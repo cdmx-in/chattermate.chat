@@ -1,0 +1,417 @@
+<script setup lang="ts">
+import { onMounted, watch, nextTick } from 'vue'
+import type { ChatDetail } from '@/types/chat'
+import { useConversationChat } from '@/composables/useConversationChat'
+import sendIcon from '@/assets/sendbutton.svg'
+
+const props = defineProps<{
+  chat: ChatDetail
+}>()
+
+const emit = defineEmits<{
+  (e: 'refresh'): void
+  (e: 'chatUpdated', data: ChatDetail): void
+  (e: 'clearUnread', sessionId: string): void
+}>()
+
+const {
+  newMessage,
+  messagesContainer,
+  formattedMessages,
+  isLoading,
+  showTakeoverButton,
+  showTakenOverStatus,
+  isChatClosed,
+  canSendMessage,
+  scrollToBottom,
+  sendMessage,
+  handleTakeover,
+  updateChat
+} = useConversationChat(props.chat, emit)
+
+// Watch for chat changes and update the internal state
+watch(() => props.chat, (newChat) => {
+  if (newChat) {
+    updateChat(newChat)
+    nextTick(() => {
+      scrollToBottom()
+    })
+  }
+}, { deep: true })
+
+// Scroll to bottom on initial load
+onMounted(() => {
+  scrollToBottom()
+})
+</script>
+
+<template>
+  <div class="chat-layout">
+    <header class="chat-header">
+      <div class="user-info">
+        <h2>{{ chat.customer.full_name || chat.customer.email }}</h2>
+        <div v-if="showTakenOverStatus" class="taken-over-status">
+          <i class="fas fa-user-clock"></i>
+          Taken over by {{ chat.user_name || 'another agent' }}
+        </div>
+        <div v-if="isChatClosed" class="chat-closed-status">
+          <i class="fas fa-lock"></i>
+          Chat closed
+        </div>
+      </div>
+      <div class="header-actions">
+        <button 
+          v-if="showTakeoverButton"
+          class="takeover-btn"
+          :disabled="isLoading"
+          @click="handleTakeover"
+        >
+          <i class="fas fa-hand-paper"></i>
+          {{ isLoading ? 'Taking over...' : 'Take over chat' }}
+        </button>
+        <button class="action-btn"><i class="fas fa-star"></i></button>
+        <button class="action-btn"><i class="fas fa-user"></i></button>
+        <button class="action-btn"><i class="fas fa-video"></i></button>
+        <button class="action-btn"><i class="fas fa-phone"></i></button>
+      </div>
+    </header>
+
+    <main class="chat-content">
+      <div class="messages" ref="messagesContainer">
+        <div 
+          v-for="(message, idx) in formattedMessages" 
+          :key="idx"
+          class="message"
+          :class="message.message_type === 'bot' || message.message_type === 'agent' ? 'bot' : 'user'"
+        >
+          <div class="message-content">
+            <div class="message-bubble">
+              {{ message.message }}
+              <span class="message-time">{{ message.timeAgo }}</span>
+            </div>
+            <span v-if="message.message_type === 'bot' || message.message_type === 'agent'" class="agent-name">
+              {{ message.message_type === 'bot' ? message.agent_name : message.user_name }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="chat-input" v-if="!isChatClosed">
+      <div class="input-container" :class="{ disabled: !canSendMessage }">
+        <input 
+          v-model="newMessage"
+          type="text" 
+          placeholder="Type a message" 
+          class="message-input"
+          @keyup.enter="sendMessage"
+          :disabled="!canSendMessage"
+        >
+        <button 
+          class="send-button" 
+          @click="sendMessage"
+          :disabled="!newMessage.trim() || !canSendMessage"
+        >
+          <img :src="sendIcon" alt="Send" />
+        </button>
+      </div>
+      <div v-if="!canSendMessage" class="input-message">
+        {{ showTakeoverButton ? 'Take over the chat to send messages' : 
+           isChatClosed ? 'This chat has been closed' : 
+           'Chat is being handled by ' + chat.user_name }}
+      </div>
+    </footer>
+
+    <footer v-else class="chat-closed-footer">
+      <div class="chat-closed-message">
+        <i class="fas fa-lock"></i>
+        This chat has been closed
+      </div>
+    </footer>
+  </div>
+</template>
+
+<style scoped>
+.chat-layout {
+  display: flex;
+  flex-direction: column;
+  height: 70vh;
+  width: 100%;
+  background: #1a1a1a;
+  position: relative;
+  overflow: hidden;
+}
+
+.chat-header {
+  flex: 0 0 auto;
+  padding: 16px 24px;
+  border-bottom: 1px solid #2d2d2d;
+  background: #1a1a1a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+}
+
+.chat-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+}
+
+.messages {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.chat-input {
+  flex: 0 0 auto;
+  padding: 16px 24px;
+  border-top: 1px solid #2d2d2d;
+  background: #1a1a1a;
+  width: 100%;
+}
+
+.user-info h2 {
+  font-size: 16px;
+  color: #ffffff;
+  margin-bottom: 4px;
+}
+
+.status {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.header-actions {
+  display: flex;
+  gap: 16px;
+}
+
+.action-btn {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 50%;
+}
+
+.action-btn:hover {
+  background: #2d2d2d;
+}
+
+.message {
+  max-width: 70%;
+  display: flex;
+  margin-bottom: 12px;
+}
+
+.message-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.message.user {
+  margin-left: auto;
+  justify-content: flex-end;
+}
+
+.message.bot {
+  margin-right: auto;
+  justify-content: flex-start;
+}
+
+.message-bubble {
+  background: #2d2d2d;
+  padding: 12px 16px;
+  border-radius: 16px;
+  border-bottom-left-radius: 4px;
+  color: white;
+  position: relative;
+  max-width: 100%;
+  word-wrap: break-word;
+}
+
+.message.user .message-bubble {
+  background: #E94E3C;
+  border-radius: 16px;
+  border-bottom-right-radius: 4px;
+}
+
+.agent-name {
+  font-size: 12px;
+  color: #9ca3af;
+  padding-left: 4px;
+  margin-top: 2px;
+}
+
+.message-time {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 4px;
+  display: block;
+  text-align: right;
+}
+
+.input-container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: #2d2d2d;
+  padding: 8px 16px;
+  border-radius: 24px;
+}
+
+.input-container.disabled {
+  opacity: 0.7;
+  background: #222;
+}
+
+.message-input {
+  flex: 1;
+  background: none;
+  border: none;
+  color: white;
+  font-size: 14px;
+  padding: 8px 0;
+  outline: none;
+}
+
+.message-input::placeholder {
+  color: #9ca3af;
+}
+
+.emoji-btn,
+.attach-btn,
+.send-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  font-size: 18px;
+}
+
+.send-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  display: flex;
+  align-items: center;
+}
+
+.send-button:hover {
+  opacity: 1;
+}
+
+.send-button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.send-button img {
+  width: 24px;
+  height: 24px;
+}
+
+.takeover-btn {
+  background: #E94E3C;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.2s;
+}
+
+.takeover-btn:hover {
+  background: #d44435;
+}
+
+.takeover-btn:disabled {
+  background: #666;
+  cursor: not-allowed;
+}
+
+.takeover-btn i {
+  font-size: 16px;
+}
+
+.taken-over-status {
+  font-size: 12px;
+  color: #E94E3C;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.taken-over-status i {
+  font-size: 14px;
+}
+
+.input-message {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.message-input:disabled {
+  cursor: not-allowed;
+}
+
+.chat-closed-status {
+  font-size: 12px;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.chat-closed-status i {
+  font-size: 14px;
+}
+
+.chat-closed-footer {
+  flex: 0 0 auto;
+  padding: 16px 24px;
+  border-top: 1px solid #2d2d2d;
+  background: #1a1a1a;
+  width: 100%;
+}
+
+.chat-closed-message {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.chat-closed-message i {
+  font-size: 16px;
+}
+</style> 

@@ -1,0 +1,180 @@
+<script setup lang="ts">
+import { useAISetup } from '@/composables/useAISetup'
+import { computed } from 'vue'
+
+const emit = defineEmits<{
+  (e: 'ai-setup-complete'): void
+}>()
+
+const {
+  isLoading,
+  error,
+  providers,
+  setupConfig,
+  saveAISetup
+} = useAISetup()
+
+const showApiKey = computed(() => setupConfig.value.provider !== 'ollama')
+
+const handleSubmit = async () => {
+  if (setupConfig.value.provider === 'ollama') {
+    setupConfig.value.apiKey = 'not_required'
+  }
+  const success = await saveAISetup()
+  if (success) {
+    emit('ai-setup-complete')
+  }
+}
+</script>
+
+<template>
+  <div class="ai-setup">
+    <div v-if="isLoading" class="loading-container">
+      <div class="loader"></div>
+    </div>
+    
+    <form v-else @submit.prevent="handleSubmit" class="setup-form">
+      <div v-if="error" class="error-message">
+        {{ error }}
+      </div>
+
+      <div class="form-group">
+        <label for="provider">AI Provider</label>
+        <select 
+          id="provider" 
+          v-model="setupConfig.provider"
+          required
+          class="form-control"
+        >
+          <option value="">Select Provider</option>
+          <option 
+            v-for="provider in providers" 
+            :key="provider.value" 
+            :value="provider.value"
+          >
+            {{ provider.label }}
+          </option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="model">Model Name</label>
+        <input
+          id="model"
+          type="text"
+          v-model="setupConfig.model"
+          required
+          placeholder="Enter model name (e.g. gpt-4)"
+          class="form-control"
+        />
+      </div>
+
+      <div v-if="showApiKey" class="form-group">
+        <label for="apiKey">API Key</label>
+        <input
+          id="apiKey"
+          type="password"
+          v-model="setupConfig.apiKey"
+          :required="showApiKey"
+          placeholder="Enter your API key"
+          class="form-control"
+        />
+        <p class="key-hint">Your API key will be encrypted and stored securely</p>
+      </div>
+
+      <button 
+        type="submit" 
+        class="submit-button"
+        :disabled="isLoading"
+      >
+        {{ isLoading ? 'Saving...' : 'Save Configuration' }}
+      </button>
+    </form>
+  </div>
+</template>
+
+<style scoped>
+.ai-setup {
+  width: 100%;
+  max-width: 500px;
+  margin: 0 auto;
+  padding: var(--space-md);
+}
+
+.setup-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.form-group label {
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.form-control {
+  padding: var(--space-sm) var(--space-md);
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  font-family: inherit;
+  background: var(--background-color);
+  color: var(--text-color);
+}
+
+.key-hint {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+}
+
+.submit-button {
+  padding: var(--space-sm) var(--space-lg);
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.submit-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error-message {
+  padding: var(--space-sm) var(--space-md);
+  margin-bottom: var(--space-md);
+  background: var(--error-soft);
+  color: var(--error-color);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--error-color);
+}
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 200px;
+}
+
+.loader {
+  width: 48px;
+  height: 48px;
+  border: 5px solid var(--primary-color-soft);
+  border-bottom-color: var(--primary-color);
+  border-radius: 50%;
+  animation: rotation 1s linear infinite;
+}
+
+@keyframes rotation {
+  0% { transform: rotate(0deg) }
+  100% { transform: rotate(360deg) }
+}
+</style>

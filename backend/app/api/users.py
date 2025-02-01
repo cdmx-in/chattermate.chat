@@ -1,0 +1,621 @@
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Body, File, UploadFile
+from fastapi.security import HTTPBearer, OAuth2PasswordRequestForm
+from sqlalchemy.orm import Session
+from typing import List
+import json
+import os
+from urllib.parse import quote
+from sqlalchemy.sql import func
+from uuid import UUID
+
+from app.database import get_db
+from app.models.user import User
+from app.models.schemas.user import UserCreate, UserStatusUpdate, UserUpdate, UserResponse, TokenResponse
+from app.core.security import create_access_token, create_refresh_token, verify_token
+from app.core.auth import get_current_user, require_permissions
+from app.core.logger import get_logger
+from app.repositories.user import UserRepository
+from pydantic import BaseModel
+from app.models.role import Role
+
+logger = get_logger(__name__)
+router = APIRouter(
+    tags=["users"]
+)
+
+security = HTTPBearer()
+
+UPLOAD_DIR = "uploads/user"
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif"}
+MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+
+def get_file_extension(filename: str) -> str:
+    return os.path.splitext(filename)[1].lower()
+
+async def save_upload_file(file: UploadFile, org_id: str, user_id: str) -> str:
+    # Create upload directory if it doesn't exist
+    user_upload_dir = os.path.join(UPLOAD_DIR, org_id, user_id)
+    os.makedirs(user_upload_dir, exist_ok=True)
+    
+    # Generate unique filename
+    file_extension = get_file_extension(file.filename)
+    filename = f"profile{file_extension}"
+    file_path = os.path.join(user_upload_dir, filename)
+    
+    # Save file
+    with open(file_path, "wb") as buffer:
+        content = await file.read()
+        buffer.write(content)
+    
+    return f"/uploads/user/{org_id}/{user_id}/{filename}"
+
+@router.post("", response_model=UserResponse)
+async def create_user(
+    user_data: UserCreate,
+    current_user: User = Depends(require_permissions("manage_users")),
+    db: Session = Depends(get_db)
+):
+    """Create a new user"""
+    try:
+        user_repo = UserRepository(db)
+        
+        # Check if email already exists
+        if user_repo.get_user_by_email(user_data.email):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Hash the password
+        hashed_password = User.get_password_hash(user_data.password)
+        
+        # Create user with organization from current user
+        new_user = user_repo.create_user(
+            email=user_data.email,
+            full_name=user_data.full_name,
+            hashed_password=hashed_password,
+            organization_id=current_user.organization_id,
+            is_active=user_data.is_active,
+            role_id=user_data.role_id
+        )
+        
+        return new_user.to_dict()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating user: {str(e)}")
+        if "duplicate key value violates unique constraint" in str(e):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
+
+@router.get("", response_model=List[UserResponse])
+async def list_users(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(require_permissions("manage_users")),
+    db: Session = Depends(get_db)
+):
+    """List all users in the organization"""
+    user_repo = UserRepository(db)
+    users = user_repo.get_users_by_organization(current_user.organization_id)
+    return users
+
+
+@router.get("/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: str,
+    current_user: User = Depends(require_permissions("manage_users")),
+    db: Session = Depends(get_db)
+):
+    """Get user by ID"""
+    user_repo = UserRepository(db)
+    user = user_repo.get_user(user_id)
+    
+    if not user or user.organization_id != current_user.organization_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+    return user.to_dict()
+
+
+@router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: str,
+    current_user: User = Depends(require_permissions("manage_users")),
+    db: Session = Depends(get_db)
+):
+    """Delete a user"""
+    user_repo = UserRepository(db)
+    user = user_repo.get_user(user_id)
+    
+    if not user or user.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    # Prevent deleting yourself
+    if user_id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+    
+    user_repo.delete_user(user_id)
+
+
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    response: Response,
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db)
+):
+    """Authenticate user and set cookies"""
+    try:
+        # Verify credentials
+        user = db.query(User).filter(User.email == form_data.username and User.is_active == True).first()
+        if not user or not user.verify_password(form_data.password):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Incorrect email or password",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Update online status
+        user.is_online = True
+        user.last_seen = func.now()
+        db.commit()
+
+        # Get role info
+        role = db.query(Role).filter(Role.id == user.role_id).first()
+
+        # Generate tokens
+        token_data = {"sub": str(user.id), "org": str(user.organization_id)}
+        access_token = create_access_token(token_data)
+        refresh_token = create_refresh_token(token_data)
+
+        # Set secure cookies
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=1800  # 30 minutes
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=604800  # 7 days
+        )
+
+        # Set session data with role information
+        user_info = json.dumps({
+            "id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "organization_id": str(user.organization_id),
+            "role": role
+        }, default=str)
+        response.set_cookie(
+            key="user_info",
+            value=quote(user_info),  # URL encode the JSON string
+            samesite="lax",
+            max_age=604800  # 7 days
+        )
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "full_name": user.full_name,
+                "organization_id": user.organization_id,
+                "profile_pic": user.profile_pic,
+                "is_online": user.is_online,
+                "last_seen": user.last_seen,
+                "is_active": user.is_active,
+                "role": role
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Login failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Login failed. Please try again later."
+        )
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(
+    response: Response,
+    request: Request,  # Add this to access cookies
+    db: Session = Depends(get_db)
+):
+    """Get new access token using refresh token from cookie"""
+    try:
+        # Get refresh token from cookie
+        refresh_token = request.cookies.get("refresh_token")
+        if not refresh_token:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Refresh token missing",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        payload = verify_token(refresh_token)
+
+        if not payload or payload.get("type") != "refresh":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid refresh token",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        user_id = payload.get("sub")
+        org_id = payload.get("org")
+
+        if not user_id or not org_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Convert string UUID to UUID object
+        try:
+            user_id = UUID(user_id)
+            org_id = UUID(org_id)
+        except ValueError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token payload format",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Verify user still exists and is active
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user or not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User not found or inactive",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        # Update last seen
+        user.last_seen = func.now()
+        db.commit()
+
+        role = db.query(Role).filter(Role.id == user.role_id).first()
+  
+        # Generate new tokens
+        token_data = {"sub": str(user_id), "org": str(org_id)}
+        access_token = create_access_token(token_data)
+        refresh_token = create_refresh_token(token_data)
+
+        # Set secure cookies
+        response.set_cookie(
+            key="access_token",
+            value=access_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=1800  # 30 minutes
+        )
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            max_age=604800  # 7 days
+        )
+
+        # Set session data
+        user_info = json.dumps({
+            "id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+            "organization_id": str(user.organization_id),
+            "role": role
+        }, default=str)
+        response.set_cookie(
+            key="user_info",
+            value=quote(user_info),  # URL encode the JSON string
+            samesite="lax",
+            max_age=604800  # 7 days
+        )
+
+        return {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "token_type": "bearer",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "full_name": user.full_name,
+                "organization_id": user.organization_id,
+                "profile_pic": user.profile_pic,
+                "is_online": user.is_online,
+                "last_seen": user.last_seen,
+                "is_active": user.is_active,
+                "role": role
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Token refresh failed: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Token refresh failed. Please try again later."
+        )
+
+
+@router.post("/logout")
+async def logout(
+    response: Response,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Logout user and clear cookies"""
+    # Update online status
+    user_repo = UserRepository(db)
+    user_repo.update_user(current_user.id, is_online=False, last_seen=func.now())
+
+    # Clear cookies
+    response.delete_cookie("access_token")
+    response.delete_cookie("refresh_token")
+    response.delete_cookie("user_info")
+
+    return {"message": "Successfully logged out"}
+
+
+class FCMTokenUpdate(BaseModel):
+    token: str
+
+
+@router.post("/token/fcm-token")
+async def update_fcm_token(
+    token_data: FCMTokenUpdate = Body(...),
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Update user's FCM token for web notifications"""
+    try:
+        user_repo = UserRepository(db)
+        success = user_repo.update_fcm_token(current_user.id, token_data.token)
+
+        if success:
+            return {"message": "FCM token updated successfully"}
+        return {"error": "Failed to update FCM token"}
+
+    except Exception as e:
+        logger.error(f"Error updating FCM token: {str(e)}")
+        return {"error": str(e)}
+
+
+@router.delete("/token/fcm-token")
+async def clear_fcm_token(
+    current_user: User = Depends(get_current_user),
+    db=Depends(get_db)
+):
+    """Clear user's FCM token"""
+    try:
+        user_repo = UserRepository(db)
+        print(current_user.id)
+        success = user_repo.clear_fcm_token(current_user.id)
+
+        if success:
+            return {"message": "FCM token cleared successfully"}
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to clear FCM token"
+        )
+
+    except Exception as e:
+        logger.error(f"Error clearing FCM token: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
+@router.patch("/me", response_model=UserResponse)
+async def update_profile(
+    data: UserUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update current user's profile"""
+    try:
+        user_repo = UserRepository(db)
+        
+        # Remove role_id from update data to prevent role modification
+        if hasattr(data, 'role_id'):
+            delattr(data, 'role_id')
+        
+        # If updating email, check if it's already taken
+        if data.email and data.email != current_user.email:
+            existing_user = user_repo.get_user_by_email(data.email)
+            if existing_user:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email already registered"
+                )
+        
+        # Verify current password if updating password
+        if data.password:
+            if not data.current_password:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Current password is required"
+                )
+            if not current_user.verify_password(data.current_password):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Incorrect current password"
+                )
+            
+            # Hash new password
+            data.password = User.get_password_hash(data.password)
+        
+        # Remove current_password from update data
+        if hasattr(data, 'current_password'):
+            delattr(data, 'current_password')
+        
+        updated_user = user_repo.update_user(
+            current_user.id,
+            **data.dict(exclude_unset=True)
+        )
+        
+        return updated_user
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Profile update failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update profile"
+        )
+
+
+@router.put("/{user_id}", response_model=UserResponse)
+async def update_user(
+    user_id: str,
+    user_data: UserUpdate,
+    current_user: User = Depends(require_permissions("manage_users")),
+    db: Session = Depends(get_db)
+):
+    """Update a user"""
+    user_repo = UserRepository(db)
+    user = user_repo.get_user(user_id)
+    
+    if not user or user.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    
+    # Check if updating email and if it's already taken
+    if user_data.email and user_data.email != user.email:
+        existing_user = user_repo.get_user_by_email(user_data.email)
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+    
+    updated_user = user_repo.update_user(
+        user_id,
+        **user_data.dict(exclude_unset=True)
+    )
+    
+    return updated_user
+
+
+@router.post("/{user_id}/status")
+async def update_user_status(
+    user_id: str,
+    status_data: UserStatusUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Update user's online status"""
+    try:
+        user_repo = UserRepository(db)
+        user = user_repo.get_user(user_id)
+        
+        if not user or user.id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Can only update own status"
+            )
+        
+        user_repo.update_user(
+            user_id, 
+            is_online=status_data.is_online,
+            last_seen=func.now()
+        )
+        
+        # Get updated user to return current last_seen
+        updated_user = user_repo.get_user(user_id)
+        return {
+            "message": "Status updated successfully",
+            "is_online": updated_user.is_online,
+            "last_seen": updated_user.last_seen
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Status update failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update status"
+        )
+
+
+@router.post("/me/profile-pic", response_model=UserResponse)
+async def upload_profile_pic(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Upload user profile picture"""
+    try:
+        # Validate file extension
+        file_ext = get_file_extension(file.filename)
+        if file_ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File type not allowed. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}"
+            )
+        
+        # Validate file size
+        file_size = len(await file.read())
+        await file.seek(0)  # Reset file pointer
+        if file_size > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File size too large. Maximum size: {MAX_FILE_SIZE/1024/1024}MB"
+            )
+        
+        # Save file and update user
+        file_path = await save_upload_file(
+            file,
+            str(current_user.organization_id),
+            str(current_user.id)
+        )
+        
+        user_repo = UserRepository(db)
+        updated_user = user_repo.update_user(
+            current_user.id,
+            profile_pic=file_path
+        )
+        
+        return updated_user
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Profile picture upload failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to upload profile picture"
+        )
+
+
+

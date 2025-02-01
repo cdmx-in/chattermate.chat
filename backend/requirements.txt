@@ -1,0 +1,47 @@
+# Web Framework
+fastapi
+uvicorn
+python-socketio
+websockets
+
+# Database
+sqlalchemy
+alembic
+psycopg2-binary
+asyncpg
+
+# Authentication & Security
+python-jose[cryptography]
+passlib[bcrypt]
+python-multipart
+
+# Environment & Config
+python-dotenv
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Utilities
+email-validator
+python-dateutil
+
+# Testing
+pytest
+pytest-asyncio
+
+
+#ai
+openai
+phidata
+duckduckgo-search
+pypdf
+pgvector
+
+google-generativeai
+google-cloud-aiplatform
+ollama
+
+#ocr
+rapidocr-onnxruntime
+
+#pdf
+pypdf
