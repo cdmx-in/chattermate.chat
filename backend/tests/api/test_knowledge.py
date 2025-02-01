@@ -572,21 +572,12 @@ def test_delete_knowledge(client, test_user, test_knowledge, db):
     data = response.json()
     assert "Knowledge source deleted successfully" in data["message"]
 
-    # Create a new session for verification
-    from app.database import SessionLocal
-    from app.models.knowledge import Knowledge
-    from app.models.knowledge_to_agent import KnowledgeToAgent
+    # Verify deletion using the same test database session
+    knowledge = db.query(MockKnowledge).filter_by(id=knowledge_id).first()
+    assert knowledge is None  # Knowledge should be deleted
     
-    verify_db = SessionLocal()
-    try:
-        # Do fresh queries to check if records were deleted
-        knowledge = verify_db.query(Knowledge).filter_by(id=knowledge_id).first()
-        assert knowledge is None  # Knowledge should be deleted
-        
-        link = verify_db.query(KnowledgeToAgent).filter_by(knowledge_id=knowledge_id).first()
-        assert link is None  # Link should be deleted due to cascade
-    finally:
-        verify_db.close()
+    link = db.query(MockKnowledgeToAgent).filter_by(knowledge_id=knowledge_id).first()
+    assert link is None  # Link should be deleted due to cascade
 
 def test_unauthorized_access(client, db, test_user, test_agent):
     """Test access without required permissions"""

@@ -113,7 +113,7 @@ VITE_WS_URL=ws://localhost:8000
 
 **Start Backend**
 ```bash
-uvicorn main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8000
 ```
 
 **Start Frontend**
