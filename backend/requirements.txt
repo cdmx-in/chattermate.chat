@@ -47,3 +47,7 @@ rapidocr-onnxruntime
 pypdf
 
 pytz
+
+firebase_admin
+beautifulsoup4
+aiofiles
