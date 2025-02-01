@@ -6,59 +6,38 @@ ChatterMate is an intelligent customer support platform that combines AI agents 
 
 ## Features
 
-### Backend (FastAPI)
-- **Real-time Communication**: WebSocket support for instant messaging
-- **Knowledge Base Management**: CRUD operations for articles & documents
-- **AI Integration**: Multiple AI providers support (OpenAI GPT-4, Google AI, Ollama)
-- **OCR Capabilities**: Document text extraction with RapidOCR
-- **Vector Search**: Semantic search with PGVector
-- **Authentication**: JWT & Firebase Authentication
-- **Database**: PostgreSQL with SQLAlchemy ORM
-- **File Storage**: Firebase Cloud Storage for document uploads
-- **API Documentation**: Auto-generated Swagger/OpenAPI docs
+- 🤖 **AI-Powered Responses**: Context-aware AI with multiple provider support (OpenAI GPT-4, Google AI, Ollama)
+- 👥 **Human Handoff**: Seamless transition to human agents when needed
+- 🔌 **Deep Integration**: Connect with Jira, Zendesk, Slack, and more
+- 🎨 **Custom Theming**: Fully customizable chat interface
+- 🔐 **Role-Based Access**: Granular control over user permissions
+- 📊 **Analytics Dashboard**: Real-time monitoring and insights
+- 💾 **Smart Memory**: Maintains conversation context across sessions
+- 📚 **Knowledge Base**: Train the AI with your domain knowledge
+- 🌐 **Open Source**: Self-hostable and community-driven
 
-### Frontend (Vue 3)
-- **Chat Interface**: Real-time chat widget with markdown support
-- **Agent Dashboard**: Conversation monitoring and takeover
-- **Knowledge Management**: File upload and article editing
-- **White-label Widget**: Customizable chat widget for embedding
-- **Customization**: Theming and styling with PrimeVue and HeadlessUI
-- **Notifications**: Firebase Cloud Messaging integration
-- **Toast Notifications**: Modern toast notifications with Vue Sonner
-- **Testing**: Unit tests (Vitest) and E2E tests (Playwright)
+### Technical Features
 
-## Technologies
+**Backend (FastAPI)**
+- Real-time WebSocket communication
+- Knowledge base management with vector search (PGVector)
+- OCR capabilities with RapidOCR
+- JWT & Firebase Authentication
+- PostgreSQL with SQLAlchemy ORM
+- Firebase Cloud Storage
+- Auto-generated API documentation
 
-**Backend**
-- Python 3.12+
-- FastAPI
-- PostgreSQL with PGVector
-- Firebase Admin SDK
-- SQLAlchemy + Alembic
-- WebSocket (Socket.IO)
-- Multiple AI Providers:
-  - OpenAI
-  - Google Generative AI
-  - Google Cloud AI Platform
-  - Ollama
-- RapidOCR for document processing
-- Redis (Rate limiting)
+**Frontend (Vue 3)**
+- Real-time chat widget with markdown support
+- Agent dashboard for conversation monitoring
+- Knowledge management interface
+- White-label customizable widget
+- Theming with PrimeVue and HeadlessUI
+- Firebase Cloud Messaging integration
+- Modern toast notifications (Vue Sonner)
+- Comprehensive testing suite
 
-**Frontend**
-- Vue 3.5+ (Composition API)
-- PrimeVue 4.2+ UI Library
-- HeadlessUI & HeroIcons
-- Pinia State Management
-- Socket.IO Client
-- Firebase Web SDK v11+
-- Markdown Processing
-- Vue Advanced Cropper
-- Vue Sonner for Notifications
-- Vitest + Playwright
-
-## Getting Started
-
-### Prerequisites
+## Prerequisites
 
 - Python 3.12+
 - Node.js 22+
@@ -66,9 +45,9 @@ ChatterMate is an intelligent customer support platform that combines AI agents 
 - Firebase Project
 - Redis (Optional for rate limiting)
 
-### Installation
+## Installation
 
-**Backend Setup**
+### Backend Setup
 ```bash
 cd backend
 python -m venv venv
@@ -83,40 +62,42 @@ cp .env.example .env
 alembic upgrade head
 ```
 
-**Frontend Setup**
+### Frontend Setup
 ```bash
 cd frontend
 npm install
 
 # Configure environment
 cp .env.example .env.local
-# Set your Firebase config in swenv.js
+# Set your Firebase config in env.js
 ```
 
-### Configuration
+## Configuration
 
-**Backend (.env)**
-```ini
-DATABASE_URL=postgresql://user:password@localhost/chattermate
+### Backend (.env)
+```env
+DATABASE_URL=postgresql://user:pass@localhost:5432/chattermate
 FIREBASE_CREDENTIALS=firebase-credentials.json
-JWT_SECRET=your_jwt_secret_here
-
+JWT_SECRET_KEY=your-secret-key
+CONVERSATION_SECRET_KEY=yoursecretkey
+ENCRYPTION_KEY_PATH=encryption.key
+CORS_ORIGINS=["https://yourdomain.com"]
 ```
 
-**Frontend (.env.local)**
-```ini
+### Frontend (.env.local)
+```env
 VITE_API_URL=http://localhost:8000
 VITE_WS_URL=ws://localhost:8000
 ```
 
 ## Running the Application
 
-**Start Backend**
+**Backend**
 ```bash
 uvicorn app.main:app --reload --port 8000
 ```
 
-**Start Frontend**
+**Frontend**
 ```bash
 # Development
 npm run dev
@@ -130,12 +111,12 @@ npm run build:webclient
 
 ## Testing
 
-**Backend Tests**
+**Backend**
 ```bash
 pytest tests/
 ```
 
-**Frontend Tests**
+**Frontend**
 ```bash
 # Unit tests
 npm run test:unit
@@ -146,7 +127,7 @@ npm run test:e2e
 
 ## Deployment
 
-**Production Setup**
+For production deployment:
 ```bash
 # Backend
 gunicorn -k uvicorn.workers.UvicornWorker -w 4 main:app
@@ -155,14 +136,35 @@ gunicorn -k uvicorn.workers.UvicornWorker -w 4 main:app
 npm run build
 ```
 
-## API Documentation
+## Documentation
 
-Access Swagger UI at `http://localhost:8000/docs` after starting the backend.
+- API Documentation: `http://localhost:8000/docs`
+- Project Documentation: [docs.chattermate.chat](https://docs.chattermate.chat)
 
-## License
+## Contributing
 
-This project is licensed under the terms of the [LICENSE.md](LICENSE.md) file.
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+### Development Guidelines
+- Follow PEP 8 style guide
+- Write tests for new features
+- Update documentation as needed
+- Add type hints to new functions
 
 ## Support
 
-For issues or feature requests, please [open an issue](https://github.com/yourrepo/chattermate/issues). 
+- 💬 Discord: [Join our community](https://discord.gg/chattermate)
+- 🐛 Issues: [GitHub Issues](https://github.com/chattermate/chattermate/issues)
+- 📧 Email: support@chattermate.chat
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+---
+
+Made with ❤️ by the ChatterMate team 

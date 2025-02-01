@@ -1,4 +1,5 @@
 import os
+import json
 from pydantic_settings import BaseSettings
 import socketio
 from socketio import AsyncServer
@@ -15,20 +16,24 @@ class Settings(BaseSettings):
 
     # JWT
     SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key")
+    ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     CONVERSATION_SECRET_KEY: str = os.getenv(
         "CONVERSATION_SECRET_KEY", "your-conversation-secret-key")
-    ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # CORS
-    CORS_ORIGINS: list = ["https://chattermate.chat",
-                          "http://localhost:5173", "http://localhost:8000", "*"]
+    CORS_ORIGINS: list = json.loads(os.getenv(
+        "CORS_ORIGINS", '["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000", "*"]'))
 
     # Firebase config
-    FIREBASE_CREDENTIALS_PATH: str = "chattermate-13e0a-firebase-adminsdk-7dqo6-57f3de88cb.json"
+    FIREBASE_CREDENTIALS: str = os.getenv(
+        "FIREBASE_CREDENTIALS", "")
 
-    class Config:
-        case_sensitive = True
+    model_config = {
+        "case_sensitive": True,
+        "env_file": ".env",
+        "extra": "allow"  # This allows extra fields from .env
+    }
 
 
 settings = Settings()

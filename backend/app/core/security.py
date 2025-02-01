@@ -23,7 +23,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def get_or_create_key():
-    key_path = "encryption.key"
+    key_path = os.getenv("ENCRYPTION_KEY_PATH", "encryption.key")
     if os.path.exists(key_path):
         with open(key_path, "rb") as key_file:
             return key_file.read()
