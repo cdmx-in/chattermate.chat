@@ -157,13 +157,11 @@ npm run build
 
 ## Support
 
-- 💬 Discord: [Join our community](https://discord.gg/chattermate)
+- 💬 Discord: [Join our community](https://discord.gg/XNCMg8jV8U)
 - 🐛 Issues: [GitHub Issues](https://github.com/chattermate/chattermate/issues)
 - 📧 Email: support@chattermate.chat
 
-## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 

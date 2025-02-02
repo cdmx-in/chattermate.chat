@@ -24,9 +24,9 @@ from sqlalchemy.sql import func
 # Custom UUID type for SQLite
 class SqliteUUID(TypeDecorator):
     """Platform-independent UUID type.
-    Uses PostgreSQL's UUID type, otherwise uses String(32).
+    Uses PostgreSQL's UUID type, otherwise uses String(36).
     """
-    impl = String(32)
+    impl = String(36)
     cache_ok = True
 
     def process_bind_param(self, value, dialect):
@@ -40,7 +40,7 @@ class SqliteUUID(TypeDecorator):
                     value = UUID(str(value))
                 except (ValueError, AttributeError):
                     return None
-            return value.hex
+            return str(value)
 
     def process_result_value(self, value, dialect):
         if value is None:
@@ -52,10 +52,6 @@ class SqliteUUID(TypeDecorator):
                 except (ValueError, AttributeError):
                     return None
             try:
-                # If the value has hyphens, it's already in UUID format
-                if '-' in value:
-                    return UUID(value)
-                # Add hyphens to the hex string to create a valid UUID
                 return UUID(value)
             except (ValueError, AttributeError):
                 return None
@@ -64,7 +60,6 @@ class SqliteUUID(TypeDecorator):
         if x is None or y is None:
             return x == y
         try:
-            # Convert both values to hex format for comparison
             if not isinstance(x, UUID):
                 try:
                     x = UUID(str(x))
@@ -75,7 +70,7 @@ class SqliteUUID(TypeDecorator):
                     y = UUID(str(y))
                 except (ValueError, AttributeError):
                     return False
-            return x.hex == y.hex
+            return str(x) == str(y)
         except (ValueError, AttributeError):
             return False
 
@@ -463,12 +458,16 @@ def test_get_knowledge_by_agent(client, test_user, test_agent, test_knowledge, d
     )
     db.add(knowledge_link)
     db.commit()
+    
+    # Refresh all objects to ensure relationships are loaded
     db.refresh(knowledge_link)
-
-    # Ensure all objects are properly attached to the session
     db.refresh(test_knowledge)
     db.refresh(test_agent)
     db.refresh(test_user)
+    
+    # Explicitly expire and refresh the knowledge object to reload relationships
+    db.expire(test_knowledge)
+    db.refresh(test_knowledge)
 
     # Verify the link exists
     link = db.query(MockKnowledgeToAgent).filter(
@@ -514,6 +513,10 @@ def test_get_knowledge_by_organization(client, test_user, test_knowledge, db):
     
     # Ensure test_user is properly attached to the session
     db.refresh(test_user)
+    
+    # Explicitly expire and refresh the knowledge object to reload relationships
+    db.expire(test_knowledge)
+    db.refresh(test_knowledge)
 
     # Verify the knowledge exists and belongs to the organization
     knowledge = db.query(MockKnowledge).filter(

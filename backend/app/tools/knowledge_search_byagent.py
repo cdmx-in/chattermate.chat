@@ -5,9 +5,12 @@ from app.database import get_db
 from app.core.config import settings
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.knowledge import KnowledgeRepository
+from app.repositories.ai_config import AIConfigRepository
+from app.core.security import decrypt_api_key
 from phi.knowledge.agent import AgentKnowledge
 from phi.vectordb.pgvector import PgVector, SearchType
 from uuid import UUID
+import os
 
 class KnowledgeSearchByAgent(Toolkit):
     def __init__(self, agent_id: str, org_id: UUID):
@@ -20,6 +23,13 @@ class KnowledgeSearchByAgent(Toolkit):
         self.db = next(get_db())
         self.knowledge_repo = KnowledgeRepository(self.db)
         self.link_repo = KnowledgeToAgentRepository(self.db)
+        
+        # Get API key from AI config
+        ai_config_repo = AIConfigRepository(self.db)
+        ai_config = ai_config_repo.get_active_config(org_id)
+        if ai_config and ai_config.encrypted_api_key:
+            os.environ['OPENAI_API_KEY'] = decrypt_api_key(ai_config.encrypted_api_key)
+        
         self.agent_knowledge = None
         self.register(self.search_knowledge_base)
 
@@ -37,20 +47,22 @@ class KnowledgeSearchByAgent(Toolkit):
             if not knowledge_sources:
                 return "No knowledge sources available for this agent."
 
-            # Use the first knowledge source's table and schema since they should all be in the same table
-            source = knowledge_sources[0]
-            
-            # Initialize vector db
-            vector_db = PgVector(
-                table_name=source.table_name,
-                db_url=settings.DATABASE_URL,
-                schema=source.schema,
-                search_type=SearchType.hybrid
-            )
-            logger.debug(f"Vector db initialized: {source.table_name}")
+            # Initialize agent_knowledge if it doesn't exist
+            if self.agent_knowledge is None:
+                # Use the first knowledge source's table and schema since they should all be in the same table
+                source = knowledge_sources[0]
+                
+                # Initialize vector db
+                vector_db = PgVector(
+                    table_name=source.table_name,
+                    db_url=settings.DATABASE_URL,
+                    schema=source.schema,
+                    search_type=SearchType.hybrid
+                )
+                logger.debug(f"Vector db initialized: {source.table_name}")
 
-            # Create AgentKnowledge instance
-            self.agent_knowledge = AgentKnowledge(vector_db=vector_db)
+                # Create AgentKnowledge instance
+                self.agent_knowledge = AgentKnowledge(vector_db=vector_db)
 
             # Convert UUID to string in filters
             filters = {"agent_id": [str(self.agent_id)]}

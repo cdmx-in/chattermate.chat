@@ -27,6 +27,9 @@ python-dateutil
 # Testing
 pytest
 pytest-asyncio
+pytest-cov==4.1.0
+pytest-mock
+coverage==7.4.1
 
 
 #ai
