@@ -155,9 +155,9 @@ class ChatAgent:
 
             response_content = ""
             if hasattr(response, 'content'):
-                response_content = response.content 
+                response_content = ChatResponse(**response.content) if isinstance(response.content, dict) else response.content
             else:
-                response_content = response
+                response_content = ChatResponse(**response) if isinstance(response, dict) else response
 
 
             # Handle the response
@@ -217,8 +217,8 @@ class ChatAgent:
                 response_content = ChatResponse(
                     message=availability_response["message"],
                     transfer_to_human=availability_response["transfer_to_human"],
-                    transfer_reason=response_content.transfer_reason,
-                    transfer_description=response_content.transfer_description
+                    transfer_reason=availability_response.get("transfer_reason"),
+                    transfer_description=availability_response.get("transfer_description")
                 )
                 
                 # Store AI response with transfer status
