@@ -3,3 +3,7 @@ __pycache__/
 .env
 firebase-credentials.json 
 uploads/
+# Coverage reports
+.coverage
+coverage_html/
+htmlcov/
