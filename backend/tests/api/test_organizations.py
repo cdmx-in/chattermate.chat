@@ -164,6 +164,7 @@ def test_create_organization(client, db):
         "admin_email": "admin@new.com",
         "admin_name": "Admin User",
         "admin_password": "adminpass123"
+        
     }
 
     response = client.post("/api/v1/organizations", json=org_data)

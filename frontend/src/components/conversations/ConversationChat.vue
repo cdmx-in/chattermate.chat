@@ -26,7 +26,8 @@ const {
   scrollToBottom,
   sendMessage,
   handleTakeover,
-  updateChat
+  updateChat,
+  handledByAI
 } = useConversationChat(props.chat, emit)
 
 // Watch for chat changes and update the internal state
@@ -50,6 +51,10 @@ onMounted(() => {
     <header class="chat-header">
       <div class="user-info">
         <h2>{{ chat.customer.full_name || chat.customer.email }}</h2>
+        <div v-if="handledByAI" class="chat-closed-status">
+          <i class="fas fa-lock"></i>
+          Handled by AI
+        </div>
         <div v-if="showTakenOverStatus" class="taken-over-status">
           <i class="fas fa-user-clock"></i>
           Taken over by {{ chat.user_name || 'another agent' }}
@@ -97,7 +102,7 @@ onMounted(() => {
       </div>
     </main>
 
-    <footer class="chat-input" v-if="!isChatClosed">
+    <footer class="chat-input" v-if="!isChatClosed && !handledByAI">
       <div class="input-container" :class="{ disabled: !canSendMessage }">
         <input 
           v-model="newMessage"
@@ -117,11 +122,18 @@ onMounted(() => {
       </div>
       <div v-if="!canSendMessage" class="input-message">
         {{ showTakeoverButton ? 'Take over the chat to send messages' : 
-           isChatClosed ? 'This chat has been closed' : 
+           handledByAI ? 'This chat is being handled by AI' : 
+           isChatClosed  ? 'This chat has been closed' : 
            'Chat is being handled by ' + chat.user_name }}
       </div>
     </footer>
 
+    <footer v-else-if="handledByAI" class="chat-closed-footer">
+      <div class="chat-closed-message">
+        <i class="fas fa-lock"></i>
+        This chat is being handled by AI
+      </div>
+    </footer>
     <footer v-else class="chat-closed-footer">
       <div class="chat-closed-message">
         <i class="fas fa-lock"></i>

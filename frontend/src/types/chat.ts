@@ -7,7 +7,7 @@ export interface CustomerInfo {
 export interface Message {
   message: string
   message_type: string
-  timestamp: string
+  created_at: string
   session_id: string
   attributes?: Record<string, any>
   user_name?: string

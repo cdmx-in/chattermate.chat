@@ -12,6 +12,11 @@ export async function listRoles(): Promise<Role[]> {
     return response.data
 }
 
+export async function getRole(id: string): Promise<Role> {
+  const response = await api.get(`/roles/${id}`)
+  return response.data
+}
+
 export async function listPermissions(): Promise<Permission[]> {
   const response = await api.get('/roles/permissions/all')
   return response.data
