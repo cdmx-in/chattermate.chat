@@ -3,7 +3,7 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 
-from app.models.schemas.role import RoleResponse, SimpleRoleResponse
+from app.models.schemas.role import RoleResponse
 
 
 
@@ -48,7 +48,7 @@ class UserResponse(UserBase):
     profile_pic: Optional[str] = None
     is_active: Optional[bool] = None
     groups: Optional[List[UserGroupResponse]] = None    
-    role: Optional[SimpleRoleResponse] = None
+    role: Optional[RoleResponse] = None
     class Config:
         from_attributes = True
 

@@ -30,10 +30,10 @@ class SimpleRoleResponse(BaseModel):
 
 class RoleResponse(RoleBase):
     id: int
-    organization_id: UUID
-    created_at: Optional[datetime]
-    updated_at: Optional[datetime]
-    permissions: List["PermissionResponse"]
+    organization_id: Optional[UUID] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    permissions: Optional[List["PermissionResponse"]] = None
 
     class Config:
         from_attributes = True

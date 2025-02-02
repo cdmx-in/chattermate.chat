@@ -27,6 +27,11 @@ export function useConversationChat(
     return chat.value.status === 'open' && chat.value.user_id && chat.value.user_id !== currentUserId
   })
 
+  const handledByAI = computed(() => {
+    console.log(chat.value.status === 'open' && !chat.value.user_id && !chat.value.group_id)
+    return chat.value.status === 'open' && !chat.value.user_id && !chat.value.group_id
+  })
+
   const isChatClosed = computed(() => {
     return chat.value.status === 'closed'
   })
@@ -70,7 +75,7 @@ export function useConversationChat(
       const localMessage: Message = {
         message: messageText,
         message_type: 'agent',
-        timestamp,
+        created_at: timestamp,
         session_id: chat.value.session_id
       }
 
@@ -83,7 +88,7 @@ export function useConversationChat(
         message: messageText,
         session_id: chat.value.session_id,
         message_type: 'agent',
-        timestamp: timestamp
+        created_at: timestamp
       })
 
       scrollToBottom()
@@ -140,7 +145,7 @@ export function useConversationChat(
   const formattedMessages = computed(() => {
     return chat.value.messages.map(msg => ({
       ...msg,
-      timeAgo: formatDistanceToNow(new Date(msg.timestamp), { addSuffix: true })
+      timeAgo: formatDistanceToNow(new Date(msg.created_at), { addSuffix: true })
     }))
   })
 
@@ -156,6 +161,7 @@ export function useConversationChat(
     scrollToBottom,
     sendMessage,
     handleTakeover,
-    updateChat
+    updateChat,
+    handledByAI
   }
 } 

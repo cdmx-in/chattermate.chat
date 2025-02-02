@@ -317,6 +317,7 @@ class ChatAgent:
                 model_name=model_name,
                 model_type=model_type
             )
+            await agent.agent.arun(message="Hello, how are you?")
             return True
         except Exception as e:
             logger.error(f"Error testing API key: {str(e)}")

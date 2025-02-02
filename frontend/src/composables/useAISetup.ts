@@ -38,9 +38,9 @@ export function useAISetup() {
         apiKey: config.api_key
       }
     } catch (err: unknown) {
-      const apiError = (err as { response?: { data?: { detail?: { details?: string; error?: string } } } } ).response?.data?.detail;
-      if (apiError?.error !== 'AI configuration not found') {
-        error.value = apiError?.details || apiError?.error || 'Failed to load configuration'
+      const response = (err as { response?: { status?: number; data?: { detail?: { details?: string; error?: string } } } }).response;
+      if (response?.status !== 404 && response?.data?.detail?.error !== 'AI configuration not found') {
+        error.value = response?.data?.detail?.details || response?.data?.detail?.error || 'Failed to load configuration'
       }
     } finally {
       isLoading.value = false

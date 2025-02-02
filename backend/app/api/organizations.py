@@ -182,7 +182,7 @@ async def create_organization(
                 "organization_id": organization.id,
                 "role": {
                     "id": admin_role.id,
-                    "name": admin_role.name
+                    "name": admin_role.name,
                 }
             }
         }

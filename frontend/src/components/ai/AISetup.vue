@@ -17,12 +17,16 @@ const {
 const showApiKey = computed(() => setupConfig.value.provider !== 'ollama')
 
 const handleSubmit = async () => {
-  if (setupConfig.value.provider === 'ollama') {
-    setupConfig.value.apiKey = 'not_required'
-  }
-  const success = await saveAISetup()
-  if (success) {
-    emit('ai-setup-complete')
+  try {
+    if (setupConfig.value.provider === 'ollama') {
+      setupConfig.value.apiKey = 'not_required'
+    }
+    const success = await saveAISetup()
+    if (success) {
+      emit('ai-setup-complete')
+    }
+  } catch (error) {
+    console.error('Submit error:', error)
   }
 }
 </script>
@@ -167,9 +171,10 @@ const handleSubmit = async () => {
 .loader {
   width: 48px;
   height: 48px;
-  border: 5px solid var(--primary-color-soft);
+  border: 4px solid var(--border-color);
   border-bottom-color: var(--primary-color);
   border-radius: 50%;
+  display: inline-block;
   animation: rotation 1s linear infinite;
 }
 
