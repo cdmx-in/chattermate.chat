@@ -3,7 +3,7 @@ from typing import Optional
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from cryptography.fernet import Fernet
-from app.core.config import settings
+from app.core.config import  settings
 from app.core.logger import get_logger
 import base64
 import os
@@ -23,7 +23,7 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 def get_or_create_key():
-    key_path = os.getenv("ENCRYPTION_KEY_PATH", "encryption.key")
+    key_path = settings.ENCRYPTION_KEY_PATH
     if os.path.exists(key_path):
         with open(key_path, "rb") as key_file:
             return key_file.read()

@@ -24,7 +24,7 @@ class SocketService {
   connect(namespace: string = '/agent') {
     if (this.socket?.connected) return
 
-    const apiUrl = import.meta.env.VITE_SOCKET_URL || 'ws://localhost:8000'
+    const apiUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000'
     this.socket = io(apiUrl + namespace, {
       transports: ['websocket', 'polling'],
       withCredentials: true,

@@ -1,7 +1,7 @@
 import datetime
 import os
 from fastapi import APIRouter
-from app.core import config
+from app.core.socketio import sio
 from app.core.logger import get_logger
 import traceback
 from app.agents.chat_agent import ChatAgent, ChatResponse
@@ -25,9 +25,10 @@ def format_datetime(dt):
     """Convert datetime to ISO format string"""
     return dt.isoformat() if dt else None
 
-@config.sio.on('connect', namespace='/widget')
+@sio.on('connect', namespace='/widget')
 async def widget_connect(sid, environ, auth):
     try:
+        logger.info(f"Widget client connected: {sid}")
         # Authenticate using conversation token
         widget_id, org_id, customer_id = await authenticate_socket_conversation_token(sid, environ)
         
@@ -44,7 +45,7 @@ async def widget_connect(sid, environ, auth):
         ai_config_repo = AIConfigRepository(db)
         ai_config = ai_config_repo.get_active_config(org_id)
         if not ai_config:
-            await config.sio.emit('error', {
+            await sio.emit('error', {
                 'error': 'AI configuration required',
                 'type': 'ai_config_missing'
             }, to=sid, namespace='/widget')
@@ -75,7 +76,7 @@ async def widget_connect(sid, environ, auth):
             logger.debug(f"New session: {session_id}")
 
         # Join the room using session_id
-        await config.sio.enter_room(sid, session_id, namespace='/widget')
+        await sio.enter_room(sid, session_id, namespace='/widget')
         
         # Store session data
         session_data = {
@@ -87,32 +88,32 @@ async def widget_connect(sid, environ, auth):
             'ai_config': ai_config
         }
         logger.debug(f"ai_config: {ai_config.encrypted_api_key}")
-        await config.sio.save_session(sid, session_data, namespace='/widget')
+        await sio.save_session(sid, session_data, namespace='/widget')
         logger.info(f"Widget client connected: {sid} joined room: {session_id}")
         return True
 
     except Exception as e:
         logger.error(f"Widget connection error for sid {sid}: {str(e)}")
         logger.error(traceback.format_exc())
-        await config.sio.emit('error', {
+        await sio.emit('error', {
             'error': 'Connection failed',
             'type': 'connection_error'
         }, to=sid, namespace='/widget')
         return False
 
 
-@config.sio.on('chat', namespace='/widget')
+@sio.on('chat', namespace='/widget')
 async def handle_widget_chat(sid, data):
     try:
         # Authenticate using conversation token
-        environ = config.sio.get_environ(sid, namespace='/widget')
+        environ = sio.get_environ(sid, namespace='/widget')
         widget_id, org_id, customer_id = await authenticate_socket_conversation_token(sid, environ)
         
         if not widget_id or not org_id:
             raise ValueError("Widget authentication failed")
 
         # Get session data
-        session = await config.sio.get_session(sid, namespace='/widget')
+        session = await sio.get_session(sid, namespace='/widget')
         logger.debug(f"ai_config: {session['ai_config'].encrypted_api_key}")
         session_id = session['session_id']
         # Verify session matches authenticated data
@@ -221,7 +222,7 @@ async def handle_widget_chat(sid, data):
             if user_id:
                 # Also emit to user-specific room
                 user_room = f"user_{user_id}"
-                await config.sio.emit('chat_reply', {
+                await sio.emit('chat_reply', {
                     'message': data['message'],
                     'type': 'user_message',
                     'transfer_to_human': False,
@@ -230,7 +231,7 @@ async def handle_widget_chat(sid, data):
                 }, room=user_room, namespace='/agent')
 
             # Emit to both session room and user's personal room
-            await config.sio.emit('chat_reply', {
+            await sio.emit('chat_reply', {
                 'message': data['message'],
                 'type': 'user_message',
                 'transfer_to_human': False,
@@ -240,7 +241,7 @@ async def handle_widget_chat(sid, data):
             return # don't do anything if the session is closed or the user has already taken over
         
         # Emit response to the specific room
-        await config.sio.emit('chat_response', {
+        await sio.emit('chat_response', {
             'message': response.message,
             'type': 'chat_response',
             'transfer_to_human': response.transfer_to_human
@@ -249,25 +250,25 @@ async def handle_widget_chat(sid, data):
     except Exception as e:
         logger.error(f"Widget chat error for sid {sid}: {str(e)}")
         logger.error(traceback.format_exc())
-        await config.sio.emit('error', {
+        await sio.emit('error', {
             'error': 'Unable to process your request, please try again later.',
             'type': 'chat_error'
         }, to=sid, namespace='/widget')
 
 
-@config.sio.on('get_chat_history', namespace='/widget')
+@sio.on('get_chat_history', namespace='/widget')
 async def get_widget_chat_history(sid):
     try:
         logger.info(f"Getting chat history for sid {sid}")
         # Authenticate using conversation token
-        environ = config.sio.get_environ(sid, namespace='/widget')
+        environ = sio.get_environ(sid, namespace='/widget')
         widget_id, org_id, customer_id = await authenticate_socket_conversation_token(sid, environ)
         
         if not widget_id or not org_id:
             raise ValueError("Widget authentication failed")
 
         # Get session data
-        session = await config.sio.get_session(sid, namespace='/widget')
+        session = await sio.get_session(sid, namespace='/widget')
         
         # Verify session matches authenticated data
         if (session['widget_id'] != widget_id or 
@@ -286,7 +287,7 @@ async def get_widget_chat_history(sid):
 
         if not active_session:
             logger.info("No active session found, returning empty history")
-            await config.sio.emit('chat_history', {
+            await sio.emit('chat_history', {
                 'messages': [],
                 'type': 'chat_history'
             }, to=sid, namespace='/widget')
@@ -308,7 +309,7 @@ async def get_widget_chat_history(sid):
             'agent_name': msg.agent.display_name or msg.agent.name if msg.agent else None
         } for msg in messages]
 
-        await config.sio.emit('chat_history', {
+        await sio.emit('chat_history', {
             'messages': formatted_messages,
             'type': 'chat_history'
         }, to=sid, namespace='/widget')
@@ -316,21 +317,21 @@ async def get_widget_chat_history(sid):
     except ValueError as e:
         traceback.print_exc()
         logger.error(f"Widget authentication error for sid {sid}: {str(e)}")
-        await config.sio.emit('error', {
+        await sio.emit('error', {
             'error': 'Authentication failed',
             'type': 'auth_error'
         }, to=sid, namespace='/widget')
     except Exception as e:
         logger.error(f"Error getting chat history for sid {sid}: {str(e)}")
         logger.error(traceback.format_exc())
-        await config.sio.emit('error', {
+        await sio.emit('error', {
             'error': 'Failed to get chat history',
             'type': 'chat_history_error'
         }, to=sid, namespace='/widget')
 
 
 # Add connection handler for agent namespace
-@config.sio.on('connect', namespace='/agent')
+@sio.on('connect', namespace='/agent')
 async def agent_connect(sid, environ, auth):
     try:
         access_token, user_id, org_id = await authenticate_socket(sid, environ)
@@ -345,7 +346,7 @@ async def agent_connect(sid, environ, auth):
             'organization_id': org_id
         }
         
-        await config.sio.save_session(sid, session_data, namespace='/agent')
+        await sio.save_session(sid, session_data, namespace='/agent')
         
         
         return True
@@ -355,10 +356,10 @@ async def agent_connect(sid, environ, auth):
         return False 
     
 # Add new socket event handler for agent messages
-@config.sio.on('agent_message', namespace='/agent')
+@sio.on('agent_message', namespace='/agent')
 async def handle_agent_message(sid, data):
     try:
-        session = await config.sio.get_session(sid, namespace='/agent')
+        session = await sio.get_session(sid, namespace='/agent')
         session_id = data['session_id']
         
         logger.info(f"Session ID: {session_id}")
@@ -387,7 +388,7 @@ async def handle_agent_message(sid, data):
         
         chat_repo.create_message(message)
         # Emit to widget clients
-        await config.sio.emit('chat_response', {
+        await sio.emit('chat_response', {
             'message': data['message'],
             'type': 'agent_message',
         }, room=session_id, namespace='/widget')
@@ -396,16 +397,16 @@ async def handle_agent_message(sid, data):
     except Exception as e:
         logger.error(f"Agent message error for sid {sid}: {str(e)}")
         logger.error(traceback.format_exc())
-        await config.sio.emit('error', {
+        await sio.emit('error', {
             'error': 'Failed to send message',
             'type': 'message_error'
         }, to=sid, namespace='/agent')    
 
 # Add handlers for room management
-@config.sio.on('join_room', namespace='/agent')
+@sio.on('join_room', namespace='/agent')
 async def handle_join_room(sid, data):
     try:
-        session = await config.sio.get_session(sid, namespace='/agent')
+        session = await sio.get_session(sid, namespace='/agent')
         session_id = data.get('session_id')
         if not session_id:
             raise ValueError("No session ID provided")
@@ -415,7 +416,7 @@ async def handle_join_room(sid, data):
             user_id = session_id.split('_')[1]
             if str(session.get('user_id')) != user_id:
                 raise ValueError("Unauthorized to join user room")
-            await config.sio.enter_room(sid, session_id, namespace='/agent')
+            await sio.enter_room(sid, session_id, namespace='/agent')
             logger.info(f"Agent {user_id} joined their user room")
             return
 
@@ -431,12 +432,12 @@ async def handle_join_room(sid, data):
             raise ValueError("Unauthorized to join this room")
 
         # Join the room
-        await config.sio.enter_room(sid, session_id, namespace='/agent')
+        await sio.enter_room(sid, session_id, namespace='/agent')
         logger.info(f"Agent {session.get('user_id')} joined room: {session_id}")
 
 
         # Notify room of join
-        await config.sio.emit('room_event', {
+        await sio.emit('room_event', {
             'type': 'join',
             'user_id': str(session.get('user_id')),
         }, room=session_id, namespace='/agent')
@@ -445,19 +446,19 @@ async def handle_join_room(sid, data):
             'session_id': session_id,
             'user_id': session.get('user_id'),
         }
-        await config.sio.save_session(sid, session_data, namespace='/agent')
+        await sio.save_session(sid, session_data, namespace='/agent')
 
     except Exception as e:
         logger.error(f"Error joining room for sid {sid}: {str(e)}")
-        await config.sio.emit('error', {
+        await sio.emit('error', {
             'error': 'Failed to join room',
             'type': 'room_error'
         }, to=sid, namespace='/agent')
 
-@config.sio.on('leave_room', namespace='/agent')
+@sio.on('leave_room', namespace='/agent')
 async def handle_leave_room(sid, data):
     try:
-        session = await config.sio.get_session(sid, namespace='/agent')
+        session = await sio.get_session(sid, namespace='/agent')
         if not session:
             raise ValueError("No active session")
 
@@ -466,24 +467,24 @@ async def handle_leave_room(sid, data):
             raise ValueError("No session ID provided")
 
         # Leave the room
-        await config.sio.leave_room(sid, session_id, namespace='/agent')
+        await sio.leave_room(sid, session_id, namespace='/agent')
         logger.info(f"Agent {session.get('user_id')} left room: {session_id}")
 
         # Notify room of leave
-        await config.sio.emit('room_event', {
+        await sio.emit('room_event', {
             'type': 'leave',
             'user_id': str(session.get('user_id')),
         }, room=session_id, namespace='/agent')
 
     except Exception as e:
         logger.error(f"Error leaving room for sid {sid}: {str(e)}")
-        await config.sio.emit('error', {
+        await sio.emit('error', {
             'error': 'Failed to leave room',
             'type': 'room_error'
         }, to=sid, namespace='/agent')    
 
 
-@config.sio.on('taken_over', namespace='/agent')
+@sio.on('taken_over', namespace='/agent')
 async def handle_taken_over(sid, data):
     logger.info(f"Agent {data['user_name']} has taken over chat {data['session_id']}")
-    await config.sio.emit('handle_taken_over', data, room=data['session_id'] , namespace='/widget')
+    await sio.emit('handle_taken_over', data, room=data['session_id'] , namespace='/widget')

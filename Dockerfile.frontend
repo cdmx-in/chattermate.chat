@@ -1,0 +1,41 @@
+FROM node:22-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create .npmrc with registry configuration
+RUN echo "registry=https://registry.npmjs.org/\nstrict-ssl=false\nlegacy-peer-deps=true" > ~/.npmrc
+
+# Copy package files first
+COPY frontend/package*.json ./
+
+# Install dependencies with legacy peer deps
+RUN npm install --legacy-peer-deps
+
+# Copy frontend source code
+COPY frontend/ .
+
+# Create startup script in /usr/local/bin
+RUN echo '#!/bin/bash\n\
+echo "Waiting for backend..."\n\
+until curl -f http://backend:8000/health; do\n\
+    echo "Backend not ready - sleeping"\n\
+    sleep 5\n\
+done\n\
+\n\
+echo "Backend is ready - starting frontend"\n\
+cd /app && npm run predev && npm run dev -- --host 0.0.0.0 --port 3000' > /usr/local/bin/start.sh
+
+# Make startup script executable
+RUN chmod +x /usr/local/bin/start.sh
+
+# Expose port
+EXPOSE 3000
+
+# Start the application in development mode
+CMD ["/bin/bash", "/usr/local/bin/start.sh"] 

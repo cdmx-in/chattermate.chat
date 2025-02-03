@@ -3,7 +3,9 @@ import WidgetBuilder from './WidgetBuilder.vue'
 import './widget.css'
 
 // Ensure the environment is defined
+// @ts-ignore
 if (!window.process) {
+  // @ts-ignore
   window.process = { env: { NODE_ENV: 'production' } }
 }
 

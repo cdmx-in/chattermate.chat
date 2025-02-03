@@ -1,7 +1,7 @@
 import type { AxiosError } from 'axios'
 import api from './api'
-import { userService, type UserInfo } from './user'
-
+import { userService } from './user'
+import type { User } from '../types/user'
 interface ErrorResponse {
   detail: string
 }
@@ -10,7 +10,7 @@ interface LoginResponse {
   access_token: string
   refresh_token: string
   token_type: string
-  user: UserInfo
+  user: User
 }
 
 export const authService = {
