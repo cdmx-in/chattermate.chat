@@ -20,8 +20,11 @@ export default defineConfig({
   },
   publicDir: 'public',
   build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
     rollupOptions: {
       input: {
+        main: './index.html',
         'firebase-messaging-sw': './public/firebase-messaging-sw.js',
       },
     },

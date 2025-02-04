@@ -24,9 +24,11 @@ class KnowledgeRepository:
         """Get paginated knowledge items for an agent"""
         
         query = (self.db.query(Knowledge)
-                .join(KnowledgeToAgent, 
-                      (Knowledge.id == KnowledgeToAgent.knowledge_id) & 
-                      (KnowledgeToAgent.agent_id == agent_id))
+                .join(KnowledgeToAgent)
+                .filter(
+                    KnowledgeToAgent.knowledge_id == Knowledge.id,
+                    KnowledgeToAgent.agent_id == agent_id
+                )
                 .order_by(Knowledge.id)
                 .offset(skip)
                 .limit(limit))
@@ -39,9 +41,11 @@ class KnowledgeRepository:
         """Get total count of knowledge items for an agent"""
         
         query = (self.db.query(func.count(Knowledge.id))
-                .join(KnowledgeToAgent, 
-                      (Knowledge.id == KnowledgeToAgent.knowledge_id) & 
-                      (KnowledgeToAgent.agent_id == agent_id)))
+                .join(KnowledgeToAgent)
+                .filter(
+                    KnowledgeToAgent.knowledge_id == Knowledge.id,
+                    KnowledgeToAgent.agent_id == agent_id
+                ))
         
         result = query.scalar() or 0
         return result

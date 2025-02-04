@@ -135,7 +135,7 @@ async def test_authenticate_socket_with_refresh(mock_db, mock_user):
     
     with patch('app.core.auth_utils.verify_token') as mock_verify, \
          patch('app.core.auth_utils.refresh_access_token') as mock_refresh, \
-         patch('app.core.config.sio.emit') as mock_emit:
+         patch('app.core.socketio.sio.emit') as mock_emit:
         mock_refresh.return_value = new_access_token
         mock_verify.return_value = {
             "sub": str(mock_user.id),

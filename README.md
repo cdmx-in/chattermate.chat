@@ -65,36 +65,29 @@ alembic upgrade head
 ### Frontend Setup
 ```bash
 cd frontend
+
 npm install
 
 # Configure environment
-cp .env.example .env.local
-# Set your Firebase config in env.js
-```
+cp .env.example .env
 
-## Configuration
-
-### Backend (.env)
-```env
-DATABASE_URL=postgresql://user:pass@localhost:5432/chattermate
-FIREBASE_CREDENTIALS=firebase-credentials.json
-JWT_SECRET_KEY=your-secret-key
-CONVERSATION_SECRET_KEY=yoursecretkey
-ENCRYPTION_KEY_PATH=encryption.key
-CORS_ORIGINS=["https://yourdomain.com"]
 ```
+For Web Push notification, generate a firebase config and keep in folder backend/app/config/firebase-config.json 
 
-### Frontend (.env.local)
-```env
-VITE_API_URL=http://localhost:8000
-VITE_WS_URL=ws://localhost:8000
-```
 
 ## Running the Application
 
 **Backend**
 ```bash
+# Development
 uvicorn app.main:app --reload --port 8000
+
+# Production
+# Install gunicorn if not already installed
+pip install gunicorn
+
+# Run with gunicorn (adjust workers based on CPU cores)
+gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --access-logfile - --error-logfile - --log-level info
 ```
 
 **Frontend**
@@ -102,10 +95,10 @@ uvicorn app.main:app --reload --port 8000
 # Development
 npm run dev
 
-# Build Widget
+# Build Widget for chat to integrate in website
 npm run build:widget
 
-# Build Web Client
+# Build Web Client to integrate in website
 npm run build:webclient
 ```
 
@@ -127,14 +120,191 @@ npm run test:e2e
 
 ## Deployment
 
-For production deployment:
-```bash
-# Backend
-gunicorn -k uvicorn.workers.UvicornWorker -w 4 main:app
+For production deployment without Docker:
 
-# Frontend
-npm run build
+**Backend**
+```bash
+# Install production dependencies
+pip install gunicorn
+
+# Run with gunicorn
+gunicorn app.main:app \
+    --workers 4 \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:8000 \
+    --access-logfile - \
+    --error-logfile - \
+    --log-level info \
+    --timeout 120
+
+# Recommended worker count:
+# - CPU bound: 1-2 workers per CPU core
+# - I/O bound: 2-4 workers per CPU core
+# Example: For a 4-core machine, use 4-16 workers depending on workload
 ```
+
+**Frontend**
+```bash
+# Build for production
+npm run build
+
+# Serve using nginx or other web server
+```
+
+### Docker Deployment
+
+You can run the project using either Docker Compose with local builds or pre-built Docker images.
+
+#### Using Pre-built Images
+
+The following Docker images are available on Docker Hub:
+```bash
+# Frontend Image
+docker pull chattermate/frontend:latest
+
+# Backend Image
+docker pull chattermate/backend:latest
+```
+
+To run using pre-built images:
+
+1. Create a `docker-compose.prod.yml` file:
+```yaml
+services:
+  frontend:
+    image: chattermate/frontend:latest
+    ports:
+      - "80:80"
+    env_file:
+      - ./frontend/.env
+    depends_on:
+      - backend
+    networks:
+      - chattermate-network
+    restart: unless-stopped
+
+  backend:
+    image: chattermate/backend:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - chattermate-network
+    restart: unless-stopped
+    volumes:
+      - backend_data:/app/uploads
+
+  db:
+    image: postgres:14-alpine
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=chattermate
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chattermate-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    networks:
+      - chattermate-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  chattermate-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  backend_data:
+```
+
+2. Start the services:
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+#### Local Development with Docker
+
+For local development, you can build the images yourself:
+
+```bash
+# Build and start all services
+docker-compose up --build
+
+# Run in background
+docker-compose up -d
+
+# Stop services
+docker-compose down
+
+# View logs
+docker-compose logs -f
+
+# View specific service logs
+docker-compose logs -f db     # PostgreSQL logs
+docker-compose logs -f redis  # Redis logs
+docker-compose logs -f backend # Backend logs
+docker-compose logs -f frontend # frontend logs
+```
+
+The Docker setup includes:
+- Custom PostgreSQL image with pg_vector extension pre-installed
+- Redis for caching and rate limiting
+- FastAPI backend with all dependencies
+- Vue.js frontend with automatic builds
+- Automatic database migrations on startup
+- Health checks for all services
+- Proper service startup order
+
+The startup process:
+1. PostgreSQL starts and initializes with vector extension
+2. Redis starts and becomes ready
+3. Backend service waits for PostgreSQL to be healthy
+4. Database migrations run automatically
+5. FastAPI application starts
+6. Frontend builds and waits for backend
+7. Frontend application starts
+
+Service URLs:
+```
+Frontend: http://localhost:80
+Backend API: http://localhost:8000
+Database: localhost:5432
+Redis: localhost:6379
+```
+
+Database connection details:
+```
+Host: localhost
+Port: 5432
+Database: chattermate
+Username: postgres
+Password: postgres
+```
+
+Make sure to set up your environment variables in a `.env` file before running Docker.
 
 ## Documentation
 

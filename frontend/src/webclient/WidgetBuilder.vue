@@ -18,7 +18,9 @@ marked.setOptions({
 // Configure marked renderer to add target="_blank" to links
 const renderer = new marked.Renderer();
 const linkRenderer = renderer.link;
+// @ts-ignore
 renderer.link = (href, title, text) => {
+    // @ts-ignore
     const html = linkRenderer.call(renderer, href, title, text);
     return html.replace(/^<a /, '<a target="_blank" rel="nofollow" ');
 };

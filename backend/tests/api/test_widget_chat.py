@@ -3,19 +3,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-from app.database import Base, get_db
+from app.database import Base
 from app.models.widget import Widget
-from app.models.user import User
 from app.models.agent import Agent, AgentType
-from app.models.session_to_agent import SessionStatus
 from app.models.ai_config import AIConfig, AIModelType
-from app.core.config import settings
 from app.repositories.agent import AgentRepository
 from app.repositories.widget import create_widget
 from app.models.schemas.widget import WidgetCreate
 from app.core.security import encrypt_api_key
 from uuid import UUID, uuid4
-import json
 
 # Test database URL
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -98,7 +94,7 @@ async def test_widget_connect(db, test_widget, test_ai_config, mock_sio, monkeyp
     from app.api import widget_chat
 
     # Mock dependencies
-    monkeypatch.setattr(widget_chat.config, "sio", mock_sio)
+    monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
 
     # Mock authentication
@@ -158,7 +154,7 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, mock_sio, mo
     from app.api import widget_chat
     
     # Mock dependencies
-    monkeypatch.setattr(widget_chat.config, "sio", mock_sio)
+    monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
     
     # Create a test session
@@ -242,7 +238,7 @@ async def test_widget_chat_history(db, test_widget, mock_sio, monkeypatch):
     from app.api import widget_chat
     
     # Mock dependencies
-    monkeypatch.setattr(widget_chat.config, "sio", mock_sio)
+    monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
     
     # Create a test session
@@ -301,7 +297,7 @@ async def test_agent_connect(db, mock_sio, monkeypatch):
     from app.api import widget_chat
     
     # Mock dependencies
-    monkeypatch.setattr(widget_chat.config, "sio", mock_sio)
+    monkeypatch.setattr(widget_chat, "sio", mock_sio)
     
     # Mock authentication
     user_id = uuid4()
@@ -334,7 +330,7 @@ async def test_agent_message(db, mock_sio, monkeypatch):
     from app.api import widget_chat
     
     # Mock dependencies
-    monkeypatch.setattr(widget_chat.config, "sio", mock_sio)
+    monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
     
     # Create test data

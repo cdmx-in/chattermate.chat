@@ -17,6 +17,7 @@ from app.models.schemas.widget import WidgetCreate, WidgetResponse
 from app.core.logger import get_logger
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
+from app.core.config import settings
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -49,6 +50,8 @@ async def get_widget_ui(
     agent = agent_repo.get_by_id(widget.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    
 
     # Check existing conversation token first
     customer_id = None
@@ -88,6 +91,8 @@ async def get_widget_ui(
 
 def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None) -> str:
     """Generate widget HTML with embedded data"""
+    widget_url = settings.VITE_WIDGET_URL
+    
     # Convert AgentCustomization to dict if it's a model instance
     customization_dict = {
         "chat_background_color": agent_customization.chat_background_color,
@@ -104,8 +109,8 @@ def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, 
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Chat Widget</title>
-            <script type="module" crossorigin src="http://localhost:5173/assets/widget.js"></script>
-            <link rel="stylesheet" href="http://localhost:5173/assets/widget.css">
+            <script type="module" crossorigin src="{widget_url}/assets/widget.js"></script>
+            <link rel="stylesheet" crossorigin href="{widget_url}/assets/widget.css">
             <script>
                 window.__INITIAL_DATA__ = {{
                     widgetId: "{widget_id}",

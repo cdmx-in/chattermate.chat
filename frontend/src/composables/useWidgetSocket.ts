@@ -58,7 +58,7 @@ export function useWidgetSocket() {
                 messages.value.push({
                     message: data.message,
                     message_type: 'agent',
-                    timestamp: new Date().toISOString(),
+                    created_at: new Date().toISOString(),
                     session_id: '',
                     agent_name: data.agent_name
                 })
@@ -66,7 +66,7 @@ export function useWidgetSocket() {
                 messages.value.push({
                     message: data.message,
                     message_type: 'bot',
-                    timestamp: new Date().toISOString(),
+                    created_at: new Date().toISOString(),
                     session_id: '',
                     agent_name: data.agent_name
                 })
@@ -79,7 +79,7 @@ export function useWidgetSocket() {
             messages.value.push({
                 message: `${data.user_name} joined the conversation`,
                 message_type: 'system',
-                timestamp: new Date().toISOString(),
+                created_at: new Date().toISOString(),
                 session_id: data.session_id
             })
 
@@ -168,7 +168,7 @@ export function useWidgetSocket() {
             const historyMessages = data.messages.map((msg: Message) => ({
                 message: msg.message,
                 message_type: msg.message_type as "assistant" | "user" | "error" | "bot" | "agent" | "system",
-                timestamp: msg.timestamp,
+                created_at: msg.created_at,
                 attributes: msg.attributes || {},
                 session_id: '',
                 agent_name: msg.agent_name || '',
@@ -195,7 +195,7 @@ export function useWidgetSocket() {
         messages.value.push({
             message: newMessage,
             message_type: 'user',
-            timestamp: new Date().toISOString(),
+            created_at: new Date().toISOString(),
             session_id: ''
         })
 

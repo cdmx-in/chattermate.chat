@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref,onMounted } from 'vue'
 import { useOrganizationSettings } from '@/composables/useOrganizationSettings'
+// @ts-ignore
 import { listTz, clientTz } from 'timezone-select-js'
 
 const {

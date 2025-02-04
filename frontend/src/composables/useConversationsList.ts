@@ -22,11 +22,11 @@ export function useConversationsList(props: {
     message: string
     type: string
     agent_name?: string
-    timestamp: string
+    created_at: string
     session_id: string
   }) => {
     // Create unique message identifier
-    const messageKey = `${data.session_id}-${data.timestamp}`;
+    const messageKey = `${data.session_id}-${data.created_at}`;
     // Skip if already processed
     if (processedMessages.has(messageKey)) return;
     processedMessages.add(messageKey);
@@ -43,7 +43,7 @@ export function useConversationsList(props: {
       const newMessage: Message = {
         message: data.message,
         message_type: data.type === 'agent_message' ? 'agent' : data.type,
-        timestamp: data.timestamp,
+        created_at: data.created_at,
         session_id: data.session_id
       }
 
@@ -51,7 +51,7 @@ export function useConversationsList(props: {
       const updatedChat: ChatDetail = {
         ...selectedChat.value,
         messages: [...(selectedChat.value.messages || []), newMessage],
-        updated_at: data.timestamp,
+        updated_at: data.created_at,
         customer: { ...selectedChat.value.customer },
         agent_name: selectedChat.value.agent_name,
         status: selectedChat.value.status,

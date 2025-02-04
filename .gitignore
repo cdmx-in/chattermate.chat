@@ -29,3 +29,8 @@ test.db
 *.db.tar.bz2
 *.db.tar.xz
 *.db.tar.lzma
+
+docs/
+config/
+.env.prod
+.env.dev
