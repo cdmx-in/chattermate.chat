@@ -1,7 +1,9 @@
-name: Run Tests
+name: Run Tests and Build Docker Images
 
 on:
   pull_request:
+    branches: [ main ]
+  push:
     branches: [ main ]
 
 jobs:
@@ -30,3 +32,36 @@ jobs:
         PYTHONPATH: ${GITHUB_WORKSPACE}/backend
       run: |
         python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=70
+
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+    - name: Build and push backend image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.backend.prod
+        push: true
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/chattermate-backend:latest
+
+    - name: Build and push frontend image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: Dockerfile.frontend
+        push: true
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/chattermate-frontend:latest
