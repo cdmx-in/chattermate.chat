@@ -1,0 +1,4 @@
+[submodule "backend/app/enterprise"]
+	path = backend/app/enterprise
+	url = ./backend/app/enterprise
+	branch = main
