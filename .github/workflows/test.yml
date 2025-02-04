@@ -1,4 +1,4 @@
-name: Run Tests and Build Docker Images
+name: CI/CD Pipeline
 
 on:
   pull_request:
@@ -8,6 +8,8 @@ on:
 
 jobs:
   test:
+    name: Run Tests
+    # Run tests for both pull requests and pushes to main
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -34,9 +36,11 @@ jobs:
         python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=70
 
   build-and-push:
-    needs: test
+    name: Build and Push Docker Images
+    # Only run this job on push to main (after merge)
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    # Don't need to wait for tests on main push since they already passed in PR
     
     steps:
     - uses: actions/checkout@v3
@@ -56,7 +60,7 @@ jobs:
         context: .
         file: Dockerfile.backend.prod
         push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/chattermate-backend:latest
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/backend:latest
 
     - name: Build and push frontend image
       uses: docker/build-push-action@v5
@@ -64,4 +68,4 @@ jobs:
         context: .
         file: Dockerfile.frontend
         push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/chattermate-frontend:latest
+        tags: ${{ secrets.DOCKERHUB_USERNAME }}/frontend:latest
