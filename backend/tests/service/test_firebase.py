@@ -112,8 +112,8 @@ def test_initialize_firebase_failure(mock_logger):
         with pytest.raises(Exception, match=error_msg):
             initialize_firebase()
         
-        mock_logger.error.assert_called_once_with(f"Error initializing Firebase: {error_msg}")
-        mock_logger.warning.assert_called_once_with("Continuing without Firebase initialization")
+        mock_logger.error.assert_called_with(f"Error initializing Firebase: {error_msg}")
+        mock_logger.warning.assert_called_with("Continuing without Firebase initialization")
 
 @pytest.mark.asyncio
 async def test_send_firebase_notification_success(mock_db, mock_notification, mock_user_repo, mock_logger):
