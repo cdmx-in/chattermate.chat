@@ -6,11 +6,22 @@ This file is part of Chattermate.chat.
 --------------------------------------------------------------------
 Dual Licensing Notice
 --------------------------------------------------------------------
-Chattermate.chat is available under dual licensing. For open source use, it is distributed under the terms of the GNU Affero General Public License version 3 (AGPLv3) as set forth below. For commercial licensing (which does not require compliance with the AGPLv3 terms), please contact:
+Chattermate.chat is free and open source software available under the GNU AGPLv3 license. You may use, modify, and distribute this software freely under the following conditions:
 
-    Chattermate.chat
-    contact@chattermate.chat
-    https://chattermate.chat
+1. Open Source Use (AGPLv3):
+   - The software is FREE TO USE for both personal and commercial purposes
+   - You must:
+     * Disclose source code of any modified versions
+     * License derivative works under AGPLv3
+     * Preserve all copyright notices
+     * Make source code available to network users if deployed as a service
+
+2. Commercial Licensing:
+   - Available for organizations needing to:
+     * Use Chattermate.chat in proprietary systems
+     * Modify without AGPLv3 disclosure requirements
+     * Obtain official support and warranties
+   - Contact us for custom licensing terms
 
 --------------------------------------------------------------------
 GNU AFFERO GENERAL PUBLIC LICENSE
@@ -55,6 +66,13 @@ Full license text is available at: https://www.gnu.org/licenses/agpl-3.0.txt
 --------------------------------------------------------------------
 Commercial Licensing Option
 --------------------------------------------------------------------
+While Chattermate.chat is fundamentally open source under AGPLv3, we offer commercial licenses for:
+
+- Integration with closed-source systems
+- SaaS/PaaS providers needing to avoid AGPL service requirements
+- Enterprises requiring legal indemnification
+- Organizations needing private modifications without source disclosure
+
 If you wish to use Chattermate.chat under terms different from those of the AGPLv3 – for example, if you require a proprietary license for integration into closed-source products or for other commercial uses – please contact us at:
 
     Chattermate.chat
