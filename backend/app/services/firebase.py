@@ -5,6 +5,7 @@ import json
 from app.repositories.user import UserRepository
 from app.core.logger import get_logger
 import os
+from firebase_admin.exceptions import FirebaseError
 
 logger = get_logger(__name__)
 
@@ -18,12 +19,11 @@ def initialize_firebase():
             logger.info("Firebase already initialized")
             return
         except ValueError:
-            pass
+            logger.info("Initializing Firebase...")
 
         # Get credentials file path
         cred_path = settings.FIREBASE_CREDENTIALS
 
-        
         if not cred_path or not os.path.isfile(cred_path):
             logger.warning(f"Firebase credentials not found at {cred_path}. Running in development mode.")
             # Use a default configuration for development
@@ -49,6 +49,7 @@ def initialize_firebase():
     except Exception as e:
         logger.error(f"Error initializing Firebase: {str(e)}")
         logger.warning("Continuing without Firebase initialization")
+        raise
 
 
 async def send_firebase_notification(notification, db):
@@ -57,26 +58,37 @@ async def send_firebase_notification(notification, db):
         # Get user's FCM token from database
         user_repo = UserRepository(db)
         user_token = user_repo.get_user_fcm_token(notification.user_id)
+        
         if not user_token:
-            logger.warning(f"No FCM token found for user {
-                           notification.user_id}")
+            logger.warning(f"No FCM token found for user {notification.user_id}")
             return
 
-        message = messaging.Message(
-            notification=messaging.Notification(
-                title=notification.title,
-                body=notification.message,
-            ),
-            data={
-                "type": notification.type,
-                "id": str(notification.id),
-                "metadata": json.dumps(notification.metadata)
-            },
-            token=user_token,
-        )
+        # Create the message payload
+        try:
+            message = messaging.Message(
+                notification=messaging.Notification(
+                    title=notification.title,
+                    body=notification.message,
+                ),
+                data={
+                    "type": notification.type,
+                    "id": str(notification.id),
+                    "metadata": json.dumps(notification.metadata)
+                },
+                token=user_token,
+            )
+        except Exception as e:
+            logger.error(f"Error creating Firebase message payload: {str(e)}")
+            return
 
-        response = messaging.send(message)
-        logger.info(f"Successfully sent notification: {response}")
+        try:
+            response = messaging.send(message)
+            logger.info(f"Successfully sent notification {notification.id} to user {notification.user_id}: {response}")
+        except FirebaseError as e:
+            error_msg = str(e.cause) if e.cause else str(e)
+            logger.error(f"Firebase API error while sending notification {notification.id}: {error_msg}")
+        except Exception as e:
+            logger.error(f"Unexpected error sending notification {notification.id}: {str(e)}")
 
     except Exception as e:
-        logger.error(f"Error sending Firebase notification: {str(e)}")
+        logger.error(f"Error in send_firebase_notification: {str(e)}")

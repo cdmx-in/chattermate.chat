@@ -5,7 +5,7 @@ from app.core.logger import get_logger
 from app.database import get_db
 from app.models.user import User
 from sqlalchemy.orm import Session
-from app.core import config
+from app.core.socketio import sio
 from app.models.widget import Widget
 
 logger = get_logger(__name__)
@@ -63,7 +63,7 @@ async def authenticate_socket(sid: str, environ: dict) -> Tuple[Optional[str], O
                 access_token = await refresh_access_token(refresh_token, db)
 
                 # Emit cookie_set event with the new token
-                await config.sio.emit('cookie_set', {
+                await sio.emit('cookie_set', {
                     'access_token': access_token
                 }, to=sid)
                 logger.info(f"New access token generated for sid {sid}")
