@@ -2,3 +2,7 @@
 	path = backend/app/enterprise
 	url = ./backend/app/enterprise
 	branch = main
+[submodule "frontend/src/modules"]
+	path = frontend/src/modules
+	url = ./frontend/src/modules
+	branch = main

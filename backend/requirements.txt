@@ -58,3 +58,5 @@ aiofiles
 gunicorn
 
 redis
+
+aiohttp

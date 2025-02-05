@@ -60,6 +60,9 @@ cp .env.example .env
 
 # Database setup
 alembic upgrade head
+
+# To generate revisions if any model changes 
+alembic revision --autogenerate -m "Changes description "
 ```
 
 ### Frontend Setup

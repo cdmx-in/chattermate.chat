@@ -44,3 +44,19 @@ class Role(Base):
             "name": self.name,
             "description": self.description
         }
+
+    def has_permission(self, permission_name: str) -> bool:
+        """Check if role has a specific permission"""
+        return any(p.name == permission_name for p in self.permissions)
+
+    def is_super_admin(self) -> bool:
+        """Check if role has super admin permission"""
+        return self.has_permission("super_admin")
+
+    def can_manage_subscription(self) -> bool:
+        """Check if role can manage subscriptions"""
+        return self.is_super_admin() or self.has_permission("manage_subscription")
+
+    def can_view_subscription(self) -> bool:
+        """Check if role can view subscription details"""
+        return self.is_super_admin() or self.has_permission("view_subscription")

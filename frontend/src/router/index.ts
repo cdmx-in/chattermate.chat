@@ -6,74 +6,92 @@ import HumanAgentView from '@/views/HumanAgentView.vue'
 import OrganizationSettings from '@/views/settings/OrganizationSettings.vue'
 import AIConfigSettings from '@/views/settings/AIConfigSettings.vue'
 
+// Base routes
+const baseRoutes = [
+  {
+    path: '/',
+    redirect: '/ai-agents',
+  },
+  {
+    path: '/login',
+    name: 'login',
+    component: () => import('../views/LoginView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/setup',
+    name: 'setup',
+    component: () => import('../views/SetupView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/ai-agents',
+    name: 'ai-agents',
+    component: () => import('../views/AIAgentView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/widget/:id',
+    name: 'widget',
+    component: () => import('@/webclient/WidgetBuilder.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/conversations',
+    name: 'conversations',
+    component: () => import('../views/ConversationsView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/human-agents',
+    name: 'human-agents',
+    component: HumanAgentView,
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/settings/organization',
+    name: 'organization-settings',
+    component: OrganizationSettings,
+    meta: {
+      requiresAuth: true,
+      layout: 'dashboard',
+      permissions: ['manage_organization', 'view_organization']
+    }
+  },
+  {
+    path: '/settings/ai-config',
+    name: 'ai-config-settings',
+    component: AIConfigSettings,
+    meta: {
+      requiresAuth: true,
+      layout: 'dashboard',
+      permissions: ['manage_ai_config', 'view_ai_config']
+    }
+  },
+  {
+    path: '/:pathMatch(.*)*',
+    redirect: '/ai-agents',
+  },
+]
+
+// Check for enterprise module
+const enterpriseModules = import.meta.glob('@/modules/enterprise/views/SignupView.vue')
+const hasEnterpriseModule = Object.keys(enterpriseModules).length > 0
+
+// Combine routes based on module availability
+const allRoutes = hasEnterpriseModule ? [
+  ...baseRoutes,
+  {
+    path: '/signup',
+    name: 'signup',
+    component: () => import('@/modules/enterprise/views/SignupView.vue'),
+    meta: { requiresAuth: false }
+  }
+] : baseRoutes
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
-  routes: [
-    {
-      path: '/',
-      redirect: '/ai-agents',
-    },
-    {
-      path: '/login',
-      name: 'login',
-      component: () => import('../views/LoginView.vue'),
-      meta: { requiresAuth: false },
-    },
-    {
-      path: '/setup',
-      name: 'setup',
-      component: () => import('../views/SetupView.vue'),
-      meta: { requiresAuth: false },
-    },
-    {
-      path: '/ai-agents',
-      name: 'ai-agents',
-      component: () => import('../views/AIAgentView.vue'),
-      meta: { requiresAuth: true },
-    },
-    {
-      path: '/widget/:id',
-      name: 'widget',
-      component: () => import('@/webclient/WidgetBuilder.vue'),
-      meta: { requiresAuth: false },
-    },
-    {
-      path: '/conversations',
-      name: 'conversations',
-      component: () => import('../views/ConversationsView.vue'),
-      meta: { requiresAuth: true },
-    },
-    {
-      path: '/human-agents',
-      name: 'human-agents',
-      component: HumanAgentView,
-      meta: { requiresAuth: true },
-    },
-    {
-      path: '/settings/organization',
-      name: 'organization-settings',
-      component: OrganizationSettings,
-      meta: {
-        requiresAuth: true,
-        layout: 'dashboard',
-        permissions: ['manage_organization', 'view_organization']
-      }
-    },
-    {
-      path: '/settings/ai-config',
-      name: 'ai-config-settings',
-      component: AIConfigSettings,
-      meta: {
-        requiresAuth: true,
-        layout: 'dashboard',
-        permissions: ['manage_ai_config', 'view_ai_config']
-      }
-    },
-    {
-      path: '/:pathMatch(.*)*',
-      redirect: '/ai-agents',
-    },
-  ],
+  routes: allRoutes
 })
 
 // Navigation guard

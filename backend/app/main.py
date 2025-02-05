@@ -35,9 +35,16 @@ from app.core.cors import get_cors_origins
 
 # Import models to ensure they're registered with SQLAlchemy
 from app.models import Organization, User, Customer
-from app.api import roles
+try:
+    from app.enterprise.models import OTP
+except ImportError:
+    print("Enterprise models not available")
 from app.api import session_to_agent
+
 logger = get_logger(__name__)
+
+
+
 
 
 @asynccontextmanager
@@ -81,6 +88,14 @@ app.include_router(
     prefix=f"{settings.API_V1_STR}/chats",
     tags=["chats"]
 )
+
+# Try to import enterprise module if available
+try:
+    from app.enterprise import router as enterprise_router
+    app.include_router(enterprise_router, prefix=f"{settings.API_V1_STR}/enterprise", tags=["enterprise"])
+except ImportError as e:
+    logger.info("Enterprise module not available - running in community edition mode")
+    logger.debug(f"Import error: {e}")
 
 app.include_router(
     organizations.router,
@@ -152,8 +167,15 @@ async def root():
     }
 
 
-@app.api_route("/health", methods=["GET", "HEAD"])
-async def health_check():
+@app.api_route("/health", methods=["GET"], operation_id="get_health_check")
+async def get_health_check():
+    return {
+        "status": "healthy",
+        "version": settings.VERSION
+    }
+
+@app.api_route("/health", methods=["HEAD"], operation_id="head_health_check")
+async def head_health_check():
     return {
         "status": "healthy",
         "version": settings.VERSION
