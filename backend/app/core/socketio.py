@@ -28,18 +28,21 @@ sio: AsyncServer = socketio.AsyncServer(
     async_handlers=True,
     ping_timeout=60,
     ping_interval=25,
+    cors_allowed_origins='*'  # Initially allow all, will be configured properly later
 )
 
 # Create ASGI app
 socket_app = socketio.ASGIApp(
     socketio_server=sio,
     socketio_path='socket.io'
-
 )
 
 def configure_socketio(cors_origins):
     """Configure Socket.IO with CORS origins and Redis if enabled"""
-    sio.cors_allowed_origins = cors_origins
+    # Convert set to list and ensure all origins are strings
+    origins = list(map(str, cors_origins))
+    sio.cors_allowed_origins = origins
+    print(f"Socket.IO CORS origins configured: {origins}")
     
     if settings.REDIS_ENABLED:
         print(f"Redis URL: {settings.REDIS_URL}")

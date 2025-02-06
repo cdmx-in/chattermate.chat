@@ -164,6 +164,7 @@ class SessionToAgentRepository:
             )
             if agent_id:
                 query = query.filter(SessionToAgent.agent_id == agent_id)
+            
             return query.order_by(SessionToAgent.assigned_at.desc()).first()
         except Exception as e:
             logger.error(f"Error getting active customer session: {str(e)}")
