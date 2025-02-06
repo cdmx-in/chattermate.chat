@@ -75,7 +75,8 @@ async def widget_connect(sid, environ, auth):
                 
         # Try to get existing active session
         active_session = session_repo.get_active_customer_session(
-            customer_id=customer_id
+            customer_id=customer_id,
+            agent_id=widget.agent_id
         )
               
         if active_session:
@@ -230,6 +231,7 @@ async def handle_widget_chat(sid, data):
                 "organization_id": org_id,  
                 "agent_id": session['agent_id'],
                 "customer_id": customer_id,
+                "user_id": active_session.user_id
             })
             # Get session data to find assigned user
             session_data = session_repo.get_session(session_id)
@@ -245,17 +247,9 @@ async def handle_widget_chat(sid, data):
                     'type': 'user_message',
                     'transfer_to_human': False,
                     'session_id': session_id,
-                    'timestamp': timestamp
+                    'created_at': timestamp
                 }, room=user_room, namespace='/agent')
-
-            # Emit to both session room and user's personal room
-            await sio.emit('chat_reply', {
-                'message': data['message'],
-                'type': 'user_message',
-                'transfer_to_human': False,
-                'session_id': session_id,
-                'timestamp': timestamp
-            }, room=session_id, namespace='/agent')    
+ 
             return # don't do anything if the session is closed or the user has already taken over
         
         # Emit response to the specific room
