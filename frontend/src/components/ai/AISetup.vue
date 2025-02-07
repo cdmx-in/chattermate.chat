@@ -106,7 +106,7 @@ const handleSubmit = async () => {
 
       <button 
         type="submit" 
-        class="submit-button"
+        class="btn btn-primary"
         :disabled="isLoading"
       >
         {{ isLoading ? 'Saving...' : 'Save Configuration' }}
@@ -120,19 +120,23 @@ const handleSubmit = async () => {
   width: 100%;
   max-width: 500px;
   margin: 0 auto;
-  padding: var(--space-md);
+  padding: var(--space-lg);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 4px 15px rgb(131, 129, 129);
 }
 
 .setup-form {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+  
 }
 
 .form-group label {

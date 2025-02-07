@@ -144,7 +144,7 @@ const handleLogin = async () => {
 <style scoped>
 .login-page {
     min-height: 100vh;
-    background: #f3f4f6;
+    background: var(--background-soft);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -154,8 +154,8 @@ const handleLogin = async () => {
 .login-container {
     width: 100%;
     max-width: 1200px;
-    background: white;
-    border-radius: 24px;
+    background: var(--background-color);
+    border-radius: var(--radius-lg);
     overflow: hidden;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
 }
@@ -188,11 +188,11 @@ const handleLogin = async () => {
     font-size: 2.5rem;
     font-weight: 600;
     margin-bottom: 0.5rem;
-    color: #1F2937;
+    color: var(--text-primary);
 }
 
 .subtitle {
-    color: #6B7280;
+    color: var(--text-muted);
     margin-bottom: 2rem;
 }
 
@@ -209,7 +209,7 @@ const handleLogin = async () => {
 .form-group label {
     display: block;
     margin-bottom: 0.5rem;
-    color: #374151;
+    color: var(--text-primary);
     font-weight: 500;
     font-size: 0.875rem;
 }
@@ -217,22 +217,22 @@ const handleLogin = async () => {
 .input-wrapper input {
     width: 100%;
     padding: 0.75rem 1rem;
-    border: 1px solid #E5E7EB;
-    border-radius: 8px;
-    background: white;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--background-color);
     font-size: 1rem;
-    color: #1F2937;
-    transition: all 0.2s;
+    color: var(--text-primary);
+    transition: var(--transition-fast);
 }
 
 .input-wrapper input:focus {
-    border-color: #f34611;
+    border-color: var(--primary-color);
     box-shadow: 0 0 0 3px rgba(243, 70, 17, 0.1);
     outline: none;
 }
 
 .input-wrapper input::placeholder {
-    color: #9CA3AF;
+    color: var(--text-placeholder);
 }
 
 .error-message {
@@ -240,7 +240,7 @@ const handleLogin = async () => {
     text-align: center;
     padding: 0.75rem;
     background: rgba(239, 68, 68, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     font-size: 0.875rem;
     margin: 0;
 }
@@ -248,18 +248,18 @@ const handleLogin = async () => {
 .submit-btn {
     width: 100%;
     padding: 0.75rem;
-    background: #f34611;
-    color: white;
+    background: var(--primary-color);
+    color: var(--background-color);
     border: none;
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     font-weight: 600;
     font-size: 1rem;
     cursor: pointer;
-    transition: all 0.2s;
+    transition: var(--transition-fast);
 }
 
 .submit-btn:hover:not(:disabled) {
-    background: #d93a0c;
+    background: var(--accent-color);
 }
 
 .submit-btn:disabled {
@@ -269,7 +269,7 @@ const handleLogin = async () => {
 
 .illustration-container {
     flex: 1.2;
-    background: #FEF2F2;
+    background: var(--background-soft);
     padding: 0;
     display: flex;
     align-items: flex-end;
@@ -303,13 +303,13 @@ const handleLogin = async () => {
     font-size: 2.5rem;
     font-weight: 700;
     margin-bottom: 1.5rem;
-    color: #1F2937;
+    color: var(--text-primary);
     line-height: 1.2;
 }
 
 .illustration-content p {
     font-size: 1.125rem;
-    color: #4B5563;
+    color: var(--text-secondary);
     line-height: 1.6;
     opacity: 0.9;
     max-width: 360px;
