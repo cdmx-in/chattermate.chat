@@ -389,3 +389,23 @@ async def get_organization_stats(
         ).count(),
         "settings": org.settings
     }
+
+
+@router.get("/check-domain/{domain}")
+async def check_domain_availability(
+    domain: str,
+    db: Session = Depends(get_db)
+):
+    """Check if an organization domain is available"""
+    try:
+        existing_org = db.query(Organization).filter(Organization.domain == domain).first()
+        return {
+            "available": not existing_org,
+            "message": "Domain is available" if not existing_org else "Domain already exists"
+        }
+    except Exception as e:
+        logger.error(f"Failed to check domain availability: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check domain availability"
+        )

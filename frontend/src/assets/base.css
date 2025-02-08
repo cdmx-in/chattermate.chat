@@ -20,8 +20,8 @@
   --vt-c-text-dark-1: var(--vt-c-white);
   --vt-c-text-dark-2: rgba(235, 235, 235, 0.64);
 
-  --background-base-rgb: 0, 0, 0;  
-  --background-soft-rgb: 0, 0, 0; 
+  --background-base-rgb: 255, 255, 255;  
+  --background-soft-rgb: 255, 255, 255; 
   --background-dark-rgb: 0, 0, 0;  
 }
 
