@@ -15,20 +15,31 @@ const baseRoutes = [
   {
     path: '/login',
     name: 'login',
-    component: () => import('../views/LoginView.vue'),
+    component: () => import('@/views/LoginView.vue'),
     meta: { requiresAuth: false },
   },
   {
     path: '/setup',
     name: 'setup',
-    component: () => import('../views/SetupView.vue'),
+    component: () => import('@/views/SetupView.vue'),
     meta: { requiresAuth: false },
   },
   {
     path: '/ai-agents',
     name: 'ai-agents',
-    component: () => import('../views/AIAgentView.vue'),
+    component: () => import('@/views/AIAgentView.vue'),
     meta: { requiresAuth: true },
+  },
+  {
+    path: '/analytics',
+    name: 'analytics',
+    component: () => import('@/views/AnalyticsView.vue'),
+    meta: { 
+      requiresAuth: true,
+      layout: 'dashboard',
+      title: 'Analytics Dashboard',
+      permissions: ['view_analytics']
+    }
   },
   {
     path: '/widget/:id',
@@ -75,7 +86,10 @@ const baseRoutes = [
 ]
 
 // Check for enterprise module
-const enterpriseModules = import.meta.glob('@/modules/enterprise/views/SignupView.vue')
+const enterpriseModules = import.meta.glob([
+  '@/modules/enterprise/views/SignupView.vue',
+  '@/modules/enterprise/router/guards/subscription.ts'
+])
 const hasEnterpriseModule = Object.keys(enterpriseModules).length > 0
 
 // Combine routes based on module availability
@@ -86,6 +100,22 @@ const allRoutes = hasEnterpriseModule ? [
     name: 'signup',
     component: () => import('@/modules/enterprise/views/SignupView.vue'),
     meta: { requiresAuth: false }
+  },
+  {
+    path: '/settings/subscription',
+    name: 'subscription',
+    component: () => import('@/modules/enterprise/views/SubscriptionView.vue'),
+    meta: { 
+      requiresAuth: true,
+      layout: 'dashboard',
+      title: 'Subscription Plans'
+    }
+  },
+  {
+    path: '/settings/subscription/setup/:planId',
+    name: 'billing-setup',
+    component: () => import('@/modules/enterprise/views/BillingSetupView.vue'),
+    meta: { requiresAuth: true }
   }
 ] : baseRoutes
 
@@ -93,6 +123,15 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: allRoutes
 })
+
+// Add subscription guard only if enterprise module is available
+if (hasEnterpriseModule) {
+  import('@/modules/enterprise/router/guards/subscription').then(({ subscriptionGuard }) => {
+    router.beforeEach(subscriptionGuard)
+  }).catch(error => {
+    console.error('Error loading subscription guard:', error)
+  })
+}
 
 // Navigation guard
 router.beforeEach(async (to, from, next) => {

@@ -34,7 +34,7 @@ class EmailService:
         self.smtp_password = settings.SMTP_PASSWORD
         self.from_email = settings.FROM_EMAIL
         self.from_name = settings.FROM_NAME
-        self.is_local = os.getenv('ENVIRONMENT', 'local') == 'local'
+        self.is_local = os.getenv('ENVIRONMENT', 'local') == 'local' or os.getenv('ENVIRONMENT', 'local') == 'development'
 
     async def send_email(self, to_email: str, subject: str, html_content: str, text_content: str = None):
         """Send email using SMTP"""

@@ -72,13 +72,22 @@ class Organization(Base):
 def setup_enterprise_relationships(mapper, class_):
     try:
         from app.enterprise.models.subscription import Subscription
+        from app.enterprise.models.order import PayPalOrder
+        
         if not hasattr(class_, 'subscription'):
             class_.subscription = relationship(
                 Subscription,
                 back_populates="organization",
                 uselist=False
             )
-            logger.info("Enterprise subscription relationship configured")
+            
+        if not hasattr(class_, 'paypal_orders'):
+            class_.paypal_orders = relationship(
+                PayPalOrder,
+                back_populates="organization",
+                cascade="all, delete-orphan"
+            )
+            logger.info("Enterprise subscription and paypal_orders relationships configured")
     except ImportError:
         logger.info("Enterprise module not available - subscription relationship not configured")
         class_.subscription = None

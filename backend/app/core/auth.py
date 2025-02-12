@@ -35,6 +35,9 @@ def check_permissions(user: User, required_permissions: List[str]) -> bool:
     if not user.role or not user.role.permissions:
         return False
     user_permissions = [p.name for p in user.role.permissions]
+    # If user has super_admin permission, they have access to everything
+    if "super_admin" in user_permissions:
+        return True
     return all(perm in user_permissions for perm in required_permissions)
 
 def require_permissions(*required_permissions: str):

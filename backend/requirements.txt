@@ -60,3 +60,5 @@ gunicorn
 redis
 
 aiohttp
+
+bs4

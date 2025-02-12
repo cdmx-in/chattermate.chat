@@ -70,11 +70,19 @@ class Settings(BaseSettings):
     FROM_EMAIL: str = os.getenv("FROM_EMAIL", "noreply@chattermate.chat")
     FROM_NAME: str = os.getenv("FROM_NAME", "ChatterMate")
 
+    # PayPal
+    PAYPAL_CLIENT_ID: str = os.getenv("PAYPAL_CLIENT_ID", "test")
+    PAYPAL_CLIENT_SECRET: str = os.getenv("PAYPAL_CLIENT_SECRET", "test")
+    PAYPAL_SANDBOX_MODE: bool = os.getenv("PAYPAL_SANDBOX_MODE", "true").lower() == "true"
+    PAYPAL_WEBHOOK_ID: str = os.getenv("PAYPAL_WEBHOOK_ID", "test")
     model_config = {
         "case_sensitive": True,
         "env_file": ".env",
         "extra": "allow"  # This allows extra fields from .env
     }
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+
+    TRIAL_DAYS: int = 7  # 7-day trial period
 
 
 settings = Settings()

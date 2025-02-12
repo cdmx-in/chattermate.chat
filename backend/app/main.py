@@ -19,7 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -155,6 +155,12 @@ app.include_router(
     session_to_agent.router,
     prefix=f"{settings.API_V1_STR}/sessions",
     tags=["session_to_agent"]
+)
+
+app.include_router(
+    analytics.router,
+    prefix=f"{settings.API_V1_STR}/analytics",
+    tags=["analytics"]
 )
 
 
