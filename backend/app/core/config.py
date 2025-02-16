@@ -50,8 +50,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # CORS - Base origins that are always allowed
-    BASE_CORS_ORIGINS: List[str] = json.loads(os.getenv(
-        "CORS_ORIGINS", '["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]'))
+    try:
+        BASE_CORS_ORIGINS: List[str] = json.loads(os.getenv(
+            "CORS_ORIGINS", '["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]'))
+    except json.JSONDecodeError as e:
+        print(f"Error parsing CORS_ORIGINS: {e}. Using default values.")
+        BASE_CORS_ORIGINS: List[str] = ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
 
     # Firebase config
     FIREBASE_CREDENTIALS: str = os.getenv(
@@ -59,8 +63,12 @@ class Settings(BaseSettings):
     
     VITE_WIDGET_URL: str = os.getenv("VITE_WIDGET_URL", "http://localhost:5173")
     ENCRYPTION_KEY_PATH: str = os.getenv("ENCRYPTION_KEY_PATH", "encryption.key")
-    CORS_ORIGINS: List[str] = json.loads(os.getenv(
-        "CORS_ORIGINS", '["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]'))
+    try:
+        CORS_ORIGINS: List[str] = json.loads(os.getenv(
+            "CORS_ORIGINS", '["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]'))
+    except json.JSONDecodeError as e:
+        print(f"Error parsing CORS_ORIGINS: {e}. Using default values.")
+        CORS_ORIGINS: List[str] = ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
 
     # SMTP Settings
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
