@@ -1,45 +1,22 @@
 """
-ChatterMate - Main (Simplified for Testing)
+ChatterMate - Main
+Copyright (C) 2024 ChatterMate
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import os
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="ChatterMate",
-    version="0.1.0",
-)
-
-# Basic CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for testing
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-@app.get("/health")
-async def health_check():
-    # Get some important environment variables for testing
-    env_vars = {
-        "DATABASE_URL": os.getenv("DATABASE_URL", "not set"),
-        "CORS_ORIGINS": os.getenv("CORS_ORIGINS", "not set"),
-        "REDIS_HOST": os.getenv("REDIS_HOST", "not set"),
-        "ENVIRONMENT": os.getenv("ENVIRONMENT", "not set"),
-        "AWS_REGION": os.getenv("AWS_REGION", "not set")
-    }
-    
-    return {
-        "status": "healthy",
-        "version": "0.1.0",
-        "environment_check": env_vars
-    }
-
-# Original code commented out for testing
-"""
+# Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
 from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics
@@ -65,6 +42,10 @@ except ImportError:
 from app.api import session_to_agent
 
 logger = get_logger(__name__)
+
+
+
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -98,7 +79,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup_event():
-    Configure Socket.IO on startup
+    """Configure Socket.IO on startup"""
     configure_socketio(cors_origins)
 
 # Include routers
@@ -191,8 +172,24 @@ async def root():
         "description": "Welcome to ChatterMate API"
     }
 
+
+@app.api_route("/health", methods=["GET"], operation_id="get_health_check")
+async def get_health_check():
+    return {
+        "status": "healthy",
+        "version": settings.VERSION
+    }
+
+@app.api_route("/health", methods=["HEAD"], operation_id="head_health_check")
+async def head_health_check():
+    return {
+        "status": "healthy",
+        "version": settings.VERSION
+    }
+
+
 async def start_knowledge_processor():
-    Start the knowledge processor as a background task
+    """Start the knowledge processor as a background task"""
     try:
         while True:
             await run_processor()
@@ -214,4 +211,3 @@ app.mount("/api/v1/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 # Create SocketIO app
 app = socketio.ASGIApp(sio, app)
-"""
