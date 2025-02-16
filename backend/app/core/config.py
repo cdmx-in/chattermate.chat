@@ -29,6 +29,15 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 # Load the .env file
 load_dotenv(BACKEND_DIR / ".env")
 
+def parse_cors_origins(v: str | None) -> List[str]:
+    if not v:
+        return ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
+    try:
+        return json.loads(v)
+    except Exception as e:
+        print(f"Error parsing CORS_ORIGINS: {e}. Using default values.")
+        return ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
+
 class Settings(BaseSettings):
     PROJECT_NAME: str = "ChatterMate"
     VERSION: str = "0.1.0"
@@ -43,19 +52,14 @@ class Settings(BaseSettings):
 
     # JWT
     SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "your-secret-key")
-
     ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
     CONVERSATION_SECRET_KEY: str = os.getenv(
         "CONVERSATION_SECRET_KEY", "your-conversation-secret-key")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
-    # CORS - Base origins that are always allowed
-    try:
-        BASE_CORS_ORIGINS: List[str] = json.loads(os.getenv(
-            "CORS_ORIGINS", '["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]'))
-    except json.JSONDecodeError as e:
-        print(f"Error parsing CORS_ORIGINS: {e}. Using default values.")
-        BASE_CORS_ORIGINS: List[str] = ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
+    # CORS Configuration
+    CORS_ORIGINS: List[str] = []
+    BASE_CORS_ORIGINS: List[str] = []
 
     # Firebase config
     FIREBASE_CREDENTIALS: str = os.getenv(
@@ -63,12 +67,6 @@ class Settings(BaseSettings):
     
     VITE_WIDGET_URL: str = os.getenv("VITE_WIDGET_URL", "http://localhost:5173")
     ENCRYPTION_KEY_PATH: str = os.getenv("ENCRYPTION_KEY_PATH", "encryption.key")
-    try:
-        CORS_ORIGINS: List[str] = json.loads(os.getenv(
-            "CORS_ORIGINS", '["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]'))
-    except json.JSONDecodeError as e:
-        print(f"Error parsing CORS_ORIGINS: {e}. Using default values.")
-        CORS_ORIGINS: List[str] = ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
 
     # SMTP Settings
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")
@@ -83,14 +81,20 @@ class Settings(BaseSettings):
     PAYPAL_CLIENT_SECRET: str = os.getenv("PAYPAL_CLIENT_SECRET", "test")
     PAYPAL_SANDBOX_MODE: bool = os.getenv("PAYPAL_SANDBOX_MODE", "true").lower() == "true"
     PAYPAL_WEBHOOK_ID: str = os.getenv("PAYPAL_WEBHOOK_ID", "test")
+    
+    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
+    TRIAL_DAYS: int = 7  # 7-day trial period
+
     model_config = {
         "case_sensitive": True,
         "env_file": ".env",
-        "extra": "allow"  # This allows extra fields from .env
+        "extra": "allow",  # This allows extra fields from .env
     }
-    ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
 
-    TRIAL_DAYS: int = 7  # 7-day trial period
+    def model_post_init(self, *args, **kwargs):
+        # Set CORS origins after initialization
+        self.CORS_ORIGINS = parse_cors_origins(os.getenv("CORS_ORIGINS"))
+        self.BASE_CORS_ORIGINS = self.CORS_ORIGINS
 
 
 settings = Settings()
