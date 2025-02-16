@@ -22,6 +22,7 @@ from pydantic_settings import BaseSettings
 from typing import List
 from dotenv import load_dotenv
 from pathlib import Path
+from pydantic import field_validator
 
 # Get the absolute path to the backend directory (parent of app directory)
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
@@ -29,14 +30,7 @@ BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 # Load the .env file
 load_dotenv(BACKEND_DIR / ".env")
 
-def parse_cors_origins(v: str | None) -> List[str]:
-    if not v:
-        return ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
-    try:
-        return json.loads(v)
-    except Exception as e:
-        print(f"Error parsing CORS_ORIGINS: {e}. Using default values.")
-        return ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
+DEFAULT_CORS = ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "ChatterMate"
@@ -58,8 +52,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # CORS Configuration
-    CORS_ORIGINS: List[str] = []
-    BASE_CORS_ORIGINS: List[str] = []
+    CORS_ORIGINS: List[str] = DEFAULT_CORS
+    BASE_CORS_ORIGINS: List[str] = DEFAULT_CORS
 
     # Firebase config
     FIREBASE_CREDENTIALS: str = os.getenv(
@@ -91,10 +85,20 @@ class Settings(BaseSettings):
         "extra": "allow",  # This allows extra fields from .env
     }
 
-    def model_post_init(self, *args, **kwargs):
-        # Set CORS origins after initialization
-        self.CORS_ORIGINS = parse_cors_origins(os.getenv("CORS_ORIGINS"))
-        self.BASE_CORS_ORIGINS = self.CORS_ORIGINS
+    @field_validator("CORS_ORIGINS", "BASE_CORS_ORIGINS", mode="before")
+    @classmethod
+    def validate_cors_origins(cls, v):
+        if isinstance(v, list):
+            return v
+        if not v:
+            return DEFAULT_CORS
+        try:
+            if isinstance(v, str):
+                return json.loads(v)
+        except json.JSONDecodeError as e:
+            print(f"Error parsing CORS_ORIGINS: {e}. Using default values.")
+            return DEFAULT_CORS
+        return DEFAULT_CORS
 
 
 settings = Settings()
