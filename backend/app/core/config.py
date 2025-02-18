@@ -60,7 +60,7 @@ class Settings(BaseSettings):
         "FIREBASE_CREDENTIALS", "app/config/firebase-config.json")
     
     VITE_WIDGET_URL: str = os.getenv("VITE_WIDGET_URL", "http://localhost:5173")
-    ENCRYPTION_KEY_PATH: str = os.getenv("ENCRYPTION_KEY_PATH", "encryption.key")
+    ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "encryption.key")
 
     # SMTP Settings
     SMTP_SERVER: str = os.getenv("SMTP_SERVER", "smtp.gmail.com")

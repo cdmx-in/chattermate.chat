@@ -60,6 +60,10 @@ const baseUrl = computed(() => {
     return import.meta.env.VITE_API_URL
 })
 
+const widgetUrl = computed(() => {
+    return import.meta.env.VITE_WIDGET_URL
+})
+
 const emit = defineEmits<{
     (e: 'close'): void
 }>()
@@ -266,7 +270,7 @@ onMounted(() => {
                         </div>
                         <div v-else-if="widget" class="widget-code">
                             <div class="code-container">
-                                <code>&lt;script&gt;window.chattermateId='{{ widget.id }}';&lt;/script&gt;&lt;script src="{{ baseUrl }}/webclient/chattermate.min.js"&gt;&lt;/script&gt;</code>
+                                <code>&lt;script&gt;window.chattermateId='{{ widget.id }}';&lt;/script&gt;&lt;script src="{{ widgetUrl }}/webclient/chattermate.min.js"&gt;&lt;/script&gt;</code>
                                 <button class="copy-button" @click="copyWidgetCode" title="Copy to clipboard">
                                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
                                         xmlns="http://www.w3.org/2000/svg">
