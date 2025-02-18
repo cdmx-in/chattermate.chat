@@ -105,7 +105,7 @@ async def widget_connect(sid, environ, auth):
             'session_id': session_id,
             'ai_config': ai_config
         }
-        logger.debug(f"ai_config: {ai_config.encrypted_api_key}")
+
         await sio.save_session(sid, session_data, namespace='/widget')
         logger.info(f"Widget client connected: {sid} joined room: {session_id}")
         return True
@@ -132,7 +132,7 @@ async def handle_widget_chat(sid, data):
 
         # Get session data
         session = await sio.get_session(sid, namespace='/widget')
-        logger.debug(f"ai_config: {session['ai_config'].encrypted_api_key}")
+  
         session_id = session['session_id']
         # Verify session matches authenticated data
         if (session['widget_id'] != widget_id or 

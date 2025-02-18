@@ -135,7 +135,13 @@ const checkAuthorization = async () => {
             url.searchParams.append('email', emailInput.value.trim())
         }
 
-        const response = await fetch(url)
+        const response = await fetch(url, {
+            credentials: 'include',  // This enables sending cookies cross-origin
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
+            }
+        })
         if (response.status === 401) {
             hasConversationToken.value = false
             return false

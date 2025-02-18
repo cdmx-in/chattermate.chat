@@ -108,7 +108,7 @@ const handleClose = () => {
 }
 
 const copyWidgetCode = () => {
-    copyWidgetCodeFn(baseUrl.value)
+    copyWidgetCodeFn(widgetUrl.value)
 }
 
 // Computed property to handle instructions as text

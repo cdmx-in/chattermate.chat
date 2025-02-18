@@ -154,7 +154,7 @@ async def get_widget_data(
     db: Session = Depends(get_db)
 ):
     """Get widget data including agent customization"""
-    logger.info(f"Getting widget data for widget_id {widget_id}")
+    logger.info(f"Getting widget data for widget_id {widget_id}, email {email}, conversation_token {conversation_token}")
 
     # Check if token exists
     if not conversation_token:
