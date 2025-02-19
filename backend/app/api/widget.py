@@ -97,6 +97,7 @@ async def get_widget_ui(
         httponly=True,
         secure=True,
         samesite="none",
+        domain=".chattermate.chat",
         max_age=3600 * 24 * 360  # 360 days
     )
 
@@ -201,6 +202,7 @@ async def get_widget_data(
                 httponly=True,
                 secure=True,
                 samesite="none",
+                domain=".chattermate.chat",
                 max_age=3600 * 24 * 360  # 360 days
             )
         else:
