@@ -52,8 +52,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
 
     # CORS Configuration
-    CORS_ORIGINS: List[str] = DEFAULT_CORS
-    BASE_CORS_ORIGINS: List[str] = DEFAULT_CORS
+    CORS_ORIGINS: List[str] = os.getenv("CORS_ORIGINS", DEFAULT_CORS)
+    
 
     # Firebase config
     FIREBASE_CREDENTIALS: str = os.getenv(
@@ -85,20 +85,7 @@ class Settings(BaseSettings):
         "extra": "allow",  # This allows extra fields from .env
     }
 
-    @field_validator("CORS_ORIGINS", "BASE_CORS_ORIGINS", mode="before")
-    @classmethod
-    def validate_cors_origins(cls, v):
-        if isinstance(v, list):
-            return v
-        if not v:
-            return DEFAULT_CORS
-        try:
-            if isinstance(v, str):
-                return json.loads(v)
-        except json.JSONDecodeError as e:
-            print(f"Error parsing CORS_ORIGINS: {e}. Using default values.")
-            return DEFAULT_CORS
-        return DEFAULT_CORS
+
 
 
 settings = Settings()

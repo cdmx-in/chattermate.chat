@@ -11,6 +11,7 @@ window.ChatterMate;
     containerId: 'chattermate-container',
     buttonId: 'chattermate-button',
     chatBubbleColor: '#f34611', // Default color
+    loadingContainerId: 'chattermate-loading'
   }
 
   // Create and inject styles
@@ -34,6 +35,28 @@ window.ChatterMate;
 
       #${config.buttonId}:hover {
         transform: scale(1.1);
+      }
+
+      #${config.buttonId}.loading {
+        position: relative;
+      }
+
+      #${config.buttonId}.loading:after {
+        content: '';
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        top: 50%;
+        left: 50%;
+        margin: -8px 0 0 -8px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-radius: 50%;
+        border-top-color: #fff;
+        animation: chattermate-spin 0.6s linear infinite;
+      }
+
+      @keyframes chattermate-spin {
+        to {transform: rotate(360deg);}
       }
 
       #${config.containerId} {
@@ -113,22 +136,48 @@ window.ChatterMate;
     document.body.appendChild(button)
     document.body.appendChild(container)
 
-    // Initialize chat widget
     let isOpen = false
     let iframe = null
+    let isLoading = false
+
+    // Start prefetching the widget data
+    async function prefetchWidget() {
+      if (isLoading || iframe) return
+      
+      try {
+        isLoading = true
+        button.classList.add('loading')
+        
+        iframe = document.createElement('iframe')
+        iframe.className = 'chattermate-iframe'
+        iframe.src = `${config.baseUrl}/api/v1/widgets/${window.chattermateId}/data?widget_id=${window.chattermateId}`
+        
+        // Hide iframe until loaded
+        iframe.style.opacity = '0'
+        container.appendChild(iframe)
+        
+        // Wait for iframe to load
+        await new Promise((resolve) => {
+          iframe.onload = resolve
+        })
+        
+        button.classList.remove('loading')
+        iframe.style.opacity = '1'
+      } catch (error) {
+        console.error('Failed to load widget:', error)
+        button.classList.remove('loading')
+      } finally {
+        isLoading = false
+      }
+    }
+
+    // Start prefetching immediately
+    prefetchWidget()
 
     function toggleChat() {
       isOpen = !isOpen
       container.classList.toggle('active')
 
-      if (isOpen && !iframe) {
-        iframe = document.createElement('iframe')
-        iframe.className = 'chattermate-iframe'
-        iframe.src = `${config.baseUrl}/api/v1/widgets/${window.chattermateId}/data?widget_id=${window.chattermateId}`
-        container.appendChild(iframe)
-      }
-
-      // Add message to trigger scroll
       if (isOpen && iframe) {
         iframe.contentWindow.postMessage({ type: 'SCROLL_TO_BOTTOM' }, '*')
       }

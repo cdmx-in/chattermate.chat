@@ -68,6 +68,7 @@ app = FastAPI(
     openapi_url=f"{settings.API_V1_STR}/openapi.json"
 )
 
+logger.info(f"CORS origins: {cors_origins}")
 # Add CORS middleware immediately after app instantiation
 app.add_middleware(
     CORSMiddleware,

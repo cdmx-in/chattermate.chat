@@ -78,6 +78,9 @@ const isExpanded = ref(true)
 const emailInput = ref('')
 const hasConversationToken = ref(false)
 
+// Add loading state
+const isInitializing = ref(true)
+
 // Initialize from initial data
 initializeFromData()
 const initialData = window.__INITIAL_DATA__
@@ -127,7 +130,7 @@ const handleKeyPress = (event: KeyboardEvent) => {
     }
 }
 
-// Check authorization and fetch agent customization
+// Update the checkAuthorization function
 const checkAuthorization = async () => {
     try {
         const url = new URL(`${widgetEnv.API_URL}/widgets/${props.widgetId}`)
@@ -136,7 +139,7 @@ const checkAuthorization = async () => {
         }
 
         const response = await fetch(url, {
-            credentials: 'include',  // This enables sending cookies cross-origin
+            credentials: 'include',
             headers: {
                 'Accept': 'application/json',
                 'Content-Type': 'application/json'
@@ -168,6 +171,8 @@ const checkAuthorization = async () => {
         console.error('Error checking authorization:', error)
         hasConversationToken.value = false
         return false
+    } finally {
+        isInitializing.value = false
     }
 }
 
@@ -234,8 +239,18 @@ onUnmounted(() => {
 
 <template>
     <div class="chat-container" :class="{ collapsed: !isExpanded }" :style="shadowStyle">
+        <!-- Loading State -->
+        <div v-if="isInitializing" class="initializing-overlay">
+            <div class="loading-spinner">
+                <div class="dot"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+            <div class="loading-text">Initializing chat...</div>
+        </div>
+
         <!-- Connection Status -->
-        <div v-if="connectionStatus !== 'connected'" class="connection-status" :class="connectionStatus">
+        <div v-if="!isInitializing && connectionStatus !== 'connected'" class="connection-status" :class="connectionStatus">
             <div v-if="connectionStatus === 'connecting'" class="connecting-message">
                 Connecting to chat service...
                 <div class="loading-dots">
@@ -790,4 +805,41 @@ onUnmounted(() => {
     border-radius: var(--radius-lg);
     text-align: center;
 }
+
+.initializing-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.95);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    border-radius: var(--radius-lg);
+}
+
+.loading-text {
+    margin-top: var(--space-md);
+    color: var(--text-color);
+    font-size: var(--text-md);
+}
+
+.loading-spinner {
+    display: flex;
+    gap: 6px;
+}
+
+.loading-spinner .dot {
+    width: 10px;
+    height: 10px;
+    background: var(--primary-color);
+    border-radius: 50%;
+    animation: bounce 1.4s infinite ease-in-out;
+}
+
+.loading-spinner .dot:nth-child(1) { animation-delay: -0.32s; }
+.loading-spinner .dot:nth-child(2) { animation-delay: -0.16s; }
 </style>
