@@ -42,6 +42,9 @@ from app.repositories.agent import AgentRepository
 from app.core.default_templates import DEFAULT_TEMPLATES
 from app.models.agent import AgentType
 from uuid import UUID
+from app.core.cors import update_cors_middleware
+from app.core.application import app  # Import the FastAPI app instance from the new location
+
 logger = get_logger(__name__)
 router = APIRouter(
     tags=["organizations"]
@@ -52,7 +55,8 @@ router = APIRouter(
 async def create_organization(
     org_data: OrganizationCreate,
     response: Response,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """Create a new organization with an admin user and default roles"""
     try:
@@ -182,6 +186,10 @@ async def create_organization(
         )
 
         db.commit()
+
+        # Update CORS origins after creating organization
+        update_cors_middleware(app)
+
         return {
             "id": organization.id,
             "name": organization.name,
@@ -325,6 +333,10 @@ async def update_organization(
 
         db.commit()
         db.refresh(org)
+
+        # Update CORS origins after updating organization
+        update_cors_middleware(app)
+
         return org
     except HTTPException:
         raise
@@ -354,6 +366,10 @@ async def delete_organization(
 
         org.is_active = False
         db.commit()
+
+        # Update CORS origins after deleting organization
+        update_cors_middleware(app)
+
         return None
     except HTTPException as he:
         raise he

@@ -1,5 +1,5 @@
 """
-ChatterMate - Main
+ChatterMate - Main Application
 Copyright (C) 2024 ChatterMate
 
 This program is free software: you can redistribute it and/or modify
@@ -32,6 +32,7 @@ from contextlib import asynccontextmanager
 import os
 from app.core.socketio import socket_app, configure_socketio, sio
 from app.core.cors import get_cors_origins
+from app.core.application import app
 
 # Import models to ensure they're registered with SQLAlchemy
 from app.models import Organization, User, Customer
@@ -59,20 +60,14 @@ async def lifespan(app: FastAPI):
 
 # Move the CORS setup before app instantiation
 cors_origins = get_cors_origins()
+logger.debug(f"CORS origins: {cors_origins}")
 
-app = FastAPI(
-    title=settings.PROJECT_NAME,
-    version=settings.VERSION,
-    description="AI-powered customer service platform with role-based access and integrations",
-    lifespan=lifespan,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json"
-)
 
-logger.info(f"CORS origins: {cors_origins}")
-# Add CORS middleware immediately after app instantiation
+
+# Add CORS middleware to FastAPI app
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(cors_origins),  # Convert set to list
+    allow_origins=list(cors_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -210,5 +205,5 @@ if not os.path.exists("uploads/agents"):
 # Mount static files
 app.mount("/api/v1/uploads", StaticFiles(directory="uploads"), name="uploads")
 
-# Create SocketIO app
+# Create final ASGI app
 app = socketio.ASGIApp(sio, app)

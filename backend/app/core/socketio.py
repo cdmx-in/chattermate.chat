@@ -19,6 +19,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import socketio
 from socketio import AsyncServer
 from app.core.config import settings
+from app.core.logger import get_logger
+from app.core.cors import get_cors_origins
+
+logger = get_logger(__name__)
 
 # Initialize Socket.IO server with basic config
 sio: AsyncServer = socketio.AsyncServer(
@@ -28,21 +32,27 @@ sio: AsyncServer = socketio.AsyncServer(
     async_handlers=True,
     ping_timeout=60,
     ping_interval=25,
+    cors_allowed_origins=list(get_cors_origins())  # Use the same CORS origins as FastAPI
 )
 
 # Create ASGI app
 socket_app = socketio.ASGIApp(
     socketio_server=sio,
     socketio_path='socket.io'
-
 )
 
-def configure_socketio(cors_origins):
+def configure_socketio(cors_origins=None):
     """Configure Socket.IO with CORS origins and Redis if enabled"""
-    sio.cors_allowed_origins = cors_origins
-    
+    if cors_origins:
+        # Convert set to list if needed and ensure all origins are strings
+        cors_list = list(cors_origins) if isinstance(cors_origins, (set, list)) else [cors_origins]
+        
+        # Set CORS origins for Socket.IO
+        sio.eio.cors_allowed_origins = cors_list
+        logger.info(f"Socket.IO CORS origins configured: {cors_list}")
+
     if settings.REDIS_ENABLED:
-        print(f"Redis URL: {settings.REDIS_URL}")
+        logger.info(f"Redis URL: {settings.REDIS_URL}")
         sio.client_manager = socketio.AsyncRedisManager(
             settings.REDIS_URL,
             write_only=False,

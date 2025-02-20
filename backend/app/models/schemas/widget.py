@@ -59,6 +59,6 @@ class WidgetResponse(BaseModel):
     customer: Optional[CustomerResponse] = None
     # Include agent ID in response if set
     agent_id: Optional[UUID] = None
-
+    token: Optional[str] = None
     class Config:
         from_attributes = True

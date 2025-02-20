@@ -49,6 +49,9 @@ const props = defineProps<{
     widgetId: string
 }>()
 
+// Get widget ID from props or initial data
+const widgetId = computed(() => props.widgetId || window.__INITIAL_DATA__?.widgetId)
+
 const {
     customization,
     agentName,
@@ -81,11 +84,23 @@ const hasConversationToken = ref(false)
 // Add loading state
 const isInitializing = ref(true)
 
+// Add these to the script setup section after the imports
+const TOKEN_KEY = 'ctid'
+const token = ref(window.__INITIAL_DATA__?.initialToken || localStorage.getItem(TOKEN_KEY))
+const hasToken = computed(() => !!token.value)
+
 // Initialize from initial data
 initializeFromData()
 const initialData = window.__INITIAL_DATA__
-if (initialData) {
-    hasConversationToken.value = !!initialData.customerId
+
+if (initialData?.initialToken) {
+    token.value = initialData.initialToken
+    // Notify parent window to store token
+    window.parent.postMessage({ 
+        type: 'TOKEN_UPDATE', 
+        token: initialData.initialToken 
+    }, '*')
+    hasConversationToken.value = true
 }
 
 // Add after socket initialization
@@ -105,7 +120,7 @@ const {
 
 // Update the computed property for message input enabled state
 const isMessageInputEnabled = computed(() => {
-    return (hasConversationToken.value || isValidEmail(emailInput.value.trim())) && 
+    return (hasToken.value || isValidEmail(emailInput.value.trim())) && 
            connectionStatus.value === 'connected'
 })
 
@@ -133,24 +148,45 @@ const handleKeyPress = (event: KeyboardEvent) => {
 // Update the checkAuthorization function
 const checkAuthorization = async () => {
     try {
-        const url = new URL(`${widgetEnv.API_URL}/widgets/${props.widgetId}`)
+        if (!widgetId.value) {
+            console.error('Widget ID is not available')
+            return false
+        }
+
+        const url = new URL(`${widgetEnv.API_URL}/widgets/${widgetId.value}`)
         if (emailInput.value.trim() && isValidEmail(emailInput.value.trim())) {
             url.searchParams.append('email', emailInput.value.trim())
         }
 
+        const headers = {
+            'Accept': 'application/json',
+            'Content-Type': 'application/json'
+        }
+
+        if (token.value) {
+            headers['Authorization'] = `Bearer ${token.value}`
+        }
+
         const response = await fetch(url, {
-            credentials: 'include',
-            headers: {
-                'Accept': 'application/json',
-                'Content-Type': 'application/json'
-            }
+            headers
         })
+
         if (response.status === 401) {
             hasConversationToken.value = false
             return false
         }
         
         const data = await response.json()
+        
+        // Update token if new one is provided
+        if (data.token) {
+            token.value = data.token
+            console.log('Token updated:', data.token)
+            localStorage.setItem(TOKEN_KEY, data.token)
+            // Notify parent window of token update
+            window.parent.postMessage({ type: 'TOKEN_UPDATE', token: data.token }, '*')
+        }
+
         hasConversationToken.value = true
         
         // Connect socket and verify connection success
@@ -223,6 +259,10 @@ onMounted(async () => {
     window.addEventListener('message', (event) => {
         if (event.data.type === 'SCROLL_TO_BOTTOM') {
             scrollToBottom()
+        }
+        if (event.data.type === 'TOKEN_RECEIVED') {
+            // Parent confirmed token storage
+            localStorage.setItem(TOKEN_KEY, event.data.token)
         }
     })
 })

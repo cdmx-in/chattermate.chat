@@ -54,7 +54,7 @@ def create_new_widget(
 async def get_widget_ui(
     widget_id: str,
     response: Response,
-    conversation_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
     """Get widget UI and handle customer authentication"""
@@ -69,13 +69,12 @@ async def get_widget_ui(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
-    
-
     # Check existing conversation token first
     customer_id = None
-    if conversation_token:
+    if authorization and authorization.startswith('Bearer '):
+        token = authorization.split(' ')[1]
         try:
-            token_data = verify_conversation_token(conversation_token)
+            token_data = verify_conversation_token(token)
             if token_data and token_data.get("widget_id") == widget_id:
                 customer_id = token_data.get("sub")
                 return HTMLResponse(get_widget_html(
@@ -91,24 +90,15 @@ async def get_widget_ui(
     # No valid token, create new one
     token = create_conversation_token(widget_id=widget_id)
     
-    response.set_cookie(
-        key="conversation_token",
-        value=token,
-        httponly=True,
-        secure=True,
-        samesite="none",
-        path="/",  # Ensure cookie is available for all paths
-        max_age=3600 * 24 * 360  # 360 days
-    )
-
-    return get_widget_html(
+    return HTMLResponse(get_widget_html(
         widget_id=widget_id,
         agent_name=agent.display_name or agent.name,
         agent_customization=agent.customization,
-        customer_id=customer_id
-    )
+        customer_id=customer_id,
+        initial_token=token
+    ))
 
-def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None) -> str:
+def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None) -> str:
     """Generate widget HTML with embedded data"""
     widget_url = settings.VITE_WIDGET_URL
     
@@ -135,7 +125,8 @@ def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, 
                     widgetId: "{widget_id}",
                     agentName: "{agent_name}",
                     customization: {json.dumps(customization_dict)},
-                    customerId: "{customer_id or ''}"
+                    customerId: "{customer_id or ''}",
+                    initialToken: "{initial_token or ''}"
                 }};
             </script>
         </head>
@@ -151,22 +142,24 @@ async def get_widget_data(
     widget_id: str,
     response: Response,
     email: Optional[str] = None,
-    conversation_token: Optional[str] = Cookie(None),
+    authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db)
 ):
     """Get widget data including agent customization"""
-    logger.info(f"Getting widget data for widget_id {widget_id}, email {email}, conversation_token {conversation_token}")
+    logger.info(f"Getting widget data for widget_id {widget_id}, email {email}")
 
     # Check if token exists
-    if not conversation_token:
+    if not authorization or not authorization.startswith('Bearer '):
         raise HTTPException(
             status_code=401,
             detail="Unauthorized"
         )
+
+    token = authorization.split(' ')[1]
     widget = None
     # Verify conversation token and get widget_id from token
     try:
-        token_data = verify_conversation_token(conversation_token)
+        token_data = verify_conversation_token(token)
 
         if not token_data or token_data.get("widget_id") != widget_id:
             raise HTTPException(
@@ -179,32 +172,44 @@ async def get_widget_data(
         # Get customer_id from token if exists
         customer_id = token_data.get("sub")
 
+        agent_repo = AgentRepository(db)
+        agent = agent_repo.get_by_id(widget.agent_id)
+
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        
 
         # Fix the condition check
         should_create_customer = (customer_id == "None" or customer_id is None) and email
 
         # Updated condition
         if should_create_customer:
+     
             customer_repo = CustomerRepository(db)
             customer = customer_repo.get_or_create_customer(
                 email=email,
                 organization_id=widget.organization_id
             )
+
             # Generate new token with customer_id
             new_token = create_conversation_token(
                 customer_id=customer.id,
                 widget_id=widget_id
             )
-            # Set new cookie
-            response.set_cookie(
-                key="conversation_token",
-                value=new_token,
-                httponly=True,
-                secure=True,
-                samesite="none",
-                path="/",  # Ensure cookie is available for all paths
-                max_age=3600 * 24 * 360  # 360 days
-            )
+
+            return {
+                "id": widget.id,
+                "organization_id": widget.organization_id,
+                "customer_id": customer.id,
+                "customer": {},  # Empty dict for new customer
+                "agent": {
+                    "id": agent.id,
+                    "name": agent.name,
+                    "display_name": agent.display_name,
+                    "customization": agent.customization
+                },
+                "token": new_token  # Include the new token in response
+            }
         else:
             if customer_id == "None" or customer_id is None:
                 raise HTTPException(
@@ -218,12 +223,6 @@ async def get_widget_data(
             detail="Unauthorized"
         )
 
-
-    agent_repo = AgentRepository(db)
-    agent = agent_repo.get_by_id(widget.agent_id)
-    logger.debug(f"Agent: {agent}")
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
     
     customer_info = {}
     if customer_id and customer_id != "None":

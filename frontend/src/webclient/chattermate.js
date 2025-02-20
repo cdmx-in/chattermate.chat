@@ -7,11 +7,12 @@ window.ChatterMate;
 ;(function () {
   // Configuration object
   const config = {
-    baseUrl: 'https://api.chattermate.chat', // Replace with actual API URL
+    baseUrl: 'http://localhost:8000', // Replace with actual API URL
     containerId: 'chattermate-container',
     buttonId: 'chattermate-button',
     chatBubbleColor: '#f34611', // Default color
-    loadingContainerId: 'chattermate-loading'
+    loadingContainerId: 'chattermate-loading',
+    tokenKey: 'ctid' // Key for localStorage
   }
 
   // Create and inject styles
@@ -114,6 +115,23 @@ window.ChatterMate;
     document.head.appendChild(style)
   }
 
+  // Get stored token
+  function getStoredToken() {
+    return localStorage.getItem(config.tokenKey);
+  }
+
+  // Save token
+  function saveToken(token) {
+    if (token) {
+      localStorage.setItem(config.tokenKey, token);
+    }
+  }
+
+  // Remove token
+  function removeToken() {
+    localStorage.removeItem(config.tokenKey);
+  }
+
   // Initialize function to create and append elements
   function initialize() {
     updateStyles()
@@ -148,21 +166,40 @@ window.ChatterMate;
         isLoading = true
         button.classList.add('loading')
         
+        const token = getStoredToken();
+        
         iframe = document.createElement('iframe')
         iframe.className = 'chattermate-iframe'
-        iframe.src = `${config.baseUrl}/api/v1/widgets/${window.chattermateId}/data?widget_id=${window.chattermateId}`
         
-        // Hide iframe until loaded
-        iframe.style.opacity = '0'
-        container.appendChild(iframe)
+        // Fetch widget data with Authorization header if token exists
+        const url = `${config.baseUrl}/api/v1/widgets/${window.chattermateId}/data?widget_id=${window.chattermateId}`;
+        const options = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
         
-        // Wait for iframe to load
-        await new Promise((resolve) => {
-          iframe.onload = resolve
-        })
-        
-        button.classList.remove('loading')
-        iframe.style.opacity = '1'
+        fetch(url, options)
+          .then(response => response.text())
+          .then(html => {
+            iframe.srcdoc = html;
+            container.appendChild(iframe)
+            button.classList.remove('loading')
+            iframe.style.opacity = '1'
+          })
+          .catch(error => {
+            console.error('Failed to load widget:', error)
+            button.classList.remove('loading')
+          });
+
+        // Listen for token updates from iframe
+        window.addEventListener('message', function(event) {
+          if (event.data.type === 'TOKEN_UPDATE') {
+            saveToken(event.data.token);
+            // Confirm token storage to iframe
+            iframe.contentWindow.postMessage({ 
+              type: 'TOKEN_RECEIVED', 
+              token: event.data.token 
+            }, '*');
+          }
+        });
+
       } catch (error) {
         console.error('Failed to load widget:', error)
         button.classList.remove('loading')
