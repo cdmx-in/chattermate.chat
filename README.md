@@ -85,12 +85,18 @@ For Web Push notification, generate a firebase config and keep in folder backend
 # Development
 uvicorn app.main:app --reload --port 8000
 
+# Run Knowledge Processor (in a separate terminal)
+python -m app.workers.run_knowledge_processor
+
 # Production
 # Install gunicorn if not already installed
 pip install gunicorn
 
 # Run with gunicorn (adjust workers based on CPU cores)
 gunicorn app.main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --access-logfile - --error-logfile - --log-level info
+
+# Run Knowledge Processor as a background service
+nohup python -m app.workers.run_knowledge_processor > knowledge_processor.log 2>&1 &
 ```
 
 **Frontend**
@@ -140,6 +146,45 @@ gunicorn app.main:app \
     --log-level info \
     --timeout 120
 
+# Run Knowledge Processor
+# Option 1: Using systemd (recommended)
+sudo tee /etc/systemd/system/chattermate-knowledge-processor.service << EOF
+[Unit]
+Description=ChatterMate Knowledge Processor
+After=network.target
+
+[Service]
+User=chattermate
+Group=chattermate
+WorkingDirectory=/path/to/chattermate/backend
+Environment="PATH=/path/to/chattermate/backend/venv/bin"
+ExecStart=/path/to/chattermate/backend/venv/bin/python -m app.workers.run_knowledge_processor
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable chattermate-knowledge-processor
+sudo systemctl start chattermate-knowledge-processor
+
+# Option 2: Using supervisor
+sudo tee /etc/supervisor/conf.d/chattermate-knowledge-processor.conf << EOF
+[program:chattermate-knowledge-processor]
+command=/path/to/chattermate/backend/venv/bin/python -m app.workers.run_knowledge_processor
+directory=/path/to/chattermate/backend
+user=chattermate
+autostart=true
+autorestart=true
+stderr_logfile=/var/log/chattermate/knowledge-processor.err.log
+stdout_logfile=/var/log/chattermate/knowledge-processor.out.log
+EOF
+
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl start chattermate-knowledge-processor
+
 # Recommended worker count:
 # - CPU bound: 1-2 workers per CPU core
 # - I/O bound: 2-4 workers per CPU core
@@ -167,6 +212,9 @@ docker pull chattermate/frontend:latest
 
 # Backend Image
 docker pull chattermate/backend:latest
+
+# Knowledge Processor Image
+docker pull chattermate/knowledge-processor:latest
 ```
 
 To run using pre-built images:
@@ -202,6 +250,17 @@ services:
     restart: unless-stopped
     volumes:
       - backend_data:/app/uploads
+
+  knowledge-processor:
+    image: chattermate/knowledge-processor:latest
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - backend
+      - db
+    networks:
+      - chattermate-network
+    restart: unless-stopped
 
   db:
     image: postgres:14-alpine

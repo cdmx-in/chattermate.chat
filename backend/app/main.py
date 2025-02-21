@@ -26,7 +26,6 @@ from app.core.config import settings
 from app.services.firebase import initialize_firebase
 from app.database import engine, Base
 import asyncio
-from app.workers.knowledge_processor import run_processor
 from app.core.logger import get_logger
 from contextlib import asynccontextmanager
 import os
@@ -44,15 +43,10 @@ from app.api import session_to_agent
 
 logger = get_logger(__name__)
 
-
-
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     initialize_firebase()
-    asyncio.create_task(start_knowledge_processor())
     await startup_event()
     yield
     # Shutdown
@@ -61,8 +55,6 @@ async def lifespan(app: FastAPI):
 # Move the CORS setup before app instantiation
 cors_origins = get_cors_origins()
 logger.debug(f"CORS origins: {cors_origins}")
-
-
 
 # Add CORS middleware to FastAPI app
 app.add_middleware(
@@ -159,7 +151,6 @@ app.include_router(
     tags=["analytics"]
 )
 
-
 @app.get("/")
 async def root():
     return {
@@ -167,7 +158,6 @@ async def root():
         "version": settings.VERSION,
         "description": "Welcome to ChatterMate API"
     }
-
 
 @app.api_route("/health", methods=["GET"], operation_id="get_health_check")
 async def get_health_check():
@@ -182,19 +172,6 @@ async def head_health_check():
         "status": "healthy",
         "version": settings.VERSION
     }
-
-
-async def start_knowledge_processor():
-    """Start the knowledge processor as a background task"""
-    try:
-        while True:
-            await run_processor()
-            await asyncio.sleep(60)  # Wait for 60 seconds before next run
-    except Exception as e:
-        logger.error(f"Knowledge processor error: {str(e)}")
-        # Restart the processor after error
-        await asyncio.sleep(5)
-        asyncio.create_task(start_knowledge_processor())
 
 # Create upload directories if they don't exist
 if not os.path.exists("uploads"):

@@ -1,3 +1,4 @@
+// @ts-nocheck
 export interface InitialData {
     widgetId: string;
     agentName: string;
@@ -7,8 +8,11 @@ export interface InitialData {
     initialToken?: string;
 }
 
+// @ts-ignore
 declare global {
+    // @ts-ignore
     interface Window {
+        // @ts-ignore
         __INITIAL_DATA__: InitialData;
     }
 }

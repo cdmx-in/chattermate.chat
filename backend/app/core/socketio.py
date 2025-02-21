@@ -49,7 +49,7 @@ def configure_socketio(cors_origins=None):
         
         # Set CORS origins for Socket.IO
         sio.eio.cors_allowed_origins = cors_list
-        logger.info(f"Socket.IO CORS origins configured: {cors_list}")
+
 
     if settings.REDIS_ENABLED:
         logger.info(f"Redis URL: {settings.REDIS_URL}")

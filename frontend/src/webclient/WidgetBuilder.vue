@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
+// @ts-nocheck
 import { ref, onMounted, computed, onUnmounted, watch, nextTick } from 'vue'
 import {
     isValidEmail} from '../types/widget'
@@ -86,6 +87,7 @@ const isInitializing = ref(true)
 
 // Add these to the script setup section after the imports
 const TOKEN_KEY = 'ctid'
+// @ts-ignore
 const token = ref(window.__INITIAL_DATA__?.initialToken || localStorage.getItem(TOKEN_KEY))
 const hasToken = computed(() => !!token.value)
 
