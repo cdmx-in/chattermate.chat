@@ -18,19 +18,32 @@ from app.services.firebase import initialize_firebase
 logger = get_logger(__name__)
 
 async def run_processor_loop():
-    """Run the knowledge processor in a continuous loop"""
-    logger.info("Starting knowledge processor loop")
+    """Run the knowledge processor in a continuous loop or once"""
+    logger.info("Starting knowledge processor")
     initialize_firebase()
     
-    while True:
-        try:
-            await run_processor()
-            logger.debug("Knowledge processor iteration completed")
-        except Exception as e:
-            logger.error(f"Error in knowledge processor: {str(e)}")
+    try:
+        # Check if we should run once or continuously
+        run_once = os.environ.get('RUN_ONCE', 'false').lower() == 'true'
         
-        # Wait for 5 minutes before next run
-        await asyncio.sleep(300)
+        if run_once:
+            logger.info("Running knowledge processor once")
+            await run_processor()
+            logger.info("Knowledge processor completed successfully")
+        else:
+            logger.info("Starting knowledge processor loop")
+            while True:
+                try:
+                    await run_processor()
+                    logger.debug("Knowledge processor iteration completed")
+                except Exception as e:
+                    logger.error(f"Error in knowledge processor: {str(e)}")
+                
+                # Wait for 5 minutes before next run
+                await asyncio.sleep(300)
+    except Exception as e:
+        logger.error(f"Fatal error in knowledge processor: {str(e)}")
+        sys.exit(1)
 
 def main():
     """Main entry point for the knowledge processor"""
