@@ -53,6 +53,11 @@ const hasEnterpriseModule = Object.keys(enterpriseModules).length > 0
 
 const userAvatarSrc = computed(() => {
   if (currentUser.value?.profile_pic) {
+    // If it's an S3 URL (contains amazonaws.com), use it directly
+    if (currentUser.value.profile_pic.includes('amazonaws.com')) {
+      return currentUser.value.profile_pic
+    }
+    // For local storage, prepend the API URL and add timestamp
     const timestamp = new Date().getTime()
     return `${import.meta.env.VITE_API_URL}${currentUser.value.profile_pic}?t=${timestamp}`
   }
@@ -134,7 +139,8 @@ const refreshUserInfo = () => {
   userName.value = userService.getUserName()
   userRole.value = userService.getUserRole()
   const user = userService.getCurrentUser() as User
-  currentUser.value = user
+  // Force a new reference to trigger reactivity
+  currentUser.value = { ...user }
 }
 
 const navigateToUpgrade = () => {

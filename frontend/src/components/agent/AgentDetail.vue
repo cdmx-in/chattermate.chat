@@ -98,9 +98,17 @@ const handlePreview = (customization: AgentCustomization) => {
 }
 
 const photoUrl = computed(() => {
-    return agentData.value.customization?.photo_url
-        ? import.meta.env.VITE_API_URL + agentData.value.customization.photo_url
-        : getAvatarUrl(agentData.value.agent_type.toLowerCase())
+    if (!agentData.value.customization?.photo_url) {
+        return getAvatarUrl(agentData.value.agent_type.toLowerCase())
+    }
+    
+    // If it's an S3 URL (contains amazonaws.com), use it directly
+    if (agentData.value.customization.photo_url.includes('amazonaws.com')) {
+        return agentData.value.customization.photo_url
+    }
+    
+    // For local storage, prepend the API URL
+    return import.meta.env.VITE_API_URL + agentData.value.customization.photo_url
 })
 
 const handleClose = () => {

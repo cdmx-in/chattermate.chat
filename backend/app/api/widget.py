@@ -77,7 +77,7 @@ async def get_widget_ui(
             token_data = verify_conversation_token(token)
             if token_data and token_data.get("widget_id") == widget_id:
                 customer_id = token_data.get("sub")
-                return HTMLResponse(get_widget_html(
+                return HTMLResponse(await get_widget_html(
                     widget_id=widget_id,
                     agent_name=agent.display_name or agent.name,
                     agent_customization=agent.customization,
@@ -90,7 +90,7 @@ async def get_widget_ui(
     # No valid token, create new one
     token = create_conversation_token(widget_id=widget_id)
     
-    return HTMLResponse(get_widget_html(
+    return HTMLResponse(await get_widget_html(
         widget_id=widget_id,
         agent_name=agent.display_name or agent.name,
         agent_customization=agent.customization,
@@ -98,18 +98,27 @@ async def get_widget_ui(
         initial_token=token
     ))
 
-def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None) -> str:
+async def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None) -> str:
     """Generate widget HTML with embedded data"""
     widget_url = settings.VITE_WIDGET_URL
     
     # Convert AgentCustomization to dict if it's a model instance
-    customization_dict = {
-        "chat_background_color": agent_customization.chat_background_color,
-        "chat_bubble_color": agent_customization.chat_bubble_color,
-        "accent_color": agent_customization.accent_color,
-        "font_family": agent_customization.font_family,
-        "photo_url": agent_customization.photo_url
-    } if agent_customization else {}
+    customization_dict = {}
+    if agent_customization:
+        # Get signed URL for photo if using S3
+        photo_url = agent_customization.photo_url
+        if settings.S3_FILE_STORAGE and photo_url:
+            from app.core.s3 import get_s3_signed_url
+            photo_url = await get_s3_signed_url(photo_url)
+
+        customization_dict = {
+            "chat_background_color": agent_customization.chat_background_color,
+            "chat_bubble_color": agent_customization.chat_bubble_color,
+            "accent_color": agent_customization.accent_color,
+            "font_family": agent_customization.font_family,
+            "photo_url": photo_url,
+            "photo_url_signed": photo_url
+        }
 
     return f"""
         <!DOCTYPE html>
@@ -227,16 +236,19 @@ async def get_widget_data(
     customer_info = {}
     if customer_id and customer_id != "None":
         session_repo = SessionToAgentRepository(db)
-
         session = session_repo.get_customer_sessions(customer_id, SessionStatus.OPEN)
 
         # Add customer info to the response
         if session and session[0].user_full_name:
+            profile_pic = session[0].user_profile_pic
+            if settings.S3_FILE_STORAGE and profile_pic:
+                from app.core.s3 import get_s3_signed_url
+                profile_pic = await get_s3_signed_url(profile_pic)
+
             customer_info = {
                 "full_name": session[0].user_full_name,
-                "profile_pic": session[0].user_profile_pic or None
+                "profile_pic": profile_pic
             }
-
 
     return {
         "id": widget.id,

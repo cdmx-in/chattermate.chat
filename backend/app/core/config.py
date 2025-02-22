@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     TRIAL_DAYS: int = 7  # 7-day trial period
 
+    # S3 Configuration
+    S3_FILE_STORAGE: bool = os.getenv("S3_FILE_STORAGE", "false").lower() == "true"
+    S3_BUCKET: str = os.getenv("S3_BUCKET", "chattermate-uploads")
+    S3_REGION: str = os.getenv("S3_REGION", "us-east-1")
+    AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")
+    AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
+
     model_config = {
         "case_sensitive": True,
         "env_file": ".env",
