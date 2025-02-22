@@ -6,9 +6,7 @@ from botocore.exceptions import ClientError
 from app.core.config import settings
 from app.core.logger import get_logger
 from fastapi import HTTPException, UploadFile
-import os
 from typing import Optional
-from datetime import datetime, timedelta
 
 logger = get_logger(__name__)
 

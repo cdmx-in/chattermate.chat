@@ -62,3 +62,5 @@ redis
 aiohttp
 
 bs4
+
+boto3
