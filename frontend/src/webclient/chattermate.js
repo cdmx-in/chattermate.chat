@@ -5,6 +5,11 @@ window.chattermateId;
 window.ChatterMate;
 
 ;(function () {
+  // Function to validate hex color code
+  function isValidHexColor(color) {
+    return /^#[0-9A-F]{6}$/i.test(color);
+  }
+
   // Configuration object
   const config = {
     baseUrl: 'http://localhost:8000', // Replace with actual API URL
@@ -234,7 +239,8 @@ window.ChatterMate;
   // Add message listener for customization updates
   window.addEventListener('message', function (event) {
     if (event.data.type === 'CUSTOMIZATION_UPDATE') {
-      config.chatBubbleColor = event.data.data.chat_bubble_color
+      const newColor = event.data.data.chat_bubble_color;
+      config.chatBubbleColor = isValidHexColor(newColor) ? newColor : config.chatBubbleColor;
       updateStyles()
       // Update the SVG fill color
       const svgPath = document.querySelector(`#${config.buttonId} svg path:last-child`)
