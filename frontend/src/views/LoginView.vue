@@ -59,8 +59,8 @@ const handleLogin = async () => {
         isLoading.value = true
         error.value = ''
 
-        const user = await authService.login(email.value, password.value)
-        console.log('Logged in user:', user)
+        await authService.login(email.value, password.value)
+       
 
         // Determine initial route based on permissions
         const initialRoute = getInitialRoute()

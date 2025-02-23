@@ -30,6 +30,9 @@ import { inject } from 'vue'
 
 const getUserAvatar = (user: User) => {
   if (user.profile_pic) {
+    if (user.profile_pic.includes('amazonaws.com')) {
+      return user.profile_pic
+    }
     return `${import.meta.env.VITE_API_URL}${user.profile_pic}`
   }
   return userAvatar
