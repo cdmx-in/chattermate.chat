@@ -100,6 +100,7 @@ async def get_widget_ui(
 
 async def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None) -> str:
     """Generate widget HTML with embedded data"""
+    import html
     widget_url = settings.VITE_WIDGET_URL
     
     # Convert AgentCustomization to dict if it's a model instance
@@ -131,11 +132,11 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
             <link rel="stylesheet" crossorigin href="{widget_url}/assets/widget.css">
             <script>
                 window.__INITIAL_DATA__ = {{
-                    widgetId: "{widget_id}",
-                    agentName: "{agent_name}",
+                    widgetId: "{html.escape(widget_id)}",
+                    agentName: "{html.escape(agent_name)}",
                     customization: {json.dumps(customization_dict)},
-                    customerId: "{customer_id or ''}",
-                    initialToken: "{initial_token or ''}"
+                    customerId: "{html.escape(customer_id or '')}",
+                    initialToken: "{html.escape(initial_token or '')}"
                 }};
             </script>
         </head>
