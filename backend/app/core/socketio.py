@@ -51,6 +51,7 @@ def configure_socketio(cors_origins=None):
         sio.eio.cors_allowed_origins = cors_list
 
 
+
     if settings.REDIS_ENABLED:
         logger.info(f"Redis URL: {settings.REDIS_URL}")
         sio.client_manager = socketio.AsyncRedisManager(

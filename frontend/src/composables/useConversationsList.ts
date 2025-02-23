@@ -40,10 +40,13 @@ export function useConversationsList(props: {
     }
 
     if (selectedChat.value && selectedId.value === data.session_id) {
+      // Ensure created_at is a valid ISO string
+      const created_at = new Date(data.created_at).toISOString()
+
       const newMessage: Message = {
         message: data.message,
         message_type: data.type === 'agent_message' ? 'agent' : data.type,
-        created_at: data.created_at,
+        created_at,
         session_id: data.session_id
       }
 
@@ -51,7 +54,7 @@ export function useConversationsList(props: {
       const updatedChat: ChatDetail = {
         ...selectedChat.value,
         messages: [...(selectedChat.value.messages || []), newMessage],
-        updated_at: data.created_at,
+        updated_at: created_at,
         customer: { ...selectedChat.value.customer },
         agent_name: selectedChat.value.agent_name,
         status: selectedChat.value.status,

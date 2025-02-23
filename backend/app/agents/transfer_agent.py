@@ -205,7 +205,7 @@ async def get_agent_availability_response(
 
     # Get organization's business hours
     org = agent.organization
-    logger.debug(f"Organization: {org.timezone}")
+    
     business_hours = org.business_hours if hasattr(org, 'business_hours') else {
         'monday': {'start': '09:00', 'end': '17:00', 'enabled': True},
         'tuesday': {'start': '09:00', 'end': '17:00', 'enabled': True},
@@ -264,7 +264,7 @@ async def get_agent_availability_response(
         agent_id=agent.id
     )
 
-    logger.debug(f"Chat history: {chat_history}")
+
     # Get contextual response
     response = await transfer_agent.get_transfer_response(
         chat_history=chat_history or [],
