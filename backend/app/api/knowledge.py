@@ -513,7 +513,7 @@ async def get_knowledge_by_organization(
     org_id: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=10, ge=1, le=100),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)
 ):
     """Get knowledge sources and their data for an organization with pagination"""
