@@ -18,6 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <script setup lang="ts">
 import { ref, onMounted, watch, provide, readonly, computed } from 'vue'
+import type { Ref } from 'vue'
 import { useAuth } from '@/composables/useAuth'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import userAvatar from '@/assets/user.svg'
@@ -31,7 +32,8 @@ import UserSettings from '@/components/user/UserSettings.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { updateUserStatus } from '@/services/users'
 import api from '@/services/api'
-import { subscriptionStore } from '@/modules/enterprise/composables/useSubscriptionStore'
+import { useSubscription } from '@/composables/useSubscription'
+import type { SubscriptionStore } from '@/composables/useSubscription'
 
 const isSidebarOpen = ref(true)
 const showUserMenu = ref(false)
@@ -46,6 +48,20 @@ const { logout } = useAuth()
 useNotifications()
 const route = useRoute()
 const router = useRouter()
+
+// Initialize subscription store
+const subscriptionStore = ref<SubscriptionStore>({
+    currentPlan: ref(null),
+    isLoadingPlan: ref(false),
+    isInTrial: ref(false),
+    trialDaysLeft: ref(0),
+    fetchCurrentPlan: async () => {}
+})
+
+// Load subscription store
+const initSubscriptionStore = async () => {
+    subscriptionStore.value = await useSubscription()
+}
 
 // Check for enterprise module
 const enterpriseModules = import.meta.glob('@/modules/enterprise/views/SignupView.vue')
@@ -106,22 +122,6 @@ const fetchUnreadCount = async () => {
     }
 }
 
-// Replace with destructured values from subscription store
-const { 
-    currentPlan,
-    isLoadingPlan,
-    isInTrial,
-    trialDaysLeft,
-    fetchCurrentPlan 
-} = subscriptionStore
-
-onMounted(() => {
-    fetchUnreadCount()
-    if (hasEnterpriseModule) {
-        fetchCurrentPlan()
-    }
-})
-
 const toggleSidebar = () => {
     isSidebarOpen.value = !isSidebarOpen.value
 }
@@ -151,6 +151,17 @@ const navigateToUpgrade = () => {
 provide('refreshUserInfo', refreshUserInfo)
 provide('openSettings', openSettings)
 provide('showSettings', readonly(showSettings))
+
+onMounted(async () => {
+    fetchUnreadCount()
+    await initSubscriptionStore()
+    if (subscriptionStore.value) {
+        await subscriptionStore.value.fetchCurrentPlan()
+    }
+    if (hasEnterpriseModule) {
+        await subscriptionStore.value.fetchCurrentPlan()
+    }
+})
 </script>
 
 <template>
@@ -166,18 +177,18 @@ provide('showSettings', readonly(showSettings))
                         <!-- Any left section content -->
                     </div>
                     <div class="right-section">
-                        <div v-if="hasEnterpriseModule" class="plan-display">
-                            <div v-if="isLoadingPlan" class="plan-loading">
+                        <div v-if="subscriptionStore" class="plan-display">
+                            <div v-if="subscriptionStore.isLoadingPlan" class="plan-loading">
                                 <span class="loading-spinner"></span>
                                 Loading...
                             </div>
-                            <div v-else-if="currentPlan" class="plan-info">
-                                <div v-if="isInTrial" class="trial-info">
+                            <div v-else-if="subscriptionStore.currentPlan" class="plan-info">
+                                <div v-if="subscriptionStore.isInTrial" class="trial-info">
                                     <span 
                                         class="trial-badge clickable" 
                                         @click="navigateToUpgrade"
                                     >
-                                        Trial ({{ trialDaysLeft }} days left)
+                                        Trial ({{ subscriptionStore.trialDaysLeft }} days left)
                                     </span>
                                 </div>
                             </div>
@@ -205,9 +216,9 @@ provide('showSettings', readonly(showSettings))
                                     <div class="user-info" v-if="isSidebarOpen">
                                         <span class="name">{{ userName }}</span>
                                         <div class="plan-info">
-                                            <span class="plan-badge" :class="currentPlan?.plan?.type">
+                                            <span class="plan-badge" :class="subscriptionStore?.currentPlan?.plan?.type">
                                                 <span class="plan-icon">⚡</span>
-                                                {{ currentPlan?.plan?.name || '' }}
+                                                {{ subscriptionStore?.currentPlan?.plan?.name || '' }}
                                             </span>
                                         </div>
                                     </div>
