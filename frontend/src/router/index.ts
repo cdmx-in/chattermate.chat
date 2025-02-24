@@ -85,26 +85,36 @@ const baseRoutes = [
   },
 ]
 
-// Check for enterprise module
-const enterpriseModules = import.meta.glob([
-  '@/modules/enterprise/views/SignupView.vue',
-  '@/modules/enterprise/router/guards/subscription.ts'
-])
-const hasEnterpriseModule = Object.keys(enterpriseModules).length > 0
-
-// Combine routes based on module availability
-const allRoutes = hasEnterpriseModule ? [
-  ...baseRoutes,
+// Enterprise routes that will be dynamically added if available
+const enterpriseRoutes = [
   {
     path: '/signup',
     name: 'signup',
-    component: () => import('@/modules/enterprise/views/SignupView.vue'),
+    component: () => {
+      return new Promise((resolve) => {
+        import('@/modules/enterprise/views/SignupView.vue')
+          .then(module => resolve(module.default))
+          .catch(() => {
+            console.warn('Enterprise SignupView not available')
+            resolve({ template: '<div></div>' })
+          })
+      })
+    },
     meta: { requiresAuth: false }
   },
   {
     path: '/settings/subscription',
     name: 'subscription',
-    component: () => import('@/modules/enterprise/views/SubscriptionView.vue'),
+    component: () => {
+      return new Promise((resolve) => {
+        import('@/modules/enterprise/views/SubscriptionView.vue')
+          .then(module => resolve(module.default))
+          .catch(() => {
+            console.warn('Enterprise SubscriptionView not available')
+            resolve({ template: '<div></div>' })
+          })
+      })
+    },
     meta: { 
       requiresAuth: true,
       layout: 'dashboard',
@@ -114,24 +124,48 @@ const allRoutes = hasEnterpriseModule ? [
   {
     path: '/settings/subscription/setup/:planId',
     name: 'billing-setup',
-    component: () => import('@/modules/enterprise/views/BillingSetupView.vue'),
+    component: () => {
+      return new Promise((resolve) => {
+        import('@/modules/enterprise/views/BillingSetupView.vue')
+          .then(module => resolve(module.default))
+          .catch(() => {
+            console.warn('Enterprise BillingSetupView not available')
+            resolve({ template: '<div></div>' })
+          })
+      })
+    },
     meta: { requiresAuth: true }
   }
-] : baseRoutes
+]
 
+// Check for enterprise module using dynamic import
+const hasEnterpriseModule = async (): Promise<boolean> => {
+  try {
+    await import('@/modules/enterprise/views/SignupView.vue')
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Create router with base routes
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
-  routes: allRoutes
+  routes: [...baseRoutes, ...enterpriseRoutes] // Include enterprise routes by default
 })
 
 // Add subscription guard only if enterprise module is available
-if (hasEnterpriseModule) {
-  import('@/modules/enterprise/router/guards/subscription').then(({ subscriptionGuard }) => {
-    router.beforeEach(subscriptionGuard)
-  }).catch(error => {
-    console.error('Error loading subscription guard:', error)
-  })
-}
+hasEnterpriseModule().then(isAvailable => {
+  if (isAvailable) {
+    import('@/modules/enterprise/router/guards/subscription')
+      .then(({ subscriptionGuard }) => {
+        router.beforeEach(subscriptionGuard)
+      })
+      .catch(() => {
+        console.warn('Subscription guard not available')
+      })
+  }
+})
 
 // Navigation guard
 router.beforeEach(async (to, from, next) => {
