@@ -155,6 +155,7 @@ provide('showSettings', readonly(showSettings))
 onMounted(async () => {
     fetchUnreadCount()
     await initSubscriptionStore()
+    // Only call fetchCurrentPlan once since useSubscription already checks for enterprise availability
     if (subscriptionStore.value) {
         await subscriptionStore.value.fetchCurrentPlan()
     }
