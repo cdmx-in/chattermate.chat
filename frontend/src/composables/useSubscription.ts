@@ -53,35 +53,34 @@ const defaultSubscriptionStore: SubscriptionStore = {
     fetchCurrentPlan: async () => {}
 }
 
-// Check for enterprise module using dynamic import
-const hasEnterpriseModule = async (): Promise<boolean> => {
-    try {
-        // Use a more reliable way to check for module existence
-        const enterpriseModule = await import('@/modules/enterprise/views/SignupView.vue')
-            .then(() => true)
-            .catch(() => false)
-        return enterpriseModule
-    } catch {
-        return false
-    }
+// Define module type
+interface SubscriptionModule {
+    subscriptionStore: SubscriptionStore;
 }
+
+// Check for enterprise module using glob pattern
+const enterpriseModules = import.meta.glob<SubscriptionModule>([
+    '@/modules/enterprise/views/SignupView.vue',
+    '@/modules/enterprise/composables/useSubscriptionStore.ts'
+], {
+    eager: false
+})
 
 // Get subscription store based on availability
 export const useSubscription = async (): Promise<SubscriptionStore> => {
-    const isEnterpriseAvailable = await hasEnterpriseModule()
-    
-    if (!isEnterpriseAvailable) {
+    // Check if enterprise modules exist
+    const hasEnterpriseModule = Object.keys(enterpriseModules).length > 0
+
+    if (!hasEnterpriseModule) {
         return defaultSubscriptionStore
     }
 
     try {
-        // Use dynamic import with explicit error handling
-        const enterpriseStore = await import('@/modules/enterprise/composables/useSubscriptionStore')
-            .then(module => module.subscriptionStore)
-            .catch(() => null)
-
-        if (enterpriseStore) {
-            return enterpriseStore
+        // Try to load the subscription store module
+        const storeModule = enterpriseModules['@/modules/enterprise/composables/useSubscriptionStore.ts']
+        if (storeModule) {
+            const module = await storeModule() as SubscriptionModule
+            return module.subscriptionStore
         }
     } catch {
         // Fail silently and return default store

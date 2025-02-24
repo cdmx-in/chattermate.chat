@@ -63,10 +63,6 @@ const initSubscriptionStore = async () => {
     subscriptionStore.value = await useSubscription()
 }
 
-// Check for enterprise module
-const enterpriseModules = import.meta.glob('@/modules/enterprise/views/SignupView.vue')
-const hasEnterpriseModule = Object.keys(enterpriseModules).length > 0
-
 const userAvatarSrc = computed(() => {
   if (currentUser.value?.profile_pic) {
     // If it's an S3 URL (contains amazonaws.com), use it directly
@@ -157,9 +153,6 @@ onMounted(async () => {
     await initSubscriptionStore()
     // Only call fetchCurrentPlan once since useSubscription already checks for enterprise availability
     if (subscriptionStore.value) {
-        await subscriptionStore.value.fetchCurrentPlan()
-    }
-    if (hasEnterpriseModule) {
         await subscriptionStore.value.fetchCurrentPlan()
     }
 })
