@@ -1,32 +1,27 @@
-import type { RouteRecordRaw } from 'vue-router'
-import { defineAsyncComponent, defineComponent } from 'vue'
+import type { RouteRecordRaw, NavigationGuardWithThis } from 'vue-router'
+import { defineComponent, h } from 'vue'
+import type { Component } from 'vue'
 
-// Empty component for fallback
+// Empty component for fallback using render function instead of template
 const EmptyComponent = defineComponent({
     name: 'EmptyComponent',
-    template: '<div></div>'
+    render() {
+        return h('div', { class: 'empty-enterprise-component' }, 'This feature requires the enterprise version')
+    }
 })
 
-// Enterprise routes with lazy loading
-export const enterpriseRoutes: RouteRecordRaw[] = [
+// Enterprise routes
+export const enterpriseRoutes: RouteRecordRaw[] = __ENTERPRISE_AVAILABLE__ ? [
     {
         path: '/signup',
         name: 'signup',
-        component: defineAsyncComponent({
-            loader: () => import('@/modules/enterprise/views/SignupView.vue')
-                .catch(() => EmptyComponent),
-            onError: () => console.warn('Enterprise SignupView not available'),
-        }),
+        component: () => import('@/modules/enterprise/views/SignupView.vue'),
         meta: { requiresAuth: false }
     },
     {
         path: '/settings/subscription',
         name: 'subscription',
-        component: defineAsyncComponent({
-            loader: () => import('@/modules/enterprise/views/SubscriptionView.vue')
-                .catch(() => EmptyComponent),
-            onError: () => console.warn('Enterprise SubscriptionView not available'),
-        }),
+        component: () => import('@/modules/enterprise/views/SubscriptionView.vue'),
         meta: {
             requiresAuth: true,
             layout: 'dashboard',
@@ -36,22 +31,46 @@ export const enterpriseRoutes: RouteRecordRaw[] = [
     {
         path: '/settings/subscription/setup/:planId',
         name: 'billing-setup',
-        component: defineAsyncComponent({
-            loader: () => import('@/modules/enterprise/views/BillingSetupView.vue')
-                .catch(() => EmptyComponent),
-            onError: () => console.warn('Enterprise BillingSetupView not available'),
-        }),
+        component: () => import('@/modules/enterprise/views/BillingSetupView.vue'),
+        meta: { requiresAuth: true }
+    }
+] : [
+    {
+        path: '/signup',
+        name: 'signup',
+        component: EmptyComponent,
+        meta: { requiresAuth: false }
+    },
+    {
+        path: '/settings/subscription',
+        name: 'subscription',
+        component: EmptyComponent,
+        meta: {
+            requiresAuth: true,
+            layout: 'dashboard',
+            title: 'Subscription Plans'
+        }
+    },
+    {
+        path: '/settings/subscription/setup/:planId',
+        name: 'billing-setup',
+        component: EmptyComponent,
         meta: { requiresAuth: true }
     }
 ]
 
 // Helper function to load subscription guard
-export const loadSubscriptionGuard = async () => {
+export const loadSubscriptionGuard = async (): Promise<NavigationGuardWithThis<undefined> | null> => {
+    if (!__ENTERPRISE_AVAILABLE__) {
+        console.debug('Enterprise subscription guard not available')
+        return null
+    }
+
     try {
-        const { subscriptionGuard } = await import('@/modules/enterprise/router/guards/subscription')
-        return subscriptionGuard
+        const module = await import('@/modules/enterprise/router/guards/subscription')
+        return module.subscriptionGuard
     } catch (error) {
-        console.warn('Subscription guard not available')
+        console.debug('Failed to load enterprise subscription guard:', error)
         return null
     }
 } 
