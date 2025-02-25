@@ -44,8 +44,8 @@ export function useWidgetStyles(customization: { value: AgentCustomization }) {
             return ''
         }
         // Use signed URL if available
-        if (customization.value.photo_url_signed) {
-            return customization.value.photo_url_signed
+        if (customization.value.photo_url.includes('amazonaws.com')) {
+            return customization.value.photo_url
         }
         
         // For local storage, prepend the API URL
