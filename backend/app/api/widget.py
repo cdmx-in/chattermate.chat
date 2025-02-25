@@ -108,7 +108,7 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
     if agent_customization:
         # Get signed URL for photo if using S3
         photo_url = agent_customization.photo_url
-        
+
         customization_dict = {
             "chat_background_color": agent_customization.chat_background_color,
             "chat_bubble_color": agent_customization.chat_bubble_color,
