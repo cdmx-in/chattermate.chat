@@ -20,12 +20,15 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { permissionChecks } from '@/utils/permissions'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 import conversationIcon from '@/assets/conversation.svg'
 import aiAgentIcon from '@/assets/aiagent.svg'
 import humanAgentIcon from '@/assets/humanagent.svg'
 import organizationIcon from '@/assets/organization.svg'
+import analyticsIcon from '@/assets/analytics.svg'
 import configIcon from '@/assets/config.svg'
+import subscriptionIcon from '@/assets/subscription.svg'
 import SidebarToggle from './SidebarToggle.vue'
 
 defineProps<{
@@ -38,6 +41,9 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
+
+// Get enterprise features availability
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 
 interface NavItem {
     to?: string;
@@ -71,6 +77,12 @@ const navItems = computed(() => [
         show: permissionChecks.canViewChats()
     },
     {
+        to: '/analytics',
+        iconSrc: analyticsIcon,
+        label: 'Analytics',
+        show: permissionChecks.canViewAnalytics()
+    },
+    {
         section: 'Settings',
         show: permissionChecks.canViewOrganization() || permissionChecks.canViewAIConfig()
     },
@@ -79,6 +91,12 @@ const navItems = computed(() => [
         iconSrc: organizationIcon,
         label: 'Organization',
         show: permissionChecks.canViewOrganization()
+    },
+    {
+        to: '/settings/subscription',
+        iconSrc: subscriptionIcon,
+        label: 'Subscription',
+        show: hasEnterpriseModule && permissionChecks.canViewOrganization()
     },
     {
         to: '/settings/ai-config',
