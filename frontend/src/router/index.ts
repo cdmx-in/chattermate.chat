@@ -5,7 +5,10 @@ import { permissionChecks, hasAnyPermission } from '@/utils/permissions'
 import HumanAgentView from '@/views/HumanAgentView.vue'
 import OrganizationSettings from '@/views/settings/OrganizationSettings.vue'
 import AIConfigSettings from '@/views/settings/AIConfigSettings.vue'
-import { enterpriseRoutes, loadSubscriptionGuard } from './enterprise'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
+
+// Initialize enterprise features
+const { hasEnterpriseModule, loadModule, moduleImports, NotAvailableComponent } = useEnterpriseFeatures()
 
 // Base routes
 const baseRoutes = [
@@ -86,18 +89,63 @@ const baseRoutes = [
   },
 ]
 
-// Create router with base routes and enterprise routes
+// Helper function to load enterprise component
+const loadEnterpriseComponent = (path: string) => {
+  if (!hasEnterpriseModule) {
+    return NotAvailableComponent
+  }
+  return async () => {
+    const module = await loadModule(path)
+    return module?.default || NotAvailableComponent
+  }
+}
+
+// Combine routes based on module availability
+const allRoutes = hasEnterpriseModule ? [
+  ...baseRoutes,
+  {
+    path: '/signup',
+    name: 'signup',
+    component: loadEnterpriseComponent(moduleImports.signupView),
+    meta: { requiresAuth: false }
+  },
+  {
+    path: '/settings/subscription',
+    name: 'subscription',
+    component: loadEnterpriseComponent(moduleImports.subscriptionView),
+    meta: { 
+      requiresAuth: true,
+      layout: 'dashboard',
+      title: 'Subscription Plans'
+    }
+  },
+  {
+    path: '/settings/subscription/setup/:planId',
+    name: 'billing-setup',
+    component: loadEnterpriseComponent(moduleImports.billingSetupView),
+    meta: { requiresAuth: true }
+  }
+] : baseRoutes
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
-  routes: [...baseRoutes, ...enterpriseRoutes]
+  routes: allRoutes
 })
 
-// Try to load and add subscription guard
-loadSubscriptionGuard().then(guard => {
-  if (guard) {
-    router.beforeEach(guard)
+// Add subscription guard only if enterprise module is available
+if (hasEnterpriseModule) {
+  const loadGuard = async () => {
+    try {
+      const guardModule = await loadModule(moduleImports.subscriptionGuard)
+      if (guardModule?.subscriptionGuard) {
+        router.beforeEach(guardModule.subscriptionGuard)
+      }
+    } catch (error) {
+      console.warn('Enterprise subscription guard not available:', error)
+    }
   }
-})
+  loadGuard()
+}
 
 // Navigation guard
 router.beforeEach(async (to, from, next) => {

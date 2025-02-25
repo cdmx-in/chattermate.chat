@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { permissionChecks } from '@/utils/permissions'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 import conversationIcon from '@/assets/conversation.svg'
 import aiAgentIcon from '@/assets/aiagent.svg'
@@ -40,6 +41,9 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
+
+// Get enterprise features availability
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 
 interface NavItem {
     to?: string;
@@ -92,7 +96,7 @@ const navItems = computed(() => [
         to: '/settings/subscription',
         iconSrc: subscriptionIcon,
         label: 'Subscription',
-        show: permissionChecks.canViewOrganization()
+        show: hasEnterpriseModule && permissionChecks.canViewOrganization()
     },
     {
         to: '/settings/ai-config',
