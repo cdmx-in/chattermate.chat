@@ -183,7 +183,6 @@ const checkAuthorization = async () => {
         // Update token if new one is provided
         if (data.token) {
             token.value = data.token
-            console.log('Token updated:', data.token)
             localStorage.setItem(TOKEN_KEY, data.token)
             // Notify parent window of token update
             window.parent.postMessage({ type: 'TOKEN_UPDATE', token: data.token }, '*')
