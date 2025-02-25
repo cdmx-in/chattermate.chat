@@ -27,20 +27,30 @@ class CustomerRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def get_or_create_customer(
+    def get_customer_by_email(
+        self,
+        email: str,
+        organization_id: UUID
+    ) -> Customer | None:
+        """Get existing customer by email and organization ID"""
+        try:
+            customer = self.db.query(Customer).filter(
+                Customer.email == email,
+                Customer.organization_id == organization_id
+            ).first()
+            return customer
+        except Exception as e:
+            logger.error(f"Error getting customer by email: {str(e)}")
+            return None
+
+    def create_customer(
         self,
         email: str,
         organization_id: UUID,
         full_name: str = None
     ) -> Customer:
-        """Get existing customer or create new one"""
-
-        customer = self.db.query(Customer).filter(
-            Customer.email == email,
-            Customer.organization_id == organization_id
-        ).first()
-
-        if not customer:
+        """Create a new customer"""
+        try:
             customer = Customer(
                 email=email,
                 full_name=full_name,
@@ -49,6 +59,25 @@ class CustomerRepository:
             self.db.add(customer)
             self.db.commit()
             self.db.refresh(customer)
+            return customer
+        except Exception as e:
+            logger.error(f"Error creating customer: {str(e)}")
+            self.db.rollback()
+            raise
+
+    def get_or_create_customer(
+        self,
+        email: str,
+        organization_id: UUID,
+        full_name: str = None
+    ) -> Customer:
+        """Get existing customer or create new one"""
+        customer = self.get_customer_by_email(email, organization_id)
+
+        if not customer:
+            customer = self.create_customer(email, organization_id, full_name)
+        else:
+            logger.info(f"Customer already exists: {customer.id}")
 
         return customer
 

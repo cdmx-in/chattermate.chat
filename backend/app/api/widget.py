@@ -24,6 +24,7 @@ from jose import JWTError
 import json
 
 from app.models.widget import Widget
+from app.models.user import User
 
 from app.core.auth import get_current_user
 from app.database import get_db
@@ -73,8 +74,10 @@ async def get_widget_ui(
     customer_id = None
     if authorization and authorization.startswith('Bearer '):
         token = authorization.split(' ')[1]
+        
         try:
             token_data = verify_conversation_token(token)
+         
             if token_data and token_data.get("widget_id") == widget_id:
                 customer_id = token_data.get("sub")
                 return HTMLResponse(await get_widget_html(
@@ -95,7 +98,7 @@ async def get_widget_ui(
         agent_name=agent.display_name or agent.name,
         agent_customization=agent.customization,
         customer_id=customer_id,
-        initial_token=token
+        initial_token=token,
     ))
 
 async def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None) -> str:
@@ -137,7 +140,8 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
                     agentName: "{html.escape(agent_name)}",
                     customization: {json.dumps(customization_dict)},
                     customerId: "{html.escape(customer_id or '')}",
-                    initialToken: "{html.escape(initial_token or '')}"
+                    initialToken: "{html.escape(initial_token or '')}",
+                    customer: {{}}
                 }};
             </script>
         </head>
@@ -147,6 +151,37 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
         </html>
     """
 
+async def get_customer_session_info(db: Session, customer_id: str) -> dict:
+    """Get customer session info including human agent details if assigned"""
+    customer_info = {}
+    session_repo = SessionToAgentRepository(db)
+    sessions = session_repo.get_customer_sessions(customer_id, SessionStatus.OPEN)
+    
+    if sessions and len(sessions) > 0:
+        session_model, user_full_name, user_profile_pic = sessions[0]
+        
+        if user_full_name:  # If there's a human agent assigned
+            profile_pic = user_profile_pic
+            if settings.S3_FILE_STORAGE and profile_pic:
+                from app.core.s3 import get_s3_signed_url
+                profile_pic = await get_s3_signed_url(profile_pic)
+
+            # Get human agent info from session
+            agent_name = user_full_name if session_model.user_id else None
+            agent_profile_pic = None
+            if user_profile_pic:
+                agent_profile_pic = user_profile_pic
+                if settings.S3_FILE_STORAGE:
+                    agent_profile_pic = await get_s3_signed_url(user_profile_pic)
+
+            customer_info = {
+                "full_name": user_full_name,
+                "profile_pic": profile_pic,
+                "agent_name": agent_name,
+                "agent_profile_pic": agent_profile_pic
+            }
+    
+    return customer_info
 
 @router.get("/{widget_id}", response_model=WidgetResponse)
 async def get_widget_data(
@@ -171,7 +206,6 @@ async def get_widget_data(
     # Verify conversation token and get widget_id from token
     try:
         token_data = verify_conversation_token(token)
-
         if not token_data or token_data.get("widget_id") != widget_id:
             raise HTTPException(
                 status_code=401,
@@ -188,38 +222,44 @@ async def get_widget_data(
 
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        
 
         # Fix the condition check
         should_create_customer = (customer_id == "None" or customer_id is None) and email
 
-        # Updated condition
+        
+        customer_repo = CustomerRepository(db)
+        customer_info = {}
+        
         if should_create_customer:
-     
-            customer_repo = CustomerRepository(db)
-            customer = customer_repo.get_or_create_customer(
-                email=email,
-                organization_id=widget.organization_id
-            )
-
+            # Try to get existing customer first
+            customer = customer_repo.get_customer_by_email(email, widget.organization_id)
+            
+            if not customer:
+                # Create new customer if doesn't exist
+                customer = customer_repo.create_customer(email, widget.organization_id)
+            
+            # Get session info for existing customer
+            if customer:
+                customer_info = await get_customer_session_info(db, customer.id)
+            
             # Generate new token with customer_id
             new_token = create_conversation_token(
                 customer_id=customer.id,
                 widget_id=widget_id
             )
-
+            
             return {
                 "id": widget.id,
                 "organization_id": widget.organization_id,
                 "customer_id": customer.id,
-                "customer": {},  # Empty dict for new customer
+                "customer": customer_info,
                 "agent": {
                     "id": agent.id,
                     "name": agent.name,
                     "display_name": agent.display_name,
                     "customization": agent.customization
                 },
-                "token": new_token  # Include the new token in response
+                "token": new_token
             }
         else:
             if customer_id == "None" or customer_id is None:
@@ -227,6 +267,10 @@ async def get_widget_data(
                     status_code=401,
                     detail="Unauthorized"
                 )
+            
+            # Get session info for existing customer
+            customer_info = await get_customer_session_info(db, customer_id)
+
     except JWTError:
         logger.error(f"JWTError: {JWTError}")
         raise HTTPException(
@@ -234,29 +278,11 @@ async def get_widget_data(
             detail="Unauthorized"
         )
 
-    
-    customer_info = {}
-    if customer_id and customer_id != "None":
-        session_repo = SessionToAgentRepository(db)
-        session = session_repo.get_customer_sessions(customer_id, SessionStatus.OPEN)
-
-        # Add customer info to the response
-        if session and session[0].user_full_name:
-            profile_pic = session[0].user_profile_pic
-            if settings.S3_FILE_STORAGE and profile_pic:
-                from app.core.s3 import get_s3_signed_url
-                profile_pic = await get_s3_signed_url(profile_pic)
-
-            customer_info = {
-                "full_name": session[0].user_full_name,
-                "profile_pic": profile_pic
-            }
-
     return {
         "id": widget.id,
         "organization_id": widget.organization_id,
         "customer_id": customer_id,
-        "customer": customer_info or {},  # Always return dict even when empty
+        "customer": customer_info,
         "agent": {
             "id": agent.id,
             "name": agent.name,
