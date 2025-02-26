@@ -50,16 +50,29 @@ def configure_socketio(cors_origins=None):
         # Set CORS origins for Socket.IO
         sio.eio.cors_allowed_origins = cors_list
 
-
-
     if settings.REDIS_ENABLED:
-        logger.info(f"Redis URL: {settings.REDIS_URL}")
-        sio.client_manager = socketio.AsyncRedisManager(
-            settings.REDIS_URL,
-            write_only=False,
-            channel='chattermate',
-            redis_options={
-                'retry_on_timeout': True,
-                'health_check_interval': 30,
-            }
-        ) 
+        # Use rediss:// protocol if TLS is needed (ElastiCache)
+        redis_url = settings.REDIS_URL
+        if redis_url and redis_url.startswith("redis://") and ".cache.amazonaws.com" in redis_url:
+            redis_url = "rediss://" + redis_url[8:]
+            logger.info(f"Using TLS for Redis connection: {redis_url}")
+        
+        logger.info(f"Redis URL: {redis_url}")
+        
+        try:
+            # Configure Redis manager with appropriate options
+            sio.client_manager = socketio.AsyncRedisManager(
+                redis_url,
+                write_only=False,
+                channel='chattermate',
+                redis_options={
+                    'retry_on_timeout': True,
+                    'health_check_interval': 30,
+                    'socket_timeout': 5.0,
+                    'socket_connect_timeout': 5.0,
+                    'ssl_cert_reqs': None  # Don't verify certificate for ElastiCache
+                }
+            )
+            logger.info("Redis manager configured successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize Redis manager: {str(e)}") 
