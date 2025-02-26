@@ -58,7 +58,7 @@ aiofiles
 gunicorn
 
 redis
-redis-py-cluster
+
 
 aiohttp
 
