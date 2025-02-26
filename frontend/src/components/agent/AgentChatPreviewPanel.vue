@@ -358,6 +358,7 @@ const isMessageInputEnabled = computed(() => {
 <style scoped>
 .chat-container {
     width: 400px;
+    height: 600px;
     display: flex;
     flex-direction: column;
     background: transparent;
