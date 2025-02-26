@@ -181,6 +181,7 @@ if not os.path.exists("uploads/agents"):
 
 # Mount static files
 app.mount("/api/v1/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/assets", StaticFiles(directory="assets"), name="assets")
 
 # Create final ASGI app
 app = socketio.ASGIApp(sio, app)
