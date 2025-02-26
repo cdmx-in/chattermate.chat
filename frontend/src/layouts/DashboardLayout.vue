@@ -50,13 +50,12 @@ const router = useRouter()
 // Initialize enterprise features
 const { hasEnterpriseModule, subscriptionStore, initializeSubscriptionStore } = useEnterpriseFeatures()
 
-const { 
-    currentPlan,
-    isLoadingPlan,
-    isInTrial,
-    trialDaysLeft,
-    fetchCurrentPlan 
-} = subscriptionStore.value
+const currentPlan = computed(() => subscriptionStore.value.currentPlan)
+const isLoadingPlan = computed(() => subscriptionStore.value.isLoadingPlan)
+const isInTrial = computed(() => subscriptionStore.value.isInTrial)
+const trialDaysLeft = computed(() => subscriptionStore.value.trialDaysLeft)
+
+
 
 const userAvatarSrc = computed(() => {
   if (currentUser.value?.profile_pic) {
@@ -117,7 +116,12 @@ onMounted(() => {
     fetchUnreadCount()
     if (hasEnterpriseModule) {
         initializeSubscriptionStore().then(() => {
-            fetchCurrentPlan()
+            subscriptionStore.value.fetchCurrentPlan().then(() => {
+            }).catch((err: Error) => {
+                console.error('Error fetching current plan:', err)
+            })
+        }).catch((err: Error) => {
+            console.error('Error initializing subscription store:', err)
         })
     }
 })

@@ -12,8 +12,8 @@ const NotAvailableComponent = defineComponent({
 // Check for enterprise module
 const enterpriseModules = import.meta.glob([
   '@/modules/enterprise/views/SignupView.vue',
-  '@/modules/enterprise/composables/useSubscriptionStore',
-  '@/modules/enterprise/router/guards/subscription'
+  '@/modules/enterprise/composables/useSubscriptionStore.ts',
+  '@/modules/enterprise/router/guards/subscription.ts'
 ])
 const hasEnterpriseModule = Object.keys(enterpriseModules).length > 0
 
@@ -49,8 +49,8 @@ const moduleImports = {
   signupView: '/src/modules/enterprise/views/SignupView.vue',
   subscriptionView: '/src/modules/enterprise/views/SubscriptionView.vue',
   billingSetupView: '/src/modules/enterprise/views/BillingSetupView.vue',
-  subscriptionStore: '/src/modules/enterprise/composables/useSubscriptionStore',
-  subscriptionGuard: '/src/modules/enterprise/router/guards/subscription'
+  subscriptionStore: '/src/modules/enterprise/composables/useSubscriptionStore.ts',
+  subscriptionGuard: '/src/modules/enterprise/router/guards/subscription.ts'
 }
 
 // Default subscription state
