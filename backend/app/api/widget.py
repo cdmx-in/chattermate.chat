@@ -123,7 +123,7 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
         # Only add photo_url_signed if using S3 storage
         if settings.S3_FILE_STORAGE and photo_url:
             from app.core.s3 import get_s3_signed_url
-            customization_dict["photo_url_signed"] = await get_s3_signed_url(photo_url)
+            customization_dict["photo_url"] = await get_s3_signed_url(photo_url)
 
     return f"""
         <!DOCTYPE html>

@@ -21,6 +21,7 @@ import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { authService } from '@/services/auth'
 import { permissionChecks } from '@/utils/permissions'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import type { AxiosError } from 'axios'
 
 interface ErrorResponse {
@@ -32,6 +33,9 @@ const email = ref('')
 const password = ref('')
 const error = ref('')
 const isLoading = ref(false)
+
+// Check if enterprise module is available
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 
 const getInitialRoute = () => {
     // Check permissions in order of priority
@@ -75,6 +79,10 @@ const handleLogin = async () => {
         isLoading.value = false
     }
 }
+
+const navigateToSignup = () => {
+    router.push('/signup')
+}
 </script>
 
 <template>
@@ -112,6 +120,10 @@ const handleLogin = async () => {
                         <button type="submit" class="submit-btn" :disabled="isLoading">
                             {{ isLoading ? 'Signing in...' : 'Sign In' }}
                         </button>
+                        
+                        <div v-if="hasEnterpriseModule" class="signup-link-container">
+                            <p>Don't have an account? <a href="#" @click.prevent="navigateToSignup" class="signup-link">Sign up</a></p>
+                        </div>
                     </form>
                 </div>
 
@@ -265,6 +277,25 @@ const handleLogin = async () => {
 .submit-btn:disabled {
     opacity: 0.7;
     cursor: not-allowed;
+}
+
+.signup-link-container {
+    text-align: center;
+    margin-top: 1rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.signup-link {
+    color: var(--primary-color);
+    font-weight: 500;
+    text-decoration: none;
+    transition: var(--transition-fast);
+}
+
+.signup-link:hover {
+    color: var(--accent-color);
+    text-decoration: underline;
 }
 
 .illustration-container {
