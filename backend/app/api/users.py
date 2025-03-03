@@ -35,7 +35,7 @@ from app.core.logger import get_logger
 from app.repositories.user import UserRepository
 from pydantic import BaseModel
 from app.models.role import Role
-from app.core.s3 import upload_file_to_s3, delete_file_from_s3
+from app.core.s3 import get_s3_signed_url, upload_file_to_s3, delete_file_from_s3
 from app.core.config import settings
 # Try to import enterprise modules
 try:
@@ -292,7 +292,7 @@ async def login(
                 "email": user.email,
                 "full_name": user.full_name,
                 "organization_id": user.organization_id,
-                "profile_pic": user.profile_pic,
+                "profile_pic": await get_s3_signed_url(user.profile_pic) if settings.S3_FILE_STORAGE and user.profile_pic else user.profile_pic,
                 "is_online": user.is_online,
                 "last_seen": user.last_seen,
                 "is_active": user.is_active,
@@ -419,7 +419,7 @@ async def refresh_token(
                 "email": user.email,
                 "full_name": user.full_name,
                 "organization_id": user.organization_id,
-                "profile_pic": user.profile_pic,
+                "profile_pic": await get_s3_signed_url(user.profile_pic) if settings.S3_FILE_STORAGE and user.profile_pic else user.profile_pic,
                 "is_online": user.is_online,
                 "last_seen": user.last_seen,
                 "is_active": user.is_active,

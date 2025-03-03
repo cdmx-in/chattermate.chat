@@ -251,8 +251,8 @@ provide('showSettings', readonly(showSettings))
                 <div class="footer-content">
                     <p>&copy; 2024 ChatterMate. All rights reserved.</p>
                     <nav class="footer-links">
-                        <a href="/privacy">Privacy Policy</a>
-                        <a href="/terms">Terms of Service</a>
+                        <a href="https://chattermate.chat/privacy_policy.html">Privacy Policy</a>
+                        <a href="https://chattermate.chat/terms_and_conditions.html">Terms of Service</a>
                     </nav>
                 </div>
             </footer>

@@ -377,6 +377,31 @@ Make sure to set up your environment variables in a `.env` file before running D
 - API Documentation: `http://localhost:8000/docs`
 - Project Documentation: [docs.chattermate.chat](https://docs.chattermate.chat)
 
+## Roadmap
+
+- 🎯 End Chat and ask for feedback
+
+
+- 🔄 Auto Follow-up System for idle customer
+
+- 📘 Customer Contact Management
+
+
+- 🤝 Human Agent AI Suggestions
+
+
+- 📈 Agent Performance Metrics
+  - Response time tracking
+  - Resolution rate analysis
+  - Customer satisfaction scores
+
+- 📞 AI Voice Chat or Call
+
+- 🔌 Third-party Integrations
+  - Slack workspace connection
+  - Jira ticket management
+
+
 ## Contributing
 
 1. Fork the repository
