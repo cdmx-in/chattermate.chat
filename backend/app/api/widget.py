@@ -37,6 +37,7 @@ from app.core.logger import get_logger
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
 from app.core.config import settings
+from app.core.s3 import get_s3_signed_url
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -122,7 +123,6 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
         
         # Only add photo_url_signed if using S3 storage
         if settings.S3_FILE_STORAGE and photo_url:
-            from app.core.s3 import get_s3_signed_url
             customization_dict["photo_url"] = await get_s3_signed_url(photo_url)
 
     return f"""
@@ -163,7 +163,6 @@ async def get_customer_session_info(db: Session, customer_id: str) -> dict:
         if user_full_name:  # If there's a human agent assigned
             profile_pic = user_profile_pic
             if settings.S3_FILE_STORAGE and profile_pic:
-                from app.core.s3 import get_s3_signed_url
                 profile_pic = await get_s3_signed_url(profile_pic)
 
             # Get human agent info from session
@@ -248,6 +247,12 @@ async def get_widget_data(
                 widget_id=widget_id
             )
             
+            # Create a copy of customization to modify photo_url
+            customization = agent.customization
+            if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+                # Get signed URL for the photo
+                customization.photo_url = await get_s3_signed_url(customization.photo_url)
+
             return {
                 "id": widget.id,
                 "organization_id": widget.organization_id,
@@ -257,7 +262,7 @@ async def get_widget_data(
                     "id": agent.id,
                     "name": agent.name,
                     "display_name": agent.display_name,
-                    "customization": agent.customization
+                    "customization": customization
                 },
                 "token": new_token
             }

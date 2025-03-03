@@ -33,7 +33,7 @@ import os
 from uuid import uuid4
 from PIL import Image
 from uuid import UUID
-from app.core.s3 import upload_file_to_s3
+from app.core.s3 import upload_file_to_s3, get_s3_signed_url
 from app.core.config import settings
 
 router = APIRouter()
@@ -172,6 +172,13 @@ async def get_organization_agents(
         response = []
         for agent in agents:
             knowledge_items = knowledge_repo.get_by_agent(agent.id)
+            
+            # Create a copy of the customization to modify the photo_url
+            customization = agent.customization
+            if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+                # Get signed URL for the photo
+                customization.photo_url = await get_s3_signed_url(customization.photo_url)
+            
             agent_data = AgentWithCustomizationResponse(
                 id=agent.id,
                 name=agent.name,
@@ -187,7 +194,7 @@ async def get_organization_agents(
                     "name": k.source,
                     "type": k.source_type
                 } for k in knowledge_items],
-                customization=agent.customization,
+                customization=customization,
                 groups=agent.groups
             )
             response.append(agent_data)
@@ -295,6 +302,11 @@ async def upload_agent_photo(
 
         db.commit()
         db.refresh(db_customization)
+
+        # Generate signed URL if using S3 storage
+        if settings.S3_FILE_STORAGE and db_customization.photo_url:
+            db_customization.photo_url = await get_s3_signed_url(db_customization.photo_url)
+
         return db_customization
 
     except HTTPException:
