@@ -4,6 +4,11 @@
 
 ChatterMate is an intelligent customer support platform that combines AI agents with human oversight. It enables businesses to provide 24/7 support through AI agents that can handle common queries, escalate complex issues, and continuously learn from knowledge base articles.
 
+## Documentation
+
+- API Documentation: `http://localhost:8000/docs`
+- Project Documentation: [docs.chattermate.chat](https://docs.chattermate.chat)
+
 ## Demo
 Watch our platform demo:
 [![ChatterMate Demo](https://img.youtube.com/vi/bk40VSS2BLU/0.jpg)](https://youtu.be/bk40VSS2BLU)
@@ -372,10 +377,6 @@ Password: postgres
 
 Make sure to set up your environment variables in a `.env` file before running Docker.
 
-## Documentation
-
-- API Documentation: `http://localhost:8000/docs`
-- Project Documentation: [docs.chattermate.chat](https://docs.chattermate.chat)
 
 ## Roadmap
 
