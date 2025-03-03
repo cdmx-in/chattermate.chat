@@ -211,93 +211,9 @@ docker pull chattermate/backend:latest
 docker pull chattermate/knowledge-processor:latest
 ```
 
-To run using pre-built images:
+To run using pre-built images refer docker-compose.prod.yml:
 
-1. Create a `docker-compose.prod.yml` file:
-```yaml
-services:
-  frontend:
-    image: chattermate/frontend:latest
-    ports:
-      - "80:80"
-    env_file:
-      - ./frontend/.env
-    depends_on:
-      - backend
-    networks:
-      - chattermate-network
-    restart: unless-stopped
-
-  backend:
-    image: chattermate/backend:latest
-    ports:
-      - "8000:8000"
-    env_file:
-      - ./backend/.env
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - chattermate-network
-    restart: unless-stopped
-    volumes:
-      - backend_data:/app/uploads
-
-  knowledge-processor:
-    image: chattermate/knowledge-processor:latest
-    env_file:
-      - ./backend/.env
-    depends_on:
-      - backend
-      - db
-    networks:
-      - chattermate-network
-    restart: unless-stopped
-
-  db:
-    image: postgres:14-alpine
-    environment:
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_DB=chattermate
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    networks:
-      - chattermate-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-    networks:
-      - chattermate-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-networks:
-  chattermate-network:
-    driver: bridge
-
-volumes:
-  postgres_data:
-  redis_data:
-  backend_data:
 ```
-
-2. Start the services:
-```bash
 docker compose -f docker-compose.prod.yml up -d
 ```
 
@@ -323,23 +239,6 @@ docker-compose logs -f db     # PostgreSQL logs
 docker-compose logs -f redis  # Redis logs
 docker-compose logs -f backend # Backend logs
 docker-compose logs -f frontend # frontend logs
-```
-
-Service URLs:
-```
-Frontend: http://localhost:80
-Backend API: http://localhost:8000
-Database: localhost:5432
-Redis: localhost:6379
-```
-
-Database connection details:
-```
-Host: localhost
-Port: 5432
-Database: chattermate
-Username: postgres
-Password: postgres
 ```
 
 Make sure to set up your environment variables in a `.env` file before running Docker.
@@ -386,7 +285,6 @@ Make sure to set up your environment variables in a `.env` file before running D
 
 ## Support
 
-- 💬 Discord: [Join our community](https://discord.gg/XNCMg8jV8U)
 - 🐛 Issues: [GitHub Issues](https://github.com/chattermate/chattermate/issues)
 - 📧 Email: support@chattermate.chat
 
