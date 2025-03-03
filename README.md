@@ -2,22 +2,21 @@
 
 ![ChatterMate Logo](frontend/public/assets/images/logo.svg)
 
-ChatterMate is an intelligent customer support platform that combines AI agents with human oversight. It enables businesses to provide 24/7 support through AI agents that can handle common queries, escalate complex issues, and continuously learn from knowledge base articles.
+ChatterMate is an intelligent customer support platform built with AI as a frontier. It enables businesses to provide 24/7 support through AI agents that can handle common queries, escalate complex issues to the human agent on need basics, and continuously learn from knowledge base articles.
 
 ## Documentation
 
-- API Documentation: `http://localhost:8000/docs`
-- Project Documentation: [docs.chattermate.chat](https://docs.chattermate.chat)
+[docs.chattermate.chat](https://docs.chattermate.chat)
 
 ## Demo
-Watch our platform demo:
+Product demo:
 [![ChatterMate Demo](https://img.youtube.com/vi/bk40VSS2BLU/0.jpg)](https://youtu.be/bk40VSS2BLU)
 
 ## Features
 
 - 🤖 **AI-Powered Responses**: Context-aware AI with multiple provider support (OpenAI GPT-4, Google AI, Ollama)
 - 👥 **Human Handoff**: Seamless transition to human agents when needed
-- 🔌 **Deep Integration**: Connect with Jira, Zendesk, Slack, and more
+- 🔌 **Deep Integration**: Connect with Jira, Zendesk, Slack, and more (Coming Soon)
 - 🎨 **Custom Theming**: Fully customizable chat interface
 - 🔐 **Role-Based Access**: Granular control over user permissions
 - 📊 **Analytics Dashboard**: Real-time monitoring and insights
@@ -27,32 +26,18 @@ Watch our platform demo:
 
 ### Technical Features
 
-**Backend (FastAPI)**
-- Real-time WebSocket communication
-- Knowledge base management with vector search (PGVector)
-- OCR capabilities with RapidOCR
-- JWT & Firebase Authentication
-- PostgreSQL with SQLAlchemy ORM
-- Firebase Cloud Storage
-- Auto-generated API documentation
+**Backend (Python FastAPI)**
+
 
 **Frontend (Vue 3)**
-- Real-time chat widget with markdown support
-- Agent dashboard for conversation monitoring
-- Knowledge management interface
-- White-label customizable widget
-- Theming with PrimeVue and HeadlessUI
-- Firebase Cloud Messaging integration
-- Modern toast notifications (Vue Sonner)
-- Comprehensive testing suite
+
 
 ## Prerequisites
 
 - Python 3.12+
-- Node.js 22+
 - PostgreSQL 14+ (with Vector extension)
-- Firebase Project
-- Redis (Optional for rate limiting)
+- Firebase Project for push notification
+- Redis (Optional for rate limiting and multiserver socket deployment)
 
 ## Installation
 
@@ -339,24 +324,6 @@ docker-compose logs -f redis  # Redis logs
 docker-compose logs -f backend # Backend logs
 docker-compose logs -f frontend # frontend logs
 ```
-
-The Docker setup includes:
-- Custom PostgreSQL image with pg_vector extension pre-installed
-- Redis for caching and rate limiting
-- FastAPI backend with all dependencies
-- Vue.js frontend with automatic builds
-- Automatic database migrations on startup
-- Health checks for all services
-- Proper service startup order
-
-The startup process:
-1. PostgreSQL starts and initializes with vector extension
-2. Redis starts and becomes ready
-3. Backend service waits for PostgreSQL to be healthy
-4. Database migrations run automatically
-5. FastAPI application starts
-6. Frontend builds and waits for backend
-7. Frontend application starts
 
 Service URLs:
 ```
