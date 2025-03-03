@@ -1,8 +1,8 @@
-# ChatterMate - AI-Powered Customer Support Platform
+# ChatterMate - AI-Powered ChatBot Agent Framework
 
 ![ChatterMate Logo](frontend/public/assets/images/logo.svg)
 
-ChatterMate is a no-code customer support agent framework built with AI as a frontier. It enables businesses to provide 24/7 support through AI agents that can handle common queries, escalate complex issues to the human agent on need basics, and continuously learn from knowledge base articles. Integrate the chat widget easily on any website. 
+ChatterMate is a no-code AI chatbot agent framework. It enables businesses to provide 24/7 support through AI agents that can handle common queries, escalate complex issues to the human agent on need basics, and continuously learn from knowledge base articles. Integrate the chat widget easily on any website. 
 
 ## Documentation
 
