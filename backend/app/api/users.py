@@ -166,9 +166,28 @@ async def list_users(
     db: Session = Depends(get_db)
 ):
     """List all users in the organization"""
-    user_repo = UserRepository(db)
-    users = user_repo.get_users_by_organization(current_user.organization_id)
-    return users
+    try:
+        user_repo = UserRepository(db)
+        users = user_repo.get_users_by_organization(current_user.organization_id)
+
+        # Get signed URLs for profile pictures if using S3
+        if settings.S3_FILE_STORAGE:
+            for user in users:
+                if user.profile_pic:
+                    try:
+                        user.profile_pic = await get_s3_signed_url(user.profile_pic)
+                    except Exception as e:
+                        logger.error(f"Error getting signed URL for user profile picture: {str(e)}")
+                        # Don't fail the request if we can't get the signed URL
+                        pass
+
+        return users
+    except Exception as e:
+        logger.error(f"Error listing users: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
 
 @router.get("/{user_id}", response_model=UserResponse)

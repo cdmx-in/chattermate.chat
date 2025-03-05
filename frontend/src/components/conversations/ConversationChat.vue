@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { onMounted, watch, nextTick } from 'vue'
+import { onMounted, watch, nextTick, ref } from 'vue'
 import type { ChatDetail } from '@/types/chat'
 import { useConversationChat } from '@/composables/useConversationChat'
 import sendIcon from '@/assets/sendbutton.svg'
@@ -45,8 +45,28 @@ const {
   sendMessage,
   handleTakeover,
   updateChat,
-  handledByAI
+  handledByAI,
+  endChat
 } = useConversationChat(props.chat, emit)
+
+// Add state for end chat confirmation
+const showEndChatConfirm = ref(false)
+
+// Function to handle end chat request
+const handleEndChatRequest = () => {
+  showEndChatConfirm.value = true
+}
+
+// Function to confirm end chat
+const confirmEndChat = () => {
+  endChat(true) // true indicates to request rating
+  showEndChatConfirm.value = false
+}
+
+// Function to cancel end chat
+const cancelEndChat = () => {
+  showEndChatConfirm.value = false
+}
 
 // Watch for chat changes and update the internal state
 watch(() => props.chat, (newChat) => {
@@ -92,6 +112,15 @@ onMounted(() => {
           <i class="fas fa-hand-paper"></i>
           {{ isLoading ? 'Taking over...' : 'Take over chat' }}
         </button>
+        <!-- Add End Chat button -->
+        <button 
+          v-if="canSendMessage && !isChatClosed" 
+          class="end-chat-btn"
+          @click="handleEndChatRequest"
+        >
+          <i class="fas fa-door-open"></i>
+          End Chat
+        </button>
         <button class="action-btn"><i class="fas fa-star"></i></button>
         <button class="action-btn"><i class="fas fa-user"></i></button>
         <button class="action-btn"><i class="fas fa-video"></i></button>
@@ -119,6 +148,18 @@ onMounted(() => {
         </div>
       </div>
     </main>
+
+    <!-- End Chat Confirmation Modal -->
+    <div v-if="showEndChatConfirm" class="end-chat-modal">
+      <div class="end-chat-modal-content">
+        <h3>End Chat</h3>
+        <p>Are you sure you want to end this chat and request customer feedback?</p>
+        <div class="end-chat-modal-actions">
+          <button class="cancel-btn" @click="cancelEndChat">Cancel</button>
+          <button class="confirm-btn" @click="confirmEndChat">End Chat & Request Rating</button>
+        </div>
+      </div>
+    </div>
 
     <footer class="chat-input" v-if="!isChatClosed && !handledByAI">
       <div class="input-container" :class="{ disabled: !canSendMessage }">
@@ -297,6 +338,14 @@ onMounted(() => {
   text-align: right;
 }
 
+.message.user .message-time {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.message.bot .message-time {
+  color: var(--text-muted);
+}
+
 .input-container {
   display: flex;
   align-items: center;
@@ -445,5 +494,93 @@ onMounted(() => {
 
 .chat-closed-message i {
   font-size: 16px;
+}
+
+.end-chat-btn {
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.2s;
+  margin-right: 16px;
+}
+
+.end-chat-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+
+.end-chat-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.end-chat-modal-content {
+  background: var(--background-color);
+  border-radius: 8px;
+  padding: 24px;
+  width: 400px;
+  max-width: 90%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.end-chat-modal-content h3 {
+  margin-top: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.end-chat-modal-content p {
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+}
+
+.end-chat-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.cancel-btn {
+  background: var(--background-mute);
+  color: var(--text-primary);
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.confirm-btn {
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.confirm-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+
+.cancel-btn:hover {
+  background: var(--background-soft);
 }
 </style> 

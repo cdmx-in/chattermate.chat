@@ -92,6 +92,7 @@ class Agent(Base):
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"))
     is_default = Column(Boolean, default=False)
     transfer_to_human = Column(Boolean, default=False, nullable=False)
+    ask_for_rating = Column(Boolean, default=True, nullable=True)
 
     # Relationships
     organization = relationship("Organization", back_populates="agents")
@@ -102,6 +103,7 @@ class Agent(Base):
     widgets = relationship("Widget", back_populates="agent")
     chat_histories = relationship("ChatHistory", back_populates="agent")
     session_assignments = relationship("SessionToAgent", back_populates="agent")
+    ratings = relationship("Rating", back_populates="agent")
     groups = relationship(
         "UserGroup",
         secondary=agent_usergroup,

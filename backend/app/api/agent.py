@@ -128,6 +128,16 @@ async def update_agent(
         # Get knowledge sources for response
         knowledge_items = knowledge_repo.get_by_agent(agent.id)
 
+        # Get signed URL for photo if using S3
+        customization = agent.customization
+        if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+            try:
+                customization.photo_url = await get_s3_signed_url(customization.photo_url)
+            except Exception as e:
+                logger.error(f"Error getting signed URL for agent photo: {str(e)}")
+                # Don't fail the request if we can't get the signed URL
+                pass
+
         # Prepare response
         response = AgentWithCustomizationResponse(
             id=agent.id,
@@ -138,8 +148,9 @@ async def update_agent(
             instructions=agent.instructions,
             is_active=agent.is_active,
             organization_id=agent.organization_id,
-            customization=agent.customization,
+            customization=customization,
             transfer_to_human=agent.transfer_to_human,
+            ask_for_rating=agent.ask_for_rating,
             knowledge=[{
                 "id": k.id,
                 "name": k.source,
@@ -189,6 +200,7 @@ async def get_organization_agents(
                 is_active=agent.is_active,
                 organization_id=agent.organization_id,
                 transfer_to_human=agent.transfer_to_human or False,
+                ask_for_rating=agent.ask_for_rating or False,
                 knowledge=[{
                     "id": k.id,
                     "name": k.source,
@@ -386,21 +398,23 @@ async def get_agent_by_id(
     current_user: User = Depends(require_permissions("view_all", "manage_agents")),
     db: Session = Depends(get_db)
 ):
-    """Get agent by ID"""
-    try:
-        # Get agent
-        agent = db.query(Agent).filter(Agent.id == agent_id).first()
-        if not agent or agent.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=404, detail="Agent not found")
-
-        # Return agent
-        return agent
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting agent by id: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get agent by id"
-        )
+    """Get agent by ID with customization"""
+    agent_repo = AgentRepository(db)
+    agent = agent_repo.get_by_id(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Check if agent belongs to user's organization
+    if agent.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Get signed URL for photo if using S3
+    if settings.S3_FILE_STORAGE and agent.customization and agent.customization.photo_url:
+        try:
+            agent.customization.photo_url = await get_s3_signed_url(agent.customization.photo_url)
+        except Exception as e:
+            logger.error(f"Error getting signed URL for agent photo: {str(e)}")
+            # Don't fail the request if we can't get the signed URL
+            pass
+    
+    return agent

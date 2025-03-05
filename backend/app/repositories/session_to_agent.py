@@ -179,11 +179,43 @@ class SessionToAgentRepository:
             )
             if status:
                 query = query.filter(SessionToAgent.status == status)
+            
             return query.order_by(SessionToAgent.assigned_at.desc()).all()
         except Exception as e:
             logger.error(f"Error getting agent-customer sessions: {str(e)}")
-            return [] 
-        
+            return []
+
+    def reopen_closed_session(self, session_id: UUID | str) -> bool:
+        """Reopen a closed session"""
+        try:
+            session = self.get_session(session_id)
+            if not session:
+                return False
+            
+            if session.status == SessionStatus.CLOSED:
+                session.status = SessionStatus.OPEN
+                self.db.commit()
+                return True
+            return False  # Session was not closed
+        except Exception as e:
+            logger.error(f"Error reopening session: {str(e)}")
+            self.db.rollback()
+            return False
+            
+    def get_latest_customer_session(self, customer_id: UUID | str, agent_id: UUID | str = None) -> Optional[SessionToAgent]:
+        """Get the latest session for a customer regardless of status"""
+        try:
+            query = self.db.query(SessionToAgent).filter(
+                SessionToAgent.customer_id == customer_id
+            )
+            if agent_id:
+                query = query.filter(SessionToAgent.agent_id == agent_id)
+            
+            return query.order_by(SessionToAgent.assigned_at.desc()).first()
+        except Exception as e:
+            logger.error(f"Error getting latest customer session: {str(e)}")
+            return None
+
     def update_session(self, session_id: UUID | str, data: dict) -> bool:
         """Update a session"""
         try:
@@ -222,3 +254,31 @@ class SessionToAgentRepository:
             logger.error(f"Error taking over session: {str(e)}")
             self.db.rollback()
             return False
+
+    def update_session_status(self, session_id: UUID | str, status: str) -> Optional[SessionToAgent]:
+        """Update the status of a session"""
+        try:
+            session = self.db.query(SessionToAgent).filter(SessionToAgent.session_id == session_id).first()
+            if not session:
+                logger.error(f"Session {session_id} not found")
+                return None
+                
+            # Convert string status to enum if needed
+            if isinstance(status, str):
+                try:
+                    status = SessionStatus[status]
+                except KeyError:
+                    logger.error(f"Invalid session status: {status}")
+                    return None
+            
+            session.status = status
+            session.updated_at = datetime.utcnow()
+            
+            self.db.commit()
+            self.db.refresh(session)
+            logger.info(f"Updated session {session_id} status to {status}")
+            return session
+        except Exception as e:
+            logger.error(f"Error updating session status: {str(e)}")
+            self.db.rollback()
+            return None

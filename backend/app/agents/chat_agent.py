@@ -29,6 +29,7 @@ from phi.storage.agent.postgres import PgAgentStorage
 from app.repositories.chat import ChatRepository
 import uuid
 from app.repositories.session_to_agent import SessionToAgentRepository
+from app.models.session_to_agent import SessionStatus
 from pydantic import BaseModel, Field
 from enum import Enum
 from app.core.config import settings
@@ -36,6 +37,7 @@ from app.agents.transfer_agent import get_agent_availability_response
 from app.models.notification import Notification
 from app.services.user import send_fcm_notification
 from app.models.user import User, user_groups
+from datetime import datetime
 
 logger = get_logger(__name__)
 
@@ -52,11 +54,24 @@ class TransferReasonType(str, Enum):
     HIGH_PRIORITY_ISSUE = "HIGH_PRIORITY_ISSUE"
     COMPLIANCE_ISSUE = "COMPLIANCE_ISSUE"
 
+class EndChatReasonType(str, Enum):
+    ISSUE_RESOLVED = "ISSUE_RESOLVED"
+    CUSTOMER_REQUEST = "CUSTOMER_REQUEST"
+    CONFIRMATION_RECEIVED = "CONFIRMATION_RECEIVED"
+    FAREWELL = "FAREWELL"
+    THANK_YOU = "THANK_YOU"
+    NATURAL_CONCLUSION = "NATURAL_CONCLUSION"
+    TASK_COMPLETED = "TASK_COMPLETED"
+
 class ChatResponse(BaseModel):
     message: str = Field(description="The response from the agent")
     transfer_to_human: bool = Field(description="Whether to transfer the conversation to a human")
-    transfer_reason: Optional[TransferReasonType] = Field(description="Transfer reason Type should be one of the following: UNABLE_TO_ANSWER, NEED_MORE_INFO, KNOWLEDGE_GAP, NEED_TO_CALL, NEED_TO_EMAIL, NEED_TO_MEET, FRUSTRATED, REPEAT_INSTRUCTIONS, DIRECT_REQUEST, HIGH_PRIORITY_ISSUE, COMPLIANCE_ISSUE")
-    transfer_description: Optional[str] = Field(description="Detailed description for the transfer")
+    end_chat: bool = Field(default=False, description="Whether to end the chat and request rating")
+    transfer_reason: Optional[TransferReasonType] = Field(default=None, description="Transfer reason Type should be one of the following: UNABLE_TO_ANSWER, NEED_MORE_INFO, KNOWLEDGE_GAP, NEED_TO_CALL, NEED_TO_EMAIL, NEED_TO_MEET, FRUSTRATED, REPEAT_INSTRUCTIONS, DIRECT_REQUEST, HIGH_PRIORITY_ISSUE, COMPLIANCE_ISSUE")
+    transfer_description: Optional[str] = Field(default=None, description="Detailed description for the transfer")
+    end_chat_reason: Optional[EndChatReasonType] = Field(default=None, description="End chat reason Type should be one of the following: ISSUE_RESOLVED, CUSTOMER_REQUEST, CONFIRMATION_RECEIVED, FAREWELL, THANK_YOU, NATURAL_CONCLUSION, TASK_COMPLETED")
+    end_chat_description: Optional[str] = Field(default=None, description="Detailed description for ending the chat")
+    request_rating: bool = Field(default=False, description="Whether to request a rating from the customer")
 
     class Config:
         from_attributes = True
@@ -79,9 +94,40 @@ class ChatAgent:
         self.model_type = model_type
 
         if self.agent_data:
+            # Define end chat instructions to avoid long lines
+            end_chat_with_rating = (
+                "You should end the chat and request a rating ONLY when you are confident that: "
+                "1) The customer's issue has been fully resolved and they have confirmed this, "
+                "2) The customer explicitly requests to end the chat, "
+                "3) There's a clear confirmation or acknowledgment from the customer that their needs have been met, "
+                "4) The conversation has reached a natural conclusion after resolving the customer's query, or "
+                "5) The requested task has been completed and confirmed by the customer. "
+                "DO NOT end the chat just because the customer says \"thank you\" or \"thanks\" - "
+                "this is often just politeness and not an indication that they want to end the conversation. "
+                "Always check the conversation history to confirm the issue has been properly addressed before ending the chat."
+            )
+            
+            end_chat_without_rating = (
+                "You should end the chat ONLY when: "
+                "1) The customer's issue has been fully resolved and they have confirmed this, "
+                "2) The customer explicitly requests to end the chat, "
+                "3) There's a clear confirmation or acknowledgment from the customer that their needs have been met, "
+                "4) The conversation has reached a natural conclusion after resolving the customer's query, or "
+                "5) The requested task has been completed and confirmed by the customer. "
+                "DO NOT end the chat just because the customer says \"thank you\" or \"thanks\" - "
+                "this is often just politeness and not an indication that they want to end the conversation."
+            )
+            
+            transfer_instructions = (
+                "You are allowed to transfer the conversation to a human if one of the following conditions is met: "
+                "UNABLE_TO_ANSWER, NEED_MORE_INFO, KNOWLEDGE_GAP, NEED_TO_CALL, NEED_TO_EMAIL, NEED_TO_MEET, "
+                "FRUSTRATED, REPEAT_INSTRUCTIONS, DIRECT_REQUEST, HIGH_PRIORITY_ISSUE, COMPLIANCE_ISSUE."
+            )
+            
             instructions = [
                 f"You are {self.agent_data.display_name if self.agent_data.display_name else self.agent_data.name}, representing our company.",
-                f" { 'You are allowed to transfer the conversation to a human if one of the following conditions is met: UNABLE_TO_ANSWER, NEED_MORE_INFO, KNOWLEDGE_GAP, NEED_TO_CALL, NEED_TO_EMAIL, NEED_TO_MEET, FRUSTRATED, REPEAT_INSTRUCTIONS, DIRECT_REQUEST, HIGH_PRIORITY_ISSUE, COMPLIANCE_ISSUE.' if self.agent_data.transfer_to_human else ''} ",
+                f" { transfer_instructions if self.agent_data.transfer_to_human else ''} ",
+                f" { end_chat_with_rating if self.agent_data.ask_for_rating else end_chat_without_rating} ",
                 *self.agent_data.instructions
             ]
         else:
@@ -124,8 +170,6 @@ class ChatAgent:
 
         storage = PgAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
 
-
-
         self.agent = Agent(
             name="Customer Service Agent",
             session_id=session_id,
@@ -138,12 +182,11 @@ class ChatAgent:
             num_history_responses=10,
             read_chat_history=True,
             markdown=False,
-            debug_mode=True,
+            debug_mode=settings.ENVIRONMENT == "development",
             user_id=str(customer_id),
             session_data={"status": "active"},
             response_model=ChatResponse,
             structured_output=True,
-
         )
 
     async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
@@ -159,10 +202,10 @@ class ChatAgent:
                 "message_type": "user",
                 "session_id": session_id,
                 "organization_id": org_id,
-                    "agent_id": agent_id,
-                    "customer_id": customer_id,
-                    "attributes": {}
-                })
+                "agent_id": agent_id,
+                "customer_id": customer_id,
+                "attributes": {}
+            })
 
             # Get AI response
             response = await self.agent.arun(
@@ -173,12 +216,71 @@ class ChatAgent:
 
             response_content = ""
             if hasattr(response, 'content'):
-                response_content = ChatResponse(**response.content) if isinstance(response.content, dict) else response.content
+                if isinstance(response.content, dict):
+                    response_content = ChatResponse(**response.content)
+                elif isinstance(response.content, str):
+                    try:
+                        import json
+                        content_dict = json.loads(response.content)
+                        response_content = ChatResponse(**content_dict)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse response content as JSON: {e}")
+                        response_content = ChatResponse(
+                            message=response.content,
+                            transfer_to_human=False,
+                            end_chat=False,
+                            end_chat_reason=None,
+                            end_chat_description=None,
+                            request_rating=False
+                        )
+                else:
+                    response_content = response.content
             else:
-                response_content = ChatResponse(**response) if isinstance(response, dict) else response
+                if isinstance(response, dict):
+                    response_content = ChatResponse(**response)
+                elif isinstance(response, str):
+                    try:
+                        import json
+                        response_dict = json.loads(response)
+                        response_content = ChatResponse(**response_dict)
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse response as JSON: {e}")
+                        response_content = ChatResponse(
+                            message=response,
+                            transfer_to_human=False,
+                            end_chat=False,
+                            end_chat_reason=None,
+                            end_chat_description=None,
+                            request_rating=False
+                        )
+                else:
+                    response_content = response
 
+            logger.info(f"Response content: {response_content}")
+            # Handle end chat and rating request
+            if response_content.end_chat:
+                session_repo = SessionToAgentRepository(db)
+                
+                # Only request rating if enabled for this agent
+                should_request_rating = self.agent_data and self.agent_data.ask_for_rating
+                response_content.request_rating = should_request_rating
 
-            # Handle the response
+                session_repo.update_session(
+                    session_id,
+                    {
+                        "status": SessionStatus.CLOSED,
+                        "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
+                        "end_chat_description": response_content.end_chat_description,
+                        "closed_at": datetime.now()
+                    }
+                )
+
+                # Add rating request to the message if enabled
+                if should_request_rating:
+                    rating_message = "\n\nThank you for chatting with us! Would you please take a moment to rate your experience? Your feedback helps us improve our service."
+                    response_content.message += rating_message
+
+            # Handle transfer (existing code)
             if self.agent_data.transfer_to_human and response_content.transfer_to_human and self.agent_data.groups:
                 # Get chat history
                 chat_history = []
@@ -198,8 +300,6 @@ class ChatAgent:
                 # Get all users in the group
                 group_id = self.agent_data.groups[0].id
                 users = db.query(User).join(user_groups).filter(user_groups.c.group_id == group_id).all()
-                
-
                 
                 for user in users:
                     # Create notification record
@@ -236,7 +336,11 @@ class ChatAgent:
                     message=availability_response["message"],
                     transfer_to_human=availability_response["transfer_to_human"],
                     transfer_reason=availability_response.get("transfer_reason"),
-                    transfer_description=availability_response.get("transfer_description")
+                    transfer_description=availability_response.get("transfer_description"),
+                    end_chat=False,
+                    end_chat_reason=None,
+                    end_chat_description=None,
+                    request_rating=False
                 )
                 
                 # Store AI response with transfer status
@@ -245,31 +349,39 @@ class ChatAgent:
                     "message_type": "bot",
                     "session_id": session_id,
                     "organization_id": org_id,
-                        "agent_id": agent_id,
-                        "customer_id": customer_id,
-                        "attributes": {
-                            "transfer_to_human": response_content.transfer_to_human,
-                            "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
-                            "transfer_description": response_content.transfer_description
-                        }
-                    })
-
-                return response_content
-
-            # Store AI response
-            chat_repo.create_message({
-                "message": response_content.message,
-                "message_type": "bot",
-                "session_id": session_id,
-                "organization_id": org_id,
                     "agent_id": agent_id,
                     "customer_id": customer_id,
                     "attributes": {
                         "transfer_to_human": response_content.transfer_to_human,
                         "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
-                        "transfer_description": response_content.transfer_description
+                        "transfer_description": response_content.transfer_description,
+                        "end_chat": response_content.end_chat,
+                        "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
+                        "end_chat_description": response_content.end_chat_description,
+                        "request_rating": response_content.request_rating
                     }
                 })
+
+                return response_content
+
+            # Store AI response with end chat and rating status
+            chat_repo.create_message({
+                "message": response_content.message,
+                "message_type": "bot",
+                "session_id": session_id,
+                "organization_id": org_id,
+                "agent_id": agent_id,
+                "customer_id": customer_id,
+                "attributes": {
+                    "transfer_to_human": response_content.transfer_to_human,
+                    "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
+                    "transfer_description": response_content.transfer_description,
+                    "end_chat": response_content.end_chat,
+                    "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
+                    "end_chat_description": response_content.end_chat_description,
+                    "request_rating": response_content.request_rating
+                }
+            })
             
             return response_content
 
@@ -283,7 +395,11 @@ class ChatAgent:
                 message=error_message,
                 transfer_to_human=False,
                 transfer_reason=None,
-                transfer_description=None
+                transfer_description=None,
+                end_chat=False,
+                end_chat_reason=None,
+                end_chat_description=None,
+                request_rating=False
             )
             
             # Store error message

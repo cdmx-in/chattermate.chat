@@ -48,6 +48,7 @@ class AgentBase(BaseModel):
     is_active: bool = True
     is_default: bool = False
     transfer_to_human: bool = False
+    ask_for_rating: bool = False
 
 
 class AgentCreate(AgentBase):
@@ -59,6 +60,7 @@ class AgentUpdate(BaseModel):
     instructions: Optional[List[str]] = None
     is_active: Optional[bool] = None
     transfer_to_human: Optional[bool] = None
+    ask_for_rating: Optional[bool] = None
 
 
 
@@ -79,6 +81,7 @@ class AgentResponse(BaseModel):
     organization_id: UUID
     knowledge: List[AgentKnowledge] = []
     transfer_to_human: bool = False
+    ask_for_rating: bool = False
 
 
     class Config:

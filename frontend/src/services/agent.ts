@@ -1,5 +1,5 @@
 import api from './api'
-import type { AgentCustomization, Agent } from '@/types/agent'
+import type { AgentCustomization, Agent, AgentUpdate } from '@/types/agent'
 import { agentStorage } from '@/utils/storage'
 
 export const agentService = {
@@ -12,13 +12,7 @@ export const agentService = {
 
   async updateAgent(
     agentId: string,
-    data: {
-      display_name?: string | null
-      instructions?: string[]
-      is_active?: boolean,
-      transfer_to_human?: boolean,
-      customization?: AgentCustomization
-    },
+    data: AgentUpdate
   ): Promise<Agent> {
     const response = await api.put(`/agent/${agentId}`, data)
     // Update agent in local storage

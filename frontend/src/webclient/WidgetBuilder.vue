@@ -74,7 +74,8 @@ const {
     reconnect,
     cleanup,
     customer,
-    onTakeover
+    onTakeover,
+    submitRating: socketSubmitRating
 } = useWidgetSocket()
 
 const newMessage = ref('')
@@ -234,6 +235,15 @@ watch(() => messages.value, (newMessages) => {
     nextTick(() => {
         scrollToBottom()
     })
+    
+   
+    // Check for end chat in the last message
+    if (newMessages.length > 0) {
+
+        const lastMessage = newMessages[newMessages.length - 1]
+        
+        handleEndChat(lastMessage)
+    }
 }, { deep: true })
 
 // Add reconnect handler
@@ -241,6 +251,85 @@ const handleReconnect = async () => {
     const connected = await reconnect()
     if (connected) {
         await checkAuthorization()
+    }
+}
+
+// Add these refs after other refs
+const showRatingDialog = ref(false)
+const currentRating = ref(0)
+const ratingFeedback = ref('')
+const currentSessionId = ref('')
+
+// Add these refs for star rating
+const hoverRating = ref(0)
+const isSubmittingRating = ref(false)
+
+// Add this after other computed properties
+const ratingEnabled = computed(() => {
+    const lastMessage = messages.value[messages.value.length - 1]
+    return lastMessage?.attributes?.request_rating || false
+})
+
+// Add this after other methods
+const handleEndChat = (message) => {
+    
+    if (message.attributes?.end_chat && message.attributes?.request_rating) {
+        // Determine the agent name with proper fallbacks
+        const displayAgentName = message.agent_name || customer.value?.agent_name || agentName.value || 'our agent'
+        
+        messages.value.push({
+            message: `Rate the chat session that you had with ${displayAgentName}`,
+            message_type: 'rating',
+            created_at: new Date().toISOString(),
+            session_id: message.session_id,
+            agent_name: displayAgentName,
+            showFeedback: false
+        })
+        currentSessionId.value = message.session_id
+    }
+}
+
+const handleStarHover = (rating: number) => {
+    if (!isSubmittingRating.value) {
+        hoverRating.value = rating
+    }
+}
+
+const handleStarLeave = () => {
+    if (!isSubmittingRating.value) {
+        const lastMessage = messages.value[messages.value.length - 1]
+        hoverRating.value = lastMessage?.selectedRating || 0
+    }
+}
+
+const handleStarClick = async (rating: number) => {
+    if (!isSubmittingRating.value) {
+        hoverRating.value = rating
+        // Show feedback input after rating selection
+        const lastMessage = messages.value[messages.value.length - 1]
+        if (lastMessage && lastMessage.message_type === 'rating') {
+            lastMessage.showFeedback = true
+            lastMessage.selectedRating = rating
+        }
+    }
+}
+
+const handleSubmitRating = async (sessionId: string, rating: number, feedback: string | null = null) => {
+    try {
+        isSubmittingRating.value = true
+        await socketSubmitRating(rating, feedback)
+        
+        // Instead of removing the rating message, mark it as submitted
+        const lastMessage = messages.value.find(msg => msg.message_type === 'rating')
+        if (lastMessage) {
+            lastMessage.isSubmitted = true
+            lastMessage.finalRating = rating
+            lastMessage.finalFeedback = feedback
+        }
+    } catch (error) {
+        console.error('Failed to submit rating:', error)
+    } finally {
+        isSubmittingRating.value = false
     }
 }
 
@@ -350,15 +439,78 @@ onUnmounted(() => {
                             message.message_type === 'bot' ? 'agent-message' : 
                             message.message_type === 'agent' ? 'agent-message' : 
                             message.message_type === 'system' ? 'system-message' :
+                            message.message_type === 'rating' ? 'rating-message' :
                             'user-message'
                         ]"
                     >
                         <div class="message-bubble" 
-                            :style="message.message_type === 'system' ? {} : 
+                            :style="message.message_type === 'system' || message.message_type === 'rating' ? {} : 
                                    message.message_type === 'user' ? userBubbleStyles : 
                                    agentBubbleStyles"
                         >
-                            <div v-html="marked(message.message, { renderer })"></div>
+                            <template v-if="message.message_type === 'rating'">
+                                <div class="rating-content">
+                                    <p class="rating-prompt">Rate the chat session that you had with {{ message.agent_name || customer.agent_name || agentName || 'our agent' }}</p>
+                                    
+                                    <!-- Rating stars -->
+                                    <div class="star-rating" :class="{ 'submitted': isSubmittingRating || message.isSubmitted }">
+                                        <button
+                                            v-for="star in 5"
+                                            :key="star"
+                                            class="star-button"
+                                            :class="{
+                                                'warning': star <= (message.isSubmitted ? message.finalRating : (hoverRating || message.selectedRating)) && (message.isSubmitted ? message.finalRating : (hoverRating || message.selectedRating)) <= 3,
+                                                'success': star <= (message.isSubmitted ? message.finalRating : (hoverRating || message.selectedRating)) && (message.isSubmitted ? message.finalRating : (hoverRating || message.selectedRating)) > 3,
+                                                'selected': star <= (message.isSubmitted ? message.finalRating : (hoverRating || message.selectedRating))
+                                            }"
+                                            @mouseover="!message.isSubmitted && handleStarHover(star)"
+                                            @mouseleave="!message.isSubmitted && handleStarLeave"
+                                            @click="!message.isSubmitted && handleStarClick(star)"
+                                            :disabled="isSubmittingRating || message.isSubmitted"
+                                        >
+                                            ★
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Feedback input before submission -->
+                                    <div v-if="message.showFeedback && !message.isSubmitted" class="feedback-wrapper">
+                                        <div class="feedback-section">
+                                            <input
+                                                v-model="message.feedback"
+                                                placeholder="Please share your feedback (optional)"
+                                                :disabled="isSubmittingRating"
+                                                maxlength="500"
+                                                class="feedback-input"
+                                            />
+                                            <div class="feedback-counter">{{ message.feedback?.length || 0 }}/500</div>
+                                        </div>
+                                        <button
+                                            @click="handleSubmitRating(message.session_id, hoverRating, message.feedback)"
+                                            :disabled="isSubmittingRating || !hoverRating"
+                                            class="submit-rating-button"
+                                            :style="{ backgroundColor: customization.accent_color || 'var(--primary-color)' }"
+                                        >
+                                            {{ isSubmittingRating ? 'Submitting...' : 'Submit Rating' }}
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Submitted feedback display -->
+                                    <div v-if="message.isSubmitted && message.finalFeedback" class="submitted-feedback-wrapper">
+                                        <div class="submitted-feedback">
+                                            <p class="submitted-feedback-text">{{ message.finalFeedback }}</p>
+                                        </div>
+                                        
+                                    </div>
+                                    
+                                    <!-- Thank you message if no feedback was provided -->
+                                    <div v-else-if="message.isSubmitted" class="submitted-message">
+                                        Thank you for your rating!
+                                    </div>
+                                </div>
+                            </template>
+                            <template v-else>
+                                <div v-html="marked(message.message, { renderer })"></div>
+                            </template>
                         </div>
                         <div class="message-info">
                             <span v-if="message.message_type === 'user'" class="agent-name">
@@ -415,6 +567,45 @@ onUnmounted(() => {
             <!-- Powered by footer -->
             <div class="powered-by" :style="messageNameStyles">
                 Powered by ChatterMate
+            </div>
+        </div>
+
+        <!-- Rating Dialog -->
+        <div v-if="showRatingDialog" class="rating-dialog">
+            <div class="rating-content">
+                <h3>Rate your conversation</h3>
+                <div class="star-rating">
+                    <button 
+                        v-for="star in 5" 
+                        :key="star"
+                        @click="currentRating = star"
+                        :class="{ active: star <= currentRating }"
+                        class="star-button"
+                    >
+                        ★
+                    </button>
+                </div>
+                <textarea
+                    v-model="ratingFeedback"
+                    placeholder="Additional feedback (optional)"
+                    class="rating-feedback"
+                ></textarea>
+                <div class="rating-actions">
+                    <button 
+                        @click="submitRating(currentRating, ratingFeedback)"
+                        :disabled="!currentRating"
+                        class="submit-button"
+                        :style="userBubbleStyles"
+                    >
+                        Submit
+                    </button>
+                    <button 
+                        @click="showRatingDialog = false"
+                        class="skip-rating"
+                    >
+                        Skip
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -883,4 +1074,244 @@ onUnmounted(() => {
 
 .loading-spinner .dot:nth-child(1) { animation-delay: -0.32s; }
 .loading-spinner .dot:nth-child(2) { animation-delay: -0.16s; }
+
+.rating-dialog {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.rating-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem;
+    width: 100%;
+}
+
+.star-rating {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    margin: 0 0 24px;
+}
+
+.star-button {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 28px;
+    color: #d1d5db;
+    transition: all var(--transition-fast);
+    padding: 0 4px;
+    transform-origin: center;
+    line-height: 1;
+}
+
+.star-button:hover {
+    transform: scale(1.1);
+}
+
+.star-button.selected {
+    transform: scale(1.05);
+}
+
+.star-button.warning {
+    color: var(--error-color);
+    text-shadow: 0 0 5px rgba(239, 68, 68, 0.3);
+}
+
+.star-button.success {
+    color: var(--success-color);
+    text-shadow: 0 0 5px rgba(16, 185, 129, 0.3);
+}
+
+.star-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.submit-button {
+    padding: 12px 20px;
+    border: none;
+    border-radius: var(--radius-md);
+    background-color: var(--primary-color);
+    color: white;
+    cursor: pointer;
+    font-size: var(--text-base);
+    font-weight: 600;
+    transition: all var(--transition-fast);
+    width: 100%;
+    text-align: center;
+    display: block;
+    margin-top: 16px;
+}
+
+.submit-button:hover:not(:disabled) {
+    opacity: 0.9;
+}
+
+.submit-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.rating-prompt {
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    margin-bottom: 24px;
+    text-align: center;
+    font-weight: 500;
+}
+
+.rating-message {
+    align-self: center;
+    width: 100%;
+    max-width: 500px;
+    margin: var(--space-sm) 0;
+}
+
+.rating-message .message-bubble {
+    background-color: white;
+    padding: var(--space-md) var(--space-md);
+    border-radius: 12px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--border-color);
+    transition: all var(--transition-normal);
+}
+
+.rating-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    width: 100%;
+    padding: 0;
+}
+
+.rating-prompt {
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    margin-bottom: 20px;
+    text-align: center;
+    font-weight: 500;
+}
+
+.star-rating {
+    display: flex;
+    gap: 0.75rem;
+    justify-content: center;
+    margin: 0 0 20px;
+}
+
+.feedback-wrapper {
+    width: 100%;
+}
+
+.feedback-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    width: 100%;
+    padding: 0;
+    margin-bottom: 4px;
+}
+
+.feedback-input {
+    padding: 10px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    font-size: var(--text-sm);
+    transition: border-color var(--transition-fast);
+    background-color: white;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.feedback-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(243, 70, 17, 0.1);
+}
+
+.feedback-counter {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    text-align: right;
+    margin-right: 4px;
+    padding: 0 4px;
+}
+
+.submit-rating-button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    background-color: var(--primary-color);
+    color: white;
+    cursor: pointer;
+    font-size: var(--text-base);
+    font-weight: 600;
+    transition: all var(--transition-fast);
+    width: 100%;
+    text-align: center;
+    display: block;
+    margin: 12px 0 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.submit-rating-button:hover:not(:disabled) {
+    opacity: 0.95;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}
+
+.submit-rating-button:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.submit-rating-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.submitted .star-button {
+    pointer-events: none;
+    opacity: 0.7;
+}
+
+.submitted-feedback-wrapper {
+    width: 100%;
+    margin-top: 16px;
+}
+
+.submitted-feedback {
+    padding: 12px 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: #f9f9f9;
+    margin-bottom: 8px;
+}
+
+.submitted-feedback-text {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.5;
+    word-break: break-word;
+}
+
+.submitted-message {
+    font-size: var(--text-sm);
+    color: var(--success-color);
+    text-align: center;
+    font-weight: 500;
+    margin-top: 8px;
+}
 </style>

@@ -12,6 +12,9 @@ export interface Message {
   attributes?: Record<string, any>
   user_name?: string
   agent_name?: string
+  end_chat?: boolean
+  end_chat_reason?: string
+  end_chat_description?: string
 }
 
 export interface Conversation {

@@ -62,7 +62,13 @@ export function useWidgetSocket() {
                     message_type: 'agent',
                     created_at: new Date().toISOString(),
                     session_id: '',
-                    agent_name: data.agent_name
+                    agent_name: data.agent_name,
+                    attributes: {
+                        end_chat: data.end_chat,
+                        end_chat_reason: data.end_chat_reason,
+                        end_chat_description: data.end_chat_description,
+                        request_rating: data.request_rating
+                    }
                 })
             } else {
                 messages.value.push({
@@ -70,7 +76,13 @@ export function useWidgetSocket() {
                     message_type: 'bot',
                     created_at: new Date().toISOString(),
                     session_id: '',
-                    agent_name: data.agent_name
+                    agent_name: data.agent_name,
+                    attributes: {
+                        end_chat: data.end_chat,
+                        end_chat_reason: data.end_chat_reason,
+                        end_chat_description: data.end_chat_description,
+                        request_rating: data.request_rating
+                    }
                 })
             }
             loading.value = false
@@ -100,6 +112,7 @@ export function useWidgetSocket() {
 
         socket.on('error', handleError)
         socket.on('chat_history', handleChatHistory)
+        socket.on('rating_submitted', handleRatingSubmitted)
 
         return socket
     }
@@ -189,6 +202,28 @@ export function useWidgetSocket() {
         }
     }
 
+    // Add rating submission handler
+    const handleRatingSubmitted = (data: { success: boolean, message: string }) => {
+        if (data.success) {
+            messages.value.push({
+                message: 'Thank you for your feedback!',
+                message_type: 'system',
+                created_at: new Date().toISOString(),
+                session_id: ''
+            })
+        }
+    }
+
+    // Add rating submission function
+    const submitRating = async (rating: number, feedback?: string) => {
+        if (!socket || !rating) return
+        
+        socket.emit('submit_rating', {
+            rating,
+            feedback
+        })
+    }
+
     // Send message function
     const sendMessage = async (newMessage: string, email: string) => {
         if (!socket || !newMessage.trim()) return
@@ -246,6 +281,7 @@ export function useWidgetSocket() {
         reconnect,
         cleanup,
         customer,
-        onTakeover
+        onTakeover,
+        submitRating
     }
 } 
