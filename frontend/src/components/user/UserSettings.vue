@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, inject, computed } from 'vue'
+import { ref, onMounted, inject, computed, watch } from 'vue'
 import { useAuth } from '@/composables/useAuth'
 import { userService } from '@/services/user'
 import { validatePassword, type PasswordStrength } from '@/utils/validators'
@@ -36,6 +36,9 @@ const formData = ref({
   confirm_password: ''
 })
 
+// Define the fileInput ref with proper typing
+const fileInput = ref<HTMLInputElement | null>(null)
+
 const loading = ref(false)
 const message = ref('')
 const error = ref('')
@@ -50,11 +53,6 @@ const passwordStrength = ref<PasswordStrength>({
   hasSpecialChar: false
 })
 
-const emit = defineEmits<{
-  (e: 'close'): void
-}>()
-
-const refreshUserInfo = inject('refreshUserInfo') as () => void
 
 const hasChanges = computed(() => {
   if (!user.value) return false
@@ -115,8 +113,25 @@ const handleFileSelect = (event: Event) => {
     return
   }
   
+  // Clear any previous error messages
+  error.value = ''
+  
+  // Set the file and create preview
   profilePicFile.value = file
   profilePicPreview.value = URL.createObjectURL(file)
+  
+
+}
+
+const resetFileInput = () => {
+  // Clear preview and file
+  profilePicFile.value = null
+  profilePicPreview.value = ''
+  
+  // Reset the file input element to allow selecting the same file again
+  if (fileInput.value) {
+    fileInput.value.value = ''
+  }
 }
 
 const uploadProfilePic = async () => {
@@ -139,17 +154,15 @@ const uploadProfilePic = async () => {
       if (updatedUser && updatedUser.profile_pic) {
         user.value = {
           ...updatedUser,
-          profile_pic: `${updatedUser.profile_pic}?t=${new Date().getTime()}`
+          profile_pic: updatedUser.profile_pic.includes('amazonaws.com') ? updatedUser.profile_pic : `${updatedUser.profile_pic}?t=${new Date().getTime()}`
         }
       }
     }
     
-    // Clear preview and file
-    profilePicFile.value = null
-    profilePicPreview.value = ''
+    // Reset the file input
+    resetFileInput()
     
-    // Refresh user info in parent components
-    refreshUserInfo()
+
     
   } catch (err: any) {
     error.value = err.message || 'Failed to upload profile picture'
@@ -202,7 +215,6 @@ const updateProfile = async () => {
     await userService.updateProfile(updateData)
     user.value = userService.getCurrentUser()
     message.value = 'Profile updated successfully'
-    refreshUserInfo()
     
     // Clear password fields
     formData.value.current_password = ''
@@ -215,21 +227,24 @@ const updateProfile = async () => {
     loading.value = false
   }
 }
+
+// Watch for changes to profilePicFile
+watch(profilePicFile, (newFile) => {
+  if (newFile) {
+    // Auto-upload when a file is selected
+    uploadProfilePic()
+  }
+})
+
+const handleProfilePicClick = () => {
+  if (fileInput.value) {
+    fileInput.value.click()
+  }
+}
 </script>
 
 <template>
   <div class="settings-page">
-    <div class="settings-header">
-      <div class="header-content">
-        <button class="back-button" @click="emit('close')">
-          <span>←</span> Back
-        </button>
-        <h3>Account Settings</h3>
-      </div>
-      <p class="settings-description">
-        Manage your account settings and change your password
-      </p>
-    </div>
 
     <div class="settings-content">
       <form @submit.prevent="updateProfile" class="settings-form">
@@ -239,7 +254,7 @@ const updateProfile = async () => {
               <img :src="userAvatarSrc" alt="Profile" class="profile-pic" />
               <div 
                 class="profile-pic-overlay"
-                @click="$refs.fileInput?.click()"
+                @click="handleProfilePicClick"
               >
                 <i class="fas fa-camera"></i>
                 <span>Change Photo</span>
@@ -254,11 +269,11 @@ const updateProfile = async () => {
             >
             <div class="profile-pic-actions">
               <button 
-                v-if="profilePicFile"
+                v-if="profilePicPreview"
                 type="button" 
                 class="upload-button"
                 @click="uploadProfilePic"
-                :disabled="loading"
+                :disabled="loading || !profilePicFile"
               >
                 {{ loading ? 'Uploading...' : 'Save New Picture' }}
               </button>

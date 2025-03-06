@@ -17,10 +17,11 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { onMounted, watch, nextTick, ref } from 'vue'
+import { onMounted, watch, nextTick, ref, computed } from 'vue'
 import type { ChatDetail } from '@/types/chat'
 import { useConversationChat } from '@/composables/useConversationChat'
 import sendIcon from '@/assets/sendbutton.svg'
+import { userService } from '@/services/user'
 
 const props = defineProps<{
   chat: ChatDetail
@@ -31,6 +32,9 @@ const emit = defineEmits<{
   (e: 'chatUpdated', data: ChatDetail): void
   (e: 'clearUnread', sessionId: string): void
 }>()
+
+// Create a local ref to track the current chat state
+const currentChat = ref(props.chat)
 
 const {
   newMessage,
@@ -52,6 +56,17 @@ const {
 // Add state for end chat confirmation
 const showEndChatConfirm = ref(false)
 
+// Computed property to determine if the current user can end the chat
+const canEndChat = computed(() => {
+  // Can only end chat if:
+  // 1. User can send messages (already handled by canSendMessage)
+  // 2. Chat is not closed
+  // 3. Current user is the one who took over the chat
+  return canSendMessage.value && 
+         !isChatClosed.value && 
+         currentChat.value.user_id === userService.getUserId();
+})
+
 // Function to handle end chat request
 const handleEndChatRequest = () => {
   showEndChatConfirm.value = true
@@ -68,9 +83,26 @@ const cancelEndChat = () => {
   showEndChatConfirm.value = false
 }
 
+// Function to handle takeover
+const onTakeover = async () => {
+  try {
+    await handleTakeover()
+    // Update the currentChat ref with the latest chat data
+    currentChat.value = {
+      ...currentChat.value,
+      status: 'open',
+      user_id: userService.getUserId(),
+      user_name: userService.getUserName()
+    }
+  } catch (error) {
+    console.error('Error taking over chat:', error)
+  }
+}
+
 // Watch for chat changes and update the internal state
 watch(() => props.chat, (newChat) => {
   if (newChat) {
+    currentChat.value = newChat
     updateChat(newChat)
     nextTick(() => {
       scrollToBottom()
@@ -107,24 +139,20 @@ onMounted(() => {
           v-if="showTakeoverButton"
           class="takeover-btn"
           :disabled="isLoading"
-          @click="handleTakeover"
+          @click="onTakeover"
         >
           <i class="fas fa-hand-paper"></i>
           {{ isLoading ? 'Taking over...' : 'Take over chat' }}
         </button>
         <!-- Add End Chat button -->
         <button 
-          v-if="canSendMessage && !isChatClosed" 
+          v-if="canEndChat" 
           class="end-chat-btn"
           @click="handleEndChatRequest"
         >
           <i class="fas fa-door-open"></i>
           End Chat
         </button>
-        <button class="action-btn"><i class="fas fa-star"></i></button>
-        <button class="action-btn"><i class="fas fa-user"></i></button>
-        <button class="action-btn"><i class="fas fa-video"></i></button>
-        <button class="action-btn"><i class="fas fa-phone"></i></button>
       </div>
     </header>
 

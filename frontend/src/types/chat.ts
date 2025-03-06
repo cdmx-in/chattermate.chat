@@ -26,6 +26,7 @@ export interface Conversation {
   message_count: number
   session_id: string
   user_id: string
+  status: 'open' | 'transferred' | 'closed'
 }
 
 export interface ChatDetail {

@@ -29,6 +29,7 @@ import organizationIcon from '@/assets/organization.svg'
 import analyticsIcon from '@/assets/analytics.svg'
 import configIcon from '@/assets/config.svg'
 import subscriptionIcon from '@/assets/subscription.svg'
+import userAvatar from '@/assets/user.svg'
 import SidebarToggle from './SidebarToggle.vue'
 
 defineProps<{
@@ -103,6 +104,12 @@ const navItems = computed(() => [
         iconSrc: configIcon,
         label: 'AI Configuration',
         show: permissionChecks.canViewAIConfig()
+    },
+    {
+        to: '/settings/user',
+        iconSrc: userAvatar,
+        label: 'User Settings',
+        show: true
     }
 ].filter(item => item.show !== false))
 
@@ -145,15 +152,6 @@ const handleNavigation = () => {
                 </router-link>
             </div>
         </nav>
-
-        <!-- User Profile -->
-        <!-- <div class="user-profile" :class="{ 'collapsed': isCollapsed }">
-            <img :src="avatarUrl" alt="User" class="avatar" />
-            <div v-if="!isCollapsed" class="user-info">
-                <span class="user-name">{{ userName }}</span>
-                <span class="user-role">Web Developer</span>
-            </div>
-        </div> -->
     </aside>
 </template>
 

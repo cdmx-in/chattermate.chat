@@ -87,6 +87,8 @@ export function useConversationChat(
     chat.value = { ...newChat }
     // Emit event to clear unreads
     emit('clearUnread', newChat.session_id)
+    // Emit chatUpdated event to ensure the parent component updates
+    emit('chatUpdated', chat.value)
   }
 
   const sendMessage = async () => {
@@ -155,6 +157,8 @@ export function useConversationChat(
       
       // Emit refresh event to update chat status
       emit('refresh')
+      // Also emit chatUpdated event to ensure the parent component updates
+      emit('chatUpdated', chat.value)
     } catch (err: any) {
       console.error('Failed to takeover chat:', err)
       

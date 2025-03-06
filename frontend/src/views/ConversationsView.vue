@@ -17,20 +17,64 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import DashboardLayout from '@/layouts/DashboardLayout.vue'
 import ConversationsList from '@/components/conversations/ConversationsList.vue'
-import type { Conversation } from '@/types/chat'
+import type { Conversation, ChatDetail } from '@/types/chat'
 import { chatService } from '@/services/chat'
 
 const conversations = ref<Conversation[]>([])
 const loading = ref(true)
 const error = ref('')
+const statusFilter = ref<'open' | 'closed'>('open')
+const currentPage = ref(1)
+const pageSize = ref(20)
+const hasMore = ref(true)
+const totalCount = ref<number | null>(null)
 
-const loadConversations = async () => {
+// Computed property to show how many conversations are loaded
+const loadedCount = computed(() => conversations.value.length)
+
+const loadConversations = async (page = 1, loadMore = false) => {
   try {
-    loading.value = true
-    conversations.value = await chatService.getRecentChats()
+    if (page === 1 || !loadMore) {
+      loading.value = true
+    }
+    
+    const skip = (page - 1) * pageSize.value
+    
+    let newConversations: Conversation[]
+    
+    if (statusFilter.value === 'open') {
+      newConversations = await chatService.getRecentChats({
+        status: 'open,transferred',
+        skip,
+        limit: pageSize.value
+      })
+    } else {
+      newConversations = await chatService.getRecentChats({
+        status: statusFilter.value,
+        skip,
+        limit: pageSize.value
+      })
+    }
+    
+    // If we're loading more, append to existing conversations
+    if (loadMore && page > 1) {
+      conversations.value = [...conversations.value, ...newConversations]
+    } else {
+      conversations.value = newConversations
+    }
+    
+    // Check if there might be more conversations to load
+    hasMore.value = newConversations.length === pageSize.value
+    currentPage.value = page
+    
+    // If we received fewer items than the page size, we can calculate the total
+    if (newConversations.length < pageSize.value) {
+      totalCount.value = skip + newConversations.length
+    }
+    
   } catch (err) {
     error.value = 'Failed to load conversations'
     console.error(err)
@@ -39,7 +83,41 @@ const loadConversations = async () => {
   }
 }
 
-onMounted(loadConversations)
+const loadMoreConversations = () => {
+  if (!loading.value && hasMore.value) {
+    loadConversations(currentPage.value + 1, true)
+  }
+}
+
+const updateFilter = (status: 'open' | 'closed') => {
+  statusFilter.value = status
+  currentPage.value = 1
+  hasMore.value = true
+  totalCount.value = null
+  loadConversations(1)
+}
+
+const handleChatUpdated = (chatDetail: ChatDetail) => {
+  // Update the conversation in the list if it exists
+  const index = conversations.value.findIndex(c => c.session_id === chatDetail.session_id)
+  if (index !== -1) {
+    // Create a new conversation object with updated data
+    const updatedConversation: Conversation = {
+      ...conversations.value[index],
+      last_message: chatDetail.messages[chatDetail.messages.length - 1]?.message || '',
+      updated_at: chatDetail.updated_at,
+      message_count: chatDetail.messages.length,
+      status: chatDetail.status
+    }
+    
+    // Create a new array with the updated conversation
+    const updatedConversations = [...conversations.value]
+    updatedConversations[index] = updatedConversation
+    conversations.value = updatedConversations
+  }
+}
+
+onMounted(() => loadConversations(1))
 </script>
 
 <template>
@@ -52,7 +130,16 @@ onMounted(loadConversations)
         :conversations="conversations"
         :loading="loading"
         :error="error"
-        @refresh="loadConversations"
+        :status-filter="statusFilter"
+        :has-more="hasMore"
+        :loading-more="loading && currentPage > 1"
+        :loaded-count="loadedCount"
+        :total-count="totalCount"
+        @refresh="loadConversations(1)"
+        @update-filter="updateFilter"
+        @load-more="loadMoreConversations"
+        @chat-updated="handleChatUpdated"
+        @clear-unread="() => {}"
       />
     </div>
   </DashboardLayout>
@@ -60,7 +147,7 @@ onMounted(loadConversations)
 
 <style scoped>
 .conversations-view {
-  height: 100%;
+  height: calc(100vh - 64px); /* Adjust based on header height */
   width: 100%;
   display: flex;
   overflow: hidden;

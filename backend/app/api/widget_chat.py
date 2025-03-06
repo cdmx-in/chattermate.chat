@@ -109,6 +109,11 @@ async def widget_connect(sid, environ, auth):
             'conversation_token': conversation_token
         }
 
+        
+        logger.info(f"AI config: {ai_config.model_name}")
+        logger.info(f"AI config: {ai_config.encrypted_api_key}")
+        logger.info(f"Session data: {session_data}")
+        
         await sio.save_session(sid, session_data, namespace='/widget')
         logger.info(f"Widget client connected: {sid} joined room: {session_id}")
         return True
@@ -129,6 +134,9 @@ async def handle_widget_chat(sid, data):
     try:
         # Authenticate using conversation token
         session = await sio.get_session(sid, namespace='/widget')
+        logger.info(f"Session: {session}")
+        logger.info(f"Session: {session['ai_config']}")
+        logger.info(f"Session: {session['ai_config'].encrypted_api_key}")
         widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, session)
         
         if not widget_id or not org_id:

@@ -264,7 +264,11 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
         {
             'message': "I'm here to help!",
             'type': 'chat_response',
-            'transfer_to_human': False
+            'transfer_to_human': False,
+            'end_chat': mock_chat_agent.get_response.return_value.end_chat,
+            'end_chat_reason': mock_chat_agent.get_response.return_value.end_chat_reason,
+            'end_chat_description': mock_chat_agent.get_response.return_value.end_chat_description,
+            'request_rating': mock_chat_agent.get_response.return_value.request_rating
         },
         room=str(session_id),
         namespace='/widget'
@@ -416,6 +420,11 @@ async def test_agent_message(db, test_widget, test_customer, test_user, mock_sio
         {
             'message': "How can I help you?",
             'type': 'agent_message',
+            'message_type': 'agent',
+            'end_chat': False,
+            'request_rating': False,
+            'end_chat_reason': None,
+            'end_chat_description': None
         },
         room=str(session_id),
         namespace='/widget'

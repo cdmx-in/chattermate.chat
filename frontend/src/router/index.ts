@@ -5,6 +5,7 @@ import { permissionChecks, hasAnyPermission } from '@/utils/permissions'
 import HumanAgentView from '@/views/HumanAgentView.vue'
 import OrganizationSettings from '@/views/settings/OrganizationSettings.vue'
 import AIConfigSettings from '@/views/settings/AIConfigSettings.vue'
+import UserSettingsView from '@/views/UserSettingsView.vue'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 // Initialize enterprise features
@@ -81,6 +82,15 @@ const baseRoutes = [
       requiresAuth: true,
       layout: 'dashboard',
       permissions: ['manage_ai_config', 'view_ai_config']
+    }
+  },
+  {
+    path: '/settings/user',
+    name: 'user-settings',
+    component: UserSettingsView,
+    meta: {
+      requiresAuth: true,
+      layout: 'dashboard'
     }
   },
   {
