@@ -7,6 +7,7 @@ import { toast } from 'vue-sonner'
 import type { UserGroup } from '@/types/user'
 import { listGroups } from '@/services/groups'
 import { agentStorage } from '@/utils/storage'
+import { useJiraIntegration } from './useJiraIntegration'
 
 export function useAgentDetail(agentData: { value: AgentWithCustomization }, emit: (e: 'close') => void) {
   const fileInput = ref<HTMLInputElement | null>(null)
@@ -19,6 +20,9 @@ export function useAgentDetail(agentData: { value: AgentWithCustomization }, emi
   const userGroups = ref<UserGroup[]>([])
   const selectedGroupIds = ref<string[]>([])
   const loadingGroups = ref(false)
+  
+  // Initialize Jira integration
+  const jiraIntegration = useJiraIntegration(agentData.value.id)
 
   const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
   const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -225,6 +229,9 @@ export function useAgentDetail(agentData: { value: AgentWithCustomization }, emi
     selectedGroupIds,
     loadingGroups,
     fetchUserGroups,
-    updateAgentGroups
+    updateAgentGroups,
+    
+    // Jira integration - spread all properties and methods from jiraIntegration
+    ...jiraIntegration
   }
 } 

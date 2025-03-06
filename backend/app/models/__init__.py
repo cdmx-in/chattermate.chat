@@ -29,6 +29,7 @@ from .knowledge import Knowledge
 from .chat_history import ChatHistory
 from .session_to_agent import SessionToAgent, SessionStatus
 from .rating import Rating
+from app.models.jira import JiraToken
 # This ensures all models are imported in the correct order
 __all__ = [
     "Organization",
@@ -44,5 +45,6 @@ __all__ = [
     "ChatHistory",
     "SessionToAgent",
     "SessionStatus",
-    "Rating"
+    "Rating",
+    "JiraToken"
 ]

@@ -89,7 +89,24 @@ const {
   selectedGroupIds,
   loadingGroups,
   fetchUserGroups,
-  updateAgentGroups
+  updateAgentGroups,
+  // Jira integration
+  jiraConnected,
+  jiraLoading,
+  createTicketEnabled,
+  jiraProjects,
+  jiraIssueTypes,
+  selectedProject,
+  selectedIssueType,
+  loadingProjects,
+  loadingIssueTypes,
+  checkJiraStatus,
+  fetchJiraProjects,
+  fetchJiraIssueTypes,
+  toggleCreateTicket,
+  saveJiraConfig,
+  fetchAgentJiraConfig,
+  handleProjectChange
 } = useAgentDetail(agentData, emit)
 
 const { cleanup } = useAgentChat(agentData.value.id)
@@ -138,8 +155,20 @@ const transferReasons = [
     "Compliance matters"
 ]
 
+const ticketReasons = [
+    "Issues without immediate resolution",
+    "No transfer agent available",
+    "Transfer requests not attended",
+    "Customer follow-ups",
+    "Complex issues requiring tracking"
+]
+
 const tooltipContent = computed(() => {
     return `Auto-transfer when:\n${transferReasons.map(reason => `• ${reason}`).join('\n')}`
+})
+
+const ticketTooltipContent = computed(() => {
+    return `Create tickets when:\n${ticketReasons.map(reason => `• ${reason}`).join('\n')}`
 })
 
 const ratingTooltipContent = computed(() => {
@@ -167,9 +196,15 @@ const previewContainerStyles = computed(() => ({
     }
 }))
 
-onMounted(() => {
+onMounted(async () => {
     initializeWidget()
     fetchUserGroups()
+    
+    // First check Jira status, then fetch agent config
+    await checkJiraStatus()
+    await fetchAgentJiraConfig()
+    
+
 })
 
 </script>
@@ -259,6 +294,89 @@ onMounted(() => {
                             
                             <div v-else class="loading-groups">
                                 Loading groups...
+                            </div>
+                        </div>
+
+                        <!-- Jira Ticket Creation Toggle -->
+                        <div class="ticket-toggle">
+                            <div class="toggle-header">
+                                <h4>Create Jira Tickets</h4>
+                                <label class="switch" v-tooltip="ticketTooltipContent">
+                                    <input type="checkbox" 
+                                        :checked="createTicketEnabled"
+                                        @change="toggleCreateTicket"
+                                    >
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <p class="helper-text">Create Jira tickets for issues that need further attention</p>
+                            
+                            <!-- Jira Connection Status -->
+                            <div v-if="jiraLoading" class="jira-status loading">
+                                Checking Jira connection...
+                            </div>
+                            <div v-else-if="!jiraConnected" class="jira-status not-connected">
+                                <span class="status-icon">⚠️</span>
+                                Jira is not connected
+                                <router-link to="/settings/integrations" class="connect-link">
+                                    Connect Jira
+                                </router-link>
+                            </div>
+                            <div v-else class="jira-status connected">
+                                <span class="status-icon">✓</span>
+                                Jira is connected
+                            </div>
+                            
+                            <!-- Jira Project Selection -->
+                            <div v-if="createTicketEnabled && jiraConnected" class="jira-config">
+                                <div class="form-group">
+                                    <label for="jira-project">Jira Project</label>
+                                    <div v-if="loadingProjects" class="loading-indicator">Loading projects...</div>
+                                    <select 
+                                        v-else
+                                        id="jira-project" 
+                                        v-model="selectedProject"
+                                        @change="handleProjectChange(selectedProject)"
+                                        :disabled="loadingProjects"
+                                    >
+                                        <option value="">Select a project</option>
+                                        <option 
+                                            v-for="project in jiraProjects" 
+                                            :key="project.id" 
+                                            :value="project.key"
+                                        >
+                                            {{ project.name }}
+                                        </option>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group">
+                                    <label for="issue-type">Issue Type</label>
+                                    <div v-if="loadingIssueTypes" class="loading-indicator">Loading issue types...</div>
+                                    <select 
+                                        v-else
+                                        id="issue-type" 
+                                        v-model="selectedIssueType"
+                                        :disabled="!selectedProject || loadingIssueTypes"
+                                    >
+                                        <option value="">Select an issue type</option>
+                                        <option 
+                                            v-for="issueType in jiraIssueTypes" 
+                                            :key="issueType.id" 
+                                            :value="issueType.id"
+                                        >
+                                            {{ issueType.name }}
+                                        </option>
+                                    </select>
+                                </div>
+                                
+                                <button 
+                                    class="save-config-btn"
+                                    @click="saveJiraConfig"
+                                    :disabled="!selectedProject || !selectedIssueType"
+                                >
+                                    Save Configuration
+                                </button>
                             </div>
                         </div>
 
@@ -861,5 +979,119 @@ input:checked + .slider:before {
     margin-top: var(--space-lg);
     padding-top: var(--space-lg);
     border-top: 1px solid var(--border-color);
+}
+
+.ticket-toggle {
+    margin-top: var(--space-lg);
+    padding-top: var(--space-lg);
+    border-top: 1px solid var(--border-color);
+}
+
+.jira-status {
+    margin-top: var(--space-sm);
+    padding: var(--space-sm);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.jira-status.loading {
+    background-color: var(--background-mute);
+    color: var(--text-muted);
+}
+
+.jira-status.connected {
+    background-color: var(--success-light);
+    color: var(--success);
+}
+
+.jira-status.not-connected {
+    background-color: var(--warning-light);
+    color: var(--warning);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.connect-link {
+    color: var(--primary-color);
+    font-weight: 500;
+    text-decoration: none;
+    padding: var(--space-xs) var(--space-sm);
+    background-color: var(--primary-soft);
+    border-radius: var(--radius-full);
+    transition: all var(--transition-fast);
+}
+
+.connect-link:hover {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.jira-config {
+    margin-top: var(--space-md);
+    padding: var(--space-md);
+    background-color: var(--background-soft);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.form-group label {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.form-group select {
+    padding: var(--space-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--background-color);
+    color: var(--text-color);
+    font-size: var(--text-sm);
+}
+
+.form-group select:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.loading-indicator {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    padding: var(--space-sm);
+}
+
+.save-config-btn {
+    margin-top: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+    color: white;
+    border: none;
+    border-radius: var(--radius-full);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.save-config-btn:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+}
+
+.save-config-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    filter: grayscale(0.5);
 }
 </style>
