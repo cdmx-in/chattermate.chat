@@ -17,9 +17,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 import pytz
-from datetime import datetime
+from datetime import datetime, timedelta
+from unittest.mock import patch, MagicMock, AsyncMock
+import sys
 from app.agents.transfer_agent import TransferResponseAgent, get_agent_availability_response
 from app.models.chat_history import ChatHistory
 from app.models.agent import Agent, AgentType
@@ -136,16 +137,18 @@ async def test_transfer_response_agent_initialization():
         assert isinstance(agent.agent, MockPhiAgent)
     
     # Test with Anthropic model
-    with patch('phi.model.anthropic.Claude') as mock_claude, \
-         patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent()) as mock_agent:
-        
+    claude_mock = MagicMock()
+    module_patcher = patch.dict('sys.modules', {'phi.model.anthropic': MagicMock(Claude=claude_mock)})
+    agent_patcher = patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent())
+    
+    with module_patcher, agent_patcher as mock_agent:
         agent = TransferResponseAgent(
             api_key="test_key",
             model_name="claude-3-opus",
             model_type="ANTHROPIC"
         )
         
-        mock_claude.assert_called_once_with(api_key="test_key", id="claude-3-opus", max_tokens=1000)
+        claude_mock.assert_called_once_with(api_key="test_key", id="claude-3-opus", max_tokens=1000)
         assert isinstance(agent.agent, MockPhiAgent)
     
     # Test with unsupported model
