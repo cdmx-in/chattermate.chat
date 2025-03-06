@@ -60,7 +60,7 @@ async def create_rating(
     try:
         # Get session details
         session_repo = SessionToAgentRepository(db)
-        session = session_repo.get_session_by_id(rating_data.session_id)
+        session = session_repo.get_session(rating_data.session_id)
         
         if not session:
             raise HTTPException(status_code=404, detail="Session not found")
