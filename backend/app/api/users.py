@@ -166,9 +166,28 @@ async def list_users(
     db: Session = Depends(get_db)
 ):
     """List all users in the organization"""
-    user_repo = UserRepository(db)
-    users = user_repo.get_users_by_organization(current_user.organization_id)
-    return users
+    try:
+        user_repo = UserRepository(db)
+        users = user_repo.get_users_by_organization(current_user.organization_id)
+
+        # Get signed URLs for profile pictures if using S3
+        if settings.S3_FILE_STORAGE:
+            for user in users:
+                if user.profile_pic:
+                    try:
+                        user.profile_pic = await get_s3_signed_url(user.profile_pic)
+                    except Exception as e:
+                        logger.error(f"Error getting signed URL for user profile picture: {str(e)}")
+                        # Don't fail the request if we can't get the signed URL
+                        pass
+
+        return users
+    except Exception as e:
+        logger.error(f"Error listing users: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
 
 
 @router.get("/{user_id}", response_model=UserResponse)
@@ -553,6 +572,13 @@ async def update_profile(
             current_user.id,
             **data.dict(exclude_unset=True)
         )
+                # Generate signed URL if using S3 and user has a profile picture
+        if settings.S3_FILE_STORAGE and updated_user.profile_pic:
+            signed_url = await get_s3_signed_url(updated_user.profile_pic)
+            # Create a response with both the user data and the signed URL
+            user_dict = updated_user.to_dict()
+            user_dict["profile_pic"] = signed_url
+            return user_dict
         
         return updated_user
         
@@ -614,6 +640,15 @@ async def update_user(
     
     try:
         updated_user = user_repo.update_user(user_id, **user_data.dict(exclude_unset=True))
+        
+        # Generate signed URL if using S3 and user has a profile picture
+        if settings.S3_FILE_STORAGE and updated_user.profile_pic:
+            signed_url = await get_s3_signed_url(updated_user.profile_pic)
+            # Create a response with both the user data and the signed URL
+            user_dict = updated_user.to_dict()
+            user_dict["profile_pic"] = signed_url
+            return user_dict
+            
         return updated_user
     except Exception as e:
         logger.error(f"Failed to update user: {str(e)}")
@@ -712,6 +747,14 @@ async def upload_profile_pic(
             profile_pic=file_path
         )
         
+        # Generate signed URL if using S3
+        if settings.S3_FILE_STORAGE and updated_user.profile_pic:
+            signed_url = await get_s3_signed_url(updated_user.profile_pic)
+            # Create a response with both the user data and the signed URL
+            user_dict = updated_user.to_dict()
+            user_dict["profile_pic"] = signed_url
+            return user_dict
+        
         return updated_user
         
     except HTTPException:
@@ -745,6 +788,12 @@ async def delete_profile_pic(
             profile_pic=None
         )
         
+        # Return user data with profile_pic_url set to None for consistency
+        if settings.S3_FILE_STORAGE:
+            user_dict = updated_user.to_dict()
+            user_dict["profile_pic"] = None
+            return user_dict
+            
         return updated_user
         
     except Exception as e:

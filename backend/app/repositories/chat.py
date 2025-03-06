@@ -21,7 +21,8 @@ from typing import List, Optional
 from app.models.chat_history import ChatHistory
 from app.models.customer import Customer
 from uuid import UUID
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.sql import case
 from app.models.agent import Agent
 from app.models.session_to_agent import SessionToAgent
 from app.core.logger import get_logger
@@ -80,6 +81,7 @@ class ChatRepository:
         skip: int = 0,
         limit: int = 20,
         agent_id: Optional[str | UUID] = None,
+        status: Optional[str] = None,
         user_id: Optional[str | UUID] = None,
         user_groups: Optional[List[str]] = None,
         organization_id: Optional[str | UUID] = None
@@ -120,6 +122,15 @@ class ChatRepository:
         if agent_id:
             query = query.filter(Agent.id == agent_id)
         
+        # Filter by status if provided
+        if status and status != 'all':
+            # Handle comma-separated status values
+            if ',' in status:
+                status_values = [s.strip() for s in status.split(',')]
+                query = query.filter(SessionToAgent.status.in_(status_values))
+            else:
+                query = query.filter(SessionToAgent.status == status)
+        
         # Filter by organization
         if organization_id:
             query = query.filter(SessionToAgent.organization_id == organization_id)
@@ -149,6 +160,12 @@ class ChatRepository:
             SessionToAgent.group_id,
             SessionToAgent.session_id
         ).order_by(
+            # Create a custom ordering to prioritize transferred conversations
+            # Using direct SQL expression for the CASE statement with uppercase status values
+            text("CASE WHEN session_to_agents.status = 'TRANSFERRED' THEN 0 "
+                 "WHEN session_to_agents.status = 'OPEN' THEN 1 "
+                 "ELSE 2 END"),
+            # Then order by most recent activity
             func.max(ChatHistory.created_at).desc()
         ).offset(skip).limit(limit)
 

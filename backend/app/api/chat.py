@@ -44,6 +44,7 @@ async def get_recent_chats(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
     agent_id: Optional[str] = None,
+    status: Optional[str] = Query(None, description="Filter by status: 'open', 'closed', or 'transferred'"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -53,8 +54,9 @@ async def get_recent_chats(
     can_view_assigned = "view_assigned_chats" in user_permissions
     
     if not (can_view_all or can_view_assigned):
+        from fastapi import status as http_status
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
+            status_code=http_status.HTTP_403_FORBIDDEN,
             detail="Not enough permissions"
         )
     
@@ -72,6 +74,7 @@ async def get_recent_chats(
                 skip=skip,
                 limit=limit,
                 agent_id=agent_id,
+                status=status,
                 user_id=current_user.id,  # Pass UUID directly
                 user_groups=user_group_ids,
                 organization_id=current_user.organization_id
@@ -82,6 +85,7 @@ async def get_recent_chats(
             skip=skip,
             limit=limit,
             agent_id=agent_id,
+            status=status,
             organization_id=current_user.organization_id
         )
     except ValueError as e:

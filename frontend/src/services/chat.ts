@@ -5,12 +5,14 @@ interface ChatParams {
   skip?: number
   limit?: number
   agentId?: string
+  status?: 'open' | 'closed' | 'transferred' | string
 }
 
 export const chatService = {
   async getRecentChats(params?: ChatParams) {
-    const response = await api.get<Conversation[]>('/chats/recent', { params })
-    return response.data
+    // Send the status parameter to the backend
+    const response = await api.get('/chats/recent', { params })
+    return response.data as Conversation[]
   },
 
   async getChatDetail(sessionId: string) {

@@ -27,8 +27,18 @@ from app.models.user import UserGroup
 
 class SessionStatus(str, enum.Enum):
     OPEN = "open"
-    CLOSED = "closed"
     TRANSFERRED = "transferred"
+    CLOSED  = "closed"
+
+
+class EndChatReasonType(str, enum.Enum):
+    ISSUE_RESOLVED = "ISSUE_RESOLVED"
+    CUSTOMER_REQUEST = "CUSTOMER_REQUEST"
+    CONFIRMATION_RECEIVED = "CONFIRMATION_RECEIVED"
+    FAREWELL = "FAREWELL"
+    THANK_YOU = "THANK_YOU"
+    NATURAL_CONCLUSION = "NATURAL_CONCLUSION"
+    TASK_COMPLETED = "TASK_COMPLETED"
 
 
 class SessionToAgent(Base):
@@ -42,16 +52,19 @@ class SessionToAgent(Base):
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     status = Column(SQLEnum(SessionStatus), nullable=False, default=SessionStatus.OPEN)
     assigned_at = Column(DateTime(timezone=True), server_default=func.now())
-    closed_at = Column(DateTime(timezone=True), nullable=True)
+
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     transfer_reason = Column(String, nullable=True)
     transfer_description = Column(String, nullable=True)
+    end_chat_reason = Column(SQLEnum(EndChatReasonType), nullable=True)
+    end_chat_description = Column(String, nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="session_assignments")
     agent = relationship("Agent", back_populates="session_assignments")
     customer = relationship("Customer", back_populates="session_assignments")
     group = relationship("UserGroup", back_populates="session_assignments")
+    ratings = relationship("Rating", back_populates="session_assignments")
 
 
 # Add back-reference in UserGroup model if not already present

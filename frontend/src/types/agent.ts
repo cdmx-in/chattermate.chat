@@ -10,6 +10,7 @@ export interface Agent {
   is_active: boolean
   organization_id: string // UUID
   transfer_to_human: boolean
+  ask_for_rating: boolean
   knowledge: Array<{
     id: number
     name: string
@@ -20,6 +21,16 @@ export interface Agent {
 }
 
 export type AgentResponse = Agent
+
+// Add AgentUpdate type for update operations
+export interface AgentUpdate {
+  display_name?: string | null
+  instructions?: string[]
+  is_active?: boolean
+  transfer_to_human?: boolean
+  ask_for_rating?: boolean
+  customization?: AgentCustomization
+}
 
 export interface ChatMessage {
   id?: string

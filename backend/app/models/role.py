@@ -45,7 +45,8 @@ class Role(Base):
         return {
             "id": self.id,
             "name": self.name,
-            "description": self.description
+            "description": self.description,
+            "permissions": [{"id": p.id, "name": p.name, "description": p.description} for p in self.permissions] if self.permissions else []
         }
 
     def has_permission(self, permission_name: str) -> bool:

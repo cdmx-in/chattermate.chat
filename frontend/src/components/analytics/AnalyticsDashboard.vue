@@ -32,83 +32,170 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
       </div>
     </div>
 
-    <div v-if="error" class="error-state">
-      {{ error }}
+    <div class="analytics-tabs">
+      <div class="tab-buttons">
+        <button 
+          :class="{ active: activeTab === 'overview' }"
+          @click="activeTab = 'overview'"
+        >
+          Overview
+        </button>
+        <button 
+          :class="{ active: activeTab === 'agent-performance' }"
+          @click="activeTab = 'agent-performance'"
+        >
+          Agent Performance
+        </button>
+        <button 
+          :class="{ active: activeTab === 'customers' }"
+          @click="activeTab = 'customers'"
+        >
+          Customers
+        </button>
+      </div>
     </div>
 
-    <div v-else-if="isLoading" class="loading-state">
-      Loading analytics data...
-    </div>
+    <!-- Overview Tab -->
+    <div v-if="activeTab === 'overview'">
+      <div v-if="error" class="error-state">
+        {{ error }}
+      </div>
 
-    <div v-else class="analytics-grid">
-      <!-- Overview Cards -->
-      <div class="metrics-overview">
-        <div class="metric-card">
-          <h3>Total Conversations</h3>
-          <div class="metric-value">
-            {{ analyticsData?.conversations?.total || 0 }}
-            <span class="change" :class="{ positive: (analyticsData?.conversations?.change || 0) >= 0 }">
-              {{ (analyticsData?.conversations?.change || 0) >= 0 ? '+' : '' }}{{ (analyticsData?.conversations?.change || 0).toFixed(1) }}%
-              <i :class="analyticsData?.conversations?.trend === 'up' ? 'trend-up' : 'trend-down'"></i>
-            </span>
+      <div v-else-if="isLoading" class="loading-state">
+        Loading analytics data...
+      </div>
+
+      <div v-else class="analytics-grid">
+        <!-- Overview Cards -->
+        <div class="metrics-overview">
+          <div class="metric-card">
+            <h3>Total Conversations</h3>
+            <div class="metric-value">
+              {{ analyticsData?.conversations?.total || 0 }}
+              <span class="change" :class="{ positive: (analyticsData?.conversations?.change || 0) >= 0 }">
+                {{ (analyticsData?.conversations?.change || 0) >= 0 ? '+' : '' }}{{ (analyticsData?.conversations?.change || 0).toFixed(1) }}%
+                <i :class="analyticsData?.conversations?.trend === 'up' ? 'trend-up' : 'trend-down'"></i>
+              </span>
+            </div>
+          </div>
+          <div class="metric-card">
+            <h3>AI Chat Closures</h3>
+            <div class="metric-value">
+              {{ analyticsData?.aiClosures?.total || 0 }}
+              <span class="change" :class="{ positive: (analyticsData?.aiClosures?.change || 0) >= 0 }">
+                {{ (analyticsData?.aiClosures?.change || 0) >= 0 ? '+' : '' }}{{ (analyticsData?.aiClosures?.change || 0).toFixed(1) }}%
+                <i :class="analyticsData?.aiClosures?.trend === 'up' ? 'trend-up' : 'trend-down'"></i>
+              </span>
+            </div>
+          </div>
+          <div class="metric-card">
+            <h3>Human Transfers</h3>
+            <div class="metric-value">
+              {{ analyticsData?.transfers?.total || 0 }}
+              <span class="change" :class="{ positive: (analyticsData?.transfers?.change || 0) >= 0 }">
+                {{ (analyticsData?.transfers?.change || 0) >= 0 ? '+' : '' }}{{ (analyticsData?.transfers?.change || 0).toFixed(1) }}%
+                <i :class="analyticsData?.transfers?.trend === 'up' ? 'trend-up' : 'trend-down'"></i>
+              </span>
+            </div>
+          </div>
+          <div class="metric-card">
+            <h3>Bot Rating</h3>
+            <div class="metric-value">
+              {{ (analyticsData?.ratings?.bot_avg || 0).toFixed(1) }}
+              <span class="change" :class="{ positive: (analyticsData?.ratings?.bot_change || 0) >= 0 }">
+                {{ (analyticsData?.ratings?.bot_change || 0) >= 0 ? '+' : '' }}{{ (analyticsData?.ratings?.bot_change || 0).toFixed(1) }}%
+                <i :class="analyticsData?.ratings?.bot_trend === 'up' ? 'trend-up' : 'trend-down'"></i>
+              </span>
+            </div>
+            <div class="rating-count">{{ analyticsData?.ratings?.bot_count || 0 }} ratings</div>
+          </div>
+          <div class="metric-card">
+            <h3>Human Rating</h3>
+            <div class="metric-value">
+              {{ (analyticsData?.ratings?.human_avg || 0).toFixed(1) }}
+              <span class="change" :class="{ positive: (analyticsData?.ratings?.human_change || 0) >= 0 }">
+                {{ (analyticsData?.ratings?.human_change || 0) >= 0 ? '+' : '' }}{{ (analyticsData?.ratings?.human_change || 0).toFixed(1) }}%
+                <i :class="analyticsData?.ratings?.human_trend === 'up' ? 'trend-up' : 'trend-down'"></i>
+              </span>
+            </div>
+            <div class="rating-count">{{ analyticsData?.ratings?.human_count || 0 }} ratings</div>
           </div>
         </div>
-        <div class="metric-card">
-          <h3>Active Users</h3>
-          <div class="metric-value">
-            {{ analyticsData?.users?.active || 0 }}
-            <span class="change" :class="{ positive: (analyticsData?.users?.change || 0) >= 0 }">
-              {{ (analyticsData?.users?.change || 0) >= 0 ? '+' : '' }}{{ (analyticsData?.users?.change || 0).toFixed(1) }}%
-              <i :class="analyticsData?.users?.trend === 'up' ? 'trend-up' : 'trend-down'"></i>
-            </span>
+
+        <!-- Charts -->
+        <div class="charts-grid">
+          <div class="chart-container">
+            <h3>Conversations Over Time</h3>
+            <div v-if="!hasData(analyticsData?.conversations)" class="no-data">
+              No conversation data available
+            </div>
+            <apexchart
+              v-else
+              type="area"
+              height="300"
+              :options="getChartOptions('Conversations', '#f34611')"
+              :series="[{
+                name: 'Conversations',
+                data: getChartData(analyticsData?.conversations)
+              }]"
+            />
           </div>
-        </div>
-        <div class="metric-card">
-          <h3>Active AI Agents</h3>
-          <div class="metric-value">
-            {{ analyticsData?.activeAgents?.active || 0 }}
-            <span class="change" :class="{ positive: true }">
-              <i class="trend-up"></i>
-            </span>
+          <div class="chart-container">
+            <h3>AI Closures vs Human Transfers</h3>
+            <div v-if="!hasData(analyticsData?.aiClosures) && !hasData(analyticsData?.transfers)" class="no-data">
+              No closure/transfer data available
+            </div>
+            <apexchart
+              v-else
+              type="area"
+              height="300"
+              :options="getComparisonChartOptions()"
+              :series="[
+                {
+                  name: 'AI Closures',
+                  data: getChartData(analyticsData?.aiClosures)
+                },
+                {
+                  name: 'Human Transfers',
+                  data: getChartData(analyticsData?.transfers)
+                }
+              ]"
+            />
+          </div>
+          <div class="chart-container">
+            <h3>Rating Comparison</h3>
+            <div v-if="!hasData(analyticsData?.ratings)" class="no-data">
+              No rating data available
+            </div>
+            <apexchart
+              v-else
+              type="line"
+              height="300"
+              :options="getRatingChartOptions()"
+              :series="[
+                {
+                  name: 'Bot Rating',
+                  data: getChartData(analyticsData?.ratings?.bot)
+                },
+                {
+                  name: 'Human Rating',
+                  data: getChartData(analyticsData?.ratings?.human)
+                }
+              ]"
+            />
           </div>
         </div>
       </div>
+    </div>
 
-      <!-- Charts -->
-      <div class="charts-grid">
-        <div class="chart-container">
-          <h3>Conversations Over Time</h3>
-          <div v-if="!hasData(analyticsData?.conversations)" class="no-data">
-            No conversation data available
-          </div>
-          <apexchart
-            v-else
-            type="area"
-            height="300"
-            :options="getChartOptions('Conversations', '#f34611')"
-            :series="[{
-              name: 'Conversations',
-              data: getChartData(analyticsData?.conversations)
-            }]"
-          />
-        </div>
-        <div class="chart-container">
-          <h3>User Activity</h3>
-          <div v-if="!hasData(analyticsData?.users)" class="no-data">
-            No user activity data available
-          </div>
-          <apexchart
-            v-else
-            type="area"
-            height="300"
-            :options="getChartOptions('Active Users', '#10B981')"
-            :series="[{
-              name: 'Active Users',
-              data: getChartData(analyticsData?.users)
-            }]"
-          />
-        </div>
-      </div>
+    <!-- Agent Performance Tab -->
+    <div v-if="activeTab === 'agent-performance'">
+      <AgentPerformance :time-range="timeRange" @time-range-change="handleTimeRangeChange" />
+    </div>
+
+    <!-- Customer Analytics Tab -->
+    <div v-if="activeTab === 'customers'">
+      <CustomerAnalytics :time-range="timeRange" @time-range-change="handleTimeRangeChange" />
     </div>
   </div>
 </template>
@@ -117,6 +204,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { ref, computed } from 'vue'
 import VueApexCharts from 'vue3-apexcharts'
 import api from '@/services/api'
+import AgentPerformance from './AgentPerformance.vue'
+import CustomerAnalytics from './CustomerAnalytics.vue'
 
 interface AnalyticsMetric {
   data: number[]
@@ -127,18 +216,40 @@ interface AnalyticsMetric {
   trend: 'up' | 'down'
 }
 
-interface AnalyticsData {
-  conversations: AnalyticsMetric
-  users: AnalyticsMetric
-  activeAgents: AnalyticsMetric
+interface RatingMetrics {
+  bot: AnalyticsMetric
+  human: AnalyticsMetric
+  bot_avg: number
+  human_avg: number
+  bot_count: number
+  human_count: number
+  bot_change: number
+  human_change: number
+  bot_trend: 'up' | 'down'
+  human_trend: 'up' | 'down'
 }
 
+interface AnalyticsData {
+  conversations: AnalyticsMetric
+  aiClosures: AnalyticsMetric
+  transfers: AnalyticsMetric
+  ratings: RatingMetrics
+}
+
+const timeRange = ref('7d')
+const activeTab = ref('overview')
 const isLoading = ref(true)
 const error = ref<string | null>(null)
-const timeRange = ref('7d')
 const analyticsData = ref<AnalyticsData | null>(null)
 
-const hasData = (metric: AnalyticsMetric | undefined): boolean => {
+const hasData = (metric: AnalyticsMetric | RatingMetrics | undefined): boolean => {
+  if (!metric) return false
+  if ('bot' in metric) {
+    // Handle RatingMetrics
+    return !!metric.bot?.data?.length && !!metric.bot?.labels?.length &&
+           !!metric.human?.data?.length && !!metric.human?.labels?.length
+  }
+  // Handle AnalyticsMetric
   return !!metric?.data?.length && !!metric?.labels?.length
 }
 
@@ -231,6 +342,58 @@ const getChartOptions = (name: string, color: string) => ({
   }
 })
 
+const getRatingChartOptions = () => ({
+  ...getChartOptions('Ratings', '#10B981'),
+  colors: ['#f34611', '#10B981'],
+  stroke: {
+    curve: 'smooth',
+    width: 3
+  },
+  markers: {
+    size: 4,
+    strokeWidth: 2,
+    hover: {
+      size: 6
+    }
+  },
+  yaxis: {
+    min: 0,
+    max: 5,
+    tickAmount: 5,
+    labels: {
+      formatter: (value: number) => value.toFixed(1)
+    }
+  },
+  legend: {
+    show: true,
+    position: 'top',
+    horizontalAlign: 'right'
+  }
+})
+
+const getComparisonChartOptions = () => ({
+  ...getChartOptions('Closures & Transfers', '#10B981'),
+  colors: ['#10B981', '#f34611'],
+  stroke: {
+    curve: 'smooth',
+    width: 2
+  },
+  fill: {
+    type: 'gradient',
+    gradient: {
+      shadeIntensity: 1,
+      opacityFrom: 0.7,
+      opacityTo: 0.2,
+      stops: [0, 90, 100]
+    }
+  },
+  legend: {
+    show: true,
+    position: 'top',
+    horizontalAlign: 'right'
+  }
+})
+
 const fetchAnalytics = async () => {
   try {
     isLoading.value = true
@@ -263,7 +426,43 @@ fetchAnalytics()
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: var(--space-md);
+}
+
+.analytics-tabs {
   margin-bottom: var(--space-xl);
+}
+
+.tab-buttons {
+  display: flex;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: var(--space-lg);
+}
+
+.tab-buttons button {
+  padding: var(--space-md) var(--space-lg);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: var(--text-md);
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+  position: relative;
+}
+
+.tab-buttons button.active {
+  color: var(--primary-color);
+  font-weight: 600;
+}
+
+.tab-buttons button.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--primary-color);
 }
 
 .time-range-selector {
@@ -387,5 +586,11 @@ fetchAnalytics()
 
 .trend-down {
   border-top: 4px solid currentColor;
+}
+
+.rating-count {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
 }
 </style> 

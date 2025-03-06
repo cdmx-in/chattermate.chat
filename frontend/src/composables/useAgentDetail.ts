@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import type { AgentWithCustomization } from '@/types/agent'
+import type { AgentWithCustomization, AgentUpdate } from '@/types/agent'
 import { agentService } from '@/services/agent'
 import { widgetService } from '@/services/widget'
 import type { Widget } from '@/types/widget'
@@ -120,6 +120,29 @@ export function useAgentDetail(agentData: { value: AgentWithCustomization }, emi
       .catch(err => console.error('Failed to copy:', err))
   }
 
+  const toggleAskForRating = async () => {
+    try {
+      console.log('toggleAskForRating', agentData.value.ask_for_rating)
+      const updatedAgent = await agentService.updateAgent(agentData.value.id, {
+        ask_for_rating: !agentData.value.ask_for_rating
+      })
+      agentData.value = {
+        ...agentData.value,
+        ask_for_rating: updatedAgent.ask_for_rating
+      }
+      toast.success(`Rating requests ${updatedAgent.ask_for_rating ? 'enabled' : 'disabled'}`, {
+        duration: 4000,
+        closeButton: true
+      })
+    } catch (error) {
+      console.error('Failed to update rating setting:', error)
+      toast.error('Failed to update rating setting', {
+        duration: 4000,
+        closeButton: true
+      })
+    }
+  }
+
   const toggleTransferToHuman = async () => {
     try {
       const updatedAgent = await agentService.updateAgent(agentData.value.id, {
@@ -196,6 +219,7 @@ export function useAgentDetail(agentData: { value: AgentWithCustomization }, emi
     handleClose,
     initializeWidget,
     copyWidgetCode,
+    toggleAskForRating,
     toggleTransferToHuman,
     userGroups,
     selectedGroupIds,

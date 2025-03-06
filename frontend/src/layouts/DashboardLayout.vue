@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, watch, provide, readonly, computed } from 'vue'
+import { ref, onMounted, watch, provide, computed } from 'vue'
 import { useAuth } from '@/composables/useAuth'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import userAvatar from '@/assets/user.svg'
@@ -27,16 +27,13 @@ import { userService } from '@/services/user'
 import type { User } from '@/types/user'
 import { useNotifications } from '@/composables/useNotifications'
 import { notificationService } from '@/services/notification'
-import UserSettings from '@/components/user/UserSettings.vue'
 import { useRoute, useRouter } from 'vue-router'
 import { updateUserStatus } from '@/services/users'
-import api from '@/services/api'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const isSidebarOpen = ref(true)
 const showUserMenu = ref(false)
 const showNotifications = ref(false)
-const showSettings = ref(false)
 const currentUser = ref<User>(userService.getCurrentUser() as User)
 const userName = ref(userService.getUserName())
 const userRole = ref(userService.getUserRole())
@@ -94,11 +91,12 @@ const toggleOnlineStatus = async () => {
   }
 }
 
+
+
 // Add this watch to close settings when route changes
 watch(
   () => route.path,
   () => {
-    showSettings.value = false
     showUserMenu.value = false
     showNotifications.value = false
   }
@@ -130,36 +128,21 @@ const toggleSidebar = () => {
     isSidebarOpen.value = !isSidebarOpen.value
 }
 
-const closeSettings = () => {
-  showSettings.value = false
-}
 
-const openSettings = () => {
-  showSettings.value = true
-  showUserMenu.value = false
-}
-
-const refreshUserInfo = () => {
-  userName.value = userService.getUserName()
-  userRole.value = userService.getUserRole()
-  const user = userService.getCurrentUser() as User
-  // Force a new reference to trigger reactivity
-  currentUser.value = { ...user }
-}
 
 const navigateToUpgrade = () => {
     router.push('/settings/subscription')
 }
 
-// Provide both methods
-provide('refreshUserInfo', refreshUserInfo)
-provide('openSettings', openSettings)
-provide('showSettings', readonly(showSettings))
+
 </script>
 
 <template>
     <div class="dashboard-layout" :class="{ 'sidebar-collapsed': !isSidebarOpen }">
-        <AppSidebar :isCollapsed="!isSidebarOpen" @toggle="toggleSidebar" @navigate="closeSettings" />
+        <AppSidebar 
+            :isCollapsed="!isSidebarOpen" 
+            @toggle="toggleSidebar" 
+        />
 
         <!-- Main Content -->
         <div class="main-content">
@@ -229,9 +212,7 @@ provide('showSettings', readonly(showSettings))
                                       </button>
                                     </div>
                                     <div class="menu-divider"></div>
-                                    <button class="menu-item" @click="openSettings">
-                                        Settings
-                                    </button>
+                                    
                                     <button class="menu-item" @click="logout">Logout</button>
                                 </div>
                             </div>
@@ -242,8 +223,7 @@ provide('showSettings', readonly(showSettings))
 
             <!-- Main Content Area -->
             <main class="content">
-                <UserSettings v-if="showSettings" @close="closeSettings" />
-                <slot v-else></slot>
+                <slot></slot>
             </main>
 
             <!-- Footer -->

@@ -12,6 +12,9 @@ export interface Message {
   attributes?: Record<string, any>
   user_name?: string
   agent_name?: string
+  end_chat?: boolean
+  end_chat_reason?: string
+  end_chat_description?: string
 }
 
 export interface Conversation {
@@ -23,6 +26,7 @@ export interface Conversation {
   message_count: number
   session_id: string
   user_id: string
+  status: 'open' | 'transferred' | 'closed'
 }
 
 export interface ChatDetail {

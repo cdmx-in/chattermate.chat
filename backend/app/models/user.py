@@ -94,7 +94,7 @@ class User(Base):
 
     # Add this new relationship
     session_assignments = relationship("SessionToAgent", back_populates="user")
-
+    ratings = relationship("Rating", back_populates="user")
     def to_dict(self):
         """Convert user object to dictionary"""
         return {

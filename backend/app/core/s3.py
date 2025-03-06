@@ -19,12 +19,12 @@ def get_s3_client():
         region_name=settings.S3_REGION
     )
 
-async def get_s3_signed_url(s3_url: str, expiration: int = 3600) -> str:
+async def get_s3_signed_url(s3_url: str, expiration: int = 2592000) -> str:
     """
     Generate a signed URL for an S3 object
     Args:
         s3_url: The S3 URL of the object
-        expiration: URL expiration time in seconds (default 1 hour)
+        expiration: URL expiration time in seconds (default 30 days)
     Returns:
         Signed URL for the object
     """

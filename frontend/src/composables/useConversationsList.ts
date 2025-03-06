@@ -9,7 +9,15 @@ export function useConversationsList(props: {
   conversations: Conversation[]
   loading: boolean
   error: string
-}, emit: (event: 'chatUpdated', data: ChatDetail) => void) {
+  hasMore?: boolean
+  loadingMore?: boolean
+}, emit: {
+  (e: 'refresh'): void
+  (e: 'chatUpdated', data: ChatDetail): void
+  (e: 'clearUnread', sessionId: string): void
+  (e: 'updateFilter', status: 'open' | 'closed'): void
+  (e: 'loadMore'): void
+}) {
   const selectedChat = ref<ChatDetail | null>(null)
   const selectedId = ref<string | null>(null)
   const chatLoading = ref<boolean>(false)
@@ -112,6 +120,12 @@ export function useConversationsList(props: {
         selectedId.value = sessionId
         const detail = await chatService.getChatDetail(sessionId)
         selectedChat.value = detail
+        
+        // Clear unread messages for this chat
+        if (unreadMessages[sessionId]) {
+          delete unreadMessages[sessionId]
+          emit('clearUnread', sessionId)
+        }
       }
     } catch (err) {
       console.error('Failed to load chat:', err)
@@ -128,6 +142,11 @@ export function useConversationsList(props: {
   }, { immediate: true })
 
   const formattedConversations = computed(() => {
+    // Ensure conversations is an array before mapping
+    if (!Array.isArray(props.conversations)) {
+      return []
+    }
+    
     return props.conversations.map(conv => ({
       ...conv,
       timeAgo: formatDistanceToNow(new Date(conv.updated_at), { addSuffix: true })

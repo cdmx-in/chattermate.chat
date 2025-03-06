@@ -11,17 +11,21 @@ export default defineConfig({
       fileName: 'widget',
       formats: ['es'],
     },
-    outDir: 'public/assets',
+    outDir: '../backend/assets',
     emptyOutDir: false,
     rollupOptions: {
       output: {
         format: 'es',
+        entryFileNames: 'widget.js',
         assetFileNames: (assetInfo) => {
           if (assetInfo.name === 'style.css') {
             return 'widget.css'
           }
-          return assetInfo.name
+          // Place other assets in a subdirectory that we can ignore or clean up later
+          return 'unused/[name]-[hash][extname]'
         },
+        chunkFileNames: 'unused/[name]-[hash].js',
+        manualChunks: undefined, // Disable code splitting
       },
     },
   },

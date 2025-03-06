@@ -35,6 +35,7 @@ import uuid
 from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
+from app.repositories.rating import RatingRepository
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -108,6 +109,11 @@ async def widget_connect(sid, environ, auth):
             'conversation_token': conversation_token
         }
 
+        
+        logger.info(f"AI config: {ai_config.model_name}")
+        logger.info(f"AI config: {ai_config.encrypted_api_key}")
+        logger.info(f"Session data: {session_data}")
+        
         await sio.save_session(sid, session_data, namespace='/widget')
         logger.info(f"Widget client connected: {sid} joined room: {session_id}")
         return True
@@ -128,6 +134,9 @@ async def handle_widget_chat(sid, data):
     try:
         # Authenticate using conversation token
         session = await sio.get_session(sid, namespace='/widget')
+        logger.info(f"Session: {session}")
+        logger.info(f"Session: {session['ai_config']}")
+        logger.info(f"Session: {session['ai_config'].encrypted_api_key}")
         widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, session)
         
         if not widget_id or not org_id:
@@ -157,7 +166,25 @@ async def handle_widget_chat(sid, data):
         )
 
         if not active_session:
-            raise ValueError("No active session found")
+            # Check if there's a closed session that can be reopened
+            latest_session = session_repo.get_latest_customer_session(
+                customer_id=customer_id
+            )
+            
+            if latest_session and latest_session.status == SessionStatus.CLOSED:
+                # Reopen the closed session if it matches the current session ID
+                if str(latest_session.session_id) == session_id:
+                    success = session_repo.reopen_closed_session(session_id)
+                    if success:
+                        # Refresh the session data
+                        active_session = session_repo.get_session(session_id)
+                        logger.info(f"Reopened closed session {session_id} for customer {customer_id}")
+                    else:
+                        raise ValueError("Failed to reopen closed session")
+                else:
+                    raise ValueError("Session mismatch")
+            else:
+                raise ValueError("No active session found")
         
         if str(active_session.session_id) != session_id:
             raise ValueError("Session mismatch")
@@ -225,7 +252,11 @@ async def handle_widget_chat(sid, data):
                 "attributes": {
                     "transfer_to_human": response_content.transfer_to_human,
                     "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
-                    "transfer_description": response_content.transfer_description
+                    "transfer_description": response_content.transfer_description,
+                    "end_chat": response_content.end_chat,
+                    "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
+                    "end_chat_description": response_content.end_chat_description,
+                    "request_rating": response_content.request_rating
                 }
             })
             response = response_content
@@ -238,7 +269,7 @@ async def handle_widget_chat(sid, data):
                 "organization_id": org_id,  
                 "agent_id": session['agent_id'],
                 "customer_id": customer_id,
-                "user_id": active_session.user_id
+                "user_id": active_session.user_id,
             })
             # Get session data to find assigned user
             session_data = session_repo.get_session(session_id)
@@ -273,7 +304,11 @@ async def handle_widget_chat(sid, data):
         await sio.emit('chat_response', {
             'message': response.message,
             'type': 'chat_response',
-            'transfer_to_human': response.transfer_to_human
+            'transfer_to_human': response.transfer_to_human,
+            'end_chat': response.end_chat,
+            'end_chat_reason': response.end_chat_reason,
+            'end_chat_description': response.end_chat_description,
+            'request_rating': response.request_rating
         }, room=session_id, namespace='/widget')
 
     except Exception as e:
@@ -407,19 +442,38 @@ async def handle_agent_message(sid, data):
         # Store the agent's message
         message = {
             "message": data['message'],
-            "message_type": "agent",
+            "message_type": data.get('message_type', "agent"),
             "session_id": session_id,
             "organization_id": session.get('organization_id'),
             "agent_id": session_data.agent_id if session_data.agent_id else None,
             "customer_id": session_data.customer_id,
-            "user_id": session_data.user_id
+            "user_id": session_data.user_id,
+            "attributes":{
+                "end_chat": data.get('end_chat', False),
+                "request_rating": data.get('request_rating', False),
+                "end_chat_reason": data.get('end_chat_reason', None),
+                "end_chat_description": data.get('end_chat_description', None)
+            }
         }
         
         chat_repo.create_message(message)
+        
+        # Check if this is an end chat message
+        if data.get('end_chat') is True:
+            logger.info(f"Agent ended chat session {session_id}")
+            # Update session status to closed
+            session_repo.update_session_status(session_id, "CLOSED")
+            
+        
         # Emit to widget clients
         await sio.emit('chat_response', {
             'message': data['message'],
             'type': 'agent_message',
+            'message_type': data.get('message_type', 'agent'),
+            'end_chat': data.get('end_chat', False),
+            'request_rating': data.get('request_rating', False),
+            'end_chat_reason': data.get('end_chat_reason', None),
+            'end_chat_description': data.get('end_chat_description', None)
         }, room=session_id, namespace='/widget')
 
 
@@ -429,7 +483,7 @@ async def handle_agent_message(sid, data):
         await sio.emit('error', {
             'error': 'Failed to send message',
             'type': 'message_error'
-        }, to=sid, namespace='/agent')    
+        }, to=sid, namespace='/agent')
 
 # Add handlers for room management
 @sio.on('join_room', namespace='/agent')
@@ -517,3 +571,80 @@ async def handle_leave_room(sid, data):
 async def handle_taken_over(sid, data):
     logger.info(f"Agent {data['user_name']} has taken over chat {data['session_id']}")
     await sio.emit('handle_taken_over', data, room=data['session_id'] , namespace='/widget')
+
+@sio.on('submit_rating', namespace='/widget')
+async def handle_rating_submission(sid, data):
+    """Handle rating submission from widget"""
+    try:
+        # Get session data and authenticate
+        session = await sio.get_session(sid, namespace='/widget')
+        widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, session)
+        
+        if not widget_id or not org_id:
+            logger.error(f"Widget authentication failed for sid {sid}")
+            await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
+            return
+
+        session_id = session['session_id']
+        # Verify session matches authenticated data
+        if (session['widget_id'] != widget_id or 
+            session['org_id'] != org_id or 
+            session['customer_id'] != customer_id):
+            raise ValueError("Session mismatch")
+
+        # Validate rating data
+        rating = data.get('rating')
+        feedback = data.get('feedback')
+        
+        if not rating or not isinstance(rating, int) or rating < 1 or rating > 5:
+            raise ValueError("Invalid rating value")
+
+        db = next(get_db())
+        
+        # Get session details
+        session_repo = SessionToAgentRepository(db)
+        session_data = session_repo.get_session(session_id)
+        
+        if not session_data:
+            raise ValueError("Session not found")
+
+        # Create rating using repository
+        rating_repo = RatingRepository(db)
+        rating_obj = rating_repo.create_rating(
+            session_id=session_id,
+            customer_id=customer_id,
+            user_id=session_data.user_id,
+            agent_id=session_data.agent_id,
+            organization_id=org_id,
+            rating=rating,
+            feedback=feedback
+        )
+
+        # Emit success response
+        await sio.emit('rating_submitted', {
+            'success': True,
+            'message': 'Rating submitted successfully'
+        }, room=sid, namespace='/widget')
+
+        # Also emit to agent room if there's an assigned agent
+        if session_data.user_id:
+            user_room = f"user_{session_data.user_id}"
+            await sio.emit('rating_received', {
+                'session_id': session_id,
+                'rating': rating,
+                'feedback': feedback
+            }, room=user_room, namespace='/agent')
+
+    except ValueError as e:
+        logger.error(f"Rating submission error for sid {sid}: {str(e)}")
+        await sio.emit('error', {
+            'error': str(e),
+            'type': 'rating_error'
+        }, to=sid, namespace='/widget')
+    except Exception as e:
+        logger.error(f"Rating submission error for sid {sid}: {str(e)}")
+        logger.error(traceback.format_exc())
+        await sio.emit('error', {
+            'error': 'Failed to submit rating',
+            'type': 'rating_error'
+        }, to=sid, namespace='/widget')

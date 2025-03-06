@@ -28,6 +28,7 @@ from .knowledge_to_agent import KnowledgeToAgent
 from .knowledge import Knowledge
 from .chat_history import ChatHistory
 from .session_to_agent import SessionToAgent, SessionStatus
+from .rating import Rating
 # This ensures all models are imported in the correct order
 __all__ = [
     "Organization",
@@ -42,5 +43,6 @@ __all__ = [
     "Knowledge",
     "ChatHistory",
     "SessionToAgent",
-    "SessionStatus"
+    "SessionStatus",
+    "Rating"
 ]

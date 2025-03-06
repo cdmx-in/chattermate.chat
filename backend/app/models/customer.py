@@ -42,3 +42,4 @@ class Customer(Base):
     organization = relationship("Organization", back_populates="customers")
     chat_histories = relationship("ChatHistory", back_populates="customer")
     session_assignments = relationship("SessionToAgent", back_populates="customer")
+    ratings = relationship("Rating", back_populates="customer")

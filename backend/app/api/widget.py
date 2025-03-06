@@ -249,6 +249,7 @@ async def get_widget_data(
             
             # Create a copy of customization to modify photo_url
             customization = agent.customization
+          
             if settings.S3_FILE_STORAGE and customization and customization.photo_url:
                 # Get signed URL for the photo
                 customization.photo_url = await get_s3_signed_url(customization.photo_url)
@@ -282,6 +283,13 @@ async def get_widget_data(
             status_code=401,
             detail="Unauthorized"
         )
+    
+                # Create a copy of customization to modify photo_url
+    customization = agent.customization
+          
+    if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+        # Get signed URL for the photo
+        customization.photo_url = await get_s3_signed_url(customization.photo_url)
 
     return {
         "id": widget.id,
@@ -292,7 +300,7 @@ async def get_widget_data(
             "id": agent.id,
             "name": agent.name,
             "display_name": agent.display_name,
-            "customization": agent.customization
+            "customization": customization
         }
     }
 

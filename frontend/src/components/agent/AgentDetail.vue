@@ -84,6 +84,7 @@ const {
   initializeWidget,
   copyWidgetCode: copyWidgetCodeFn,
   toggleTransferToHuman,
+  toggleAskForRating,
   userGroups,
   selectedGroupIds,
   loadingGroups,
@@ -139,6 +140,10 @@ const transferReasons = [
 
 const tooltipContent = computed(() => {
     return `Auto-transfer when:\n${transferReasons.map(reason => `• ${reason}`).join('\n')}`
+})
+
+const ratingTooltipContent = computed(() => {
+    return `Enable to:\n• Request feedback after chat ends\n• Collect star ratings (1-5)\n• Gather optional comments\n• Track customer satisfaction`
 })
 
 const iframeUrl = computed(() => {
@@ -255,6 +260,21 @@ onMounted(() => {
                             <div v-else class="loading-groups">
                                 Loading groups...
                             </div>
+                        </div>
+
+                        <!-- Ask for Rating -->
+                        <div class="rating-toggle">
+                            <div class="toggle-header">
+                                <h4>Ask for Rating</h4>
+                                <label class="switch" v-tooltip="ratingTooltipContent">
+                                    <input type="checkbox" 
+                                        :checked="agentData.ask_for_rating"
+                                        @change="toggleAskForRating"
+                                    >
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <p class="helper-text">Request customer feedback when chats end</p>
                         </div>
                     </div>
                 </section>
@@ -835,5 +855,11 @@ input:checked + .slider:before {
     background: var(--background-alt);
     border-radius: var(--radius-lg);
     margin: var(--space-lg);
+}
+
+.rating-toggle {
+    margin-top: var(--space-lg);
+    padding-top: var(--space-lg);
+    border-top: 1px solid var(--border-color);
 }
 </style>

@@ -56,6 +56,9 @@ async def lifespan(app: FastAPI):
 cors_origins = get_cors_origins()
 logger.debug(f"CORS origins: {cors_origins}")
 
+# Update the FastAPI app to use the lifespan function
+app.router.lifespan_context = lifespan
+
 # Add CORS middleware to FastAPI app
 app.add_middleware(
     CORSMiddleware,
