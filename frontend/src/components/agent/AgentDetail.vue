@@ -24,6 +24,9 @@ import AgentEdit from './AgentEdit.vue'
 import KnowledgeGrid from './KnowledgeGrid.vue'
 import AgentCustomizationView from './AgentCustomizationView.vue'
 import AgentChatPreviewPanel from './AgentChatPreviewPanel.vue'
+import AgentIntegrationsTab from './AgentIntegrationsTab.vue'
+import AgentWidgetTab from './AgentWidgetTab.vue'
+import AgentGeneralTab from './AgentGeneralTab.vue'
 import { Cropper, CircleStencil } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
 import { useAgentChat } from '@/composables/useAgentChat'
@@ -43,6 +46,7 @@ const props = defineProps<{
 const agentData = ref({ ...props.agent })
 const isEditing = ref(false)
 const isCustomizing = ref(false)
+const activeTab = ref('general') // Track the active tab: 'general', 'integrations', etc.
 const previewCustomization = ref<AgentCustomization>({
     id: agentData.value.customization?.id ?? 0,
     agent_id: agentData.value.id,
@@ -106,7 +110,8 @@ const {
   toggleCreateTicket,
   saveJiraConfig,
   fetchAgentJiraConfig,
-  handleProjectChange
+  handleProjectChange,
+  handleIssueTypeChange
 } = useAgentDetail(agentData, emit)
 
 const { cleanup } = useAgentChat(agentData.value.id)
@@ -155,20 +160,8 @@ const transferReasons = [
     "Compliance matters"
 ]
 
-const ticketReasons = [
-    "Issues without immediate resolution",
-    "No transfer agent available",
-    "Transfer requests not attended",
-    "Customer follow-ups",
-    "Complex issues requiring tracking"
-]
-
 const tooltipContent = computed(() => {
     return `Auto-transfer when:\n${transferReasons.map(reason => `• ${reason}`).join('\n')}`
-})
-
-const ticketTooltipContent = computed(() => {
-    return `Create tickets when:\n${ticketReasons.map(reason => `• ${reason}`).join('\n')}`
 })
 
 const ratingTooltipContent = computed(() => {
@@ -250,190 +243,76 @@ onMounted(async () => {
             </div>
 
             <div class="panel-content" v-if="!isEditing && !isCustomizing">
-                <section class="detail-section">
-                    <div class="transfer-section">
-                        <!-- Transfer toggle -->
-                        <div class="transfer-toggle">
-                            <div class="toggle-header">
-                                <h4>Transfer to Human</h4>
-                                <label class="switch" v-tooltip="tooltipContent">
-                                    <input type="checkbox" 
-                                        :checked="agentData.transfer_to_human"
-                                        @change="toggleTransferToHuman"
-                                    >
-                                    <span class="slider"></span>
-                                </label>
-                            </div>
-                            <p class="helper-text">Enable automatic transfer to human agents when needed</p>
-                        </div>
+                <!-- Tab Navigation -->
+                <div class="tabs-navigation">
+                    <button 
+                        class="tab-button" 
+                        :class="{ 'active': activeTab === 'general' }"
+                        @click="activeTab = 'general'"
+                    >
+                        General
+                    </button>
+                    <button 
+                        class="tab-button" 
+                        :class="{ 'active': activeTab === 'integrations' }"
+                        @click="activeTab = 'integrations'"
+                    >
+                        Integrations
+                    </button>
+                    <button 
+                        class="tab-button" 
+                        :class="{ 'active': activeTab === 'widget' }"
+                        @click="activeTab = 'widget'"
+                    >
+                        Widget
+                    </button>
+                </div>
 
-                        <!-- Group selection -->
-                        <div v-if="agentData.transfer_to_human" class="transfer-groups">
-                            <h4>Transfer Groups</h4>
-                            <p v-if="userGroups.length" class="helper-text">Select groups that can handle transferred chats</p>
-                            
-                            <div v-if="!loadingGroups">
-                                <div v-if="userGroups.length" class="groups-list">
-                                    <label v-for="group in userGroups" :key="group.id" class="group-item">
-                                        <input 
-                                            type="checkbox" 
-                                            :value="group.id"
-                                            v-model="selectedGroupIds"
-                                            @change="updateAgentGroups(selectedGroupIds)"
-                                        >
-                                        <span>{{ group.name }}</span>
-                                    </label>
-                                </div>
-                                <div v-else class="no-groups-message">
-                                    <p>No groups available.</p>
-                                    <router-link to="/human-agents" class="create-group-link">
-                                        Create Group <i class="fas fa-arrow-right"></i>
-                                    </router-link>
-                                </div>
-                            </div>
-                            
-                            <div v-else class="loading-groups">
-                                Loading groups...
-                            </div>
-                        </div>
+                <!-- General Tab -->
+                <div v-if="activeTab === 'general'" class="tab-content">
+                    <AgentGeneralTab
+                        :instructions="instructionsText"
+                        :transfer-to-human="agentData.transfer_to_human"
+                        :ask-for-rating="agentData.ask_for_rating"
+                        :user-groups="userGroups"
+                        :selected-group-ids="selectedGroupIds"
+                        :loading-groups="loadingGroups"
+                        :is-editing="isEditing"
+                        @update:instructions="(value: string) => { instructionsText = value }"
+                        @toggle-transfer-to-human="toggleTransferToHuman"
+                        @toggle-ask-for-rating="toggleAskForRating"
+                        @update-agent-groups="(groupIds: string[]) => updateAgentGroups(groupIds)"
+                    />
+                </div>
 
-                        <!-- Jira Ticket Creation Toggle -->
-                        <div class="ticket-toggle">
-                            <div class="toggle-header">
-                                <h4>Create Jira Tickets</h4>
-                                <label class="switch" v-tooltip="ticketTooltipContent">
-                                    <input type="checkbox" 
-                                        :checked="createTicketEnabled"
-                                        @change="toggleCreateTicket"
-                                    >
-                                    <span class="slider"></span>
-                                </label>
-                            </div>
-                            <p class="helper-text">Create Jira tickets for issues that need further attention</p>
-                            
-                            <!-- Jira Connection Status -->
-                            <div v-if="jiraLoading" class="jira-status loading">
-                                Checking Jira connection...
-                            </div>
-                            <div v-else-if="!jiraConnected" class="jira-status not-connected">
-                                <span class="status-icon">⚠️</span>
-                                Jira is not connected
-                                <router-link to="/settings/integrations" class="connect-link">
-                                    Connect Jira
-                                </router-link>
-                            </div>
-                            <div v-else class="jira-status connected">
-                                <span class="status-icon">✓</span>
-                                Jira is connected
-                            </div>
-                            
-                            <!-- Jira Project Selection -->
-                            <div v-if="createTicketEnabled && jiraConnected" class="jira-config">
-                                <div class="form-group">
-                                    <label for="jira-project">Jira Project</label>
-                                    <div v-if="loadingProjects" class="loading-indicator">Loading projects...</div>
-                                    <select 
-                                        v-else
-                                        id="jira-project" 
-                                        v-model="selectedProject"
-                                        @change="handleProjectChange(selectedProject)"
-                                        :disabled="loadingProjects"
-                                    >
-                                        <option value="">Select a project</option>
-                                        <option 
-                                            v-for="project in jiraProjects" 
-                                            :key="project.id" 
-                                            :value="project.key"
-                                        >
-                                            {{ project.name }}
-                                        </option>
-                                    </select>
-                                </div>
-                                
-                                <div class="form-group">
-                                    <label for="issue-type">Issue Type</label>
-                                    <div v-if="loadingIssueTypes" class="loading-indicator">Loading issue types...</div>
-                                    <select 
-                                        v-else
-                                        id="issue-type" 
-                                        v-model="selectedIssueType"
-                                        :disabled="!selectedProject || loadingIssueTypes"
-                                    >
-                                        <option value="">Select an issue type</option>
-                                        <option 
-                                            v-for="issueType in jiraIssueTypes" 
-                                            :key="issueType.id" 
-                                            :value="issueType.id"
-                                        >
-                                            {{ issueType.name }}
-                                        </option>
-                                    </select>
-                                </div>
-                                
-                                <button 
-                                    class="save-config-btn"
-                                    @click="saveJiraConfig"
-                                    :disabled="!selectedProject || !selectedIssueType"
-                                >
-                                    Save Configuration
-                                </button>
-                            </div>
-                        </div>
+                <!-- Integrations Tab -->
+                <div v-if="activeTab === 'integrations'" class="tab-content">
+                    <AgentIntegrationsTab
+                        :jira-connected="jiraConnected"
+                        :jira-loading="jiraLoading"
+                        :create-ticket-enabled="createTicketEnabled"
+                        :jira-projects="jiraProjects"
+                        :jira-issue-types="jiraIssueTypes"
+                        :selected-project="selectedProject"
+                        :selected-issue-type="selectedIssueType"
+                        :loading-projects="loadingProjects"
+                        :loading-issue-types="loadingIssueTypes"
+                        @toggle-create-ticket="toggleCreateTicket"
+                        @handle-project-change="handleProjectChange"
+                        @handle-issue-type-change="handleIssueTypeChange"
+                        @save-jira-config="(config) => saveJiraConfig(config.projectKey, config.issueTypeId)"
+                    />
+                </div>
 
-                        <!-- Ask for Rating -->
-                        <div class="rating-toggle">
-                            <div class="toggle-header">
-                                <h4>Ask for Rating</h4>
-                                <label class="switch" v-tooltip="ratingTooltipContent">
-                                    <input type="checkbox" 
-                                        :checked="agentData.ask_for_rating"
-                                        @change="toggleAskForRating"
-                                    >
-                                    <span class="slider"></span>
-                                </label>
-                            </div>
-                            <p class="helper-text">Request customer feedback when chats end</p>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="detail-section">
-                    <h4>Instructions</h4>
-                    <textarea 
-                        class="instructions-textarea" 
-                        v-model="instructionsText" 
-                        rows="6" 
-                        placeholder="Enter instructions for the agent..."
-                        :readonly="!isEditing"
-                    ></textarea>
-                </section>
-
-                <section class="detail-section">
-                    <h4>Widget Integration</h4>
-                    <div class="widget-info">
-                        <div v-if="widgetLoading" class="loading-indicator">
-                            Loading widget info...
-                        </div>
-                        <div v-else-if="widget" class="widget-code">
-                            <div class="code-container">
-                                <code>&lt;script&gt;window.chattermateId='{{ widget.id }}';&lt;/script&gt;&lt;script src="{{ widgetUrl }}/webclient/chattermate.min.js"&gt;&lt;/script&gt;</code>
-                                <button class="copy-button" @click="copyWidgetCode" title="Copy to clipboard">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                        xmlns="http://www.w3.org/2000/svg">
-                                        <path
-                                            d="M8 4V16C8 17.1046 8.89543 18 10 18H18C19.1046 18 20 17.1046 20 16V7.41421C20 6.88378 19.7893 6.37507 19.4142 6L16 2.58579C15.6249 2.21071 15.1162 2 14.5858 2H10C8.89543 2 8 2.89543 8 4Z"
-                                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                            stroke-linejoin="round" />
-                                        <path
-                                            d="M16 18V20C16 21.1046 15.1046 22 14 22H6C4.89543 22 4 21.1046 4 20V8C4 6.89543 4.89543 6 6 6H8"
-                                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                            stroke-linejoin="round" />
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </section>
+                <!-- Widget Tab -->
+                <div v-if="activeTab === 'widget'" class="tab-content">
+                    <AgentWidgetTab
+                        :widget="widget"
+                        :widget-url="widgetUrl"
+                        :widget-loading="widgetLoading"
+                        @copy-widget-code="copyWidgetCode"
+                    />
+                </div>
             </div>
 
             <!-- Edit Mode -->
@@ -1093,5 +972,67 @@ input:checked + .slider:before {
     opacity: 0.7;
     cursor: not-allowed;
     filter: grayscale(0.5);
+}
+
+.tabs-navigation {
+    display: flex;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-lg);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: var(--space-sm);
+}
+
+.tab-button {
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    color: var(--text-muted);
+    position: relative;
+}
+
+.tab-button:hover {
+    color: var(--text-color);
+}
+
+.tab-button.active {
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+.tab-button.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: var(--primary-color);
+    border-radius: 2px 2px 0 0;
+}
+
+.tab-content {
+    animation: fadeIn 0.3s ease;
+}
+
+.integration-section {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    background-color: var(--background-soft);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 </style>

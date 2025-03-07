@@ -133,8 +133,12 @@ export function useJiraIntegration(agentId: string) {
   /**
    * Save Jira configuration
    */
-  const saveJiraConfig = async () => {
-    if (!selectedProject.value || !selectedIssueType.value) {
+  const saveJiraConfig = async (projectKey?: string, issueTypeId?: string) => {
+    // Use provided values or fall back to the state values
+    const projectToUse = projectKey || selectedProject.value
+    const issueTypeToUse = issueTypeId || selectedIssueType.value
+    
+    if (!projectToUse || !issueTypeToUse) {
       toast.error('Please select a project and issue type')
       return
     }
@@ -142,9 +146,13 @@ export function useJiraIntegration(agentId: string) {
     try {
       await saveAgentJiraConfig(agentId, {
         enabled: true,
-        projectKey: selectedProject.value,
-        issueTypeId: selectedIssueType.value
+        projectKey: projectToUse,
+        issueTypeId: issueTypeToUse
       })
+      
+      // Update the local state to match what was saved
+      selectedProject.value = projectToUse
+      selectedIssueType.value = issueTypeToUse
       
       toast.success('Jira configuration saved')
     } catch (error) {
@@ -197,9 +205,18 @@ export function useJiraIntegration(agentId: string) {
    * Handle project change
    */
   const handleProjectChange = async (projectKey: string) => {
-    selectedProject.value = projectKey
-    selectedIssueType.value = '' // Reset issue type when project changes
-    await fetchJiraIssueTypes(projectKey)
+    if (projectKey !== selectedProject.value) {
+      selectedProject.value = projectKey
+      selectedIssueType.value = '' // Reset issue type when project changes
+      await fetchJiraIssueTypes(projectKey)
+    }
+  }
+
+  /**
+   * Handle issue type change
+   */
+  const handleIssueTypeChange = (issueTypeId: string) => {
+    selectedIssueType.value = issueTypeId
   }
 
   return {
@@ -221,6 +238,7 @@ export function useJiraIntegration(agentId: string) {
     toggleCreateTicket,
     saveJiraConfig,
     fetchAgentJiraConfig,
-    handleProjectChange
+    handleProjectChange,
+    handleIssueTypeChange
   }
 } 

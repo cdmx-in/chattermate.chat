@@ -362,7 +362,9 @@ async def update_agent_groups(
         # Prepare response
         knowledge_repo = KnowledgeRepository(db)
         knowledge_items = knowledge_repo.get_by_agent(agent.id)
-        
+        customization = agent.customization
+        if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+            customization.photo_url = await get_s3_signed_url(customization.photo_url)
         return AgentWithCustomizationResponse(
             id=agent.id,
             name=agent.name,
@@ -372,7 +374,7 @@ async def update_agent_groups(
             instructions=agent.instructions,
             is_active=agent.is_active,
             organization_id=agent.organization_id,
-            customization=agent.customization,
+            customization=customization,
             transfer_to_human=agent.transfer_to_human,
             groups=agent.groups,
             knowledge=[{
