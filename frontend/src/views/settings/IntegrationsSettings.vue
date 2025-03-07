@@ -33,6 +33,8 @@ const route = useRoute()
 const jiraConnected = ref(false)
 const jiraSiteUrl = ref('')
 const isLoading = ref(true)
+const showDisconnectConfirm = ref(false)
+const disconnectingIntegration = ref<string | null>(null)
 
 // Check if Jira is connected
 const fetchJiraStatus = async () => {
@@ -59,6 +61,18 @@ const connectJira = () => {
   }
 }
 
+// Show disconnect confirmation
+const showDisconnectConfirmation = (integrationId: string) => {
+  disconnectingIntegration.value = integrationId
+  showDisconnectConfirm.value = true
+}
+
+// Cancel disconnect
+const cancelDisconnect = () => {
+  showDisconnectConfirm.value = false
+  disconnectingIntegration.value = null
+}
+
 // Disconnect from Jira
 const handleDisconnectJira = async () => {
   try {
@@ -67,11 +81,20 @@ const handleDisconnectJira = async () => {
     jiraConnected.value = false
     jiraSiteUrl.value = ''
     toast.success('Jira disconnected successfully')
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error disconnecting from Jira:', error)
-    toast.error('Error disconnecting from Jira')
+    let errorMessage = 'Error disconnecting from Jira'
+    
+    // Try to extract a more detailed error message if available
+    if (error.response && error.response.data && error.response.data.detail) {
+      errorMessage = error.response.data.detail
+    }
+    
+    toast.error(errorMessage)
   } finally {
     isLoading.value = false
+    showDisconnectConfirm.value = false
+    disconnectingIntegration.value = null
   }
 }
 
@@ -202,7 +225,7 @@ onMounted(async () => {
                 </button>
                 <button 
                   v-else 
-                  @click="integration.disconnectAction" 
+                  @click="showDisconnectConfirmation(integration.id)" 
                   class="btn btn-danger"
                   :disabled="integration.isLoading"
                 >
@@ -225,6 +248,44 @@ onMounted(async () => {
       </div>
     </div>
   </DashboardLayout>
+  
+  <!-- Disconnect Confirmation Modal -->
+  <div v-if="showDisconnectConfirm" class="disconnect-modal">
+    <div class="disconnect-modal-content">
+      <div class="disconnect-modal-header">
+        <h3>Disconnect Integration</h3>
+        <button class="close-modal-btn" @click="cancelDisconnect">
+          <span>×</span>
+        </button>
+      </div>
+      <div class="disconnect-modal-body">
+        <div class="warning-icon">⚠️</div>
+        <p>Are you sure you want to disconnect this integration?</p>
+        <p class="warning-text">This will remove all connections and configurations associated with this integration.</p>
+        
+        <div v-if="disconnectingIntegration === 'jira'" class="integration-specific-warning">
+          <p>Disconnecting Jira will:</p>
+          <ul>
+            <li>Remove all Jira configurations from your agents</li>
+            <li>Disable ticket creation functionality</li>
+            <li>Require you to reconnect and reconfigure Jira settings if you want to use it again</li>
+          </ul>
+        </div>
+      </div>
+      <div class="disconnect-modal-actions">
+        <button class="btn-cancel" @click="cancelDisconnect">Cancel</button>
+        <button 
+          v-if="disconnectingIntegration === 'jira'" 
+          class="btn-disconnect" 
+          @click="handleDisconnectJira"
+          :disabled="isLoading"
+        >
+          <span v-if="isLoading" class="loading-spinner"></span>
+          <span v-else>Disconnect Jira</span>
+        </button>
+      </div>
+    </div>
+  </div>
 </template>
 
 <style scoped>
@@ -474,12 +535,12 @@ onMounted(async () => {
 }
 
 .btn-danger {
-  background-color: var(--danger-color);
+  background-color: var(--error-color);
   color: white;
 }
 
 .btn-danger:hover {
-  background-color: var(--danger-dark);
+  background-color: #d63939; /* Slightly darker shade of error color */
   transform: translateY(-1px);
 }
 
@@ -509,5 +570,164 @@ onMounted(async () => {
   .integrations-settings {
     padding: var(--space-md);
   }
+}
+
+/* Disconnect Modal Styles */
+.disconnect-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.disconnect-modal-content {
+  background: var(--background-color);
+  border-radius: 8px;
+  width: 500px;
+  max-width: 90%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  overflow: hidden;
+}
+
+.disconnect-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.disconnect-modal-header h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 18px;
+}
+
+.close-modal-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 24px;
+  line-height: 1;
+  padding: 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.close-modal-btn:hover {
+  color: var(--text-primary);
+}
+
+.disconnect-modal-body {
+  padding: 24px;
+}
+
+.warning-icon {
+  font-size: 48px;
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.disconnect-modal-body p {
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.warning-text {
+  color: var(--error-color);
+  font-weight: 500;
+}
+
+.integration-specific-warning {
+  margin-top: 24px;
+  padding: 16px;
+  background: var(--background-soft);
+  border-radius: 8px;
+  border-left: 4px solid var(--warning);
+}
+
+.integration-specific-warning p {
+  text-align: left;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.integration-specific-warning ul {
+  margin: 0;
+  padding-left: 24px;
+}
+
+.integration-specific-warning li {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+}
+
+.disconnect-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-color);
+  background: var(--background-soft);
+}
+
+.btn-cancel {
+  background: var(--background-mute);
+  color: var(--text-primary);
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.btn-cancel:hover {
+  background: var(--background-alt);
+}
+
+.btn-disconnect {
+  background: var(--error-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.btn-disconnect:hover {
+  background: #d63939; /* Slightly darker shade of error color */
+  transform: translateY(-1px);
+  filter: brightness(1.1);
+}
+
+.btn-disconnect:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.loading-spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  border-top-color: white;
+  animation: spin 1s linear infinite;
 }
 </style> 

@@ -2,12 +2,14 @@ import traceback
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
+from sqlalchemy import String
 import secrets
 import uuid
 
 from app.database import get_db
 from app.services.jira import JiraService
 from app.models.jira import JiraToken, AgentJiraConfig
+from app.models.agent import Agent
 from app.core.auth import get_current_organization, require_permissions
 from app.models.organization import Organization
 from app.models.user import User
@@ -108,8 +110,27 @@ async def disconnect_jira(
     if not token:
         raise HTTPException(status_code=404, detail="No Jira connection found")
     
-    db.delete(token)
-    db.commit()
+    # Delete all agent Jira configurations for this organization
+    try:
+        agent_configs = db.query(AgentJiraConfig).join(
+            Agent, AgentJiraConfig.agent_id == Agent.id.cast(String)
+        ).filter(
+            Agent.organization_id == organization.id
+        ).all()
+        
+        config_count = len(agent_configs)
+        for config in agent_configs:
+            db.delete(config)
+            
+        # Delete the Jira token
+        db.delete(token)
+        db.commit()
+        
+        logger.info(f"Jira disconnected for organization {organization.id} by user {current_user.id}. Deleted {config_count} agent configurations.")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error disconnecting Jira: {e}")
+        raise HTTPException(status_code=500, detail=f"Error disconnecting Jira: {str(e)}")
     
     return {"message": "Jira disconnected successfully"}
 
