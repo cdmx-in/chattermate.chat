@@ -182,7 +182,9 @@ async def get_agent_availability_response(
     customer_repo = CustomerRepository(db)
     group_repo = GroupRepository(db)
 
-    if not agent or not agent.groups:
+    # Check if agent has groups
+    agent_groups = agent.get("groups") if isinstance(agent, dict) else agent.groups
+    if not agent or not agent_groups:
         return {
             "message": "I apologize, but I'm unable to transfer the chat at this time.",
             "transfer_to_human": False
@@ -195,7 +197,7 @@ async def get_agent_availability_response(
 
     # Get available users with proper session handling
     available_users = []
-    for group in agent.groups:
+    for group in agent_groups:
         # Reload group with users relationship
         db_group = group_repo.get_group_with_users(group.id)
         if db_group:
@@ -204,7 +206,7 @@ async def get_agent_availability_response(
                     available_users.append(user)
 
     # Get organization's business hours
-    org = agent.organization
+    org = agent.get("organization") if isinstance(agent, dict) else agent.organization
     
     business_hours = org.business_hours if hasattr(org, 'business_hours') else {
         'monday': {'start': '09:00', 'end': '17:00', 'enabled': True},
@@ -261,7 +263,7 @@ async def get_agent_availability_response(
         api_key=api_key,
         model_name=model_name,
         model_type=model_type,
-        agent_id=agent.id
+        agent_id=agent.get("id") if isinstance(agent, dict) else agent.id
     )
 
 

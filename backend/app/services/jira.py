@@ -35,6 +35,17 @@ class JiraService:
         }
         return f"{self.auth_url}?{urlencode(params)}"
 
+    def validate_token(self, token) -> bool:
+        """Check if the token is valid (not expired)."""
+        if not token:
+            return False
+            
+        # Check if token is expired
+        if token.expires_at < datetime.now():
+            return False
+            
+        return True
+
     async def exchange_code_for_token(self, code: str) -> Dict[str, Any]:
         """Exchange authorization code for access token."""
         data = {
@@ -144,18 +155,63 @@ class JiraService:
         
         project = response.json()
         
-        # Get issue types for the project
+        # Get issue types for the project, filtering out sub-tasks
         issue_types = []
         for issue_type in project.get("issueTypes", []):
+            # Skip sub-tasks as they require a parent issue
+            if issue_type.get("subtask", False):
+                logger.info(f"Skipping sub-task issue type: {issue_type['name']} (ID: {issue_type['id']})")
+                continue
+                
             issue_types.append({
                 "id": issue_type["id"],
                 "name": issue_type["name"],
-                "description": issue_type.get("description", "")
+                "description": issue_type.get("description", ""),
+                "iconUrl": issue_type.get("iconUrl", "")
             })
         
         return issue_types
+        
+    async def create_issue(self, organization, db, issue_data):
+        """Wrapper method for create_issue that takes organization, db, and issue_data parameters."""
+        from app.models.jira import JiraToken
+        
+        token = db.query(JiraToken).filter(
+            JiraToken.organization_id == organization.id
+        ).first()
+        
+        if not token:
+            raise JiraAuthError("No Jira connection found")
+        
+        # Check if token is valid and refresh if needed
+        is_valid = self.validate_token(token)
+        if not is_valid:
+            try:
+                token_data = await self.refresh_token(token.refresh_token)
+                
+                # Update token in database
+                for key, value in token_data.items():
+                    setattr(token, key, value)
+                
+                db.commit()
+            except Exception as e:
+                logger.error(f"Failed to refresh Jira token: {e}")
+                raise JiraAuthError("Jira token expired and could not be refreshed")
+        
+        # Create the issue
+        result = await self.create_issue_internal(
+            token.access_token,
+            token.cloud_id,
+            issue_data.projectKey,
+            issue_data.issueTypeId,
+            issue_data.summary,
+            issue_data.description,
+            issue_data.priority
+        )
+        
+        return result
     
-    async def create_issue(self, access_token: str, cloud_id: str, project_key: str, issue_type_id: str, 
+    async def create_issue_internal(self, access_token: str, cloud_id: str, project_key: str, issue_type_id: str, 
                           summary: str, description: str, priority_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a new issue in Jira."""
         headers = {
@@ -273,5 +329,5 @@ class JiraService:
             return False
             
     async def is_priority_available(self, access_token: str, cloud_id: str, project_key: str, issue_type_id: str) -> bool:
-        """Check if priority field is available for a project/issue type combination."""
+        """Check if the priority field is available for a project/issue type combination."""
         return await self.check_field_availability(access_token, cloud_id, project_key, issue_type_id, "priority") 

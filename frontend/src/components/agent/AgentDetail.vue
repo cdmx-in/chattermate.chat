@@ -30,14 +30,7 @@ import AgentGeneralTab from './AgentGeneralTab.vue'
 import { Cropper, CircleStencil } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
 import { useAgentChat } from '@/composables/useAgentChat'
-import 'floating-vue/dist/style.css'
-import { vTooltip } from 'floating-vue'
 import { useAgentDetail } from '@/composables/useAgentDetail'
-
-// Register directive
-const directives = {
-  tooltip: vTooltip
-}
 
 const props = defineProps<{
     agent: AgentWithCustomization

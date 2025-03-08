@@ -21,13 +21,10 @@ from typing import Optional
 from phi.agent import Agent
 from phi.model.openai import OpenAIChat
 from app.core.logger import get_logger
-from phi.model.message import Message
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
-from app.repositories.agent import AgentRepository
 from app.database import get_db
 from phi.storage.agent.postgres import PgAgentStorage
 from app.repositories.chat import ChatRepository
-import uuid
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
 from pydantic import BaseModel, Field
@@ -38,6 +35,7 @@ from app.models.notification import Notification
 from app.services.user import send_fcm_notification
 from app.models.user import User, user_groups
 from datetime import datetime
+from app.repositories.jira import JiraRepository
 
 logger = get_logger(__name__)
 
@@ -72,6 +70,15 @@ class ChatResponse(BaseModel):
     end_chat_reason: Optional[EndChatReasonType] = Field(default=None, description="End chat reason Type should be one of the following: ISSUE_RESOLVED, CUSTOMER_REQUEST, CONFIRMATION_RECEIVED, FAREWELL, THANK_YOU, NATURAL_CONCLUSION, TASK_COMPLETED")
     end_chat_description: Optional[str] = Field(default=None, description="Detailed description for ending the chat")
     request_rating: bool = Field(default=False, description="Whether to request a rating from the customer")
+    
+    # Ticket creation fields
+    create_ticket: bool = Field(default=False, description="Whether to create a ticket in the integrated system (Jira, Zendesk, etc.)")
+    ticket_summary: Optional[str] = Field(default=None, description="Summary/title for the ticket to be created")
+    ticket_description: Optional[str] = Field(default=None, description="Detailed description for the ticket to be created")
+    integration_type: Optional[str] = Field(default=None, description="Type of integration to use for ticket creation")
+    ticket_id: Optional[str] = Field(default=None, description="ID of the created ticket (filled after creation)")
+    ticket_status: Optional[str] = Field(default=None, description="Status of the created ticket (filled after creation)")
+    ticket_priority: Optional[str] = Field(default=None, description="Priority level for the ticket (e.g., 'High', 'Medium', 'Low')")
 
     class Config:
         from_attributes = True
@@ -85,13 +92,15 @@ class ChatAgent:
                 agent_id=agent_id, org_id=org_id)
             tools.append(knowledge_tool)
 
-        # Get template instructions
-        agent_data_repo = AgentRepository(next(get_db()))
-        self.agent_data = agent_data_repo.get_by_agent_id(
-            agent_id) if agent_id else None
+        # Get template instructions and Jira config in a single optimized query
+        db = next(get_db())
+        jira_repo = JiraRepository(db)
+        self.agent_data = jira_repo.get_agent_with_jira_config(agent_id) if agent_id else None
+        
         self.api_key = api_key
         self.model_name = model_name
         self.model_type = model_type
+        self.jira_instructions_added = False
 
         if self.agent_data:
             # Define end chat instructions to avoid long lines
@@ -115,7 +124,8 @@ class ChatAgent:
                 "4) The conversation has reached a natural conclusion after resolving the customer's query, or "
                 "5) The requested task has been completed and confirmed by the customer. "
                 "DO NOT end the chat just because the customer says \"thank you\" or \"thanks\" - "
-                "this is often just politeness and not an indication that they want to end the conversation."
+                "this is often just politeness and not an indication that they want to end the conversation. "
+                "Always check the conversation history to confirm the issue has been properly addressed before ending the chat."
             )
             
             transfer_instructions = (
@@ -124,70 +134,105 @@ class ChatAgent:
                 "FRUSTRATED, REPEAT_INSTRUCTIONS, DIRECT_REQUEST, HIGH_PRIORITY_ISSUE, COMPLIANCE_ISSUE."
             )
             
-            instructions = [
-                f"You are {self.agent_data.display_name if self.agent_data.display_name else self.agent_data.name}, representing our company.",
-                f" { transfer_instructions if self.agent_data.transfer_to_human else ''} ",
-                f" { end_chat_with_rating if self.agent_data.ask_for_rating else end_chat_without_rating} ",
-                *self.agent_data.instructions
-            ]
-        else:
-            instructions = [
-                "You are a helpful customer service agent.",
-            ]
+            # Build system message
+            system_message = ""
+            if self.agent_data.instructions:
+                system_message = "\n".join(self.agent_data.instructions)
+            
+            # Add transfer instructions if enabled
+            if self.agent_data.transfer_to_human:
+                system_message += """
+                You have the ability to transfer this conversation to a human agent if needed. You should transfer the conversation if:
+                1. You are unable to answer the customer's question or solve their problem
+                2. The customer explicitly asks to speak to a human
+                3. The customer is expressing frustration with your responses
+                4. The customer's request requires human judgment or decision-making
+                5. The customer's issue is complex and would benefit from human expertise
+                6. The customer needs to perform an action that you cannot assist with
+                
+                To transfer to a human, set transfer_to_human to true in your response and provide a transfer_reason and transfer_description.
+                """
+            
+            # Add end chat instructions
+            if self.agent_data.ask_for_rating:
+                system_message += f"\n{end_chat_with_rating}"
+            else:
+                system_message += f"\n{end_chat_without_rating}"
+            
+            # Add Jira instructions if Jira is enabled
+            if self.agent_data and self.agent_data.jira_enabled and not self.agent_data.transfer_to_human:
+                system_message += f"""
+                You are connected to Jira for ticket creation. If the user's issue cannot be resolved in this conversation and requires further attention, you can create a Jira ticket.
+                To create a ticket, include the following fields in your response:
+                - Set create_ticket to true
+                - Provide a clear and concise ticket_summary (title)
+                - Provide a detailed ticket_description including:
+                  * The user's original issue
+                  * Steps already taken to resolve it
+                  * Any relevant context or information
+                - Set integration_type to "JIRA"
+                - Optionally set ticket_priority to one of: "Highest", "High", "Medium", "Low", "Lowest" (defaults to "Medium" if not specified)
+                
+                The ticket will be created in the Jira project with key: {self.agent_data.jira_project_key} and issue type: {self.agent_data.jira_issue_type_id}.
+                
+                Integration type should be: JIRA
+                Only create tickets for legitimate issues that need tracking and follow-up. Do not create tickets for simple questions that were already answered in the conversation.
+                """
+                self.jira_instructions_added = True
 
-        model_type = model_type.upper()
-        if model_type == 'OPENAI':
-            model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'ANTHROPIC':
-            from phi.model.anthropic import Claude
-            model = Claude(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'DEEPSEEK':
-            from phi.model.deepseek import DeepSeekChat
-            model = DeepSeekChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GOOGLE':
-            from phi.model.google import Gemini
-            model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GOOGLEVERTEX':
-            from phi.model.vertexai import Gemini
-            model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GROQ':
-            from phi.model.groq import Groq
-            model = Groq(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'MISTRAL':
-            from phi.model.mistral import MistralChat
-            model = MistralChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'HUGGINGFACE':
-            from phi.model.huggingface import HuggingFaceChat
-            model = HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'OLLAMA':
-            from phi.model.ollama import Ollama
-            model = Ollama(id=model_name)
-        elif model_type == 'XAI':
-            from phi.model.xai import xAI
-            model = xAI(api_key=api_key, id=model_name, max_tokens=1000)
-        else:
-            raise ValueError(f"Unsupported model type: {model_type}")
+            model_type = model_type.upper()
+            if model_type == 'OPENAI':
+                model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000)
+            elif model_type == 'ANTHROPIC':
+                from phi.model.anthropic import Claude
+                model = Claude(api_key=api_key, id=model_name, max_tokens=1000)
+            elif model_type == 'DEEPSEEK':
+                from phi.model.deepseek import DeepSeekChat
+                model = DeepSeekChat(api_key=api_key, id=model_name, max_tokens=1000)
+            elif model_type == 'GOOGLE':
+                from phi.model.google import Gemini
+                model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
+            elif model_type == 'GOOGLEVERTEX':
+                from phi.model.vertexai import Gemini
+                model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
+            elif model_type == 'GROQ':
+                from phi.model.groq import Groq
+                model = Groq(api_key=api_key, id=model_name, max_tokens=1000)
+            elif model_type == 'MISTRAL':
+                from phi.model.mistral import MistralChat
+                model = MistralChat(api_key=api_key, id=model_name, max_tokens=1000)
+            elif model_type == 'HUGGINGFACE':
+                from phi.model.huggingface import HuggingFaceChat
+                model = HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=1000)
+            elif model_type == 'OLLAMA':
+                from phi.model.ollama import Ollama
+                model = Ollama(id=model_name)
+            elif model_type == 'XAI':
+                from phi.model.xai import xAI
+                model = xAI(api_key=api_key, id=model_name, max_tokens=1000)
+            else:
+                raise ValueError(f"Unsupported model type: {model_type}")
 
-        storage = PgAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
+            storage = PgAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
 
-        self.agent = Agent(
-            name="Customer Service Agent",
-            session_id=session_id,
-            model=model,
-            tools=tools,
-            instructions=instructions,
-            agent_id=str(agent_id),
-            storage=storage,
-            add_history_to_messages=True,
-            num_history_responses=10,
-            read_chat_history=True,
-            markdown=False,
-            debug_mode=settings.ENVIRONMENT == "development",
-            user_id=str(customer_id),
-            session_data={"status": "active"},
-            response_model=ChatResponse,
-            structured_output=True,
-        )
+            self.agent = Agent(
+                name=self.agent_data.name,
+                session_id=session_id,
+                model=model,
+                tools=tools,
+                instructions= system_message,
+                agent_id=str(agent_id),
+                storage=storage,
+                add_history_to_messages=True,
+                num_history_responses=10,
+                read_chat_history=True,
+                markdown=False,
+                debug_mode=settings.ENVIRONMENT == "development",
+                user_id=str(customer_id),
+                session_data={"status": "active"},
+                response_model=ChatResponse,
+                structured_output=True,
+            )
 
     async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
         try:
@@ -257,6 +302,70 @@ class ChatAgent:
                     response_content = response
 
             logger.info(f"Response content: {response_content}")
+            
+            # Handle ticket creation if enabled and requested
+            if self.agent_data.jira_enabled and response_content.create_ticket and response_content.ticket_summary:
+                try:
+                    # Import here to avoid circular imports
+                    from app.services.jira import JiraService
+                    from app.api.jira import CreateJiraIssueModel
+                    
+                    jira_service = JiraService()
+                    
+                    # Create the issue
+                    issue_data = CreateJiraIssueModel(
+                        projectKey=self.agent_data.jira_project_key,
+                        issueTypeId=self.agent_data.jira_issue_type_id,
+                        summary=response_content.ticket_summary,
+                        description=response_content.ticket_description or "No description provided",
+                        priority=response_content.ticket_priority,
+                        chatId=session_id
+                    )
+                    
+                    # Get organization from the database
+                    from app.models.organization import Organization
+                    from app.models.agent import Agent
+                    
+                    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+                    if agent:
+                        organization = db.query(Organization).filter(
+                            Organization.id == agent.organization_id
+                        ).first()
+                        
+                        if organization:
+                            # Create the issue
+                            issue_result = await jira_service.create_issue(
+                                organization=organization,
+                                db=db,
+                                issue_data=issue_data
+                            )
+                            
+                            if issue_result and "key" in issue_result:
+                                # Update the response with ticket information
+                                response_content.ticket_id = issue_result["key"]
+                                response_content.ticket_status = issue_result.get("status", {}).get("name", "Created")
+                                
+                                # Update the session with ticket information
+                                session_repo = SessionToAgentRepository(db)
+                                session_repo.update_session(
+                                    session_id,
+                                    {
+                                        "ticket_id": response_content.ticket_id,
+                                        "ticket_status": response_content.ticket_status,
+                                        "ticket_summary": response_content.ticket_summary,
+                                        "ticket_description": response_content.ticket_description,
+                                        "integration_type": "JIRA",
+                                        "ticket_priority": response_content.ticket_priority
+                                    }
+                                )
+                                
+                                # Add ticket creation confirmation to the message
+                                ticket_message = f"\n\nI've created a ticket to track this issue: {response_content.ticket_id}"
+                                response_content.message += ticket_message
+                except Exception as ticket_error:
+                    logger.error(f"Failed to create Jira ticket: {str(ticket_error)}")
+                    # Don't add error message to the response, just log it
+            
             # Handle end chat and rating request
             if response_content.end_chat:
                 session_repo = SessionToAgentRepository(db)
@@ -364,7 +473,29 @@ class ChatAgent:
 
                 return response_content
 
-            # Store AI response with end chat and rating status
+            # Store AI response with all attributes
+            attributes = {
+                "transfer_to_human": response_content.transfer_to_human,
+                "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
+                "transfer_description": response_content.transfer_description,
+                "end_chat": response_content.end_chat,
+                "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
+                "end_chat_description": response_content.end_chat_description,
+                "request_rating": response_content.request_rating
+            }
+            
+            # Add ticket attributes if present
+            if response_content.create_ticket:
+                attributes.update({
+                    "create_ticket": response_content.create_ticket,
+                    "ticket_summary": response_content.ticket_summary,
+                    "ticket_description": response_content.ticket_description,
+                    "integration_type": response_content.integration_type,
+                    "ticket_id": response_content.ticket_id,
+                    "ticket_status": response_content.ticket_status,
+                    "ticket_priority": response_content.ticket_priority
+                })
+            
             chat_repo.create_message({
                 "message": response_content.message,
                 "message_type": "bot",
@@ -372,15 +503,7 @@ class ChatAgent:
                 "organization_id": org_id,
                 "agent_id": agent_id,
                 "customer_id": customer_id,
-                "attributes": {
-                    "transfer_to_human": response_content.transfer_to_human,
-                    "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
-                    "transfer_description": response_content.transfer_description,
-                    "end_chat": response_content.end_chat,
-                    "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
-                    "end_chat_description": response_content.end_chat_description,
-                    "request_rating": response_content.request_rating
-                }
+                "attributes": attributes
             })
             
             return response_content

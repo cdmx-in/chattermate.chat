@@ -17,6 +17,7 @@ from app.core.logger import get_logger
 from app.core.config import settings
 from pydantic import BaseModel
 from typing import Optional, List
+from app.core.exceptions import JiraAuthError
 
 router = APIRouter()
 jira_service = JiraService()
@@ -427,40 +428,12 @@ async def create_jira_issue(
     """
     Create a new Jira issue.
     """
-    token = db.query(JiraToken).filter(
-        JiraToken.organization_id == organization.id
-    ).first()
-    
-    if not token:
-        raise HTTPException(status_code=404, detail="No Jira connection found")
-    
-    # Check if token is valid
-    is_valid = jira_service.validate_token(token)
-    
-    # If token is expired, try to refresh it
-    if not is_valid:
-        try:
-            token_data = await jira_service.refresh_token(token.refresh_token)
-            
-            # Update token in database
-            for key, value in token_data.items():
-                setattr(token, key, value)
-            
-            db.commit()
-        except Exception as e:
-            logger.error(f"Failed to refresh Jira token: {e}")
-            raise HTTPException(status_code=401, detail="Jira token expired and could not be refreshed")
-    
     try:
-        # Create the issue
+        # Create the issue using the wrapper method
         result = await jira_service.create_issue(
-            token.access_token,
-            token.cloud_id,
-            issue_data.projectKey,
-            issue_data.issueTypeId,
-            issue_data.summary,
-            issue_data.description,
-            issue_data.priority
+            organization=organization,
+            db=db,
+            issue_data=issue_data
         )
         
         # Return the issue key and URL
@@ -469,6 +442,9 @@ async def create_jira_issue(
             "id": result.get("id"),
             "self": result.get("self")
         }
+    except JiraAuthError as e:
+        logger.error(f"Jira authentication error: {e}")
+        raise HTTPException(status_code=401, detail=str(e))
     except Exception as e:
         logger.error(f"Failed to create Jira issue: {e}")
         raise HTTPException(status_code=500, detail="Failed to create Jira issue")

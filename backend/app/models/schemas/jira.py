@@ -1,5 +1,5 @@
 """
-ChatterMate - Widget
+ChatterMate - Jira Schemas
 Copyright (C) 2024 ChatterMate
 
 This program is free software: you can redistribute it and/or modify
@@ -16,4 +16,15 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
- 
+from pydantic import BaseModel
+from typing import Optional
+from app.models.schemas.agent import AgentResponse
+
+class AgentWithJiraConfig(AgentResponse):
+    """Model for agent data with Jira configuration."""
+    jira_enabled: bool = False
+    jira_project_key: Optional[str] = None
+    jira_issue_type_id: Optional[str] = None
+    
+    class Config:
+        arbitrary_types_allowed = True 
