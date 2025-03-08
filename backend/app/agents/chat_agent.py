@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import traceback
-from typing import Optional
+from typing import Optional, Dict, Any, List, Union
 from phi.agent import Agent
 from phi.model.openai import OpenAIChat
 from app.core.logger import get_logger
@@ -36,6 +36,7 @@ from app.services.user import send_fcm_notification
 from app.models.user import User, user_groups
 from datetime import datetime
 from app.repositories.jira import JiraRepository
+from app.tools.jira_toolkit import JiraTools
 
 logger = get_logger(__name__)
 
@@ -101,6 +102,25 @@ class ChatAgent:
         self.model_name = model_name
         self.model_type = model_type
         self.jira_instructions_added = False
+        self.org_id = org_id
+        self.agent_id = agent_id
+        self.customer_id = customer_id
+        self.session_id = session_id
+
+        # Initialize tools
+        self.tools = []
+        
+        # Add Jira tools if agent_id, org_id, and session_id are provided
+        if self.agent_id and self.org_id and self.session_id and not self.agent_data.transfer_to_human and self.agent_data.jira_enabled:
+            try:
+                self.jira_tools = JiraTools(
+                    agent_id=self.agent_id,
+                    org_id=self.org_id,
+                    session_id=self.session_id
+                )
+                self.tools.append(self.jira_tools)
+            except Exception as e:
+                logger.error(f"Failed to initialize Jira tools: {e}")
 
         if self.agent_data:
             # Define end chat instructions to avoid long lines
@@ -128,11 +148,7 @@ class ChatAgent:
                 "Always check the conversation history to confirm the issue has been properly addressed before ending the chat."
             )
             
-            transfer_instructions = (
-                "You are allowed to transfer the conversation to a human if one of the following conditions is met: "
-                "UNABLE_TO_ANSWER, NEED_MORE_INFO, KNOWLEDGE_GAP, NEED_TO_CALL, NEED_TO_EMAIL, NEED_TO_MEET, "
-                "FRUSTRATED, REPEAT_INSTRUCTIONS, DIRECT_REQUEST, HIGH_PRIORITY_ISSUE, COMPLIANCE_ISSUE."
-            )
+
             
             # Build system message
             system_message = ""
@@ -161,25 +177,29 @@ class ChatAgent:
             
             # Add Jira instructions if Jira is enabled
             if self.agent_data and self.agent_data.jira_enabled and not self.agent_data.transfer_to_human:
-                system_message += f"""
-                You are connected to Jira for ticket creation. If the user's issue cannot be resolved in this conversation and requires further attention, you can create a Jira ticket.
-                To create a ticket, include the following fields in your response:
-                - Set create_ticket to true
-                - Provide a clear and concise ticket_summary (title)
-                - Provide a detailed ticket_description including:
-                  * The user's original issue
-                  * Steps already taken to resolve it
-                  * Any relevant context or information
-                - Set integration_type to "JIRA"
-                - Optionally set ticket_priority to one of: "Highest", "High", "Medium", "Low", "Lowest" (defaults to "Medium" if not specified)
-                
-                The ticket will be created in the Jira project with key: {self.agent_data.jira_project_key} and issue type: {self.agent_data.jira_issue_type_id}.
-                
-                Integration type should be: JIRA
-                Only create tickets for legitimate issues that need tracking and follow-up. Do not create tickets for simple questions that were already answered in the conversation.
-                """
-                self.jira_instructions_added = True
+                jira_instructions = """
+                You have access to Jira integration tools. You can use these tools to:
+                1. Create a Jira ticket for issues that need further attention
+                2. Check if a ticket already exists for the current conversation
+                3. Get the status of an existing ticket
 
+                To create a ticket, you can either:
+                - Use the create_jira_ticket function directly
+                - Include the following fields in your response:
+                - create_ticket: Set to true to create a ticket
+                - ticket_summary: A brief summary of the issue (required if create_ticket is true)
+                - ticket_description: A detailed description of the issue (required if create_ticket is true)
+                - ticket_priority: The priority level of the ticket (optional, defaults to "Medium")
+
+                Only create a ticket if:
+                - The issue is complex and requires human intervention
+                - The user explicitly requests to create a ticket
+                - You've tried to resolve the issue but were unable to do so
+                - No ticket already exists for this conversation
+                """
+                system_message += "\n\n" + jira_instructions
+                self.jira_instructions_added = True
+            
             model_type = model_type.upper()
             if model_type == 'OPENAI':
                 model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000)
@@ -215,12 +235,17 @@ class ChatAgent:
 
             storage = PgAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
 
+            # Combine all tools
+            all_tools = tools.copy()
+            if hasattr(self, 'tools') and self.tools:
+                all_tools.extend(self.tools)
+
             self.agent = Agent(
                 name=self.agent_data.name,
                 session_id=session_id,
                 model=model,
-                tools=tools,
-                instructions= system_message,
+                tools=all_tools,
+                instructions=system_message,
                 agent_id=str(agent_id),
                 storage=storage,
                 add_history_to_messages=True,
@@ -235,8 +260,25 @@ class ChatAgent:
             )
 
     async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
+        """
+        Get a response from the agent.
+        """
         try:
+            # Update session and IDs if provided
+            if session_id:
+                self.session_id = session_id
+            if org_id:
+                self.org_id = org_id
+            if agent_id:
+                self.agent_id = agent_id
+            if customer_id:
+                self.customer_id = customer_id
+                
+
+            
+            # Get database connection
             db = next(get_db())
+            
             chat_repo = ChatRepository(db)
             
             self.agent.session_id = session_id
@@ -303,68 +345,7 @@ class ChatAgent:
 
             logger.info(f"Response content: {response_content}")
             
-            # Handle ticket creation if enabled and requested
-            if self.agent_data.jira_enabled and response_content.create_ticket and response_content.ticket_summary:
-                try:
-                    # Import here to avoid circular imports
-                    from app.services.jira import JiraService
-                    from app.api.jira import CreateJiraIssueModel
-                    
-                    jira_service = JiraService()
-                    
-                    # Create the issue
-                    issue_data = CreateJiraIssueModel(
-                        projectKey=self.agent_data.jira_project_key,
-                        issueTypeId=self.agent_data.jira_issue_type_id,
-                        summary=response_content.ticket_summary,
-                        description=response_content.ticket_description or "No description provided",
-                        priority=response_content.ticket_priority,
-                        chatId=session_id
-                    )
-                    
-                    # Get organization from the database
-                    from app.models.organization import Organization
-                    from app.models.agent import Agent
-                    
-                    agent = db.query(Agent).filter(Agent.id == agent_id).first()
-                    if agent:
-                        organization = db.query(Organization).filter(
-                            Organization.id == agent.organization_id
-                        ).first()
-                        
-                        if organization:
-                            # Create the issue
-                            issue_result = await jira_service.create_issue(
-                                organization=organization,
-                                db=db,
-                                issue_data=issue_data
-                            )
-                            
-                            if issue_result and "key" in issue_result:
-                                # Update the response with ticket information
-                                response_content.ticket_id = issue_result["key"]
-                                response_content.ticket_status = issue_result.get("status", {}).get("name", "Created")
-                                
-                                # Update the session with ticket information
-                                session_repo = SessionToAgentRepository(db)
-                                session_repo.update_session(
-                                    session_id,
-                                    {
-                                        "ticket_id": response_content.ticket_id,
-                                        "ticket_status": response_content.ticket_status,
-                                        "ticket_summary": response_content.ticket_summary,
-                                        "ticket_description": response_content.ticket_description,
-                                        "integration_type": "JIRA",
-                                        "ticket_priority": response_content.ticket_priority
-                                    }
-                                )
-                                
-                                # Add ticket creation confirmation to the message
-                                ticket_message = f"\n\nI've created a ticket to track this issue: {response_content.ticket_id}"
-                                response_content.message += ticket_message
-                except Exception as ticket_error:
-                    logger.error(f"Failed to create Jira ticket: {str(ticket_error)}")
-                    # Don't add error message to the response, just log it
+
             
             # Handle end chat and rating request
             if response_content.end_chat:
@@ -390,7 +371,7 @@ class ChatAgent:
                     response_content.message += rating_message
 
             # Handle transfer (existing code)
-            if self.agent_data.transfer_to_human and response_content.transfer_to_human and self.agent_data.groups:
+            if self.agent_data and self.agent_data.transfer_to_human and response_content.transfer_to_human and hasattr(self.agent_data, 'groups') and self.agent_data.groups:
                 # Get chat history
                 chat_history = []
                 chat_history = chat_repo.get_session_history(session_id)

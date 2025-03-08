@@ -206,9 +206,9 @@ async def get_agent_availability_response(
                     available_users.append(user)
 
     # Get organization's business hours
-    org = agent.get("organization") if isinstance(agent, dict) else agent.organization
+    org = agent.get("organization") if isinstance(agent, dict) else getattr(agent, 'organization', None)
     
-    business_hours = org.business_hours if hasattr(org, 'business_hours') else {
+    business_hours = org.business_hours if org and hasattr(org, 'business_hours') else {
         'monday': {'start': '09:00', 'end': '17:00', 'enabled': True},
         'tuesday': {'start': '09:00', 'end': '17:00', 'enabled': True},
         'wednesday': {'start': '09:00', 'end': '17:00', 'enabled': True},
@@ -219,7 +219,7 @@ async def get_agent_availability_response(
     }
 
     # Get organization timezone
-    org_tz_name = org.timezone
+    org_tz_name = org.timezone if org and hasattr(org, 'timezone') else 'UTC'
     try:
         org_tz = pytz.timezone(org_tz_name)
     except pytz.UnknownTimeZoneError:

@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Any
 from app.models.schemas.agent import AgentResponse
 
 class AgentWithJiraConfig(AgentResponse):
@@ -25,6 +25,8 @@ class AgentWithJiraConfig(AgentResponse):
     jira_enabled: bool = False
     jira_project_key: Optional[str] = None
     jira_issue_type_id: Optional[str] = None
+    groups: List[Any] = []
+    organization: Optional[Any] = None
     
     class Config:
         arbitrary_types_allowed = True 
