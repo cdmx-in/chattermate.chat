@@ -36,6 +36,7 @@ from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
 from app.repositories.rating import RatingRepository
+from app.repositories.jira import JiraRepository
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -220,9 +221,8 @@ async def handle_widget_chat(sid, data):
             })
             chat_history = []
             chat_history = chat_repo.get_session_history(session_id)
-            agent_data_repo = AgentRepository(db)
-            agent_data = agent_data_repo.get_by_agent_id(
-                session['agent_id'])
+            jira_repo = JiraRepository(db)
+            agent_data = jira_repo.get_agent_with_jira_config(session['agent_id']) if session['agent_id'] else None
             availability_response = await get_agent_availability_response(
                 agent=agent_data,
                 customer_id=customer_id,
@@ -230,7 +230,8 @@ async def handle_widget_chat(sid, data):
                 db=db,
                 api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
                 model_name=session['ai_config'].model_name,
-                model_type=session['ai_config'].model_type
+                model_type=session['ai_config'].model_type,
+                session_id=session_id
             )
 
                 # Create ChatResponse object

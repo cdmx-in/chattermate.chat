@@ -26,6 +26,7 @@ from app.repositories.customer import CustomerRepository
 from app.core.logger import get_logger
 from app.database import get_db
 from app.repositories.group import GroupRepository
+from app.tools.jira_toolkit import JiraTools
 
 logger = get_logger(__name__)
 
@@ -126,7 +127,7 @@ class TransferResponseAgent:
         business_hours: dict,
         available_agents: int,
         is_business_hours: bool,
-        customer_email: str = None
+        customer_email: str = None,
     ) -> Dict[str, Any]:
         """Get contextual transfer response from agent"""
         logger.debug(f"Transfer Response Agent: {self.agent.instructions}")
@@ -154,8 +155,8 @@ class TransferResponseAgent:
             f"Instructions for response:\n"
             f"1. If within business hours ({is_business_hours}) and agents available ({available_agents} online), "
             f"explain that you need to transfer to a human agent who can better assist them.\n"
-            f"2. If outside business hours or no agents available, "
-            f"apologize and inform that the team will contact them"
+            f"2. If outside business hours or no agents available, if jira tool is available, "
+            f"create a ticket and inform that the team will contact them"
             f"{' at ' + customer_email if customer_email else ''}.\n"
             f"3. Keep the response professional and empathetic.\n"
             f"4. Make it clear whether they should expect immediate help (transfer) "
@@ -177,7 +178,8 @@ async def get_agent_availability_response(
     db,
     api_key: str,
     model_name: str,
-    model_type: str
+    model_type: str,
+    session_id: str
 ) -> dict:
     customer_repo = CustomerRepository(db)
     group_repo = GroupRepository(db)
@@ -266,6 +268,14 @@ async def get_agent_availability_response(
         agent_id=agent.get("id") if isinstance(agent, dict) else agent.id
     )
 
+    jira_enabled = agent.get("jira_enabled") if isinstance(agent, dict) else agent.jira_enabled
+    if jira_enabled:
+        jira_tools = JiraTools(
+            agent_id=agent.get("id") if isinstance(agent, dict) else agent.id,
+            org_id=org.id,
+            session_id=session_id
+        )
+        transfer_agent.agent.tools.append(jira_tools)
 
     # Get contextual response
     response = await transfer_agent.get_transfer_response(
@@ -273,7 +283,7 @@ async def get_agent_availability_response(
         business_hours=business_hours,
         available_agents=len(available_users),
         is_business_hours=is_business_hours,
-        customer_email=customer_email
+        customer_email=customer_email,
     )
 
     return response 

@@ -418,7 +418,8 @@ class ChatAgent:
                     db=db,
                     api_key=self.api_key,
                     model_name=self.model_name,
-                    model_type=self.model_type
+                    model_type=self.model_type,
+                    session_id=session_id
                 )
                 
                 # Create ChatResponse object
