@@ -96,7 +96,10 @@ class ChatAgent:
         # Get template instructions and Jira config in a single optimized query
         db = next(get_db())
         jira_repo = JiraRepository(db)
-        self.agent_data = jira_repo.get_agent_with_jira_config(agent_id) if agent_id else None
+        if agent_id:
+            self.agent_data = jira_repo.get_agent_with_jira_config(agent_id)
+        else:
+            self.agent_data = None
         
         self.api_key = api_key
         self.model_name = model_name
@@ -199,65 +202,66 @@ class ChatAgent:
                 """
                 system_message += "\n\n" + jira_instructions
                 self.jira_instructions_added = True
-            
-            model_type = model_type.upper()
-            if model_type == 'OPENAI':
-                model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000)
-            elif model_type == 'ANTHROPIC':
-                from phi.model.anthropic import Claude
-                model = Claude(api_key=api_key, id=model_name, max_tokens=1000)
-            elif model_type == 'DEEPSEEK':
-                from phi.model.deepseek import DeepSeekChat
-                model = DeepSeekChat(api_key=api_key, id=model_name, max_tokens=1000)
-            elif model_type == 'GOOGLE':
-                from phi.model.google import Gemini
-                model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
-            elif model_type == 'GOOGLEVERTEX':
-                from phi.model.vertexai import Gemini
-                model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
-            elif model_type == 'GROQ':
-                from phi.model.groq import Groq
-                model = Groq(api_key=api_key, id=model_name, max_tokens=1000)
-            elif model_type == 'MISTRAL':
-                from phi.model.mistral import MistralChat
-                model = MistralChat(api_key=api_key, id=model_name, max_tokens=1000)
-            elif model_type == 'HUGGINGFACE':
-                from phi.model.huggingface import HuggingFaceChat
-                model = HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=1000)
-            elif model_type == 'OLLAMA':
-                from phi.model.ollama import Ollama
-                model = Ollama(id=model_name)
-            elif model_type == 'XAI':
-                from phi.model.xai import xAI
-                model = xAI(api_key=api_key, id=model_name, max_tokens=1000)
-            else:
-                raise ValueError(f"Unsupported model type: {model_type}")
+        else:
+            system_message = [
+                "You are a helpful customer service agent.",
+            ]
 
-            storage = PgAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
-
-            # Combine all tools
-            all_tools = tools.copy()
-            if hasattr(self, 'tools') and self.tools:
-                all_tools.extend(self.tools)
-
-            self.agent = Agent(
-                name=self.agent_data.name,
-                session_id=session_id,
-                model=model,
-                tools=all_tools,
-                instructions=system_message,
-                agent_id=str(agent_id),
-                storage=storage,
-                add_history_to_messages=True,
-                num_history_responses=10,
-                read_chat_history=True,
-                markdown=False,
-                debug_mode=settings.ENVIRONMENT == "development",
-                user_id=str(customer_id),
-                session_data={"status": "active"},
-                response_model=ChatResponse,
-                structured_output=True,
-            )
+        model_type = model_type.upper()
+        if model_type == 'OPENAI':
+            model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000)
+        elif model_type == 'ANTHROPIC':
+           from phi.model.anthropic import Claude
+           model = Claude(api_key=api_key, id=model_name, max_tokens=1000)
+        elif model_type == 'DEEPSEEK':
+           from phi.model.deepseek import DeepSeekChat
+           model = DeepSeekChat(api_key=api_key, id=model_name, max_tokens=1000)
+        elif model_type == 'GOOGLE':
+           from phi.model.google import Gemini
+           model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
+        elif model_type == 'GOOGLEVERTEX':
+           from phi.model.vertexai import Gemini
+           model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
+        elif model_type == 'GROQ':
+           from phi.model.groq import Groq
+           model = Groq(api_key=api_key, id=model_name, max_tokens=1000)
+        elif model_type == 'MISTRAL':
+           from phi.model.mistral import MistralChat
+           model = MistralChat(api_key=api_key, id=model_name, max_tokens=1000)
+        elif model_type == 'HUGGINGFACE':
+           from phi.model.huggingface import HuggingFaceChat
+           model = HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=1000)
+        elif model_type == 'OLLAMA':
+           from phi.model.ollama import Ollama
+           model = Ollama(id=model_name)
+        elif model_type == 'XAI':
+           from phi.model.xai import xAI
+           model = xAI(api_key=api_key, id=model_name, max_tokens=1000)
+        else:
+           raise ValueError(f"Unsupported model type: {model_type}")
+        storage = PgAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
+       # Combine all tools
+        all_tools = tools.copy()
+        if hasattr(self, 'tools') and self.tools:
+           all_tools.extend(self.tools)
+        self.agent = Agent(
+           name=self.agent_data.name if self.agent_data else "Default Agent",
+           session_id=session_id,
+           model=model,
+           tools=all_tools,
+           instructions=system_message,
+           agent_id=str(agent_id),
+           storage=storage,
+           add_history_to_messages=True,
+           num_history_responses=10,
+           read_chat_history=True,
+           markdown=False,
+           debug_mode=settings.ENVIRONMENT == "development",
+           user_id=str(customer_id),
+           session_data={"status": "active"},
+           response_model=ChatResponse,
+           structured_output=True,
+          )
 
     async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
         """
@@ -559,5 +563,6 @@ class ChatAgent:
             await agent.agent.arun(message="Hello, how are you?")
             return True
         except Exception as e:
+            traceback.print_exc()
             logger.error(f"Error testing API key: {str(e)}")
             return False

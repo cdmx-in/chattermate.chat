@@ -97,7 +97,7 @@ class JiraTools(Toolkit):
             try:
                 org_uuid = UUID(str(self.org_id))
                 organization = self.db.query(Organization).filter(
-                    Organization.id == org_uuid
+                        Organization.id == org_uuid
                 ).first()
             except (ValueError, TypeError) as e:
                 logger.error(f"Invalid organization ID format: {e}")
@@ -105,6 +105,7 @@ class JiraTools(Toolkit):
                     "success": False,
                     "message": f"Invalid organization ID format: {str(e)}"
                 })
+        
             
             if not organization:
                 return json.dumps({
@@ -404,15 +405,15 @@ class JiraTools(Toolkit):
                     final_description = combined_description if is_update and 'combined_description' in locals() else description
                     
                     session_repo.update_session(
-                        str(self.session_id),  # Ensure session_id is a string
+                            str(self.session_id),  # Ensure session_id is a string
                         {
                             "ticket_id": issue_result["key"],
-                            "ticket_status": "Updated" if is_update else "Created",
+                                "ticket_status": "Updated" if is_update else "Created",
                             "ticket_summary": summary,
-                            "ticket_description": final_description,
+                                "ticket_description": final_description,
                             "integration_type": "JIRA",
-                            "ticket_priority": priority if priority_available else None,
-                            "ticket_url": ticket_url
+                                "ticket_priority": priority if priority_available else None,
+                                "ticket_url": ticket_url
                         }
                     )
                 except Exception as e:
@@ -480,7 +481,7 @@ class JiraTools(Toolkit):
             try:
                 org_uuid = UUID(str(self.org_id))
                 organization = self.db.query(Organization).filter(
-                    Organization.id == org_uuid
+                        Organization.id == org_uuid
                 ).first()
             except (ValueError, TypeError) as e:
                 logger.error(f"Invalid organization ID format: {e}")

@@ -36,3 +36,8 @@ config/
 .env.dev
 backend/app/enterprise/
 frontend/src/modules/
+
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
