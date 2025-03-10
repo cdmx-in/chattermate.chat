@@ -282,7 +282,7 @@ async def get_agent_availability_response(
             org_id=org.id,
             session_id=session_id
         )
-        transfer_agent.agent.tools.append(jira_tools)
+        transfer_agent.agent.tools = [jira_tools]
 
     # Get contextual response
     response = await transfer_agent.get_transfer_response(
