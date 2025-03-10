@@ -291,7 +291,8 @@ async def test_get_agent_availability_response(test_agent, test_user_group, test
             db=mock_db,
             api_key="test_key",
             model_name="gpt-4",
-            model_type="OPENAI"
+            model_type="OPENAI",
+            session_id="test_session_id"
         )
         
         assert response["message"] == "I'll transfer you to a human agent."
@@ -306,7 +307,8 @@ async def test_get_agent_availability_response(test_agent, test_user_group, test
             db=mock_db,
             api_key="test_key",
             model_name="gpt-4",
-            model_type="OPENAI"
+            model_type="OPENAI",
+            session_id="test_session_id"
         )
         
         assert "unable to transfer" in response["message"]
@@ -352,7 +354,8 @@ async def test_business_hours_calculation(test_agent, test_organization):
             db=mock_db,
             api_key="test_key",
             model_name="gpt-4",
-            model_type="OPENAI"
+            model_type="OPENAI",
+            session_id="test_session_id"
         )
 
         # Verify the response matches the expected default for agents with no groups
@@ -382,7 +385,8 @@ async def test_business_hours_calculation(test_agent, test_organization):
             db=mock_db,
             api_key="test_key",
             model_name="gpt-4",
-            model_type="OPENAI"
+            model_type="OPENAI",
+            session_id="test_session_id"
         )
         
         # Now the TransferResponseAgent should be called and its response returned
@@ -451,7 +455,8 @@ async def test_timezone_handling(test_agent):
             db=mock_db,
             api_key="test_key",
             model_name="gpt-4",
-            model_type="OPENAI"
+            model_type="OPENAI",
+            session_id="test_session_id"
         )
         
         # Verify that timezone was called with the correct timezone
@@ -469,7 +474,8 @@ async def test_timezone_handling(test_agent):
             db=mock_db,
             api_key="test_key",
             model_name="gpt-4",
-            model_type="OPENAI"
+            model_type="OPENAI",
+            session_id="test_session_id"
         )
         
         # Verify that timezone was called with the invalid timezone

@@ -268,7 +268,14 @@ async def get_agent_availability_response(
         agent_id=agent.get("id") if isinstance(agent, dict) else agent.id
     )
 
-    jira_enabled = agent.get("jira_enabled") if isinstance(agent, dict) else agent.jira_enabled
+    # Check if Jira is enabled for this agent
+    jira_enabled = False
+    if isinstance(agent, dict):
+        jira_enabled = agent.get("jira_enabled", False)
+    else:
+        # Handle the case when jira_enabled attribute doesn't exist
+        jira_enabled = getattr(agent, 'jira_enabled', False)
+
     if jira_enabled:
         jira_tools = JiraTools(
             agent_id=agent.get("id") if isinstance(agent, dict) else agent.id,

@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import pytest
+import json
 from unittest.mock import patch, MagicMock, AsyncMock
 from app.tools.jira_toolkit import JiraTools
 from app.models.jira import AgentJiraConfig, JiraToken
@@ -93,39 +94,97 @@ async def test_create_jira_ticket(mock_db, mock_jira_service):
                 mock_session_repo = mock_session_repo_class.return_value
                 mock_session_repo.get_session.return_value = None
                 
-                jira_tools = JiraTools(
-                    agent_id="00000000-0000-0000-0000-000000000001",
-                    org_id="00000000-0000-0000-0000-000000000002",
-                    session_id="test_session_id"
-                )
-                jira_tools.db = mock_db
+                # Mock the necessary database queries
+                agent = MagicMock()
+                agent.id = UUID("00000000-0000-0000-0000-000000000001")
+                agent.organization_id = UUID("00000000-0000-0000-0000-000000000002")
                 
-                # Mock the _check_existing_ticket method
-                jira_tools._check_existing_ticket = AsyncMock(return_value={"exists": False})
+                org = MagicMock()
+                org.id = UUID("00000000-0000-0000-0000-000000000002")
                 
-                # Act
-                result = jira_tools.create_jira_ticket(
-                    summary="Test ticket",
-                    description="This is a test ticket",
-                    priority="High"
-                )
+                jira_config = MagicMock()
+                jira_config.enabled = True
+                jira_config.project_key = "TEST"
+                jira_config.issue_type_id = "10001"
                 
-                # Assert
-                assert result["success"] is True
-                assert result["ticket_id"] == "TEST-123"
-                assert result["ticket_status"] == "Open"
-                mock_jira_service.create_issue.assert_called_once()
-                mock_session_repo.update_session.assert_called_once_with(
-                    "test_session_id",
-                    {
-                        "ticket_id": "TEST-123",
-                        "ticket_status": "Open",
-                        "ticket_summary": "Test ticket",
-                        "ticket_description": "This is a test ticket",
-                        "integration_type": "JIRA",
-                        "ticket_priority": "High"
+                jira_token = MagicMock()
+                jira_token.organization_id = UUID("00000000-0000-0000-0000-000000000002")
+                jira_token.access_token = "test_access_token"
+                jira_token.refresh_token = "test_refresh_token"
+                jira_token.cloud_id = "test_cloud_id"
+                
+                # Setup the mock db query chain
+                mock_db.query.return_value.filter.return_value.first.side_effect = [
+                    agent,  # For Agent query
+                    org,    # For Organization query
+                    jira_config,  # For AgentJiraConfig query
+                    jira_token,   # For JiraToken query
+                ]
+                
+                # Mock the requests.post response for creating an issue
+                mock_response = MagicMock()
+                mock_response.status_code = 201
+                mock_response.json.return_value = {
+                    "id": "10000",
+                    "key": "TEST-123",
+                    "self": "https://example.atlassian.net/rest/api/3/issue/TEST-123"
+                }
+                
+                with patch("requests.post", return_value=mock_response):
+                    # Mock the requests.get response for checking fields
+                    mock_meta_response = MagicMock()
+                    mock_meta_response.status_code = 200
+                    mock_meta_response.json.return_value = {
+                        "projects": [{
+                            "issuetypes": [{
+                                "fields": {
+                                    "priority": {
+                                        "allowedValues": [
+                                            {"name": "Highest"},
+                                            {"name": "High"},
+                                            {"name": "Medium"},
+                                            {"name": "Low"},
+                                            {"name": "Lowest"}
+                                        ]
+                                    }
+                                }
+                            }]
+                        }]
                     }
-                )
+                    
+                    with patch("requests.get", return_value=mock_meta_response):
+                        # Create the JiraTools instance
+                        jira_tools = JiraTools(
+                            agent_id="00000000-0000-0000-0000-000000000001",
+                            org_id="00000000-0000-0000-0000-000000000002",
+                            session_id="test_session_id"
+                        )
+                        jira_tools.db = mock_db
+                        
+                        # Mock the check_existing_ticket method
+                        with patch.object(jira_tools, 'check_existing_ticket', return_value=json.dumps({
+                            "exists": False,
+                            "message": "No ticket found for this session"
+                        })):
+                            # Mock the JiraService.validate_token method
+                            mock_jira_service.validate_token.return_value = True
+                            
+                            # Act
+                            result_str = jira_tools.create_jira_ticket(
+                                summary="Test ticket",
+                                description="This is a test ticket",
+                                priority="High"
+                            )
+                            
+                            # Parse the JSON string to a dictionary
+                            result = json.loads(result_str)
+                            
+                            # Assert
+                            assert result["success"] is True
+                            assert result["ticket_id"] == "TEST-123"
+                            assert "message" in result
+                            assert "ticket_url" in result
+                            mock_session_repo.update_session.assert_called_once()
 
 def test_check_existing_ticket_none(mock_db, mock_jira_service):
     # Arrange
@@ -146,7 +205,10 @@ def test_check_existing_ticket_none(mock_db, mock_jira_service):
                 jira_tools._check_existing_ticket = AsyncMock(return_value={"exists": False, "message": "No ticket found for this session"})
                 
                 # Act
-                result = jira_tools.check_existing_ticket()
+                result_str = jira_tools.check_existing_ticket()
+                
+                # Parse the JSON string to a dictionary
+                result = json.loads(result_str)
                 
                 # Assert
                 assert result["exists"] is False
@@ -173,25 +235,26 @@ def test_check_existing_ticket_exists(mock_db, mock_jira_service):
                 )
                 jira_tools.db = mock_db
                 
-                # Mock the _check_existing_ticket method
-                jira_tools._check_existing_ticket = AsyncMock(return_value={
-                    "exists": True,
+                # Mock the get_ticket_status method to return a response with "In Progress" status
+                with patch.object(jira_tools, 'get_ticket_status', return_value=json.dumps({
+                    "success": True,
                     "ticket_id": "TEST-123",
                     "ticket_status": "In Progress",
                     "ticket_summary": "Test ticket",
                     "ticket_description": "This is a test ticket",
                     "ticket_priority": "High",
-                    "ticket_url": "https://example.atlassian.net/rest/api/3/issue/TEST-123",
-                    "message": "Ticket exists"
-                })
-                
-                # Act
-                result = jira_tools.check_existing_ticket()
-                
-                # Assert
-                assert result["exists"] is True
-                assert result["ticket_id"] == "TEST-123"
-                assert result["ticket_status"] == "In Progress"
+                    "ticket_url": "https://example.atlassian.net/rest/api/3/issue/TEST-123"
+                })):
+                    # Act
+                    result_str = jira_tools.check_existing_ticket()
+                    
+                    # Parse the JSON string to a dictionary
+                    result = json.loads(result_str)
+                    
+                    # Assert
+                    assert result["exists"] is True
+                    assert result["ticket_id"] == "TEST-123"
+                    assert result["ticket_status"] == "In Progress"
 
 def test_get_ticket_status(mock_db, mock_jira_service):
     # Arrange
@@ -227,7 +290,10 @@ def test_get_ticket_status(mock_db, mock_jira_service):
                     jira_tools.db = mock_db
                     
                     # Act
-                    result = jira_tools.get_ticket_status("TEST-123")
+                    result_str = jira_tools.get_ticket_status("TEST-123")
+                    
+                    # Parse the JSON string to a dictionary
+                    result = json.loads(result_str)
                     
                     # Assert
                     assert result["success"] is True

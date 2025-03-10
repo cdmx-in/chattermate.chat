@@ -35,6 +35,7 @@ const jiraSiteUrl = ref('')
 const isLoading = ref(true)
 const showDisconnectConfirm = ref(false)
 const disconnectingIntegration = ref<string | null>(null)
+const lastConnectionError = ref<string | null>(null)
 
 // Check if Jira is connected
 const fetchJiraStatus = async () => {
@@ -54,6 +55,8 @@ const fetchJiraStatus = async () => {
 // Connect to Jira
 const connectJira = () => {
   try {
+    // Clear any previous error messages
+    lastConnectionError.value = null
     window.location.href = getJiraAuthUrl()
   } catch (error) {
     console.error('Error connecting to Jira:', error)
@@ -133,10 +136,35 @@ const availableIntegrations = computed(() => [
 onMounted(async () => {
   await fetchJiraStatus()
   
-  // Check if we're returning from a successful OAuth flow
-  if (route.query.status === 'success') {
-    toast.success('Jira connected successfully!')
-    // Remove the query parameter to avoid showing the toast on refresh
+  // Check if we're returning from an OAuth flow
+  if (route.query.status) {
+    if (route.query.status === 'success') {
+      toast.success('Jira connected successfully!')
+      lastConnectionError.value = null
+    } else if (route.query.status === 'failure') {
+      // Handle different failure reasons
+      const reason = route.query.reason as string || 'unknown'
+      
+      let errorMessage = 'Failed to connect to Jira'
+      
+      // Map common error reasons to user-friendly messages
+      if (reason === 'cancelled') {
+        errorMessage = 'Jira connection was cancelled'
+      } else if (reason === 'invalid_state') {
+        errorMessage = 'Authentication session expired or is invalid'
+      } else if (reason.includes('unauthorized')) {
+        errorMessage = 'Authorization failed. Please check your permissions'
+      } else if (reason) {
+        // Format the reason to be more readable
+        const formattedReason = reason.replace(/_/g, ' ')
+        errorMessage = `Failed to connect to Jira: ${formattedReason}`
+      }
+      
+      toast.error(errorMessage)
+      lastConnectionError.value = errorMessage
+    }
+    
+    // Remove the query parameters to avoid showing the toast on refresh
     window.history.replaceState({}, document.title, window.location.pathname)
   }
 })
@@ -201,9 +229,15 @@ onMounted(async () => {
                   </a>
                 </div>
                 <!-- Not connected status for Jira -->
-                <span v-else-if="integration.id === 'jira'" class="status-badge not-connected">
-                  Not Connected
-                </span>
+                <div v-else-if="integration.id === 'jira'" class="not-connected-info">
+                  <span class="status-badge not-connected">
+                    Not Connected
+                  </span>
+                  <div v-if="lastConnectionError" class="connection-error">
+                    <span class="error-icon">⚠️</span>
+                    {{ lastConnectionError }}
+                  </div>
+                </div>
                 <!-- Coming soon status -->
                 <span v-else-if="integration.comingSoon" class="status-badge coming-soon">
                   Coming Soon
@@ -291,6 +325,7 @@ onMounted(async () => {
 <style scoped>
 :root {
   --primary-color-rgb: 59, 130, 246; /* This is a typical blue color in RGB format */
+  --error-color-rgb: 220, 38, 38; /* Red color in RGB format */
 }
 
 .integrations-settings {
@@ -729,5 +764,30 @@ onMounted(async () => {
   border-radius: 50%;
   border-top-color: white;
   animation: spin 1s linear infinite;
+}
+
+.not-connected-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.connection-error {
+  font-size: var(--text-xs);
+  color: var(--error-color);
+  background-color: rgba(var(--error-color-rgb), 0.1);
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-md);
+  margin-top: var(--space-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  max-width: 100%;
+  word-break: break-word;
+}
+
+.error-icon {
+  font-size: 12px;
+  flex-shrink: 0;
 }
 </style> 

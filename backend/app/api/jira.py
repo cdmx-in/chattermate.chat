@@ -161,20 +161,34 @@ async def authorize_jira(
 
 @router.get("/callback")
 async def jira_oauth_callback(
-    code: str,
-    state: str,
-    request: Request,
+    code: Optional[str] = None,
+    state: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+    request: Request = None,
     db: Session = Depends(get_db)
 ):
     """
     Handle the OAuth callback from Jira.
+    This endpoint handles both successful authentication and cancellation/errors.
     """
+    # Handle cancellation or error from Jira
+    if error or not code or not state:
+        logger.warning(f"Jira OAuth flow cancelled or error: {error} - {error_description}")
+        # Clean up the state if it exists
+        if state and state in oauth_states:
+            del oauth_states[state]
+        # Redirect to failure page
+        redirect_url = f"{settings.FRONTEND_URL}/settings/integrations?status=failure&reason={error or 'cancelled'}"
+        return RedirectResponse(url=redirect_url)
+    
     # Get organization ID from state
     org_id = oauth_states.get(state)
     
     if not org_id:
         logger.error(f"Invalid or expired state parameter: {state}")
-        raise HTTPException(status_code=400, detail="Invalid or expired state parameter")
+        redirect_url = f"{settings.FRONTEND_URL}/settings/integrations?status=failure&reason=invalid_state"
+        return RedirectResponse(url=redirect_url)
     
     try:
         # Exchange code for token
@@ -224,7 +238,10 @@ async def jira_oauth_callback(
         # Clean up the state in case of error
         if state in oauth_states:
             del oauth_states[state]
-        raise HTTPException(status_code=400, detail=str(e))
+        # Redirect to failure page with error message
+        error_message = str(e).replace(" ", "_")[:100]  # Limit length and replace spaces
+        redirect_url = f"{settings.FRONTEND_URL}/settings/integrations?status=failure&reason={error_message}"
+        return RedirectResponse(url=redirect_url)
 
 @router.get("/refresh")
 async def refresh_jira_token(
