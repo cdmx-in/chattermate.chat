@@ -300,4 +300,176 @@ def test_get_ticket_status(mock_db, mock_jira_service):
                     assert result["ticket_id"] == "TEST-123"
                     assert result["ticket_status"] == "In Progress"
                     assert result["ticket_summary"] == "Test ticket"
-                    assert result["ticket_priority"] == "High" 
+                    assert result["ticket_priority"] == "High"
+
+def test_create_jira_ticket_disabled_integration(mock_db, mock_jira_service):
+    # Arrange
+    with patch("app.tools.jira_toolkit.JiraService", return_value=mock_jira_service):
+        with patch("app.tools.jira_toolkit.SessionToAgentRepository", return_value=MagicMock()) as mock_session_repo_class:
+            with patch("asyncio.run", side_effect=lambda x: x) as mock_asyncio_run:
+                mock_session_repo = mock_session_repo_class.return_value
+                mock_session_repo.get_session.return_value = None
+                
+                # Mock the necessary database queries
+                agent = MagicMock()
+                agent.id = UUID("00000000-0000-0000-0000-000000000001")
+                agent.organization_id = UUID("00000000-0000-0000-0000-000000000002")
+                
+                org = MagicMock()
+                org.id = UUID("00000000-0000-0000-0000-000000000002")
+                
+                # Create a Jira config with enabled=False
+                jira_config = MagicMock()
+                jira_config.enabled = False
+                jira_config.project_key = "TEST"
+                jira_config.issue_type_id = "10001"
+                
+                # Setup the mock db query chain
+                mock_db.query.return_value.filter.return_value.first.side_effect = [
+                    agent,  # For Agent query
+                    org,    # For Organization query
+                    jira_config,  # For AgentJiraConfig query with enabled=False
+                ]
+                
+                # Create the JiraTools instance
+                jira_tools = JiraTools(
+                    agent_id="00000000-0000-0000-0000-000000000001",
+                    org_id="00000000-0000-0000-0000-000000000002",
+                    session_id="test_session_id"
+                )
+                jira_tools.db = mock_db
+                
+                # Mock the check_existing_ticket method
+                with patch.object(jira_tools, 'check_existing_ticket', return_value=json.dumps({
+                    "exists": False,
+                    "message": "No ticket found for this session"
+                })):
+                    # Act
+                    result_str = jira_tools.create_jira_ticket(
+                        summary="Test ticket",
+                        description="This is a test ticket",
+                        priority="High"
+                    )
+                    
+                    # Parse the JSON string to a dictionary
+                    result = json.loads(result_str)
+                    
+                    # Assert
+                    assert result["success"] is False
+                    assert "Jira integration is not enabled" in result["message"]
+                    # Verify that no API calls were made
+                    mock_jira_service.create_issue.assert_not_called()
+                    mock_session_repo.update_session.assert_not_called()
+
+def test_create_jira_ticket_no_token(mock_db, mock_jira_service):
+    # Arrange
+    with patch("app.tools.jira_toolkit.JiraService", return_value=mock_jira_service):
+        with patch("app.tools.jira_toolkit.SessionToAgentRepository", return_value=MagicMock()) as mock_session_repo_class:
+            with patch("asyncio.run", side_effect=lambda x: x) as mock_asyncio_run:
+                mock_session_repo = mock_session_repo_class.return_value
+                mock_session_repo.get_session.return_value = None
+                
+                # Mock the necessary database queries
+                agent = MagicMock()
+                agent.id = UUID("00000000-0000-0000-0000-000000000001")
+                agent.organization_id = UUID("00000000-0000-0000-0000-000000000002")
+                
+                org = MagicMock()
+                org.id = UUID("00000000-0000-0000-0000-000000000002")
+                
+                # Create a Jira config with enabled=True
+                jira_config = MagicMock()
+                jira_config.enabled = True
+                jira_config.project_key = "TEST"
+                jira_config.issue_type_id = "10001"
+                
+                # Return None for the JiraToken query to simulate no token found
+                mock_db.query.return_value.filter.return_value.first.side_effect = [
+                    agent,  # For Agent query
+                    org,    # For Organization query
+                    jira_config,  # For AgentJiraConfig query
+                    None,   # For JiraToken query - no token found
+                ]
+                
+                # Create the JiraTools instance
+                jira_tools = JiraTools(
+                    agent_id="00000000-0000-0000-0000-000000000001",
+                    org_id="00000000-0000-0000-0000-000000000002",
+                    session_id="test_session_id"
+                )
+                jira_tools.db = mock_db
+                
+                # Mock the check_existing_ticket method
+                with patch.object(jira_tools, 'check_existing_ticket', return_value=json.dumps({
+                    "exists": False,
+                    "message": "No ticket found for this session"
+                })):
+                    # Act
+                    result_str = jira_tools.create_jira_ticket(
+                        summary="Test ticket",
+                        description="This is a test ticket",
+                        priority="High"
+                    )
+                    
+                    # Parse the JSON string to a dictionary
+                    result = json.loads(result_str)
+                    
+                    # Assert
+                    assert result["success"] is False
+                    assert "No Jira connection found" in result["message"]
+                    # Verify that no API calls were made
+                    mock_jira_service.create_issue.assert_not_called()
+                    mock_session_repo.update_session.assert_not_called()
+
+def test_get_ticket_status_api_error(mock_db, mock_jira_service):
+    # Arrange
+    with patch("app.tools.jira_toolkit.JiraService", return_value=mock_jira_service):
+        with patch("app.tools.jira_toolkit.SessionToAgentRepository", return_value=MagicMock()) as mock_session_repo_class:
+            with patch("asyncio.run", side_effect=lambda x: x) as mock_asyncio_run:
+                mock_session_repo = mock_session_repo_class.return_value
+                mock_session = MagicMock()
+                mock_session.ticket_id = "TEST-123"
+                mock_session_repo.get_session.return_value = mock_session
+                
+                # Mock agent and organization
+                agent = MagicMock()
+                agent.id = UUID("00000000-0000-0000-0000-000000000001")
+                agent.organization_id = UUID("00000000-0000-0000-0000-000000000002")
+                
+                org = MagicMock()
+                org.id = UUID("00000000-0000-0000-0000-000000000002")
+                
+                # Mock Jira token
+                jira_token = MagicMock()
+                jira_token.organization_id = UUID("00000000-0000-0000-0000-000000000002")
+                jira_token.access_token = "test_access_token"
+                jira_token.refresh_token = "test_refresh_token"
+                jira_token.cloud_id = "test_cloud_id"
+                
+                # Setup the mock db query chain
+                mock_db.query.return_value.filter.return_value.first.side_effect = [
+                    jira_token,  # For JiraToken query
+                ]
+                
+                # Mock requests.get to return an error
+                mock_response = MagicMock()
+                mock_response.status_code = 404
+                mock_response.text = "Issue does not exist"
+                
+                with patch("requests.get", return_value=mock_response):
+                    jira_tools = JiraTools(
+                        agent_id="00000000-0000-0000-0000-000000000001",
+                        org_id="00000000-0000-0000-0000-000000000002",
+                        session_id="test_session_id"
+                    )
+                    jira_tools.db = mock_db
+                    
+                    # Act
+                    result_str = jira_tools.get_ticket_status("TEST-123")
+                    
+                    # Parse the JSON string to a dictionary
+                    result = json.loads(result_str)
+                    
+                    # Assert
+                    assert result["success"] is False
+                    assert "Error getting Jira ticket status" in result["message"] 

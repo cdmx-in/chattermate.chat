@@ -35,16 +35,11 @@ class JiraService:
         }
         return f"{self.auth_url}?{urlencode(params)}"
 
-    def validate_token(self, token) -> bool:
-        """Check if the token is valid (not expired)."""
-        if not token:
+    def validate_token(self, token: JiraToken) -> bool:
+        """Check if the token is valid and not expired."""
+        if token is None:
             return False
-            
-        # Check if token is expired
-        if token.expires_at < datetime.now():
-            return False
-            
-        return True
+        return token.expires_at > datetime.utcnow() + timedelta(minutes=5)
 
     async def exchange_code_for_token(self, code: str) -> Dict[str, Any]:
         """Exchange authorization code for access token."""
@@ -110,10 +105,6 @@ class JiraService:
             "site_url": resources[0]["url"]
         }
 
-    def validate_token(self, token: JiraToken) -> bool:
-        """Check if the token is valid and not expired."""
-        return token.expires_at > datetime.utcnow() + timedelta(minutes=5)
-        
     async def get_projects(self, access_token: str, cloud_id: str) -> List[Dict[str, Any]]:
         """Get all projects from Jira."""
         headers = {
