@@ -10,14 +10,18 @@ vi.mock('@/components/ai/AISetup.vue', () => ({
   default: {
     name: 'AISetup',
     template: '<div class="ai-setup"></div>',
-    emits: ['ai-setup-complete']
+    emits: ['ai-setup-complete'],
+    __isTeleport: false,
+    __name: 'AISetup'
   }
 }))
 
 vi.mock('@/components/agent/AgentList.vue', () => ({
   default: {
     name: 'AgentList',
-    template: '<div class="agent-list"></div>'
+    template: '<div class="agent-list"></div>',
+    __isTeleport: false,
+    __name: 'AgentList'
   }
 }))
 

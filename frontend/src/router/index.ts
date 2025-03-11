@@ -5,6 +5,7 @@ import { permissionChecks, hasAnyPermission } from '@/utils/permissions'
 import HumanAgentView from '@/views/HumanAgentView.vue'
 import OrganizationSettings from '@/views/settings/OrganizationSettings.vue'
 import AIConfigSettings from '@/views/settings/AIConfigSettings.vue'
+import IntegrationsSettings from '@/views/settings/IntegrationsSettings.vue'
 import UserSettingsView from '@/views/UserSettingsView.vue'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
@@ -82,6 +83,16 @@ const baseRoutes = [
       requiresAuth: true,
       layout: 'dashboard',
       permissions: ['manage_ai_config', 'view_ai_config']
+    }
+  },
+  {
+    path: '/settings/integrations',
+    name: 'integrations-settings',
+    component: IntegrationsSettings,
+    meta: {
+      requiresAuth: true,
+      layout: 'dashboard',
+      permissions: ['manage_organization']
     }
   },
   {

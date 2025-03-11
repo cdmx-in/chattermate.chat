@@ -20,7 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import type { Conversation, ChatDetail } from '@/types/chat'
 import ConversationChat from '@/components/conversations/ConversationChat.vue'
 import { useConversationsList } from '@/composables/useConversationsList'
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 
 const props = defineProps<{
   conversations: Conversation[]
@@ -74,6 +74,32 @@ const scrollToTop = () => {
     })
   }
 }
+
+// Flag to track filter changes
+const filterChanged = ref(false)
+
+// Watch for filter changes to set the flag
+watch(() => props.statusFilter, () => {
+  filterChanged.value = true
+})
+
+// Watch for loading state changes to select first conversation after filter change
+watch(() => props.loading, (isLoading, prevLoading) => {
+  // Only proceed if loading has just completed (was true, now false)
+  if (prevLoading === true && isLoading === false && filterChanged.value) {
+    // Reset the flag
+    filterChanged.value = false
+    
+    // When loading completes after filter change, select the first conversation if available
+    if (props.conversations.length > 0) {
+      loadChatDetail(props.conversations[0].session_id)
+    } else {
+      // If no conversations available, clear the selected chat
+      selectedChat.value = null
+      selectedId.value = null
+    }
+  }
+})
 
 // Setup intersection observer for infinite scrolling
 onMounted(() => {

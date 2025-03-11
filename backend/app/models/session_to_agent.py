@@ -58,6 +58,14 @@ class SessionToAgent(Base):
     transfer_description = Column(String, nullable=True)
     end_chat_reason = Column(SQLEnum(EndChatReasonType), nullable=True)
     end_chat_description = Column(String, nullable=True)
+    
+    # Ticket-related fields
+    ticket_id = Column(String, nullable=True)
+    ticket_status = Column(String, nullable=True)
+    ticket_summary = Column(String, nullable=True)
+    ticket_description = Column(String, nullable=True)
+    integration_type = Column(String, nullable=True)
+    ticket_priority = Column(String, nullable=True)
 
     # Relationships
     user = relationship("User", back_populates="session_assignments")

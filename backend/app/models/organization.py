@@ -63,7 +63,8 @@ class Organization(Base):
         "Knowledge", back_populates="organization")
     widgets = relationship("Widget", back_populates="organization")
     groups = relationship("UserGroup", back_populates="organization")
-
+ 
+    jira_tokens = relationship("JiraToken", back_populates="organization", cascade="all, delete-orphan")
     class Config:
         orm_mode = True
 
@@ -91,3 +92,20 @@ def setup_enterprise_relationships(mapper, class_):
     except ImportError:
         logger.info("Enterprise module not available - subscription relationship not configured")
         class_.subscription = None
+
+# Set up Jira relationships after mapper configuration
+@event.listens_for(Organization, 'mapper_configured')
+def setup_jira_relationships(mapper, class_):
+    try:
+        from app.models.jira import JiraToken
+        
+        if not hasattr(class_, 'jira_tokens'):
+            class_.jira_tokens = relationship(
+                JiraToken,
+                back_populates="organization",
+                cascade="all, delete-orphan"
+            )
+            logger.info("Jira tokens relationship configured")
+    except ImportError:
+        logger.info("Jira module not available - jira_tokens relationship not configured")
+        class_.jira_tokens = None

@@ -33,18 +33,21 @@ const hasMore = ref(true)
 const totalCount = ref<number | null>(null)
 
 // Computed property to show how many conversations are loaded
-const loadedCount = computed(() => conversations.value.length)
+const loadedCount = computed(() => conversations.value?.length || 0)
+const totalItems = computed(() => totalCount.value || loadedCount.value)
 
 const loadConversations = async (page = 1, loadMore = false) => {
+  error.value = ''
+  
+  if (page === 1 || !loadMore) {
+    loading.value = true
+  }
+  
+  const skip = (page - 1) * pageSize.value
+  
+  let newConversations: Conversation[] = []
+  
   try {
-    if (page === 1 || !loadMore) {
-      loading.value = true
-    }
-    
-    const skip = (page - 1) * pageSize.value
-    
-    let newConversations: Conversation[]
-    
     if (statusFilter.value === 'open') {
       newConversations = await chatService.getRecentChats({
         status: 'open,transferred',
@@ -61,18 +64,18 @@ const loadConversations = async (page = 1, loadMore = false) => {
     
     // If we're loading more, append to existing conversations
     if (loadMore && page > 1) {
-      conversations.value = [...conversations.value, ...newConversations]
+      conversations.value = [...(conversations.value || []), ...newConversations]
     } else {
       conversations.value = newConversations
     }
     
     // Check if there might be more conversations to load
-    hasMore.value = newConversations.length === pageSize.value
+    hasMore.value = newConversations?.length === pageSize.value
     currentPage.value = page
     
     // If we received fewer items than the page size, we can calculate the total
-    if (newConversations.length < pageSize.value) {
-      totalCount.value = skip + newConversations.length
+    if (newConversations?.length < pageSize.value) {
+      totalCount.value = skip + (newConversations?.length || 0)
     }
     
   } catch (err) {
@@ -134,7 +137,7 @@ onMounted(() => loadConversations(1))
         :has-more="hasMore"
         :loading-more="loading && currentPage > 1"
         :loaded-count="loadedCount"
-        :total-count="totalCount"
+        :total-count="totalItems"
         @refresh="loadConversations(1)"
         @update-filter="updateFilter"
         @load-more="loadMoreConversations"

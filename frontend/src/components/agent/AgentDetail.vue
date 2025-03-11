@@ -24,17 +24,13 @@ import AgentEdit from './AgentEdit.vue'
 import KnowledgeGrid from './KnowledgeGrid.vue'
 import AgentCustomizationView from './AgentCustomizationView.vue'
 import AgentChatPreviewPanel from './AgentChatPreviewPanel.vue'
+import AgentIntegrationsTab from './AgentIntegrationsTab.vue'
+import AgentWidgetTab from './AgentWidgetTab.vue'
+import AgentGeneralTab from './AgentGeneralTab.vue'
 import { Cropper, CircleStencil } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
 import { useAgentChat } from '@/composables/useAgentChat'
-import 'floating-vue/dist/style.css'
-import { vTooltip } from 'floating-vue'
 import { useAgentDetail } from '@/composables/useAgentDetail'
-
-// Register directive
-const directives = {
-  tooltip: vTooltip
-}
 
 const props = defineProps<{
     agent: AgentWithCustomization
@@ -43,6 +39,7 @@ const props = defineProps<{
 const agentData = ref({ ...props.agent })
 const isEditing = ref(false)
 const isCustomizing = ref(false)
+const activeTab = ref('general') // Track the active tab: 'general', 'integrations', etc.
 const previewCustomization = ref<AgentCustomization>({
     id: agentData.value.customization?.id ?? 0,
     agent_id: agentData.value.id,
@@ -89,7 +86,25 @@ const {
   selectedGroupIds,
   loadingGroups,
   fetchUserGroups,
-  updateAgentGroups
+  updateAgentGroups,
+  // Jira integration
+  jiraConnected,
+  jiraLoading,
+  createTicketEnabled,
+  jiraProjects,
+  jiraIssueTypes,
+  selectedProject,
+  selectedIssueType,
+  loadingProjects,
+  loadingIssueTypes,
+  checkJiraStatus,
+  fetchJiraProjects,
+  fetchJiraIssueTypes,
+  toggleCreateTicket,
+  saveJiraConfig,
+  fetchAgentJiraConfig,
+  handleProjectChange,
+  handleIssueTypeChange
 } = useAgentDetail(agentData, emit)
 
 const { cleanup } = useAgentChat(agentData.value.id)
@@ -167,9 +182,15 @@ const previewContainerStyles = computed(() => ({
     }
 }))
 
-onMounted(() => {
+onMounted(async () => {
     initializeWidget()
     fetchUserGroups()
+    
+    // First check Jira status, then fetch agent config
+    await checkJiraStatus()
+    await fetchAgentJiraConfig()
+    
+
 })
 
 </script>
@@ -215,107 +236,76 @@ onMounted(() => {
             </div>
 
             <div class="panel-content" v-if="!isEditing && !isCustomizing">
-                <section class="detail-section">
-                    <div class="transfer-section">
-                        <!-- Transfer toggle -->
-                        <div class="transfer-toggle">
-                            <div class="toggle-header">
-                                <h4>Transfer to Human</h4>
-                                <label class="switch" v-tooltip="tooltipContent">
-                                    <input type="checkbox" 
-                                        :checked="agentData.transfer_to_human"
-                                        @change="toggleTransferToHuman"
-                                    >
-                                    <span class="slider"></span>
-                                </label>
-                            </div>
-                            <p class="helper-text">Enable automatic transfer to human agents when needed</p>
-                        </div>
+                <!-- Tab Navigation -->
+                <div class="tabs-navigation">
+                    <button 
+                        class="tab-button" 
+                        :class="{ 'active': activeTab === 'general' }"
+                        @click="activeTab = 'general'"
+                    >
+                        General
+                    </button>
+                    <button 
+                        class="tab-button" 
+                        :class="{ 'active': activeTab === 'integrations' }"
+                        @click="activeTab = 'integrations'"
+                    >
+                        Integrations
+                    </button>
+                    <button 
+                        class="tab-button" 
+                        :class="{ 'active': activeTab === 'widget' }"
+                        @click="activeTab = 'widget'"
+                    >
+                        Widget
+                    </button>
+                </div>
 
-                        <!-- Group selection -->
-                        <div v-if="agentData.transfer_to_human" class="transfer-groups">
-                            <h4>Transfer Groups</h4>
-                            <p v-if="userGroups.length" class="helper-text">Select groups that can handle transferred chats</p>
-                            
-                            <div v-if="!loadingGroups">
-                                <div v-if="userGroups.length" class="groups-list">
-                                    <label v-for="group in userGroups" :key="group.id" class="group-item">
-                                        <input 
-                                            type="checkbox" 
-                                            :value="group.id"
-                                            v-model="selectedGroupIds"
-                                            @change="updateAgentGroups(selectedGroupIds)"
-                                        >
-                                        <span>{{ group.name }}</span>
-                                    </label>
-                                </div>
-                                <div v-else class="no-groups-message">
-                                    <p>No groups available.</p>
-                                    <router-link to="/human-agents" class="create-group-link">
-                                        Create Group <i class="fas fa-arrow-right"></i>
-                                    </router-link>
-                                </div>
-                            </div>
-                            
-                            <div v-else class="loading-groups">
-                                Loading groups...
-                            </div>
-                        </div>
+                <!-- General Tab -->
+                <div v-if="activeTab === 'general'" class="tab-content">
+                    <AgentGeneralTab
+                        :instructions="instructionsText"
+                        :transfer-to-human="agentData.transfer_to_human"
+                        :ask-for-rating="agentData.ask_for_rating"
+                        :user-groups="userGroups"
+                        :selected-group-ids="selectedGroupIds"
+                        :loading-groups="loadingGroups"
+                        :is-editing="isEditing"
+                        @update:instructions="(value: string) => { instructionsText = value }"
+                        @toggle-transfer-to-human="toggleTransferToHuman"
+                        @toggle-ask-for-rating="toggleAskForRating"
+                        @update-agent-groups="(groupIds: string[]) => updateAgentGroups(groupIds)"
+                    />
+                </div>
 
-                        <!-- Ask for Rating -->
-                        <div class="rating-toggle">
-                            <div class="toggle-header">
-                                <h4>Ask for Rating</h4>
-                                <label class="switch" v-tooltip="ratingTooltipContent">
-                                    <input type="checkbox" 
-                                        :checked="agentData.ask_for_rating"
-                                        @change="toggleAskForRating"
-                                    >
-                                    <span class="slider"></span>
-                                </label>
-                            </div>
-                            <p class="helper-text">Request customer feedback when chats end</p>
-                        </div>
-                    </div>
-                </section>
+                <!-- Integrations Tab -->
+                <div v-if="activeTab === 'integrations'" class="tab-content">
+                    <AgentIntegrationsTab
+                        :jira-connected="jiraConnected"
+                        :jira-loading="jiraLoading"
+                        :create-ticket-enabled="createTicketEnabled"
+                        :jira-projects="jiraProjects"
+                        :jira-issue-types="jiraIssueTypes"
+                        :selected-project="selectedProject"
+                        :selected-issue-type="selectedIssueType"
+                        :loading-projects="loadingProjects"
+                        :loading-issue-types="loadingIssueTypes"
+                        @toggle-create-ticket="toggleCreateTicket"
+                        @handle-project-change="handleProjectChange"
+                        @handle-issue-type-change="handleIssueTypeChange"
+                        @save-jira-config="(config) => saveJiraConfig(config.projectKey, config.issueTypeId)"
+                    />
+                </div>
 
-                <section class="detail-section">
-                    <h4>Instructions</h4>
-                    <textarea 
-                        class="instructions-textarea" 
-                        v-model="instructionsText" 
-                        rows="6" 
-                        placeholder="Enter instructions for the agent..."
-                        :readonly="!isEditing"
-                    ></textarea>
-                </section>
-
-                <section class="detail-section">
-                    <h4>Widget Integration</h4>
-                    <div class="widget-info">
-                        <div v-if="widgetLoading" class="loading-indicator">
-                            Loading widget info...
-                        </div>
-                        <div v-else-if="widget" class="widget-code">
-                            <div class="code-container">
-                                <code>&lt;script&gt;window.chattermateId='{{ widget.id }}';&lt;/script&gt;&lt;script src="{{ widgetUrl }}/webclient/chattermate.min.js"&gt;&lt;/script&gt;</code>
-                                <button class="copy-button" @click="copyWidgetCode" title="Copy to clipboard">
-                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                        xmlns="http://www.w3.org/2000/svg">
-                                        <path
-                                            d="M8 4V16C8 17.1046 8.89543 18 10 18H18C19.1046 18 20 17.1046 20 16V7.41421C20 6.88378 19.7893 6.37507 19.4142 6L16 2.58579C15.6249 2.21071 15.1162 2 14.5858 2H10C8.89543 2 8 2.89543 8 4Z"
-                                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                            stroke-linejoin="round" />
-                                        <path
-                                            d="M16 18V20C16 21.1046 15.1046 22 14 22H6C4.89543 22 4 21.1046 4 20V8C4 6.89543 4.89543 6 6 6H8"
-                                            stroke="currentColor" stroke-width="2" stroke-linecap="round"
-                                            stroke-linejoin="round" />
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </section>
+                <!-- Widget Tab -->
+                <div v-if="activeTab === 'widget'" class="tab-content">
+                    <AgentWidgetTab
+                        :widget="widget"
+                        :widget-url="widgetUrl"
+                        :widget-loading="widgetLoading"
+                        @copy-widget-code="copyWidgetCode"
+                    />
+                </div>
             </div>
 
             <!-- Edit Mode -->
@@ -861,5 +851,181 @@ input:checked + .slider:before {
     margin-top: var(--space-lg);
     padding-top: var(--space-lg);
     border-top: 1px solid var(--border-color);
+}
+
+.ticket-toggle {
+    margin-top: var(--space-lg);
+    padding-top: var(--space-lg);
+    border-top: 1px solid var(--border-color);
+}
+
+.jira-status {
+    margin-top: var(--space-sm);
+    padding: var(--space-sm);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+}
+
+.jira-status.loading {
+    background-color: var(--background-mute);
+    color: var(--text-muted);
+}
+
+.jira-status.connected {
+    background-color: var(--success-light);
+    color: var(--success);
+}
+
+.jira-status.not-connected {
+    background-color: var(--warning-light);
+    color: var(--warning);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.connect-link {
+    color: var(--primary-color);
+    font-weight: 500;
+    text-decoration: none;
+    padding: var(--space-xs) var(--space-sm);
+    background-color: var(--primary-soft);
+    border-radius: var(--radius-full);
+    transition: all var(--transition-fast);
+}
+
+.connect-link:hover {
+    background-color: var(--primary-color);
+    color: white;
+}
+
+.jira-config {
+    margin-top: var(--space-md);
+    padding: var(--space-md);
+    background-color: var(--background-soft);
+    border-radius: var(--radius-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+}
+
+.form-group label {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-muted);
+}
+
+.form-group select {
+    padding: var(--space-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background-color: var(--background-color);
+    color: var(--text-color);
+    font-size: var(--text-sm);
+}
+
+.form-group select:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.loading-indicator {
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    padding: var(--space-sm);
+}
+
+.save-config-btn {
+    margin-top: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+    color: white;
+    border: none;
+    border-radius: var(--radius-full);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.save-config-btn:hover {
+    filter: brightness(1.1);
+    transform: translateY(-1px);
+}
+
+.save-config-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    filter: grayscale(0.5);
+}
+
+.tabs-navigation {
+    display: flex;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-lg);
+    border-bottom: 1px solid var(--border-color);
+    padding-bottom: var(--space-sm);
+}
+
+.tab-button {
+    padding: var(--space-sm) var(--space-md);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    color: var(--text-muted);
+    position: relative;
+}
+
+.tab-button:hover {
+    color: var(--text-color);
+}
+
+.tab-button.active {
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+.tab-button.active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background-color: var(--primary-color);
+    border-radius: 2px 2px 0 0;
+}
+
+.tab-content {
+    animation: fadeIn 0.3s ease;
+}
+
+.integration-section {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: var(--space-md);
+    background-color: var(--background-soft);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 </style>

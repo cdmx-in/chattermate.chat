@@ -20,6 +20,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { onMounted, watch, nextTick, ref, computed } from 'vue'
 import type { ChatDetail } from '@/types/chat'
 import { useConversationChat } from '@/composables/useConversationChat'
+import { useJiraTicket } from '@/composables/useJiraTicket'
+import JiraTicketModal from '@/components/jira/JiraTicketModal.vue'
 import sendIcon from '@/assets/sendbutton.svg'
 import { userService } from '@/services/user'
 
@@ -53,12 +55,33 @@ const {
   endChat
 } = useConversationChat(props.chat, emit)
 
+// Add Jira ticket functionality
+const {
+  jiraConnected,
+  checkJiraStatus
+} = useJiraTicket()
+
+// State for Jira ticket modal
+const showJiraTicketModal = ref(false)
+const ticketSummary = ref('')
+
 // Add state for end chat confirmation
 const showEndChatConfirm = ref(false)
 
 // Computed property to determine if the current user can end the chat
 const canEndChat = computed(() => {
   // Can only end chat if:
+  // 1. User can send messages (already handled by canSendMessage)
+  // 2. Chat is not closed
+  // 3. Current user is the one who took over the chat
+  return canSendMessage.value && 
+         !isChatClosed.value && 
+         currentChat.value.user_id === userService.getUserId();
+})
+
+// Computed property to determine if the current user can create a ticket
+const canCreateTicket = computed(() => {
+  // Can only create ticket if:
   // 1. User can send messages (already handled by canSendMessage)
   // 2. Chat is not closed
   // 3. Current user is the one who took over the chat
@@ -81,6 +104,24 @@ const confirmEndChat = () => {
 // Function to cancel end chat
 const cancelEndChat = () => {
   showEndChatConfirm.value = false
+}
+
+// Function to handle create ticket
+const handleCreateTicket = async () => {
+  // Get a summary from the last few messages
+  const lastMessages = formattedMessages.value.slice(-3)
+  const summary = lastMessages.map(m => m.message).join(' ').substring(0, 100) + '...'
+  
+  ticketSummary.value = summary
+  showJiraTicketModal.value = true
+}
+
+// Function to handle ticket created
+const handleTicketCreated = (ticketKey: string) => {
+  // Add ticket key to message input
+  newMessage.value = `Jira ticket created: ${ticketKey}`
+  // Close the modal
+  showJiraTicketModal.value = false
 }
 
 // Function to handle takeover
@@ -110,9 +151,10 @@ watch(() => props.chat, (newChat) => {
   }
 }, { deep: true })
 
-// Scroll to bottom on initial load
-onMounted(() => {
+// Check Jira status on mount
+onMounted(async () => {
   scrollToBottom()
+  await checkJiraStatus()
 })
 </script>
 
@@ -144,7 +186,16 @@ onMounted(() => {
           <i class="fas fa-hand-paper"></i>
           {{ isLoading ? 'Taking over...' : 'Take over chat' }}
         </button>
-        <!-- Add End Chat button -->
+        <!-- Add Create Ticket button -->
+        <button 
+          v-if="canCreateTicket && jiraConnected" 
+          class="create-ticket-btn"
+          @click="handleCreateTicket"
+        >
+          <i class="fas fa-ticket-alt"></i>
+          Create Ticket
+        </button>
+        <!-- End Chat button -->
         <button 
           v-if="canEndChat" 
           class="end-chat-btn"
@@ -188,6 +239,15 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Jira Ticket Modal -->
+    <JiraTicketModal
+      v-if="showJiraTicketModal"
+      :chat-id="currentChat.session_id"
+      :initial-summary="ticketSummary"
+      @close="showJiraTicketModal = false"
+      @ticket-created="handleTicketCreated"
+    />
 
     <footer class="chat-input" v-if="!isChatClosed && !handledByAI">
       <div class="input-container" :class="{ disabled: !canSendMessage }">
@@ -610,5 +670,25 @@ onMounted(() => {
 
 .cancel-btn:hover {
   background: var(--background-soft);
+}
+
+.create-ticket-btn {
+  background: var(--accent-color);
+  color: white;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 16px;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: background-color 0.2s;
+  margin-right: 16px;
+}
+
+.create-ticket-btn:hover {
+  transform: translateY(-1px);
+  filter: brightness(1.1);
 }
 </style> 

@@ -17,13 +17,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, defineAsyncComponent } from 'vue'
+import { ref } from 'vue'
+
 import DashboardLayout from '@/layouts/DashboardLayout.vue'
 
-// Lazy load the AIAgentSetup component
-const AIAgentSetup = defineAsyncComponent(() => 
-  import('@/components/aiagent/AIAgentSetup.vue')
-)
+import AIAgentSetup from '@/components/aiagent/AIAgentSetup.vue';
+
 
 const selectedModel = ref('openai')
 </script>

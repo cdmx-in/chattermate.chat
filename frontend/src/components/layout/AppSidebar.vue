@@ -30,6 +30,7 @@ import analyticsIcon from '@/assets/analytics.svg'
 import configIcon from '@/assets/config.svg'
 import subscriptionIcon from '@/assets/subscription.svg'
 import userAvatar from '@/assets/user.svg'
+import integrationsIcon from '@/assets/integrations.svg'
 import SidebarToggle from './SidebarToggle.vue'
 
 defineProps<{
@@ -98,6 +99,12 @@ const navItems = computed(() => [
         iconSrc: subscriptionIcon,
         label: 'Subscription',
         show: hasEnterpriseModule && permissionChecks.canViewOrganization()
+    },
+    {
+        to: '/settings/integrations',
+        iconSrc: integrationsIcon,
+        label: 'Integrations',
+        show: permissionChecks.canViewOrganization()
     },
     {
         to: '/settings/ai-config',
