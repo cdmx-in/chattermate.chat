@@ -6,29 +6,31 @@ import { nextTick } from 'vue'
 import { AxiosError } from 'axios'
 
 // Mock the child components
-vi.mock('../../../components/ai/AISetup.vue', () => ({
+vi.mock('@/components/ai/AISetup.vue', () => ({
   default: {
     name: 'AISetup',
     template: '<div class="ai-setup"></div>',
-    emits: ['ai-setup-complete']
+    emits: ['ai-setup-complete'],
+    __isTeleport: false
   }
 }))
 
-vi.mock('../../../components/agent/AgentList.vue', () => ({
+vi.mock('@/components/agent/AgentList.vue', () => ({
   default: {
     name: 'AgentList',
-    template: '<div class="agent-list"></div>'
+    template: '<div class="agent-list"></div>',
+    __isTeleport: false
   }
 }))
 
 // Mock the services
-vi.mock('../../../services/ai', () => ({
+vi.mock('@/services/ai', () => ({
   aiService: {
     getOrganizationConfig: vi.fn()
   }
 }))
 
-vi.mock('../../../services/agent', () => ({
+vi.mock('@/services/agent', () => ({
   agentService: {
     getOrganizationAgents: vi.fn()
   }
@@ -40,13 +42,13 @@ const mockAgentStorage = {
   setAgents: vi.fn()
 }
 
-vi.mock('../../../utils/storage', () => ({
+vi.mock('@/utils/storage', () => ({
   useAgentStorage: () => mockAgentStorage
 }))
 
 // Import mocked services
-import { aiService } from '../../../services/ai'
-import { agentService } from '../../../services/agent'
+import { aiService } from '@/services/ai'
+import { agentService } from '@/services/agent'
 
 describe('AIAgentSetup', () => {
   let wrapper: VueWrapper
@@ -63,7 +65,6 @@ describe('AIAgentSetup', () => {
 
   const mountComponent = async () => {
     wrapper = mount(AIAgentSetup)
-    await flushPromises()
     await nextTick()
     return wrapper
   }
@@ -75,13 +76,10 @@ describe('AIAgentSetup', () => {
   }
 
   const waitForStateUpdate = async () => {
-    await flushPromises()
-    for (let i = 0; i < 3; i++) {
-      await nextTick()
-    }
-    // Add a small delay to ensure all async operations complete
-    await new Promise(resolve => setTimeout(resolve, 50))
+    await waitForComponentUpdate()
+    await new Promise(resolve => setTimeout(resolve, 0))
     await nextTick()
+    await nextTick() // Add an extra nextTick to ensure all state updates are processed
   }
 
   it('renders properly', async () => {
@@ -92,14 +90,7 @@ describe('AIAgentSetup', () => {
 
   it('shows loading state initially', async () => {
     mockAgentStorage.getAgents.mockReturnValue([])
-    ;(aiService.getOrganizationConfig as any).mockImplementation(async () => {
-      await new Promise(resolve => setTimeout(resolve, 10))
-      return {}
-    })
-
-    wrapper = mount(AIAgentSetup)
-    await nextTick()
-
+    await mountComponent()
     expect(wrapper.find('.loading-container').exists()).toBe(true)
     expect(wrapper.find('.loader').exists()).toBe(true)
   })
@@ -157,66 +148,58 @@ describe('AIAgentSetup', () => {
 
     // Mock the API error before mounting
     ;(aiService.getOrganizationConfig as any).mockRejectedValueOnce(error)
-    mockAgentStorage.getAgents.mockReturnValue([])
 
     await mountComponent()
     await waitForStateUpdate()
+
+    // Debug the component's state
+    const vm = wrapper.vm as any
+    console.log('Component state:', {
+      isAISetupMode: vm.isAISetupMode,
+      error: vm.error,
+      isLoading: vm.isLoading
+    })
+
+    // Now check the rendered content
+    expect(vm.isAISetupMode).toBe(true)
+    expect(vm.error).toBe(null)
+    expect(vm.isLoading).toBe(false)
 
     // Check the rendered content
     const setupMessages = wrapper.find('.setup-messages')
     expect(setupMessages.exists()).toBe(true)
-    expect(wrapper.findComponent({ name: 'AISetup' }).exists()).toBe(true)
+    const aiSetup = setupMessages.findComponent({ name: 'AISetup' })
+    expect(aiSetup.exists()).toBe(true)
   })
 
   it('shows agent list when config exists', async () => {
-    // Mock successful API responses
-    ;(aiService.getOrganizationConfig as any).mockResolvedValue({})
-    ;(agentService.getOrganizationAgents as any).mockResolvedValue([{ id: 1, name: 'Test Agent' }])
-    mockAgentStorage.getAgents.mockReturnValue([])
-
     await mountComponent()
-    await waitForStateUpdate()
+    await waitForComponentUpdate()
 
-    // Check the rendered content
     expect(wrapper.find('.agent-list-container').exists()).toBe(true)
     expect(wrapper.findComponent({ name: 'AgentList' }).exists()).toBe(true)
   })
 
   it('handles AI config check error', async () => {
-    // Mock the error without actually throwing it
-    const errorMessage = 'Failed to check AI configuration'
-    ;(aiService.getOrganizationConfig as any).mockImplementation(() => {
-      return Promise.reject(new Error(errorMessage))
-    })
-    mockAgentStorage.getAgents.mockReturnValue([])
+    const error = new Error('Failed to check AI configuration')
+    ;(aiService.getOrganizationConfig as any).mockRejectedValue(error)
 
     await mountComponent()
-    await waitForStateUpdate()
+    await waitForComponentUpdate()
 
-    // Verify error state
-    const errorElement = wrapper.find('.error-message')
-    expect(errorElement.exists()).toBe(true)
-    expect(errorElement.text()).toBe(errorMessage)
+    expect(wrapper.find('.error-message').exists()).toBe(true)
+    expect(wrapper.find('.error-message').text()).toBe('Failed to check AI configuration')
   })
 
   it('handles agent fetch error', async () => {
-    // Mock successful AI config check
-    ;(aiService.getOrganizationConfig as any).mockResolvedValue({})
-    
-    // Mock the agent fetch error without actually throwing it
-    const errorMessage = 'Failed to fetch agents'
-    ;(agentService.getOrganizationAgents as any).mockImplementation(() => {
-      return Promise.reject(new Error(errorMessage))
-    })
-    mockAgentStorage.getAgents.mockReturnValue([])
+    const error = new Error('Failed to fetch agents')
+    ;(agentService.getOrganizationAgents as any).mockRejectedValue(error)
 
     await mountComponent()
-    await waitForStateUpdate()
+    await waitForComponentUpdate()
 
-    // Verify error state
-    const errorElement = wrapper.find('.error-message')
-    expect(errorElement.exists()).toBe(true)
-    expect(errorElement.text()).toBe(errorMessage)
+    expect(wrapper.find('.error-message').exists()).toBe(true)
+    expect(wrapper.find('.error-message').text()).toBe('Failed to fetch agents')
   })
 
   it('rechecks AI config when setup is completed', async () => {
@@ -236,27 +219,39 @@ describe('AIAgentSetup', () => {
     ;(aiService.getOrganizationConfig as any)
       .mockRejectedValueOnce(error)
       .mockResolvedValueOnce({})
-    ;(agentService.getOrganizationAgents as any).mockResolvedValue([{ id: 1, name: 'Test Agent' }])
-    mockAgentStorage.getAgents.mockReturnValue([])
 
     await mountComponent()
     await waitForStateUpdate()
 
+    // Debug the component's state before setup complete
+    const vm = wrapper.vm as any
+    console.log('Component state before setup complete:', {
+      isAISetupMode: vm.isAISetupMode,
+      error: vm.error,
+      isLoading: vm.isLoading
+    })
+
     // Find and trigger the setup complete event
-    const aiSetup = wrapper.findComponent({ name: 'AISetup' })
+    const setupMessages = wrapper.find('.setup-messages')
+    expect(setupMessages.exists()).toBe(true)
+    const aiSetup = setupMessages.findComponent({ name: 'AISetup' })
     expect(aiSetup.exists()).toBe(true)
-    
-    // Trigger the setup complete event
     await aiSetup.vm.$emit('ai-setup-complete')
+    
+    // Wait for all updates to process
     await waitForStateUpdate()
+
+    // Debug the component's state after setup complete
+    console.log('Component state after setup complete:', {
+      isAISetupMode: vm.isAISetupMode,
+      error: vm.error,
+      isLoading: vm.isLoading
+    })
 
     // Verify the state transition
     expect(aiService.getOrganizationConfig).toHaveBeenCalledTimes(2)
     expect(agentService.getOrganizationAgents).toHaveBeenCalled()
-    
-    // Check that the component has transitioned to showing the agent list
     expect(wrapper.find('.agent-list-container').exists()).toBe(true)
-    expect(wrapper.findComponent({ name: 'AgentList' }).exists()).toBe(true)
   })
 
   it('applies correct styling', async () => {

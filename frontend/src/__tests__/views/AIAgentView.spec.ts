@@ -7,7 +7,8 @@ import { createPinia, setActivePinia } from 'pinia'
 vi.mock('@/layouts/DashboardLayout.vue', () => ({
   default: {
     name: 'DashboardLayout',
-    template: '<div class="dashboard-layout"><slot /></div>'
+    template: '<div class="dashboard-layout"><slot /></div>',
+    __isTeleport: false
   }
 }))
 
@@ -15,7 +16,8 @@ vi.mock('@/components/aiagent/AIAgentSetup.vue', () => ({
   default: {
     name: 'AIAgentSetup',
     template: '<div class="ai-agent-setup"></div>',
-    props: ['model']
+    props: ['model'],
+    __isTeleport: false
   }
 }))
 
