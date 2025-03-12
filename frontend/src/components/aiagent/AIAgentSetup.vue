@@ -17,9 +17,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import AISetup from '../ai/AISetup.vue'
-import AgentList from '../agent/AgentList.vue'
+import { onMounted, ref, defineAsyncComponent } from 'vue'
+
+// Lazy load components
+const AISetup = defineAsyncComponent(() => import('../ai/AISetup.vue'))
+const AgentList = defineAsyncComponent(() => import('../agent/AgentList.vue'))
+
 
 
 import { useAgentStorage } from '@/utils/storage'
