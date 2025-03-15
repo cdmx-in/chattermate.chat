@@ -9,8 +9,14 @@ ChatterMate is a no-code AI chatbot agent framework. It enables businesses to pr
 [docs.chattermate.chat](https://docs.chattermate.chat)
 
 ## Demo
-Product demo:
 [![ChatterMate Demo](https://img.youtube.com/vi/bk40VSS2BLU/0.jpg)](https://youtu.be/bk40VSS2BLU)
+[![ChatterMate Demo](https://img.youtube.com/vi/WyMQ8Poqn5E/0.jpg)](https://www.youtube.com/embed/WyMQ8Poqn5E?mute=1&loop=1&playlist=WyMQ8Poqn5E&rel=0&controls=1)
+
+### Agent Dashboard
+![Agent Dashboard](frontend/public/images/agent-dashboard.gif)
+
+### Analytics Dashboard
+![Analytics Dashboard](frontend/public/images/analytics-view.gif)
 
 ## Free Signup
 https://chattermate.chat
