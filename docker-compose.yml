@@ -41,6 +41,33 @@ services:
     networks:
       - app-network
 
+  knowledge_processor:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    command: python -m app.workers.knowledge_processor
+    env_file:
+      - ./backend/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend:/app
+      - ./uploads:/app/uploads
+      - ./config:/app/config
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: always
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    networks:
+      - app-network
+
   db:
     build:
       context: .

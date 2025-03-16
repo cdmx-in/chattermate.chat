@@ -18,6 +18,7 @@ COPY backend/app ./app
 COPY backend/alembic.ini .
 COPY backend/alembic ./alembic
 COPY backend/scripts ./scripts
+COPY backend/assets ./assets
 
 # Create required directories
 RUN mkdir -p uploads/agents

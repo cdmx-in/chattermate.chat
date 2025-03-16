@@ -1,4 +1,4 @@
-FROM node:22-slim
+FROM node:20-slim
 
 WORKDIR /app
 
@@ -8,17 +8,18 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Create .npmrc with registry configuration
-RUN echo "registry=https://registry.npmjs.org/\nstrict-ssl=false\nlegacy-peer-deps=true" > ~/.npmrc
+
 
 # Copy package files first
 COPY frontend/package*.json ./
 
-# Install dependencies with legacy peer deps
-RUN npm install --legacy-peer-deps
+
+
 
 # Copy frontend source code
 COPY frontend/ .
+
+RUN npm install 
 
 # Create startup script in /usr/local/bin
 RUN echo '#!/bin/bash\n\
