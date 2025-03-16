@@ -21,10 +21,44 @@ import redis
 import functools
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.enterprise.services.rate_limit import redis_client, check_redis_connection
 from app.core.socketio import sio
 
 logger = get_logger(__name__)
+
+# Redis client setup
+redis_client = None
+if settings.REDIS_ENABLED:
+    try:
+        redis_client = redis.Redis(
+            host=settings.REDIS_HOST,
+            port=settings.REDIS_PORT,
+            db=settings.REDIS_DB,
+            password=settings.REDIS_PASSWORD,
+            decode_responses=True
+        )
+        logger.info("Redis client initialized for rate limiting")
+    except Exception as e:
+        logger.error(f"Failed to initialize Redis client: {str(e)}")
+        redis_client = None
+
+async def check_redis_connection():
+    """Check if Redis connection is working"""
+    if not redis_client:
+        return False
+    
+    try:
+        loop = asyncio.get_event_loop()
+        result = await asyncio.wait_for(
+            loop.run_in_executor(None, redis_client.ping),
+            timeout=5.0
+        )
+        return result
+    except (redis.ConnectionError, redis.TimeoutError, asyncio.TimeoutError):
+        logger.warning("Redis connection check failed")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error checking Redis connection: {str(e)}")
+        return False
 
 def socket_rate_limit(namespace='/widget'):
     """
