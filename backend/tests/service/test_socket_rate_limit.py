@@ -96,7 +96,7 @@ async def test_localhost_bypass(mock_sio, mock_redis_client):
 async def test_daily_limit_exceeded(mock_sio, mock_redis_client):
     """Test when daily request limit is exceeded"""
     # Setup Redis mock to return limit exceeded
-    mock_redis_client.get.return_value = "100"  # Current count equals limit
+    mock_redis_client.get.side_effect = ["100", None]  # First for daily (exceeded), second for rate
     mock_redis_client.ttl.return_value = 3600  # 1 hour remaining
     
     # Create and decorate handler
@@ -106,19 +106,20 @@ async def test_daily_limit_exceeded(mock_sio, mock_redis_client):
     # Call handler
     result = await decorated_handler(TEST_SID)
     
-    # Verify error was emitted
+    # Verify error was emitted and handler was not called
     mock_sio.emit.assert_called_once()
-    assert mock_sio.emit.call_args[0][0] == 'error'
-    assert 'Daily request limit reached' in mock_sio.emit.call_args[0][1]['error']
+    args = mock_sio.emit.call_args[0]
+    assert args[0] == 'error'
+    assert 'Daily request limit reached' in args[1]['error']
     assert result is None
+    mock_handler.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_rate_limit_exceeded(mock_sio, mock_redis_client):
     """Test when rate limit (requests per second) is exceeded"""
-    # Setup Redis mocks
-    mock_redis_client.get.side_effect = ["1", "1"]  # First for daily, second for rate
+    # Setup Redis mocks - first request passes daily limit but fails rate limit
+    mock_redis_client.get.side_effect = ["50", "1"]  # First for daily (ok), second for rate (exceeded)
     mock_redis_client.ttl.return_value = 1  # 1 second remaining
-    mock_redis_client.incr.return_value = 1  # Increment counter
     
     # Create and decorate handler
     mock_handler = AsyncMock()
@@ -127,11 +128,13 @@ async def test_rate_limit_exceeded(mock_sio, mock_redis_client):
     # Call handler
     result = await decorated_handler(TEST_SID)
     
-    # Verify error was emitted
+    # Verify error was emitted and handler was not called
     mock_sio.emit.assert_called_once()
-    assert mock_sio.emit.call_args[0][0] == 'error'
-    assert 'sending messages too quickly' in mock_sio.emit.call_args[0][1]['error'].lower()
+    args = mock_sio.emit.call_args[0]
+    assert args[0] == 'error'
+    assert 'sending messages too quickly' in args[1]['error'].lower()
     assert result is None
+    mock_handler.assert_not_called()
 
 @pytest.mark.asyncio
 async def test_redis_connection_failure(mock_sio):
@@ -169,6 +172,7 @@ async def test_successful_request(mock_sio, mock_redis_client):
     """Test successful request within limits"""
     # Setup Redis mocks for successful case
     mock_redis_client.get.side_effect = [None, None]  # First requests for both limits
+    mock_redis_client.setex.return_value = True  # Ensure setex returns successfully
     
     # Create and decorate handler
     mock_handler = AsyncMock()
@@ -180,6 +184,19 @@ async def test_successful_request(mock_sio, mock_redis_client):
     # Verify handler was called
     mock_handler.assert_called_once_with(TEST_SID)
     
-    # In GitHub Actions, the Redis client might be mocked differently
-    # So we'll check that setex was called at least once
-    assert mock_redis_client.setex.call_count > 0 
+    # Verify Redis operations
+    assert mock_redis_client.setex.call_count == 2  # Called for both daily and rate limits
+    
+    # Verify the calls to setex
+    calls = mock_redis_client.setex.call_args_list
+    assert len(calls) == 2
+    
+    # First call should be for overall limit
+    overall_call = calls[0]
+    assert "overall:" in overall_call[0][0]  # First arg is the key
+    assert overall_call[0][1] == 86400  # Second arg is the window (24 hours)
+    
+    # Second call should be for rate limit
+    rate_call = calls[1]
+    assert "rate:" in rate_call[0][0]  # First arg is the key
+    assert rate_call[0][1] == 1  # Second arg is the window (1 second for 1 req/sec) 
