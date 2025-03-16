@@ -27,38 +27,29 @@ logger = get_logger(__name__)
 
 # Redis client setup
 redis_client = None
+logger.info(f"Redis enabled: {settings.REDIS_ENABLED}")
 if settings.REDIS_ENABLED:
+    redis_url = settings.REDIS_URL
+    if redis_url and redis_url.startswith("redis://") and ".cache.amazonaws.com" in redis_url:
+        redis_url = "rediss://" + redis_url[8:]
+        logger.info(f"Using TLS for Redis connection: {redis_url}")
+
     try:
-        redis_client = redis.Redis(
-            host=settings.REDIS_HOST,
-            port=settings.REDIS_PORT,
-            db=settings.REDIS_DB,
-            password=settings.REDIS_PASSWORD,
-            decode_responses=True
-        )
-        logger.info("Redis client initialized for rate limiting")
+        redis_client = redis.from_url(
+            redis_url, 
+            socket_timeout=5.0, 
+            socket_connect_timeout=5.0,
+        ) 
+        
+        # Test connection immediately
+        if redis_client:
+            logger.info("Testing Redis connection...")
+            redis_client.ping()
+            logger.info("Redis connection successful")
     except Exception as e:
         logger.error(f"Failed to initialize Redis client: {str(e)}")
         redis_client = None
 
-async def check_redis_connection():
-    """Check if Redis connection is working"""
-    if not redis_client:
-        return False
-    
-    try:
-        loop = asyncio.get_event_loop()
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, redis_client.ping),
-            timeout=5.0
-        )
-        return result
-    except (redis.ConnectionError, redis.TimeoutError, asyncio.TimeoutError):
-        logger.warning("Redis connection check failed")
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error checking Redis connection: {str(e)}")
-        return False
 
 def socket_rate_limit(namespace='/widget'):
     """
@@ -77,12 +68,14 @@ def socket_rate_limit(namespace='/widget'):
         @functools.wraps(func)
         async def wrapper(sid, *args, **kwargs):
             try:
+                
                 # Get session data
                 session = await sio.get_session(sid, namespace=namespace)
                 
                 # Check if rate limiting is enabled for this agent
                 if not session.get('enable_rate_limiting', False) or not settings.REDIS_ENABLED or not redis_client:
                     # Rate limiting not enabled, proceed with the handler
+                    logger.info(f"Rate limiting not enabled, proceeding with the handler")
                     return await func(sid, *args, **kwargs)
                 
                 # Get rate limiting parameters from session
@@ -93,20 +86,15 @@ def socket_rate_limit(namespace='/widget'):
                 environ = sio.get_environ(sid, namespace=namespace)
                 client_ip = environ.get('REMOTE_ADDR', 'unknown')
                 
-                # Skip rate limiting for localhost
+                # # Skip rate limiting for localhost
                 if client_ip == "127.0.0.1" or client_ip == "localhost":
                     logger.info(f"Skipping rate limit for localhost: {client_ip}")
                     return await func(sid, *args, **kwargs)
                 
                 # Create a key specific to this agent and IP
                 agent_id = session.get('agent_id', 'unknown')
-                key_prefix = f"agent:{agent_id}"
-                
-                # Check Redis connection
-                is_connected = await check_redis_connection()
-                if not is_connected:
-                    logger.warning("Redis connection failed, skipping rate limit check")
-                    return await func(sid, *args, **kwargs)
+
+
                 
                 try:
                     # Get current count with timeout
@@ -118,6 +106,7 @@ def socket_rate_limit(namespace='/widget'):
                         loop.run_in_executor(None, redis_client.get, overall_key),
                         timeout=5.0
                     )
+                    
                     
                     # Set window to 24 hours (86400 seconds) for overall limit - reset daily
                     overall_window = 86400
@@ -175,6 +164,7 @@ def socket_rate_limit(namespace='/widget'):
                         timeout=5.0
                     )
                     
+
                     if rate_current is None:
                         # First request, set initial count
                         await asyncio.wait_for(

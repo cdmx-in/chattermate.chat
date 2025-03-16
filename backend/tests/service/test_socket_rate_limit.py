@@ -56,13 +56,6 @@ def mock_sio():
         mock_sio.emit = AsyncMock()
         yield mock_sio
 
-@pytest.fixture
-def mock_check_redis():
-    with patch('app.services.socket_rate_limit.check_redis_connection', 
-              new_callable=AsyncMock) as mock_check:
-        mock_check.return_value = True
-        yield mock_check
-
 @pytest.mark.asyncio
 async def test_rate_limit_disabled():
     """Test when rate limiting is disabled"""
@@ -83,7 +76,7 @@ async def test_rate_limit_disabled():
         mock_handler.assert_called_once_with(TEST_SID)
 
 @pytest.mark.asyncio
-async def test_localhost_bypass(mock_sio, mock_redis_client, mock_check_redis):
+async def test_localhost_bypass(mock_sio, mock_redis_client):
     """Test that localhost requests bypass rate limiting"""
     # Setup localhost IP
     mock_sio.get_environ.return_value = {'REMOTE_ADDR': '127.0.0.1'}
@@ -100,7 +93,7 @@ async def test_localhost_bypass(mock_sio, mock_redis_client, mock_check_redis):
     mock_redis_client.get.assert_not_called()
 
 @pytest.mark.asyncio
-async def test_daily_limit_exceeded(mock_sio, mock_redis_client, mock_check_redis):
+async def test_daily_limit_exceeded(mock_sio, mock_redis_client):
     """Test when daily request limit is exceeded"""
     # Setup Redis mock to return limit exceeded
     mock_redis_client.get.return_value = "100"  # Current count equals limit
@@ -121,7 +114,7 @@ async def test_daily_limit_exceeded(mock_sio, mock_redis_client, mock_check_redi
     assert result is None
 
 @pytest.mark.asyncio
-async def test_rate_limit_exceeded(mock_sio, mock_redis_client, mock_check_redis):
+async def test_rate_limit_exceeded(mock_sio, mock_redis_client):
     """Test when rate limit (requests per second) is exceeded"""
     # Setup Redis mocks
     mock_redis_client.get.side_effect = ["1", "1"]  # First for daily, second for rate
@@ -143,23 +136,22 @@ async def test_rate_limit_exceeded(mock_sio, mock_redis_client, mock_check_redis
     assert result is None
 
 @pytest.mark.asyncio
-async def test_redis_connection_failure(mock_sio, mock_check_redis):
+async def test_redis_connection_failure(mock_sio):
     """Test behavior when Redis connection fails"""
-    # Setup Redis connection check to fail
-    mock_check_redis.return_value = False
-    
-    # Create and decorate handler
-    mock_handler = AsyncMock()
-    decorated_handler = socket_rate_limit()(mock_handler)
-    
-    # Call handler
-    await decorated_handler(TEST_SID)
-    
-    # Verify handler was called despite Redis failure
-    mock_handler.assert_called_once_with(TEST_SID)
+    # Setup Redis client to be None
+    with patch('app.services.socket_rate_limit.redis_client', None):
+        # Create and decorate handler
+        mock_handler = AsyncMock()
+        decorated_handler = socket_rate_limit()(mock_handler)
+        
+        # Call handler
+        await decorated_handler(TEST_SID)
+        
+        # Verify handler was called despite Redis failure
+        mock_handler.assert_called_once_with(TEST_SID)
 
 @pytest.mark.asyncio
-async def test_redis_timeout(mock_sio, mock_redis_client, mock_check_redis):
+async def test_redis_timeout(mock_sio, mock_redis_client):
     """Test behavior when Redis operations timeout"""
     # Setup Redis mock to timeout
     mock_redis_client.get.side_effect = asyncio.TimeoutError()
@@ -175,7 +167,7 @@ async def test_redis_timeout(mock_sio, mock_redis_client, mock_check_redis):
     mock_handler.assert_called_once_with(TEST_SID)
 
 @pytest.mark.asyncio
-async def test_successful_request(mock_sio, mock_redis_client, mock_check_redis):
+async def test_successful_request(mock_sio, mock_redis_client):
     """Test successful request within limits"""
     # Setup Redis mocks for successful case
     mock_redis_client.get.side_effect = [None, None]  # First requests for both limits
