@@ -8392,7 +8392,7 @@ const Ju = {
       headerBorderStyles: Ee,
       photoUrl: kt,
       shadowStyle: Vt
-    } = Jc(r), Bt = je(() => (Lt.value || Es(ge.value.trim())) && P.value === "connected"), ot = async () => {
+    } = Jc(r), Bt = je(() => (Lt.value || Es(ge.value.trim())) && P.value === "connected" && !c.value), ot = async () => {
       Q.value.trim() && (!B.value && ge.value && await Ve(), await G(Q.value, ge.value), Q.value = "");
     }, lt = (R) => {
       R.key === "Enter" && !R.shiftKey && (R.preventDefault(), ot());
@@ -8497,7 +8497,7 @@ const Ju = {
       style: Le(z(Vt))
     }, [
       Xe.value ? (me(), we("div", Ju, S[5] || (S[5] = [
-        Pa('<div class="loading-spinner" data-v-ffd9d131><div class="dot" data-v-ffd9d131></div><div class="dot" data-v-ffd9d131></div><div class="dot" data-v-ffd9d131></div></div><div class="loading-text" data-v-ffd9d131>Initializing chat...</div>', 2)
+        Pa('<div class="loading-spinner" data-v-126f8212><div class="dot" data-v-126f8212></div><div class="dot" data-v-126f8212></div><div class="dot" data-v-126f8212></div></div><div class="loading-text" data-v-126f8212>Initializing chat...</div>', 2)
       ]))) : qe("", !0),
       !Xe.value && z(P) !== "connected" ? (me(), we("div", {
         key: 1,
@@ -8733,7 +8733,7 @@ const Ju = {
   for (const [s, i] of e)
     n[s] = i;
   return n;
-}, $f = /* @__PURE__ */ Bf(Lf, [["__scopeId", "data-v-ffd9d131"]]);
+}, $f = /* @__PURE__ */ Bf(Lf, [["__scopeId", "data-v-126f8212"]]);
 window.process || (window.process = { env: { NODE_ENV: "production" } });
 const Nf = new URL(window.location.href), Ff = Nf.searchParams.get("widget_id"), Mf = fc($f, {
   widgetId: Ff

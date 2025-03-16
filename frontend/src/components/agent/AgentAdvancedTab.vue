@@ -289,7 +289,7 @@ const handleSaveSettings = async () => {
 }
 
 input:checked + .slider {
-  background-color: var(--primary-color, #4CAF50);
+  background-color:  #4CAF50;
 }
 
 input:focus + .slider {

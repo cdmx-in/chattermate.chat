@@ -34,7 +34,7 @@ async def get_s3_signed_url(s3_url: str, expiration: int = 2592000) -> str:
         if not settings.S3_FILE_STORAGE or not s3_url:
             return s3_url
 
-        logger.info(f"Generating signed URL for {s3_url}")
+        
         
         # Parse the URL
         parsed_url = urlparse(s3_url)
