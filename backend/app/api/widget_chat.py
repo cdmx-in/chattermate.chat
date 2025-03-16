@@ -31,6 +31,7 @@ from app.core.security import decrypt_api_key
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.repositories.chat import ChatRepository
 import uuid
+from app.services.socket_rate_limit import socket_rate_limit
 
 from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
@@ -99,7 +100,15 @@ async def widget_connect(sid, environ, auth):
         # Join the room using session_id
         await sio.enter_room(sid, session_id, namespace='/widget')
         
-        # Store session data
+        # Get agent to retrieve rate limiting settings
+        agent_repo = AgentRepository(db)
+        agent = agent_repo.get_agent(widget.agent_id)
+        
+        # Store session data including rate limiting settings
+        enable_rate_limiting = agent.enable_rate_limiting if agent else False
+        overall_limit_per_ip = agent.overall_limit_per_ip if agent else 100
+        requests_per_sec = agent.requests_per_sec if agent else 1.0
+        
         session_data = {
             'widget_id': widget_id,
             'org_id': org_id,
@@ -107,13 +116,23 @@ async def widget_connect(sid, environ, auth):
             'customer_id': customer_id,
             'session_id': session_id,
             'ai_config': ai_config,
-            'conversation_token': conversation_token
+            'conversation_token': conversation_token,
+            # Add rate limiting settings
+            'enable_rate_limiting': enable_rate_limiting,
+            'overall_limit_per_ip': overall_limit_per_ip,
+            'requests_per_sec': requests_per_sec
         }
 
         
         logger.info(f"AI config: {ai_config.model_name}")
         logger.info(f"AI config: {ai_config.encrypted_api_key}")
         logger.info(f"Session data: {session_data}")
+        
+        # Log rate limiting settings
+        if enable_rate_limiting:
+            logger.info(f"Rate limiting enabled for agent {agent.name} - Daily limit: {overall_limit_per_ip} requests, Rate: {requests_per_sec} req/sec")
+        else:
+            logger.info(f"Rate limiting disabled for agent {agent.name}")
         
         await sio.save_session(sid, session_data, namespace='/widget')
         logger.info(f"Widget client connected: {sid} joined room: {session_id}")
@@ -130,6 +149,7 @@ async def widget_connect(sid, environ, auth):
 
 
 @sio.on('chat', namespace='/widget')
+@socket_rate_limit(namespace='/widget')
 async def handle_widget_chat(sid, data):
     """Handle widget chat messages"""
     try:
@@ -150,7 +170,6 @@ async def handle_widget_chat(sid, data):
         if not message:
             return
 
-  
         session_id = session['session_id']
         # Verify session matches authenticated data
         if (session['widget_id'] != widget_id or 
@@ -322,6 +341,7 @@ async def handle_widget_chat(sid, data):
 
 
 @sio.on('get_chat_history', namespace='/widget')
+@socket_rate_limit(namespace='/widget')
 async def get_widget_chat_history(sid):
     try:
         logger.info(f"Getting chat history for sid {sid}")
@@ -574,6 +594,7 @@ async def handle_taken_over(sid, data):
     await sio.emit('handle_taken_over', data, room=data['session_id'] , namespace='/widget')
 
 @sio.on('submit_rating', namespace='/widget')
+@socket_rate_limit(namespace='/widget')
 async def handle_rating_submission(sid, data):
     """Handle rating submission from widget"""
     try:

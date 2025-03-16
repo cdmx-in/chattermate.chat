@@ -129,3 +129,25 @@ async def run_processor():
         if db:
             db.close()
         PROCESSOR_STATUS["is_running"] = False
+
+
+# Main entry point for running as a standalone service
+if __name__ == "__main__":
+    import time
+    
+    logger.info("Starting knowledge processor service")
+    
+    async def processor_loop():
+        while True:
+            try:
+                logger.info("Running knowledge processor")
+                await run_processor()
+                logger.info("Knowledge processor completed, sleeping for 60 seconds")
+            except Exception as e:
+                logger.error(f"Error in knowledge processor loop: {str(e)}")
+            
+            # Sleep for 60 seconds before next run
+            await asyncio.sleep(60)
+    
+    # Run the processor loop
+    asyncio.run(processor_loop())

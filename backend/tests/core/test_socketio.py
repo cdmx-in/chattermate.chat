@@ -45,6 +45,9 @@ def test_configure_socketio_with_cors():
 @patch('app.core.socketio.settings')
 def test_configure_socketio_with_redis_disabled(mock_settings):
     """Test configuring socketio with Redis disabled"""
+    # Reset client manager before test
+    sio.client_manager = None
+    
     # Configure mock
     mock_settings.REDIS_ENABLED = False
     
@@ -52,7 +55,9 @@ def test_configure_socketio_with_redis_disabled(mock_settings):
     configure_socketio()
     
     # Verify Redis manager was not configured
-    assert not hasattr(sio, 'client_manager') or not isinstance(sio.client_manager, socketio.AsyncRedisManager)
+    if hasattr(sio, 'client_manager'):
+        assert not isinstance(sio.client_manager, socketio.AsyncRedisManager)
+    # If client_manager doesn't exist, the test passes implicitly
 
 
 @patch('app.core.socketio.settings')

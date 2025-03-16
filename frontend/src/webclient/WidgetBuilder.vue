@@ -124,7 +124,7 @@ const {
 // Update the computed property for message input enabled state
 const isMessageInputEnabled = computed(() => {
     return (hasToken.value || isValidEmail(emailInput.value.trim())) && 
-           connectionStatus.value === 'connected'
+           connectionStatus.value === 'connected' && !loading.value
 })
 
 // Update the sendMessage function

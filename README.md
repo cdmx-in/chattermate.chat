@@ -48,7 +48,34 @@ https://chattermate.chat
 - Firebase Project for push notification
 - Redis (Optional for rate limiting and multiserver socket deployment)
 
-## Installation
+#### Local Development with Docker
+
+For local development, you can build the images yourself:
+
+Make sure to set up your environment variables in a `.env` file in backend and frontend before running Docker.
+```bash
+# Build and start all services
+docker compose up --build
+
+# Run in background
+docker compose up -d
+
+# Stop services
+docker compose down
+
+# View logs
+docker compose logs -f
+
+# View specific service logs
+docker compose logs -f db     # PostgreSQL logs
+docker compose logs -f redis  # Redis logs
+docker compose logs -f backend # Backend logs
+docker compose logs -f frontend # frontend logs
+```
+
+
+
+## Non Docker Installation
 
 ### Backend Setup
 ```bash
@@ -82,6 +109,8 @@ For Web Push notification, generate a firebase config and keep in folder backend
 
 
 ## Running the Application
+
+
 
 **Backend**
 ```bash
@@ -216,8 +245,7 @@ docker pull chattermate/frontend:latest
 # Backend Image
 docker pull chattermate/backend:latest
 
-# Knowledge Processor Image
-docker pull chattermate/knowledge-processor:latest
+
 ```
 
 To run using pre-built images refer docker-compose.prod.yml:
@@ -226,56 +254,23 @@ To run using pre-built images refer docker-compose.prod.yml:
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-#### Local Development with Docker
 
-For local development, you can build the images yourself:
-
-```bash
-# Build and start all services
-docker-compose up --build
-
-# Run in background
-docker-compose up -d
-
-# Stop services
-docker-compose down
-
-# View logs
-docker-compose logs -f
-
-# View specific service logs
-docker-compose logs -f db     # PostgreSQL logs
-docker-compose logs -f redis  # Redis logs
-docker-compose logs -f backend # Backend logs
-docker-compose logs -f frontend # frontend logs
-```
-
-Make sure to set up your environment variables in a `.env` file before running Docker.
 
 
 ## Roadmap
 
-- 🎯 End Chat and ask for feedback
 
 
 - 🔄 Auto Follow-up System for idle customer
 
 - 📘 Customer Contact Management
 
-
 - 🤝 Human Agent AI Suggestions
-
-
-- 📈 Agent Performance Metrics
-  - Response time tracking
-  - Resolution rate analysis
-  - Customer satisfaction scores
 
 - 📞 AI Voice Chat or Call
 
 - 🔌 Third-party Integrations
   - Slack workspace connection
-  - Jira ticket management
 
 
 ## Contributing

@@ -1,12 +1,14 @@
 """
 S3 Storage Utilities
 """
+import traceback
 import boto3
 from botocore.exceptions import ClientError
 from app.core.config import settings
 from app.core.logger import get_logger
 from fastapi import HTTPException, UploadFile
 from typing import Optional
+from urllib.parse import urlparse
 
 logger = get_logger(__name__)
 
@@ -31,10 +33,22 @@ async def get_s3_signed_url(s3_url: str, expiration: int = 2592000) -> str:
     try:
         if not settings.S3_FILE_STORAGE or not s3_url:
             return s3_url
-            
-        # Extract key from URL
-        key = s3_url.split(f"{settings.S3_BUCKET}.s3.{settings.S3_REGION}.amazonaws.com/")[1]
+
         
+        
+        # Parse the URL
+        parsed_url = urlparse(s3_url)
+        path_parts = parsed_url.path.strip('/').split('/')
+        
+        # Handle different S3 URL formats
+        if parsed_url.netloc == 's3.amazonaws.com':
+            # Format: https://s3.amazonaws.com/bucket/key
+            bucket = path_parts[0]
+            key = '/'.join(path_parts[1:])
+        else:
+            # Format: https://bucket.s3.region.amazonaws.com/key
+            key = '/'.join(path_parts)
+            
         s3_client = get_s3_client()
         signed_url = s3_client.generate_presigned_url(
             'get_object',
@@ -46,6 +60,7 @@ async def get_s3_signed_url(s3_url: str, expiration: int = 2592000) -> str:
         )
         return signed_url
     except Exception as e:
+        traceback.print_exc()
         logger.error(f"Error generating signed URL: {str(e)}")
         return s3_url
 
@@ -94,8 +109,16 @@ async def delete_file_from_s3(s3_url: str) -> bool:
     try:
         s3_client = get_s3_client()
         
-        # Extract key from URL
-        key = s3_url.split(f"{settings.S3_BUCKET}.s3.{settings.S3_REGION}.amazonaws.com/")[1]
+        # Extract key from URL using the same parsing logic as get_s3_signed_url
+        parsed_url = urlparse(s3_url)
+        path_parts = parsed_url.path.strip('/').split('/')
+        
+        if parsed_url.netloc == 's3.amazonaws.com':
+            # Format: https://s3.amazonaws.com/bucket/key
+            key = '/'.join(path_parts[1:])
+        else:
+            # Format: https://bucket.s3.region.amazonaws.com/key
+            key = '/'.join(path_parts)
         
         s3_client.delete_object(
             Bucket=settings.S3_BUCKET,
