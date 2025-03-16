@@ -151,6 +151,9 @@ async def update_agent(
             customization=customization,
             transfer_to_human=agent.transfer_to_human,
             ask_for_rating=agent.ask_for_rating,
+            enable_rate_limiting=agent.enable_rate_limiting,
+            overall_limit_per_ip=agent.overall_limit_per_ip,
+            requests_per_sec=agent.requests_per_sec,
             knowledge=[{
                 "id": k.id,
                 "name": k.source,
@@ -201,6 +204,9 @@ async def get_organization_agents(
                 organization_id=agent.organization_id,
                 transfer_to_human=agent.transfer_to_human or False,
                 ask_for_rating=agent.ask_for_rating or False,
+                enable_rate_limiting=agent.enable_rate_limiting or False,
+                overall_limit_per_ip=agent.overall_limit_per_ip or 100,
+                requests_per_sec=agent.requests_per_sec or 1.0,
                 knowledge=[{
                     "id": k.id,
                     "name": k.source,
@@ -376,6 +382,10 @@ async def update_agent_groups(
             organization_id=agent.organization_id,
             customization=customization,
             transfer_to_human=agent.transfer_to_human,
+            ask_for_rating=agent.ask_for_rating,
+            enable_rate_limiting=agent.enable_rate_limiting,
+            overall_limit_per_ip=agent.overall_limit_per_ip,
+            requests_per_sec=agent.requests_per_sec,
             groups=agent.groups,
             knowledge=[{
                 "id": k.id,

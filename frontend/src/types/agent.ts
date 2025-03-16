@@ -11,6 +11,9 @@ export interface Agent {
   organization_id: string // UUID
   transfer_to_human: boolean
   ask_for_rating: boolean
+  enable_rate_limiting: boolean
+  overall_limit_per_ip: number
+  requests_per_sec: number
   knowledge: Array<{
     id: number
     name: string
@@ -29,6 +32,9 @@ export interface AgentUpdate {
   is_active?: boolean
   transfer_to_human?: boolean
   ask_for_rating?: boolean
+  enable_rate_limiting?: boolean
+  overall_limit_per_ip?: number
+  requests_per_sec?: number
   customization?: AgentCustomization
 }
 

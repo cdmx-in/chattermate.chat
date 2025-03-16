@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from sqlalchemy import Column, Integer, String, Text, Boolean, Enum as SQLEnum, ForeignKey, JSON, Table
+from sqlalchemy import Column, Integer, String, Text, Boolean, Enum as SQLEnum, ForeignKey, JSON, Table, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
@@ -93,6 +93,9 @@ class Agent(Base):
     is_default = Column(Boolean, default=False)
     transfer_to_human = Column(Boolean, default=False, nullable=False)
     ask_for_rating = Column(Boolean, default=True, nullable=True)
+    enable_rate_limiting = Column(Boolean, default=False, nullable=False)
+    overall_limit_per_ip = Column(Integer, default=100, nullable=False)
+    requests_per_sec = Column(Float, default=1, nullable=False)
 
     # Relationships
     organization = relationship("Organization", back_populates="agents")

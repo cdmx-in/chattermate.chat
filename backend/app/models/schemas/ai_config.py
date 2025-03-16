@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from pydantic import BaseModel, SecretStr
+from pydantic import BaseModel, SecretStr, ConfigDict
 from typing import Optional, Dict
 from app.models.ai_config import AIModelType
 from uuid import UUID
@@ -24,8 +24,10 @@ from uuid import UUID
 
 class AIConfigBase(BaseModel):
     model_type: AIModelType
-    model_name: str
+    ai_model_name: str
     settings: Optional[Dict] = {}
+
+    model_config = ConfigDict(protected_namespaces=())
 
 
 class AIConfigCreate(AIConfigBase):
@@ -34,21 +36,25 @@ class AIConfigCreate(AIConfigBase):
 
 class AIConfigUpdate(BaseModel):
     model_type: Optional[AIModelType] = None
-    model_name: Optional[str] = None
+    ai_model_name: Optional[str] = None
     api_key: Optional[SecretStr] = None
     settings: Optional[Dict] = None
+
+    model_config = ConfigDict(protected_namespaces=())
 
 
 class AIConfigResponse(BaseModel):
     id: int
     organization_id: UUID
     model_type: AIModelType
-    model_name: str
+    ai_model_name: str
     is_active: bool
     settings: Dict = {}
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(
+        from_attributes=True,
+        protected_namespaces=()
+    )
 
 
 class AISetupResponse(BaseModel):

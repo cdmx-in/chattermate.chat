@@ -27,6 +27,7 @@ import AgentChatPreviewPanel from './AgentChatPreviewPanel.vue'
 import AgentIntegrationsTab from './AgentIntegrationsTab.vue'
 import AgentWidgetTab from './AgentWidgetTab.vue'
 import AgentGeneralTab from './AgentGeneralTab.vue'
+import AgentAdvancedTab from './AgentAdvancedTab.vue'
 import { Cropper, CircleStencil } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
 import { useAgentChat } from '@/composables/useAgentChat'
@@ -52,6 +53,11 @@ const previewCustomization = ref<AgentCustomization>({
     custom_css: agentData.value.customization?.custom_css,
     customization_metadata: agentData.value.customization?.customization_metadata ?? {}
 })
+
+// Rate limiting settings
+const enableRateLimiting = ref(agentData.value.enable_rate_limiting || false)
+const overallLimitPerIp = ref(String(agentData.value.overall_limit_per_ip || 100))
+const requestsPerSec = ref(String(agentData.value.requests_per_sec || 1.0))
 
 const baseUrl = computed(() => {
     return import.meta.env.VITE_API_URL
@@ -182,6 +188,58 @@ const previewContainerStyles = computed(() => ({
     }
 }))
 
+const toggleRateLimiting = async () => {
+    try {
+        const response = await fetch(`${baseUrl.value}/agents/${agentData.value.id}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({
+                enable_rate_limiting: enableRateLimiting.value
+            })
+        })
+        
+        if (response.ok) {
+            const data = await response.json()
+            agentData.value = { ...agentData.value, ...data }
+        } else {
+            console.error('Failed to update rate limiting setting')
+        }
+    } catch (error) {
+        console.error('Error updating rate limiting setting:', error)
+    }
+}
+
+const updateRateLimitSettings = async () => {
+    try {
+        const response = await fetch(`${baseUrl.value}/agents/${agentData.value.id}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({
+                overall_limit_per_ip: parseInt(overallLimitPerIp.value),
+                requests_per_sec: parseFloat(requestsPerSec.value)
+            })
+        })
+        
+        if (response.ok) {
+            const data = await response.json()
+            agentData.value = { ...agentData.value, ...data }
+            alert('Rate limit settings updated successfully')
+        } else {
+            console.error('Failed to update rate limit settings')
+            alert('Failed to update rate limit settings')
+        }
+    } catch (error) {
+        console.error('Error updating rate limit settings:', error)
+        alert('Error updating rate limit settings')
+    }
+}
+
 onMounted(async () => {
     initializeWidget()
     fetchUserGroups()
@@ -189,8 +247,6 @@ onMounted(async () => {
     // First check Jira status, then fetch agent config
     await checkJiraStatus()
     await fetchAgentJiraConfig()
-    
-
 })
 
 </script>
@@ -259,6 +315,13 @@ onMounted(async () => {
                     >
                         Widget
                     </button>
+                    <button 
+                        class="tab-button" 
+                        :class="{ 'active': activeTab === 'advanced' }"
+                        @click="activeTab = 'advanced'"
+                    >
+                        Advanced
+                    </button>
                 </div>
 
                 <!-- General Tab -->
@@ -304,6 +367,14 @@ onMounted(async () => {
                         :widget-url="widgetUrl"
                         :widget-loading="widgetLoading"
                         @copy-widget-code="copyWidgetCode"
+                    />
+                </div>
+
+                <!-- Advanced Tab -->
+                <div v-if="activeTab === 'advanced'" class="tab-content">
+                    <AgentAdvancedTab
+                        :agent="agentData"
+                        @update="(updatedAgent) => { agentData = updatedAgent }"
                     />
                 </div>
             </div>
