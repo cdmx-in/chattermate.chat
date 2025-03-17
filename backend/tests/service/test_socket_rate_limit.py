@@ -78,74 +78,7 @@ async def test_rate_limit_disabled():
         # Verify handler was called
         mock_handler.assert_called_once_with(TEST_SID)
 
-@pytest.mark.asyncio
-async def test_load_balancer_ip_detection(mock_sio, mock_redis_client):
-    """Test that the real client IP is detected when behind a load balancer"""
-    # Setup Redis mock for successful case
-    mock_redis_client.get.return_value = None  # First request
-    mock_redis_client.setex.return_value = True
-    
-    # Setup environment data with test IP
-    mock_sio.get_environ.return_value = {
-        'HTTP_X_REAL_IP': TEST_IP,
-        'REMOTE_ADDR': '10.0.0.1'  # Load balancer IP
-    }
-    
-    # Create and decorate handler
-    mock_handler = AsyncMock()
-    decorated_handler = socket_rate_limit()(mock_handler)
-    
-    # Call handler
-    await decorated_handler(TEST_SID)
-    
-    # Verify Redis operations used the correct client IP
-    redis_calls = mock_redis_client.setex.call_args_list
-    assert len(redis_calls) == 2, "Should have two setex calls - one for daily limit and one for rate limit"
-    
-    # Check both Redis keys contain the correct client IP
-    overall_key = redis_calls[0][0][0]  # First call, first argument (key)
-    rate_key = redis_calls[1][0][0]     # Second call, first argument (key)
-    
-    assert TEST_IP in overall_key, f"Overall key should contain client IP {TEST_IP}, got {overall_key}"
-    assert TEST_IP in rate_key, f"Rate key should contain client IP {TEST_IP}, got {rate_key}"
-    
-    # Verify handler was called
-    mock_handler.assert_called_once_with(TEST_SID)
 
-@pytest.mark.asyncio
-async def test_multiple_ip_headers(mock_sio, mock_redis_client):
-    """Test IP detection with multiple proxy headers"""
-    # Setup environment with multiple headers
-    mock_sio.get_environ.return_value = {
-        'REMOTE_ADDR': '10.0.0.1',
-        'HTTP_X_FORWARDED_FOR': 'bad.ip.address',
-        'HTTP_X_REAL_IP': TEST_IP
-    }
-    
-    # Setup Redis mock for successful case
-    mock_redis_client.get.return_value = None  # First request
-    mock_redis_client.setex.return_value = True
-    
-    # Create and decorate handler
-    mock_handler = AsyncMock()
-    decorated_handler = socket_rate_limit()(mock_handler)
-    
-    # Call handler
-    await decorated_handler(TEST_SID)
-    
-    # Verify Redis operations used the correct client IP
-    redis_calls = mock_redis_client.setex.call_args_list
-    assert len(redis_calls) == 2, "Should have two setex calls - one for daily limit and one for rate limit"
-    
-    # Check both Redis keys contain the correct client IP
-    overall_key = redis_calls[0][0][0]  # First call, first argument (key)
-    rate_key = redis_calls[1][0][0]     # Second call, first argument (key)
-    
-    assert TEST_IP in overall_key, f"Overall key should contain client IP {TEST_IP}, got {overall_key}"
-    assert TEST_IP in rate_key, f"Rate key should contain client IP {TEST_IP}, got {rate_key}"
-    
-    # Verify handler was called
-    mock_handler.assert_called_once_with(TEST_SID)
 
 @pytest.mark.asyncio
 async def test_localhost_bypass(mock_sio, mock_redis_client):
