@@ -85,59 +85,30 @@ def socket_rate_limit(namespace='/widget'):
                 # Get client IP from socket request with load balancer support
                 environ = sio.get_environ(sid, namespace=namespace)
                 
-                # Helper function to validate IP format
-                def is_valid_ip(ip):
-                    if not ip:
-                        return False
-                    # Basic validation - should contain at least one dot and no spaces
-                    return '.' in ip and ' ' not in ip
-                
-                # Helper function to check if IP is localhost
-                def is_localhost(ip):
-                    return ip in ["127.0.0.1", "localhost", "::1"]
-                
                 # Try different headers that might contain the real client IP
                 client_ip = None
                 
-                # Check headers in order of preference
-                headers_to_check = [
-                    ('HTTP_X_REAL_IP', False),           # Single IP
-                    ('HTTP_X_FORWARDED_FOR', True),      # Comma-separated list
-                    ('HTTP_CF_CONNECTING_IP', False),    # Single IP
-                    ('HTTP_X_CLIENT_IP', False),         # Single IP
-                    ('REMOTE_ADDR', False)               # Single IP
-                ]
+                # Check X-Forwarded-For first
+                forwarded_for = environ.get('HTTP_X_FORWARDED_FOR')
+                if forwarded_for:
+                    # Get the first IP in the chain (original client)
+                    client_ip = forwarded_for.split(',')[0].strip()
                 
-                for header, is_list in headers_to_check:
-                    if header in environ:
-                        if is_list:
-                            # Handle comma-separated list
-                            ips = environ[header].split(',')
-                            for ip in ips:
-                                logger.info(f"Found IP in {header}: {ip}")
-                                ip = ip.strip()
-                                if is_localhost(ip):
-                                    logger.info(f"Found localhost IP in {header}: {ip}")
-                                    return await func(sid, *args, **kwargs)
-                                if is_valid_ip(ip):
-                                    client_ip = ip
-                                    break
-                        else:
-                            # Handle single IP
-                            ip = environ[header]
-                            logger.info(f"Found IP in {header}: {ip}")
-                            if is_localhost(ip):
-                                logger.info(f"Found localhost IP in {header}: {ip}")
-                                return await func(sid, *args, **kwargs)
-                            if is_valid_ip(ip):
-                                client_ip = ip
-                                break
-                
-                # If no valid IP found, use unknown
+                # If no X-Forwarded-For, try other headers
                 if not client_ip:
-                    client_ip = 'unknown'
+                    client_ip = (
+                        environ.get('HTTP_X_REAL_IP') or
+                        environ.get('HTTP_CF_CONNECTING_IP') or
+                        environ.get('HTTP_X_CLIENT_IP') or
+                        environ.get('REMOTE_ADDR', 'unknown')
+                    )
                 
                 logger.debug(f"Detected client IP: {client_ip}")
+                
+                # Skip rate limiting for localhost
+                if client_ip in ["127.0.0.1", "localhost", "::1"]:
+                    logger.info(f"Skipping rate limit for localhost: {client_ip}")
+                    return await func(sid, *args, **kwargs)
                 
                 # Create a key specific to this agent and IP
                 agent_id = session.get('agent_id', 'unknown')
