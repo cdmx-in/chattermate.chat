@@ -49,6 +49,7 @@ def format_datetime(dt):
 @sio.on('connect', namespace='/widget')
 async def widget_connect(sid, environ, auth):
     try:
+        logger.info(f"REMOTE_ADDR: {environ}")
         logger.info(f"Widget client connected: {auth}")
         # Authenticate using conversation token from Authorization header
         widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, auth)
