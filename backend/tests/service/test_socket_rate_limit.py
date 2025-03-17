@@ -50,8 +50,11 @@ def mock_sio():
             'requests_per_sec': 1.0,
             'agent_id': TEST_AGENT_ID
         })
-        # Setup environment data
-        mock_sio.get_environ.return_value = {'REMOTE_ADDR': TEST_IP}
+        # Setup environment data with load balancer headers
+        mock_sio.get_environ.return_value = {
+            'REMOTE_ADDR': '10.0.0.1',  # Load balancer IP
+            'HTTP_X_FORWARDED_FOR': f'{TEST_IP}, 10.0.0.1'  # Original client IP, load balancer IP
+        }
         # Make emit async
         mock_sio.emit = AsyncMock()
         yield mock_sio
@@ -75,23 +78,49 @@ async def test_rate_limit_disabled():
         # Verify handler was called
         mock_handler.assert_called_once_with(TEST_SID)
 
+
+
 @pytest.mark.asyncio
 async def test_localhost_bypass(mock_sio, mock_redis_client):
     """Test that localhost requests bypass rate limiting"""
-    # Setup localhost IP
-    mock_sio.get_environ.return_value = {'REMOTE_ADDR': '127.0.0.1'}
+    # Test different localhost variations and headers
+    test_cases = [
+        # (header_name, is_list, localhost_ip)
+        ('HTTP_X_FORWARDED_FOR', True, '127.0.0.1'),
+        ('HTTP_X_FORWARDED_FOR', True, 'localhost'),
+        ('HTTP_X_FORWARDED_FOR', True, '::1'),
+        ('HTTP_X_REAL_IP', False, '127.0.0.1'),
+        ('HTTP_X_REAL_IP', False, 'localhost'),
+        ('HTTP_CF_CONNECTING_IP', False, '127.0.0.1'),
+        ('REMOTE_ADDR', False, '127.0.0.1')
+    ]
     
-    # Create and decorate handler
-    mock_handler = AsyncMock()
-    decorated_handler = socket_rate_limit()(mock_handler)
-    
-    # Call handler
-    await decorated_handler(TEST_SID)
-    
-    # Verify handler was called without checking Redis
-    mock_handler.assert_called_once_with(TEST_SID)
-    mock_redis_client.get.assert_not_called()
-
+    for header, is_list, ip in test_cases:
+        # Setup environment data
+        environ = {'REMOTE_ADDR': '10.0.0.1'}  # Default remote addr
+        if is_list:
+            environ[header] = f"{ip}, 10.0.0.1"  # Add load balancer IP
+        else:
+            environ[header] = ip
+        
+        mock_sio.get_environ.return_value = environ
+        
+        # Create and decorate handler
+        mock_handler = AsyncMock()
+        decorated_handler = socket_rate_limit()(mock_handler)
+        
+        # Call handler
+        await decorated_handler(TEST_SID)
+        
+        # Verify handler was called without checking Redis
+        mock_handler.assert_called_once_with(TEST_SID)
+        mock_redis_client.get.assert_not_called()
+        mock_redis_client.setex.assert_not_called()
+        
+        # Reset mocks for next iteration
+        mock_handler.reset_mock()
+        mock_redis_client.get.reset_mock()
+        mock_redis_client.setex.reset_mock()
 
 @pytest.mark.asyncio
 async def test_redis_connection_failure(mock_sio):
