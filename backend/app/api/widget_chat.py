@@ -73,8 +73,6 @@ async def widget_connect(sid, environ, auth):
             }, to=sid, namespace='/widget')
             return False
         
-        os.environ["OPENAI_API_KEY"] = decrypt_api_key(
-            ai_config.encrypted_api_key)
         session_repo = SessionToAgentRepository(db)
                 
         # Try to get existing active session
@@ -124,15 +122,13 @@ async def widget_connect(sid, environ, auth):
             'requests_per_sec': requests_per_sec
         }
 
-        
- 
-        
         # Log rate limiting settings
         if enable_rate_limiting:
-            logger.info(f"Rate limiting enabled for agent {agent.name} - Daily limit: {overall_limit_per_ip} requests, Rate: {requests_per_sec} req/sec")
+            logger.debug(f"Rate limiting enabled for agent {agent.name} - Daily limit: {overall_limit_per_ip} requests, Rate: {requests_per_sec} req/sec")
         else:
-            logger.info(f"Rate limiting disabled for agent {agent.name}")
-        
+            logger.debug(f"Rate limiting disabled for agent {agent.name}")
+
+        logger.debug(f"Session data: {session_data['ai_config'].encrypted_api_key}")
         await sio.save_session(sid, session_data, namespace='/widget')
         logger.info(f"Widget client connected: {sid} joined room: {session_id}")
         return True

@@ -218,7 +218,8 @@ class ChatAgent:
            session_state={"status": "active"},
            response_model=ChatResponse,
            structured_outputs=True,
-           system_message_role="system"
+           system_message_role="system",
+           show_tool_calls=settings.ENVIRONMENT == "development"
           )
 
     async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
