@@ -21,8 +21,8 @@ from unittest.mock import patch, MagicMock
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
 from app.models.knowledge import Knowledge, SourceType
 from uuid import uuid4
-from phi.knowledge.agent import AgentKnowledge
-from phi.vectordb.pgvector import PgVector, SearchType
+from agno.knowledge.agent import AgentKnowledge
+from agno.vectordb.pgvector import PgVector, SearchType
 import os
 
 @pytest.fixture

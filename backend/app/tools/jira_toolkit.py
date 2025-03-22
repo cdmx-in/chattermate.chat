@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from typing import Optional, Dict, Any, List
-from phi.tools import Toolkit
+from agno.tools import Toolkit
 from app.core.logger import get_logger
 from app.services.jira import JiraService
 from app.repositories.session_to_agent import SessionToAgentRepository

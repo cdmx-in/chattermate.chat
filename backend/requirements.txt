@@ -34,7 +34,7 @@ coverage==7.4.1
 
 #ai
 openai
-phidata
+agno
 duckduckgo-search
 pypdf
 pgvector
@@ -65,3 +65,9 @@ aiohttp
 bs4
 
 boto3
+
+groq
+
+sentence-transformers
+
+fastembed

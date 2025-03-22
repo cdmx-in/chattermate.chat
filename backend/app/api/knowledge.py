@@ -35,7 +35,7 @@ from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.core.config import settings
-from phi.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.pgvector import PgVector, SearchType
 from sqlalchemy.orm import Session
 
 # Try to import enterprise modules

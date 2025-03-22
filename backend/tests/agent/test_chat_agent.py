@@ -30,10 +30,10 @@ from app.repositories.ai_config import AIConfigRepository
 from uuid import uuid4
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
-from phi.storage.agent.base import AgentStorage
+from agno.storage.base import Storage
 
 # Create a mock storage class that inherits from AgentStorage
-class MockAgentStorage(AgentStorage):
+class MockAgentStorage(Storage):
     def __init__(self, *args, **kwargs):
         pass
 
@@ -189,7 +189,7 @@ async def test_chat_agent_initialization(test_organization_id, test_agent, mock_
     """Test ChatAgent initialization"""
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
-         patch('app.agents.chat_agent.PgAgentStorage', return_value=MockAgentStorage()):
+         patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
         
         chat_agent = ChatAgent(
@@ -212,7 +212,7 @@ async def test_chat_agent_get_response(test_organization_id, test_agent, test_us
     """Test ChatAgent get_response method"""
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
-         patch('app.agents.chat_agent.PgAgentStorage', return_value=MockAgentStorage()):
+         patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
         
         chat_agent = ChatAgent(
@@ -229,9 +229,11 @@ async def test_chat_agent_get_response(test_organization_id, test_agent, test_us
             message="Test response",
             transfer_to_human=False,
             transfer_reason=None,
-            transfer_description=None
+            transfer_description=None,
+            request_rating=False,
+            create_ticket=False,
+            end_chat=False
         ))
-        
         session_id = str(uuid4())
         response = await chat_agent.get_response(
             message="Hello",
@@ -263,7 +265,7 @@ async def test_chat_agent_error_handling(test_organization_id, test_agent, test_
     """Test ChatAgent error handling"""
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
-         patch('app.agents.chat_agent.PgAgentStorage', return_value=MockAgentStorage()):
+         patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
         
         chat_agent = ChatAgent(

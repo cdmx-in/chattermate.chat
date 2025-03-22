@@ -49,7 +49,7 @@ def format_datetime(dt):
 @sio.on('connect', namespace='/widget')
 async def widget_connect(sid, environ, auth):
     try:
-        logger.info(f"REMOTE_ADDR: {environ}")
+       
         logger.info(f"Widget client connected: {auth}")
         # Authenticate using conversation token from Authorization header
         widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, auth)
@@ -125,9 +125,7 @@ async def widget_connect(sid, environ, auth):
         }
 
         
-        logger.info(f"AI config: {ai_config.model_name}")
-        logger.info(f"AI config: {ai_config.encrypted_api_key}")
-        logger.info(f"Session data: {session_data}")
+ 
         
         # Log rate limiting settings
         if enable_rate_limiting:
@@ -156,9 +154,7 @@ async def handle_widget_chat(sid, data):
     try:
         # Authenticate using conversation token
         session = await sio.get_session(sid, namespace='/widget')
-        logger.info(f"Session: {session}")
-        logger.info(f"Session: {session['ai_config']}")
-        logger.info(f"Session: {session['ai_config'].encrypted_api_key}")
+
         widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, session)
         
         if not widget_id or not org_id:
@@ -259,7 +255,10 @@ async def handle_widget_chat(sid, data):
                 message=availability_response["message"],
                 transfer_to_human=True,
                 transfer_reason=None,
-                transfer_description=None
+                transfer_description=None,
+                end_chat=False,
+                request_rating=False,
+                create_ticket=False
             )
                 
             # Store AI response with transfer status

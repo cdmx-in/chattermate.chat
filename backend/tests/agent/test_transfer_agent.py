@@ -28,7 +28,7 @@ from app.models.organization import Organization
 from app.models.user import User, UserGroup
 from uuid import uuid4
 
-# Mock for phi.agent.Agent
+# Mock for agno.agent.Agent
 class MockPhiAgent:
     def __init__(self, *args, **kwargs):
         self.instructions = kwargs.get('instructions', [])
@@ -138,7 +138,7 @@ async def test_transfer_response_agent_initialization():
     
     # Test with Anthropic model
     claude_mock = MagicMock()
-    module_patcher = patch.dict('sys.modules', {'phi.model.anthropic': MagicMock(Claude=claude_mock)})
+    module_patcher = patch.dict('sys.modules', {'agno.models.anthropic': MagicMock(Claude=claude_mock)})
     agent_patcher = patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent())
     
     with module_patcher, agent_patcher as mock_agent:
