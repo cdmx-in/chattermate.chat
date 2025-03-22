@@ -16,10 +16,11 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from phi.knowledge.pdf import PDFKnowledgeBase, PDFUrlKnowledgeBase
-from phi.knowledge.website import WebsiteKnowledgeBase
-from phi.knowledge.pdf import PDFReader,PDFImageReader
-from phi.vectordb.pgvector import PgVector, SearchType
+from agno.knowledge.pdf import PDFKnowledgeBase
+from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
+from agno.knowledge.website import WebsiteKnowledgeBase
+from agno.knowledge.pdf import PDFImageReader
+from agno.vectordb.pgvector import PgVector, SearchType
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.models.knowledge import Knowledge, SourceType
@@ -31,7 +32,7 @@ from app.repositories.knowledge import KnowledgeRepository
 from typing import List, Optional, Dict
 import os
 from uuid import UUID
-from app.core.security import decrypt_api_key
+from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
 
 logger = get_logger(__name__)
 
@@ -45,15 +46,24 @@ class KnowledgeManager:
         # Get API key from AI config
         ai_config_repo = AIConfigRepository(self.db)
         ai_config = ai_config_repo.get_active_config(org_id)
-        if ai_config and ai_config.encrypted_api_key:
-            os.environ['OPENAI_API_KEY'] = decrypt_api_key(
-                ai_config.encrypted_api_key)
+        
+        # Default to SentenceTransformer embedder if no AI config is found
+        embedder = None
+        table_name = f"d_{org_id}"
+        
+
+        embedder = SentenceTransformerEmbedder(
+            id="BAAI/bge-small-en-v1.5"  # Optimized for chatbot applications
+        )
+        # Updated dimensions for the smaller model
+        embedder.dimensions = 384  # Reduced from 1024 for faster processing
 
         self.vector_db = PgVector(
-            table_name=f"d_{org_id}",
+            table_name=table_name,
             db_url=settings.DATABASE_URL,
             schema="ai",
-            search_type=SearchType.hybrid
+            search_type=SearchType.hybrid,
+            embedder=embedder
         )
         self.knowledge_repo = KnowledgeRepository(self.db)
         self.link_repo = KnowledgeToAgentRepository(self.db)

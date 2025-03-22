@@ -27,8 +27,8 @@ logger = get_logger(__name__)
 # Initialize Socket.IO server with basic config
 sio: AsyncServer = socketio.AsyncServer(
     async_mode='asgi',
-    logger=True,
-    engineio_logger=True,
+    logger=False,
+    engineio_logger=False,
     async_handlers=True,
     ping_timeout=60,
     ping_interval=25,

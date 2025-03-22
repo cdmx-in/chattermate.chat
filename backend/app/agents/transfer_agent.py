@@ -19,14 +19,16 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from typing import Dict, Any
 from datetime import datetime
 import pytz
-from phi.agent import Agent
-from phi.model.openai import OpenAIChat
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from app.repositories.agent import AgentRepository
 from app.repositories.customer import CustomerRepository
 from app.core.logger import get_logger
 from app.database import get_db
 from app.repositories.group import GroupRepository
 from app.tools.jira_toolkit import JiraTools
+from app.models.schemas.chat import ChatResponse
+from app.utils.response_parser import parse_response_content
 
 logger = get_logger(__name__)
 
@@ -36,31 +38,31 @@ class TransferResponseAgent:
         if model_type == 'OPENAI':
             model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'ANTHROPIC':
-            from phi.model.anthropic import Claude
+            from agno.models.anthropic import Claude
             model = Claude(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'DEEPSEEK':
-            from phi.model.deepseek import DeepSeekChat
+            from agno.models.deepseek import DeepSeekChat
             model = DeepSeekChat(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'GOOGLE':
-            from phi.model.google import Gemini
+            from agno.models.google import Gemini
             model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'GOOGLEVERTEX':
-            from phi.model.vertexai import Gemini
+            from agno.models.vertexai import Gemini
             model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'GROQ':
-            from phi.model.groq import Groq
-            model = Groq(api_key=api_key, id=model_name, max_tokens=1000)
+            from agno.models.groq import Groq
+            model = Groq(api_key=api_key, id=model_name, max_tokens=1000,response_format={"type": "text"})
         elif model_type == 'MISTRAL':
-            from phi.model.mistral import MistralChat
+            from agno.models.mistral import MistralChat
             model = MistralChat(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'HUGGINGFACE':
-            from phi.model.huggingface import HuggingFaceChat
+            from agno.models.huggingface import HuggingFaceChat
             model = HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'OLLAMA':
-            from phi.model.ollama import Ollama
+            from agno.models.ollama import Ollama
             model = Ollama(id=model_name)
         elif model_type == 'XAI':
-            from phi.model.xai import xAI
+            from agno.models.xai import xAI
             model = xAI(api_key=api_key, id=model_name, max_tokens=1000)
         else:
             raise ValueError(f"Unsupported model type: {model_type}")
@@ -90,7 +92,8 @@ class TransferResponseAgent:
             model=model,
             instructions=instructions,
             markdown=True,
-            debug_mode=True
+            debug_mode=False,
+            system_message_role="system"
         )
         logger.debug(f"Transfer Response Agent: {self.agent.instructions}")
 
@@ -165,9 +168,12 @@ class TransferResponseAgent:
         )
 
         response = await self.agent.arun(message=prompt, stream=False)
+
+        # Use the utility function to parse the response
+        response_content = parse_response_content(response)
         
         return {
-            "message": response.content,
+            "message": response_content.message,
             "transfer_to_human": is_business_hours and available_agents > 0
         }
 

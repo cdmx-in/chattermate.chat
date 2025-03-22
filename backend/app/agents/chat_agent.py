@@ -18,17 +18,16 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 import traceback
 from typing import Optional, Dict, Any, List, Union
-from phi.agent import Agent
-from phi.model.openai import OpenAIChat
+from agno.agent import Agent
+from agno.models.openai import OpenAIChat
 from app.core.logger import get_logger
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
 from app.database import get_db
-from phi.storage.agent.postgres import PgAgentStorage
+from agno.storage.agent.postgres import PostgresAgentStorage
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
-from pydantic import BaseModel, Field
-from enum import Enum
+from app.models.schemas.chat import ChatResponse, TransferReasonType, EndChatReasonType
 from app.core.config import settings
 from app.agents.transfer_agent import get_agent_availability_response
 from app.models.notification import Notification
@@ -37,52 +36,9 @@ from app.models.user import User, user_groups
 from datetime import datetime
 from app.repositories.jira import JiraRepository
 from app.tools.jira_toolkit import JiraTools
+from app.utils.response_parser import parse_response_content
 
 logger = get_logger(__name__)
-
-class TransferReasonType(str, Enum):
-    UNABLE_TO_ANSWER = "UNABLE_TO_ANSWER"
-    NEED_MORE_INFO = "NEED_MORE_INFO"
-    KNOWLEDGE_GAP = "KNOWLEDGE_GAP"
-    NEED_TO_CALL = "NEED_TO_CALL"
-    NEED_TO_EMAIL = "NEED_TO_EMAIL"
-    NEED_TO_MEET = "NEED_TO_MEET"
-    FRUSTRATED = "FRUSTRATED"
-    REPEAT_INSTRUCTIONS = "REPEAT_INSTRUCTIONS"
-    DIRECT_REQUEST = "DIRECT_REQUEST"
-    HIGH_PRIORITY_ISSUE = "HIGH_PRIORITY_ISSUE"
-    COMPLIANCE_ISSUE = "COMPLIANCE_ISSUE"
-
-class EndChatReasonType(str, Enum):
-    ISSUE_RESOLVED = "ISSUE_RESOLVED"
-    CUSTOMER_REQUEST = "CUSTOMER_REQUEST"
-    CONFIRMATION_RECEIVED = "CONFIRMATION_RECEIVED"
-    FAREWELL = "FAREWELL"
-    THANK_YOU = "THANK_YOU"
-    NATURAL_CONCLUSION = "NATURAL_CONCLUSION"
-    TASK_COMPLETED = "TASK_COMPLETED"
-
-class ChatResponse(BaseModel):
-    message: str = Field(description="The response from the agent")
-    transfer_to_human: bool = Field(description="Whether to transfer the conversation to a human")
-    end_chat: bool = Field(default=False, description="Whether to end the chat and request rating")
-    transfer_reason: Optional[TransferReasonType] = Field(default=None, description="Transfer reason Type should be one of the following: UNABLE_TO_ANSWER, NEED_MORE_INFO, KNOWLEDGE_GAP, NEED_TO_CALL, NEED_TO_EMAIL, NEED_TO_MEET, FRUSTRATED, REPEAT_INSTRUCTIONS, DIRECT_REQUEST, HIGH_PRIORITY_ISSUE, COMPLIANCE_ISSUE")
-    transfer_description: Optional[str] = Field(default=None, description="Detailed description for the transfer")
-    end_chat_reason: Optional[EndChatReasonType] = Field(default=None, description="End chat reason Type should be one of the following: ISSUE_RESOLVED, CUSTOMER_REQUEST, CONFIRMATION_RECEIVED, FAREWELL, THANK_YOU, NATURAL_CONCLUSION, TASK_COMPLETED")
-    end_chat_description: Optional[str] = Field(default=None, description="Detailed description for ending the chat")
-    request_rating: bool = Field(default=False, description="Whether to request a rating from the customer")
-    
-    # Ticket creation fields
-    create_ticket: bool = Field(default=False, description="Whether to create a ticket in the integrated system (Jira, Zendesk, etc.)")
-    ticket_summary: Optional[str] = Field(default=None, description="Summary/title for the ticket to be created")
-    ticket_description: Optional[str] = Field(default=None, description="Detailed description for the ticket to be created")
-    integration_type: Optional[str] = Field(default=None, description="Type of integration to use for ticket creation")
-    ticket_id: Optional[str] = Field(default=None, description="ID of the created ticket (filled after creation)")
-    ticket_status: Optional[str] = Field(default=None, description="Status of the created ticket (filled after creation)")
-    ticket_priority: Optional[str] = Field(default=None, description="Priority level for the ticket (e.g., 'High', 'Medium', 'Low')")
-
-    class Config:
-        from_attributes = True
 
 class ChatAgent:
     def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None):
@@ -209,41 +165,42 @@ class ChatAgent:
 
         model_type = model_type.upper()
         if model_type == 'OPENAI':
-            model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000)
+            model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000, response_format={"type": "json_object"})
         elif model_type == 'ANTHROPIC':
-           from phi.model.anthropic import Claude
+           from agno.models.anthropic import Claude
            model = Claude(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'DEEPSEEK':
-           from phi.model.deepseek import DeepSeekChat
+           from agno.models.deepseek import DeepSeekChat
            model = DeepSeekChat(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'GOOGLE':
-           from phi.model.google import Gemini
+           from agno.models.google import Gemini
            model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'GOOGLEVERTEX':
-           from phi.model.vertexai import Gemini
+           from agno.models.vertexai import Gemini
            model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'GROQ':
-           from phi.model.groq import Groq
-           model = Groq(api_key=api_key, id=model_name, max_tokens=1000)
+           from agno.models.groq import Groq
+           model = Groq(api_key=api_key, id=model_name, max_tokens=1000,response_format={"type": "text"})
         elif model_type == 'MISTRAL':
-           from phi.model.mistral import MistralChat
+           from agno.models.mistral import MistralChat
            model = MistralChat(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'HUGGINGFACE':
-           from phi.model.huggingface import HuggingFaceChat
+           from agno.models.huggingface import HuggingFaceChat
            model = HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=1000)
         elif model_type == 'OLLAMA':
-           from phi.model.ollama import Ollama
+           from agno.models.ollama import Ollama
            model = Ollama(id=model_name)
         elif model_type == 'XAI':
-           from phi.model.xai import xAI
+           from agno.models.xai import xAI
            model = xAI(api_key=api_key, id=model_name, max_tokens=1000)
         else:
            raise ValueError(f"Unsupported model type: {model_type}")
-        storage = PgAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
+        storage = PostgresAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
        # Combine all tools
         all_tools = tools.copy()
         if hasattr(self, 'tools') and self.tools:
            all_tools.extend(self.tools)
+
         self.agent = Agent(
            name=self.agent_data.name if self.agent_data else "Default Agent",
            session_id=session_id,
@@ -258,9 +215,10 @@ class ChatAgent:
            markdown=False,
            debug_mode=settings.ENVIRONMENT == "development",
            user_id=str(customer_id),
-           session_data={"status": "active"},
+           session_state={"status": "active"},
            response_model=ChatResponse,
-           structured_output=True,
+           structured_outputs=True,
+           system_message_role="system"
           )
 
     async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
@@ -278,8 +236,6 @@ class ChatAgent:
             if customer_id:
                 self.customer_id = customer_id
                 
-
-            
             # Get database connection
             db = next(get_db())
             
@@ -298,6 +254,7 @@ class ChatAgent:
                 "attributes": {}
             })
 
+            
             # Get AI response
             response = await self.agent.arun(
                 message=message,
@@ -305,51 +262,10 @@ class ChatAgent:
                 stream=False
             )
 
-            response_content = ""
-            if hasattr(response, 'content'):
-                if isinstance(response.content, dict):
-                    response_content = ChatResponse(**response.content)
-                elif isinstance(response.content, str):
-                    try:
-                        import json
-                        content_dict = json.loads(response.content)
-                        response_content = ChatResponse(**content_dict)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse response content as JSON: {e}")
-                        response_content = ChatResponse(
-                            message=response.content,
-                            transfer_to_human=False,
-                            end_chat=False,
-                            end_chat_reason=None,
-                            end_chat_description=None,
-                            request_rating=False
-                        )
-                else:
-                    response_content = response.content
-            else:
-                if isinstance(response, dict):
-                    response_content = ChatResponse(**response)
-                elif isinstance(response, str):
-                    try:
-                        import json
-                        response_dict = json.loads(response)
-                        response_content = ChatResponse(**response_dict)
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Failed to parse response as JSON: {e}")
-                        response_content = ChatResponse(
-                            message=response,
-                            transfer_to_human=False,
-                            end_chat=False,
-                            end_chat_reason=None,
-                            end_chat_description=None,
-                            request_rating=False
-                        )
-                else:
-                    response_content = response
+            # Use the utility function to parse the response
+            response_content = parse_response_content(response)
 
-            logger.info(f"Response content: {response_content}")
-            
-
+            logger.debug(f"Response content: {response_content}")
             
             # Handle end chat and rating request
             if response_content.end_chat:
@@ -435,7 +351,8 @@ class ChatAgent:
                     end_chat=False,
                     end_chat_reason=None,
                     end_chat_description=None,
-                    request_rating=False
+                    request_rating=False,
+                    create_ticket=False
                 )
                 
                 # Store AI response with transfer status
@@ -508,7 +425,8 @@ class ChatAgent:
                 end_chat=False,
                 end_chat_reason=None,
                 end_chat_description=None,
-                request_rating=False
+                request_rating=False,
+                create_ticket=False
             )
             
             # Store error message

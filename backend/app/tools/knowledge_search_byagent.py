@@ -17,16 +17,17 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from typing import List
-from phi.tools import Toolkit
-from phi.utils.log import logger
+from agno.tools import Toolkit
+from agno.utils.log import logger
 from app.database import get_db
 from app.core.config import settings
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.knowledge import KnowledgeRepository
 from app.repositories.ai_config import AIConfigRepository
 from app.core.security import decrypt_api_key
-from phi.knowledge.agent import AgentKnowledge
-from phi.vectordb.pgvector import PgVector, SearchType
+from agno.knowledge.agent import AgentKnowledge
+from agno.vectordb.pgvector import PgVector, SearchType
+from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
 from uuid import UUID
 import os
 
@@ -69,13 +70,18 @@ class KnowledgeSearchByAgent(Toolkit):
             if self.agent_knowledge is None:
                 # Use the first knowledge source's table and schema since they should all be in the same table
                 source = knowledge_sources[0]
-                
+                embedder = SentenceTransformerEmbedder(
+                    id="BAAI/bge-small-en-v1.5"  # Optimized for chatbot applications
+                )
+                # Updated dimensions for the smaller model
+                embedder.dimensions = 384  # Reduced from 1024 for faster processing
                 # Initialize vector db
                 vector_db = PgVector(
                     table_name=source.table_name,
                     db_url=settings.DATABASE_URL,
                     schema=source.schema,
-                    search_type=SearchType.hybrid
+                    search_type=SearchType.hybrid,
+                    embedder=embedder
                 )
                 logger.debug(f"Vector db initialized: {source.table_name}")
 

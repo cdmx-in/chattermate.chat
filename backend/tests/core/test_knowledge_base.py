@@ -23,7 +23,7 @@ from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from uuid import UUID, uuid4
 import os
-from phi.vectordb.pgvector import PgVector, SearchType
+from agno.vectordb.pgvector import PgVector, SearchType
 
 @pytest.fixture
 def mock_db():
@@ -69,7 +69,6 @@ def knowledge_manager(mock_db, mock_ai_config, mock_vector_db):
     with patch('app.knowledge.knowledge_base.get_db') as mock_get_db, \
          patch('app.knowledge.knowledge_base.AIConfigRepository') as mock_ai_config_repo, \
          patch('app.knowledge.knowledge_base.PgVector') as mock_pg_vector, \
-         patch('app.knowledge.knowledge_base.decrypt_api_key') as mock_decrypt, \
          patch('app.knowledge.knowledge_base.KnowledgeRepository') as mock_knowledge_repo, \
          patch('app.knowledge.knowledge_base.KnowledgeToAgentRepository') as mock_link_repo:
         
@@ -77,7 +76,6 @@ def knowledge_manager(mock_db, mock_ai_config, mock_vector_db):
         mock_get_db.return_value.__next__.return_value = mock_db
         mock_ai_config_repo.return_value.get_active_config.return_value = mock_ai_config
         mock_pg_vector.return_value = mock_vector_db
-        mock_decrypt.return_value = "decrypted_key"
         
         # Configure repository mocks
         mock_knowledge_repo_instance = MagicMock()
