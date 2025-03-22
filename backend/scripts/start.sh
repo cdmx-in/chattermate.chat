@@ -36,6 +36,18 @@ fi
 echo "Running database migrations..."
 alembic upgrade head
 
-# Start the application
-echo "Starting FastAPI application..."
-uvicorn app.main:app --host 0.0.0.0 --port 8000 
+# Calculate number of workers based on CPU cores
+WORKERS=$((2 * $(nproc) + 1))
+
+# Start the application with Gunicorn
+echo "Starting FastAPI application with Gunicorn..."
+gunicorn app.main:app \
+    --workers $WORKERS \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --bind 0.0.0.0:8000 \
+    --timeout 120 \
+    --keep-alive 5 \
+    --log-level info \
+    --access-logfile - \
+    --error-logfile - \
+    --preload 
