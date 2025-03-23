@@ -16,10 +16,9 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from agno.knowledge.pdf import PDFKnowledgeBase
+from agno.knowledge.pdf import PDFKnowledgeBase, PDFImageReader, PDFReader
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.knowledge.website import WebsiteKnowledgeBase
-from agno.knowledge.pdf import PDFImageReader,PDFKnowledgeBase,PDFReader
 from agno.vectordb.pgvector import PgVector, SearchType
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -31,6 +30,9 @@ from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.knowledge import KnowledgeRepository
 from typing import List, Optional, Dict, Union
 import os
+import tempfile
+import requests
+from urllib.parse import urlparse
 from uuid import UUID
 from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
 
@@ -98,18 +100,100 @@ class KnowledgeManager:
             agent_id_filter = [str(self.agent_id)] if self.agent_id else []
             
             for url in urls:
-                knowledge_base = PDFUrlKnowledgeBase(
-                    urls=[url],  # Pass single URL in a list
-                    vector_db=self.vector_db
-                )
-                # Extract filename from URL and remove extension
-                filename = os.path.splitext(os.path.basename(url))[0]
-                knowledge_base.load(recreate=False, upsert=True, filters={
-                    "name": filename,
-                    "agent_id": agent_id_filter,
-                    "org_id": str(self.org_id)
-                })
-                self._add_knowledge_source(filename, SourceType.FILE)
+                logger.info(f"Adding PDF URL: {url}")
+                # Check if the URL ends with .pdf
+                if url.lower().endswith('.pdf'):
+                    logger.info(f"PDF URL detected, adding to knowledge base: {url}")
+                    # Use PDFUrlKnowledgeBase for direct PDF URLs
+                    knowledge_base = PDFUrlKnowledgeBase(
+                        urls=[url],  # Pass single URL in a list
+                        vector_db=self.vector_db
+                    )
+                    # Extract filename from URL and remove extension
+                    filename = os.path.splitext(os.path.basename(url))[0]
+                    knowledge_base.load(recreate=False, upsert=True, filters={
+                        "name": filename,
+                        "agent_id": agent_id_filter,
+                        "org_id": str(self.org_id)
+                    })
+                    self._add_knowledge_source(filename, SourceType.FILE)
+                else:
+                    # For non-PDF URLs, download to temp file and process with add_pdf_files
+                    logger.info(f"Non-PDF URL detected, downloading from: {url}")
+                    temp_file = None
+                    try:
+                        # Extract filename from URL for metadata
+                        parsed_url = urlparse(url)
+                        
+                        # Parse filename from URL, handling S3 URLs specially
+                        if "s3.amazonaws.com" in url:
+                            # Extract the actual filename from S3 URL path
+                            path_parts = parsed_url.path.split('/')
+                            # Get the last part of the path and decode URL encoded characters
+                            s3_filename = path_parts[-1].split('?')[0]  # Remove query parameters
+                            import urllib.parse
+                            decoded_filename = urllib.parse.unquote(s3_filename)
+                            # Use the decoded filename without removing extension
+                            temp_filename = decoded_filename
+                            # Remove extension for the knowledge base name
+                            filename = os.path.splitext(decoded_filename)[0]
+                        else:
+                            # For non-S3 URLs
+                            filename = os.path.basename(parsed_url.path)
+                            if not filename:
+                                filename = parsed_url.netloc
+                            temp_filename = filename + ".pdf"  # Add extension for the temp file
+                            filename = os.path.splitext(filename)[0]  # Remove extension for knowledge base name
+                        
+                        # Create a temporary file with a meaningful name
+                        temp_dir = tempfile.gettempdir()
+                        temp_path = os.path.join(temp_dir, temp_filename)
+                        temp_file = open(temp_path, 'wb')
+                        temp_file.close()
+                        
+                        # Download content
+                        response = requests.get(url, stream=True)
+                        response.raise_for_status()
+                        
+                        # Write content to the temporary file
+                        with open(temp_path, 'wb') as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                        
+                        logger.info(f"Downloaded URL to temporary file: {temp_path}, will process as: {filename}")
+                        
+                        # Process the downloaded file
+                        await self.add_pdf_files([temp_path], filename=filename)
+                        
+                        # Delete the S3 URL from storage if it's an S3 URL
+                        if "s3.amazonaws.com" in url:
+                            try:
+                                # Delete the file from S3
+                                # Parse the S3 bucket and key from the URL
+                                s3_parts = urlparse(url)
+                                bucket_name = s3_parts.netloc.split('.')[0]
+                                key = s3_parts.path.lstrip('/')
+                                
+                                # Initialize boto3 S3 client
+                                import boto3
+                                s3_client = boto3.client('s3')
+                                
+                                # Delete the object
+                                s3_client.delete_object(Bucket=bucket_name, Key=key)
+                                logger.info(f"Deleted S3 object: {url}")
+                            except Exception as s3_err:
+                                # Ignore errors when deleting S3 file
+                                logger.warning(f"Failed to delete S3 file, ignoring: {str(s3_err)}")
+                        
+                    except Exception as download_err:
+                        logger.error(f"Error downloading from URL: {str(download_err)}")
+                        raise
+                    finally:
+                        # Clean up temp file
+                        if temp_file and os.path.exists(temp_path):
+                            os.unlink(temp_path)
+                            logger.info(f"Deleted temporary file: {temp_path}")
+                
             return True
         except Exception as e:
             logger.error(f"Error adding PDF URLs: {str(e)}")
@@ -142,46 +226,59 @@ class KnowledgeManager:
             logger.error(f"Error adding websites: {str(e)}")
             return False
 
-    async def add_pdf_files(self, files: List[str], chunk: bool = True, reader: Optional[Union[PDFReader, PDFImageReader]] = None) -> bool:
+    async def add_pdf_files(self, files: List[str], chunk: bool = True, reader: Optional[Union[PDFReader, PDFImageReader]] = None, filename: Optional[str] = None) -> bool:
         """Add knowledge from PDF files"""
         try:
             # Process each file individually since PDFKnowledgeBase expects a single path
             for file_path in files:
-                # First try with regular PDFReader
-                try:
-                    knowledge_base = PDFKnowledgeBase(
-                        path=file_path,
-                        vector_db=self.vector_db,
-                        reader=PDFReader(chunk=chunk)
-                    )
-                    # Extract just the filename from the path and remove extension
-                    filename = os.path.splitext(os.path.basename(file_path))[0]
-                    # Convert agent_id to string if it exists
-                    agent_id_filter = [str(self.agent_id)] if self.agent_id else []
-                    knowledge_base.load(recreate=False, upsert=True, filters={
-                        "name": filename,
-                        "agent_id": agent_id_filter,
-                        "org_id": str(self.org_id)
-                    })
-                except Exception as e:
-                    logger.warning(f"Regular PDFReader failed for {file_path}, trying PDFImageReader: {str(e)}")
-                    # Fallback to PDFImageReader if PDFReader fails
-                    knowledge_base = PDFKnowledgeBase(
-                        path=file_path,
-                        vector_db=self.vector_db,
-                        reader=PDFImageReader(chunk=chunk)
-                    )
-                    # Extract just the filename from the path and remove extension
-                    filename = os.path.splitext(os.path.basename(file_path))[0]
-                    # Convert agent_id to string if it exists
-                    agent_id_filter = [str(self.agent_id)] if self.agent_id else []
-                    knowledge_base.load(recreate=False, upsert=True, filters={
-                        "name": filename,
-                        "agent_id": agent_id_filter,
-                        "org_id": str(self.org_id)
-                    })
+                temp_file = None
+                path_to_use = file_path
                 
-                self._add_knowledge_source(filename, SourceType.FILE)
+                
+                try:
+                    # First try with regular PDFReader
+                    try:
+                        knowledge_base = PDFKnowledgeBase(
+                            path=path_to_use,
+                            vector_db=self.vector_db,
+                            reader=PDFReader(chunk=chunk) if not reader else reader
+                        )
+                        if filename is None:
+                            filename = os.path.splitext(os.path.basename(file_path))[0]
+                            
+                        # Convert agent_id to string if it exists
+                        agent_id_filter = [str(self.agent_id)] if self.agent_id else []
+                        logger.info(f"Adding knowledge source: {filename}")
+                        knowledge_base.load(recreate=False, upsert=True, filters={
+                            "name": filename,
+                            "agent_id": agent_id_filter,
+                            "org_id": str(self.org_id)
+                        })
+                    except Exception as e:
+                        logger.warning(f"Regular PDFReader failed for {path_to_use}, trying PDFImageReader: {str(e)}")
+                        # Fallback to PDFImageReader if PDFReader fails
+                        knowledge_base = PDFKnowledgeBase(
+                            path=path_to_use,
+                            vector_db=self.vector_db,
+                            reader=PDFImageReader(chunk=chunk)
+                        )
+                        if filename is None:
+                            filename = os.path.splitext(os.path.basename(file_path))[0]
+                        
+                        # Convert agent_id to string if it exists
+                        agent_id_filter = [str(self.agent_id)] if self.agent_id else []
+                        knowledge_base.load(recreate=False, upsert=True, filters={
+                            "name": filename,
+                            "agent_id": agent_id_filter,
+                            "org_id": str(self.org_id)
+                        })
+                    
+                    self._add_knowledge_source(filename, SourceType.FILE)
+                finally:
+                    # Clean up temp file if we created one
+                    if temp_file and os.path.exists(temp_file.name):
+                        os.unlink(temp_file.name)
+                        
             return True
         except Exception as e:
             logger.error(f"Error adding PDF files: {str(e)}")
@@ -213,8 +310,8 @@ class KnowledgeManager:
             # Process based on source type
             if queue_item.source_type == 'pdf_file':
                 success = await self.add_pdf_files([queue_item.source])
-                # Clean up temp file after processing
-                if os.path.exists(queue_item.source):
+                # Clean up temp file after processing if it's a local file
+                if not queue_item.source.startswith('http') and os.path.exists(queue_item.source):
                     os.remove(queue_item.source)
 
             elif queue_item.source_type == 'pdf_url':

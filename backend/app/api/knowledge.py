@@ -37,6 +37,7 @@ from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.core.config import settings
 from agno.vectordb.pgvector import PgVector, SearchType
 from sqlalchemy.orm import Session
+from app.core.s3 import upload_file_to_s3, get_s3_signed_url
 
 # Try to import enterprise modules
 try:
@@ -115,18 +116,29 @@ async def upload_pdf_files(
                     detail=f"Cannot add files: Maximum number of knowledge sources ({subscription.plan.max_knowledge_sources}) would be exceeded"
                 )
 
-        # Create temp directory if it doesn't exist
-        os.makedirs(TEMP_DIR, exist_ok=True)
-
         queue_repo = KnowledgeQueueRepository(db)
         queued_items = []
 
-        # Save files temporarily and create queue items
+        # Process each file
         for file in files:
-            file_path = os.path.join(TEMP_DIR, file.filename)
-            with open(file_path, "wb") as f:
-                content = await file.read()
-                f.write(content)
+            file_path = ""
+            source_type = "pdf_file"
+            # Check if S3 storage is enabled
+            if settings.S3_FILE_STORAGE:
+                # Upload to S3
+                folder = f"knowledge/{org_uuid}"
+                file_url = await upload_file_to_s3(file, folder, file.filename, content_type="application/pdf")
+                logger.debug(f"Uploaded PDF to S3: {file_url}")
+                file_path = await get_s3_signed_url(file_url)
+                source_type = "pdf_url"
+            else:
+                # Save file locally
+                os.makedirs(TEMP_DIR, exist_ok=True)
+                file_path = os.path.join(TEMP_DIR, file.filename)
+                with open(file_path, "wb") as f:
+                    content = await file.read()
+                    f.write(content)
+                
             saved_files.append(file_path)
 
             # Create queue item with user_id
@@ -134,7 +146,7 @@ async def upload_pdf_files(
                 organization_id=org_uuid,
                 agent_id=UUID(agent_id) if agent_id else None,
                 user_id=current_user.id,
-                source_type='pdf_file',
+                source_type=source_type,
                 source=file_path,
                 status=QueueStatus.PENDING,
                 queue_metadata={
