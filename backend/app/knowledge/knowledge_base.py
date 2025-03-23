@@ -19,7 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from agno.knowledge.pdf import PDFKnowledgeBase
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.knowledge.website import WebsiteKnowledgeBase
-from agno.knowledge.pdf import PDFImageReader
+from agno.knowledge.pdf import PDFImageReader,PDFKnowledgeBase,PDFReader
 from agno.vectordb.pgvector import PgVector, SearchType
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -29,7 +29,7 @@ from app.repositories.ai_config import AIConfigRepository
 from app.database import get_db
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.knowledge import KnowledgeRepository
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Union
 import os
 from uuid import UUID
 from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
@@ -142,25 +142,45 @@ class KnowledgeManager:
             logger.error(f"Error adding websites: {str(e)}")
             return False
 
-    async def add_pdf_files(self, files: List[str], chunk: bool = True) -> bool:
+    async def add_pdf_files(self, files: List[str], chunk: bool = True, reader: Optional[Union[PDFReader, PDFImageReader]] = None) -> bool:
         """Add knowledge from PDF files"""
         try:
             # Process each file individually since PDFKnowledgeBase expects a single path
             for file_path in files:
-                knowledge_base = PDFKnowledgeBase(
-                    path=file_path,  # Pass single path string instead of list
-                    vector_db=self.vector_db,
-                    reader=PDFImageReader(chunk=chunk)
-                )
-                # Extract just the filename from the path and remove extension
-                filename = os.path.splitext(os.path.basename(file_path))[0]
-                # Convert agent_id to string if it exists
-                agent_id_filter = [str(self.agent_id)] if self.agent_id else []
-                knowledge_base.load(recreate=False, upsert=True, filters={
-                    "name": filename,
-                    "agent_id": agent_id_filter,
-                    "org_id": str(self.org_id)
-                })
+                # First try with regular PDFReader
+                try:
+                    knowledge_base = PDFKnowledgeBase(
+                        path=file_path,
+                        vector_db=self.vector_db,
+                        reader=PDFReader(chunk=chunk)
+                    )
+                    # Extract just the filename from the path and remove extension
+                    filename = os.path.splitext(os.path.basename(file_path))[0]
+                    # Convert agent_id to string if it exists
+                    agent_id_filter = [str(self.agent_id)] if self.agent_id else []
+                    knowledge_base.load(recreate=False, upsert=True, filters={
+                        "name": filename,
+                        "agent_id": agent_id_filter,
+                        "org_id": str(self.org_id)
+                    })
+                except Exception as e:
+                    logger.warning(f"Regular PDFReader failed for {file_path}, trying PDFImageReader: {str(e)}")
+                    # Fallback to PDFImageReader if PDFReader fails
+                    knowledge_base = PDFKnowledgeBase(
+                        path=file_path,
+                        vector_db=self.vector_db,
+                        reader=PDFImageReader(chunk=chunk)
+                    )
+                    # Extract just the filename from the path and remove extension
+                    filename = os.path.splitext(os.path.basename(file_path))[0]
+                    # Convert agent_id to string if it exists
+                    agent_id_filter = [str(self.agent_id)] if self.agent_id else []
+                    knowledge_base.load(recreate=False, upsert=True, filters={
+                        "name": filename,
+                        "agent_id": agent_id_filter,
+                        "org_id": str(self.org_id)
+                    })
+                
                 self._add_knowledge_source(filename, SourceType.FILE)
             return True
         except Exception as e:
