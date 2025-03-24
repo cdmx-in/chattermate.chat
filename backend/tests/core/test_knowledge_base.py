@@ -136,7 +136,7 @@ async def test_add_websites_success(knowledge_manager, mock_knowledge):
     max_links = 5
     knowledge_manager.knowledge_repo.create.return_value = mock_knowledge
     
-    with patch('app.knowledge.knowledge_base.WebsiteKnowledgeBase') as mock_web_kb:
+    with patch('app.knowledge.knowledge_base.EnhancedWebsiteKnowledgeBase') as mock_web_kb:
         # Configure mock
         mock_web_kb_instance = MagicMock()
         mock_web_kb.return_value = mock_web_kb_instance
