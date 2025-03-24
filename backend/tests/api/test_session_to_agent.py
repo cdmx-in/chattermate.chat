@@ -36,6 +36,8 @@ from app.models.schemas.chat import ChatDetailResponse, CustomerInfo, AgentInfo,
 from sqlalchemy.orm import Session
 from tests.conftest import engine, TestingSessionLocal, create_tables, Base
 from app.models.organization import Organization
+from app.repositories.session_to_agent import SessionToAgentRepository
+from unittest.mock import patch
 
 # Create a test FastAPI app
 app = FastAPI()
@@ -325,6 +327,17 @@ def client(user_with_manage_chats_permission, mock_chat_response) -> TestClient:
     
     return TestClient(app)
 
+@pytest.fixture
+def client_with_error_mock(user_with_manage_chats_permission, mock_chat_response) -> TestClient:
+    """Create test client with error mocking capabilities"""
+    async def override_get_current_user():
+        return user_with_manage_chats_permission
+
+    app.dependency_overrides[get_current_user] = override_get_current_user
+    app.dependency_overrides[get_db] = lambda: TestingSessionLocal()
+    
+    return TestClient(app)
+
 def test_takeover_chat_success(client, db, user_with_manage_chats_permission, 
                              create_chat_session, mock_chat_response):
     """Test successful chat takeover"""
@@ -431,4 +444,93 @@ def test_takeover_chat_with_manage_assigned_chats(client, db,
     assert "agent" in data
     assert "messages" in data
     assert "status" in data
-    assert data["status"] == SessionStatus.OPEN.value 
+    assert data["status"] == SessionStatus.OPEN.value
+
+def test_takeover_chat_update_failure(client_with_error_mock, db, user_with_manage_chats_permission, create_chat_session):
+    """Test chat takeover when session update fails"""
+    session = create_chat_session()
+    
+    # Mock the repository to simulate update failure
+    def mock_takeover_session(*args, **kwargs):
+        return False
+    
+    with patch('app.repositories.session_to_agent.SessionToAgentRepository.takeover_session', 
+               side_effect=mock_takeover_session):
+        response = client_with_error_mock.post(
+            f"/api/v1/session-to-agent/{session.session_id}/takeover"
+        )
+    
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Failed to take over chat" in response.json()["detail"]
+
+def test_takeover_chat_details_failure(client_with_error_mock, db, user_with_manage_chats_permission, create_chat_session):
+    """Test chat takeover when getting chat details fails"""
+    session = create_chat_session()
+    
+    # Mock the repository to simulate chat details failure
+    def mock_get_chat_detail(*args, **kwargs):
+        return None
+    
+    with patch('app.repositories.chat.ChatRepository.get_chat_detail', 
+               side_effect=mock_get_chat_detail):
+        response = client_with_error_mock.post(
+            f"/api/v1/session-to-agent/{session.session_id}/takeover"
+        )
+    
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Failed to get chat details after takeover" in response.json()["detail"]
+
+def test_takeover_chat_unexpected_error(client_with_error_mock, db, user_with_manage_chats_permission, create_chat_session):
+    """Test chat takeover with unexpected error"""
+    session = create_chat_session()
+    
+    # Mock the repository to simulate unexpected error
+    def mock_get_session(*args, **kwargs):
+        raise Exception("Unexpected error occurred")
+    
+    with patch('app.repositories.session_to_agent.SessionToAgentRepository.get_session', 
+               side_effect=mock_get_session):
+        response = client_with_error_mock.post(
+            f"/api/v1/session-to-agent/{session.session_id}/takeover"
+        )
+    
+    assert response.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+    assert "Failed to take over chat" in response.json()["detail"]
+
+def test_takeover_chat_already_taken(client, db, user_with_manage_chats_permission, create_chat_session):
+    """Test chat takeover when session is already taken"""
+    session = create_chat_session()
+    
+    # First takeover should succeed
+    response1 = client.post(
+        f"/api/v1/session-to-agent/{session.session_id}/takeover"
+    )
+    assert response1.status_code == status.HTTP_200_OK
+    
+    # Second takeover should fail
+    response2 = client.post(
+        f"/api/v1/session-to-agent/{session.session_id}/takeover"
+    )
+    assert response2.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Failed to take over chat" in response2.json()["detail"]
+
+def test_takeover_chat_closed_session(client_with_error_mock, db, user_with_manage_chats_permission, create_chat_session):
+    """Test chat takeover when session is closed"""
+    session = create_chat_session()
+    
+    # Close the session
+    session_repo = SessionToAgentRepository(db)
+    session_repo.update_session_status(session.session_id, SessionStatus.CLOSED)
+    
+    # Mock the repository to simulate takeover failure
+    def mock_takeover_session(*args, **kwargs):
+        return False
+    
+    with patch('app.repositories.session_to_agent.SessionToAgentRepository.takeover_session', 
+               side_effect=mock_takeover_session):
+        response = client_with_error_mock.post(
+            f"/api/v1/session-to-agent/{session.session_id}/takeover"
+        )
+    
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert "Failed to take over chat" in response.json()["detail"] 

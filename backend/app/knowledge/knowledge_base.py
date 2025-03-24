@@ -22,6 +22,7 @@ from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.vectordb.pgvector import PgVector, SearchType
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.repositories.ai_config import AIConfigRepository
@@ -200,26 +201,31 @@ class KnowledgeManager:
             return False
 
     async def add_websites(self, urls: List[str], max_links: int = 10) -> bool:
-        """Add knowledge from websites"""
+        """Add knowledge from websites using the enhanced website reader"""
         try:
             # Convert agent_id to string if it exists
             agent_id_filter = [str(self.agent_id)] if self.agent_id else []
             
             for url in urls:
                 logger.debug(f"Adding website: {url}")
-                knowledge_base = WebsiteKnowledgeBase(
+                # Use enhanced website knowledge base for better content extraction
+                knowledge_base = EnhancedWebsiteKnowledgeBase(
                     urls=[url],  # Pass single URL in a list
                     max_links=max_links,
+                    max_depth=3,  # Default depth
+                    min_content_length=100,  # Minimum content length to consider
+                    timeout=30,  # Request timeout
+                    max_retries=3,  # Maximum retries for failed requests
                     vector_db=self.vector_db
                 )
-                logger.debug(f"Knowledge base created for: {url}")
+                logger.debug(f"Enhanced knowledge base created for: {url}")
                 
                 knowledge_base.load(recreate=False, upsert=True, filters={
                     "name": url,
                     "agent_id": agent_id_filter,
                     "org_id": str(self.org_id)
                 })
-                logger.debug(f"Knowledge base loaded for: {url}")
+                logger.debug(f"Enhanced knowledge base loaded for: {url}")
                 self._add_knowledge_source(url, SourceType.WEBSITE)
             return True
         except Exception as e:
