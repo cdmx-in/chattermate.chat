@@ -9,6 +9,8 @@ This module provides an enhanced website knowledge extraction system that signif
 - **Text density analysis**: Can identify important content based on paragraph density when standard selectors fail.
 - **Smart content cleaning**: Automatically removes boilerplate, navigation, ads, and other non-content elements.
 - **Configurable parameters**: Allows customization of crawl depth, number of links, timeouts, etc.
+- **High-performance parallel embedding**: Embeds documents in parallel during crawling to maximize throughput.
+- **Optimized database insertion**: Preserves embeddings to avoid redundant work during vector database operations.
 
 ## Usage
 
@@ -44,15 +46,66 @@ kb.load(
 )
 ```
 
+### High-Performance Configuration with Optimized Vector Database
+
+For maximum performance, use the `OptimizedPgVector` class with increased parallelism settings:
+
+```python
+from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
+from app.knowledge.optimized_pgvector import OptimizedPgVector
+
+# Initialize optimized vector database
+vector_db = OptimizedPgVector(
+    table_name="your_table",
+    db_url="your_db_url",
+    schema="your_schema"
+)
+
+# Create knowledge base with increased parallelism
+kb = EnhancedWebsiteKnowledgeBase(
+    urls=["https://example.com"],
+    max_depth=5,                   # Deeper crawling for more content
+    max_links=25,                  # More links for comprehensive coverage
+    min_content_length=100,
+    timeout=30,
+    max_retries=3,
+    max_workers=32,                # High parallel processing for maximum throughput
+    batch_size=100,                # Larger batch size for better database performance
+    vector_db=vector_db
+)
+
+# Load knowledge base
+kb.load(
+    recreate=False,
+    upsert=True,
+    filters={"source": "website"}
+)
+```
+
+## Performance Optimization
+
+The system is designed to maximize performance at every stage:
+
+1. **Parallel Crawling**: Multiple URLs are crawled simultaneously using ThreadPoolExecutor
+2. **Parallel Embedding**: Documents from each URL are embedded in parallel batches
+3. **Final Parallel Embedding**: Any remaining unembedded documents are processed with high parallelism
+4. **Embedding Preservation**: The OptimizedPgVector class preserves embeddings during database operations
+5. **Batched Database Operations**: Documents are inserted into the database in optimized batches
+6. **Vector Database Indexing**: Automatic index optimization for faster vector searches
+
+This approach dramatically reduces the total processing time, especially for large websites with many pages.
+
 ### Configuration Options
 
 The `EnhancedWebsiteReader` and `EnhancedWebsiteKnowledgeBase` classes offer several configuration options:
 
-- **max_depth**: How many levels deep to crawl from the starting URL (default: 3)
-- **max_links**: Maximum number of links to follow (default: 10)
+- **max_depth**: How many levels deep to crawl from the starting URL (default: 5)
+- **max_links**: Maximum number of links to follow (default: 25)
 - **min_content_length**: Minimum text length to be considered valid content (default: 100)
 - **timeout**: HTTP request timeout in seconds (default: 30)
 - **max_retries**: Maximum number of retry attempts for failed requests (default: 3)
+- **max_workers**: Number of parallel workers for crawling and embedding (default: 10)
+- **batch_size**: Size of document batches for database operations (default: 20)
 - **blacklist_tags**: HTML tags to remove before content extraction (scripts, styles, etc.)
 - **common_content_tags**: HTML tags likely to contain main content
 - **common_content_classes**: CSS class names likely to indicate main content
@@ -78,4 +131,6 @@ conda activate python3128
 
 # Run the tests
 python -m pytest backend/tests/knowledge/test_enhanced_website_reader.py -v
+python -m pytest backend/tests/knowledge/test_enhanced_website_kb.py -v
+python -m pytest backend/tests/knowledge/test_optimized_pgvector.py -v
 ``` 

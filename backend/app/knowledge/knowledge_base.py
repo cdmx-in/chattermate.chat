@@ -18,8 +18,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 from agno.knowledge.pdf import PDFKnowledgeBase, PDFImageReader, PDFReader
 from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
-from agno.knowledge.website import WebsiteKnowledgeBase
 from agno.vectordb.pgvector import PgVector, SearchType
+from app.knowledge.optimized_pgvector import OptimizedPgVector
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
@@ -61,7 +61,7 @@ class KnowledgeManager:
         # Updated dimensions for the smaller model
         embedder.dimensions = 384  # Reduced from 1024 for faster processing
 
-        self.vector_db = PgVector(
+        self.vector_db = OptimizedPgVector(
             table_name=table_name,
             db_url=settings.DATABASE_URL,
             schema="ai",
