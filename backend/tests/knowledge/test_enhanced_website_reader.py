@@ -152,69 +152,90 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         self.assertIsNone(soup_copy.find('nav'))
         self.assertIsNone(soup_copy.find(class_='hidden'))
         
-    @patch('httpx.get')
-    def test_crawl_with_successful_request(self, mock_get):
+    @patch('httpx.Client')
+    def test_crawl_with_successful_request(self, mock_client):
         """Test crawling with successful HTTP requests"""
-        # Mock HTTP response
+        # Mock HTTP client response
         mock_response = MagicMock()
-        mock_response.content = self.test_html
+        mock_response.text = self.test_html
         mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+        
+        # Setup mock client
+        mock_client_instance = MagicMock()
+        mock_client_instance.get.return_value = mock_response
+        mock_client.return_value.__enter__.return_value = mock_client_instance
         
         # Test crawling
         result = self.reader.crawl('https://example.com')
         
-        # Verify call to httpx.get
-        mock_get.assert_called_with(
-            'https://example.com',
-            headers=self.reader.headers,
-            timeout=self.reader.timeout,
-            follow_redirects=True
-        )
+        # Verify call to httpx client
+        mock_client.assert_called_once()
+        mock_client_instance.get.assert_called_with('https://example.com')
         
         # Verify result contains the expected content
         self.assertIn('https://example.com', result)
         self.assertIn("Main Content", result['https://example.com'])
         
-    @patch('httpx.get')
+    @patch('httpx.Client')
     @patch('time.sleep', return_value=None)  # Skip actual sleeping
-    def test_crawl_with_retries(self, mock_sleep, mock_get):
+    def test_crawl_with_retries(self, mock_sleep, mock_client):
         """Test crawling with retries on failed requests"""
         # Mock HTTP errors for the first two attempts
-        mock_get.side_effect = [
-            httpx.HTTPStatusError("Error", request=MagicMock(), response=MagicMock(status_code=500)),
-            httpx.RequestError("Timeout", request=MagicMock()),
-            # Success on third attempt
-            Mock(content=self.test_html, raise_for_status=Mock())
+        mock_response_error = MagicMock()
+        mock_response_error.raise_for_status.side_effect = httpx.HTTPStatusError("Error", request=MagicMock(), response=MagicMock(status_code=500))
+        
+        mock_response_success = MagicMock()
+        mock_response_success.text = self.test_html
+        mock_response_success.raise_for_status = MagicMock()
+        
+        # Setup mock client
+        mock_client_instance = MagicMock()
+        mock_client_instance.get.side_effect = [
+            mock_response_error,  # First attempt fails with HTTP error
+            MagicMock(raise_for_status=MagicMock(side_effect=httpx.RequestError("Timeout", request=MagicMock()))),  # Second attempt fails with request error
+            mock_response_success  # Third attempt succeeds
         ]
+        mock_client.return_value.__enter__.return_value = mock_client_instance
         
         # Test crawling with retries
         result = self.reader.crawl('https://example.com')
         
-        # Verify httpx.get was called 3 times (2 failures + 1 success)
-        self.assertEqual(mock_get.call_count, 3)
+        # Verify httpx client's get method was called 3 times (2 failures + 1 success)
+        self.assertEqual(mock_client_instance.get.call_count, 3)
         
         # Verify result contains the expected content after successful retry
         self.assertIn('https://example.com', result)
         self.assertIn("Main Content", result['https://example.com'])
         
-    @patch('httpx.get')
-    def test_read_method(self, mock_get):
+    @patch('httpx.Client')
+    def test_read_method(self, mock_client):
         """Test the read method to ensure it returns proper Document objects"""
         # Mock HTTP response
         mock_response = MagicMock()
-        mock_response.content = self.test_html
+        mock_response.text = self.test_html
         mock_response.raise_for_status = MagicMock()
-        mock_get.return_value = mock_response
+        
+        # Setup mock client
+        mock_client_instance = MagicMock()
+        mock_client_instance.get.return_value = mock_response
+        mock_client.return_value.__enter__.return_value = mock_client_instance
         
         # Test read method
         documents = self.reader.read('https://example.com')
         
         # Verify documents are created correctly
         self.assertTrue(len(documents) > 0)
-        self.assertEqual(documents[0].name, 'https://example.com')
-        self.assertEqual(documents[0].meta_data['url'], 'https://example.com')
         self.assertIn("Main Content", documents[0].content)
+        
+        # Verify metadata format
+        self.assertEqual(documents[0].meta_data['url'], 'https://example.com')
+        self.assertEqual(documents[0].meta_data['chunk'], 1)
+        self.assertIsInstance(documents[0].meta_data['chunk_size'], int)
+        
+        # Verify ID and name
+        self.assertEqual(documents[0].id, 'https://example.com')
+        # Verify that name is the original source URL
+        self.assertEqual(documents[0].name, 'https://example.com')
 
 
 if __name__ == '__main__':

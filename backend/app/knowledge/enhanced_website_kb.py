@@ -17,13 +17,20 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from typing import Any, Dict, Iterator, List, Optional
+import time
+from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
-from agno.utils.log import log_debug, log_info, logger
+from agno.embedder import Embedder
+from app.core.logger import get_logger
 from pydantic import model_validator
 
 from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
+
+# Initialize logger for this module
+logger = get_logger(__name__)
 
 
 class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
@@ -32,25 +39,94 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     urls: List[str] = []
     reader: Optional[EnhancedWebsiteReader] = None
 
-    # Reader parameters
-    max_depth: int = 3
-    max_links: int = 10
+    # Reader parameters - adjusted for better subpage crawling
+    max_depth: int = 5  # Increased from 3 to ensure deeper page crawling
+    max_links: int = 25  # Increased from 10 to allow for more content discovery 
     min_content_length: int = 100
     timeout: int = 30
     max_retries: int = 3
+    max_workers: int = 10  # Number of parallel workers for crawling
+    batch_size: int = 20  # Increased batch size for vector DB operations (was 10)
+    optimize_on: Optional[int] = 1000  # Trigger vector DB optimization after this many documents
 
     @model_validator(mode="after")
     def set_reader(self) -> "EnhancedWebsiteKnowledgeBase":
         """Set the reader if not provided"""
         if self.reader is None:
+            logger.info(f"Initializing EnhancedWebsiteReader with max_depth={self.max_depth}, max_links={self.max_links}, max_workers={self.max_workers}")
             self.reader = EnhancedWebsiteReader(
                 max_depth=self.max_depth,
                 max_links=self.max_links,
                 min_content_length=self.min_content_length,
                 timeout=self.timeout,
-                max_retries=self.max_retries
+                max_retries=self.max_retries,
+                max_workers=self.max_workers
             )
         return self
+
+    def _process_url(self, url: str) -> List[Document]:
+        """Process a single URL and return its documents"""
+        try:
+            url_start_time = time.time()
+            logger.info(f"Crawling URL: {url}")
+            
+            # Get documents from the reader without embedding
+            documents = self.reader.read(url=url)
+            
+            # Now embed documents in parallel if possible
+            if self.vector_db and hasattr(self.vector_db, 'embedder') and documents:
+                unembedded_docs = [doc for doc in documents if doc.embedding is None]
+                if unembedded_docs:
+                    # Use ThreadPoolExecutor for parallel embedding
+                    with ThreadPoolExecutor(max_workers=min(len(unembedded_docs), self.max_workers)) as executor:
+                        # Create a list of future tasks
+                        futures = []
+                        for doc in unembedded_docs:
+                            futures.append(executor.submit(self._embed_document, doc, self.vector_db.embedder))
+                        
+                        # Wait for all embeddings to complete
+                        for future in as_completed(futures):
+                            try:
+                                future.result()  # Get any exceptions that occurred
+                            except Exception as e:
+                                logger.error(f"Error during parallel embedding: {str(e)}")
+            
+            url_end_time = time.time()
+            url_duration = url_end_time - url_start_time
+            
+            # Log document details
+            page_count = len(set(doc.meta_data.get('url', '') for doc in documents))
+            logger.info(f"Completed {url} - Extracted {len(documents)} documents from {page_count} pages ({url_duration:.2f}s)")
+            
+            return documents
+        except Exception as e:
+            logger.error(f"Error reading URL {url}: {str(e)}")
+            return []
+    
+    def _embed_document(self, document: Document, embedder: Embedder) -> None:
+        """Embed a single document (for parallel processing)"""
+        try:
+            if document.embedding is None:
+                document.embed(embedder=embedder)
+        except Exception as e:
+            logger.error(f"Error embedding document '{document.id}': {str(e)}")
+            raise
+
+    def _process_document_batch(self, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+        """Process a batch of documents by inserting them into the vector database"""
+        if not documents or not self.vector_db:
+            return
+
+        try:
+            batch_start_time = time.time()
+            
+            # Use the most efficient upsert method available
+            self.vector_db.upsert(documents=documents, filters=filters)
+            
+            batch_end_time = time.time()
+            batch_duration = batch_end_time - batch_start_time
+        except Exception as e:
+            logger.error(f"Error processing document batch: {str(e)}")
 
     @property
     def document_lists(self) -> Iterator[List[Document]]:
@@ -62,9 +138,28 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
             Iterator[List[Document]]: Iterator yielding list of documents
         """
         if self.reader is not None:
-            for _url in self.urls:
-                log_info(f"Reading documents from {_url}")
-                yield self.reader.read(url=_url)
+            total_start_time = time.time()
+            logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting to process {len(self.urls)} URLs")
+            
+            # Process URLs in parallel using ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                # Submit all URLs for processing
+                future_to_url = {executor.submit(self._process_url, url): url for url in self.urls}
+                
+                # Process completed futures as they finish
+                for future in as_completed(future_to_url):
+                    url = future_to_url[future]
+                    try:
+                        documents = future.result()
+                        if documents:
+                            yield documents
+                    except Exception as e:
+                        logger.error(f"Error processing URL {url}: {str(e)}")
+                        yield []
+            
+            total_end_time = time.time()
+            total_duration = total_end_time - total_start_time
+            logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Completed processing all {len(self.urls)} URLs (Total time: {total_duration:.2f}s)")
 
     def load(
         self,
@@ -74,7 +169,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
         filters: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
-        Load the website contents to the vector db
+        Load the website contents to the vector db with parallel processing and batch insertion
         
         Args:
             recreate (bool, optional): Whether to recreate the collection. Defaults to False.
@@ -82,6 +177,8 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
             skip_existing (bool, optional): Whether to skip existing documents. Defaults to True.
             filters (Optional[Dict[str, Any]], optional): Filters to apply to the documents. Defaults to None.
         """
+        total_start_time = time.time()
+        
         if self.vector_db is None:
             logger.warning("No vector db provided")
             return
@@ -91,64 +188,90 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
             return
 
         if recreate:
-            log_debug("Dropping collection")
             self.vector_db.drop()
+            self.vector_db.create()
+        elif not self.vector_db.exists():
+            self.vector_db.create()
 
-        log_debug("Creating collection")
-        self.vector_db.create()
-
-        log_info("Loading knowledge base")
-        num_documents = 0
+        logger.info(f"Starting knowledge base loading - {len(self.urls)} URLs")
 
         # Check if URLs exist in vector db
         urls_to_read = self.urls.copy()
-        if not recreate:
-            for url in self.urls:
-                log_debug(f"Checking if {url} exists in the vector db")
-                if self.vector_db.name_exists(name=url):
-                    log_debug(f"Skipping {url} as it exists in the vector db")
-                    if url in urls_to_read:
-                        urls_to_read.remove(url)
-
-        # Process each URL
-        for url in urls_to_read:
-            log_info(f"Processing URL: {url}")
+        if not recreate and skip_existing:
             try:
-                document_list = self.reader.read(url=url)
-                
-                # Log the number of documents extracted
-                log_debug(f"Extracted {len(document_list)} documents from {url}")
-                
-                # Filter out documents which already exist in the vector db
-                if not recreate:
-                    initial_count = len(document_list)
-                    document_list = [document for document in document_list if not self.vector_db.doc_exists(document)]
-                    log_debug(f"Filtered out {initial_count - len(document_list)} existing documents")
-                
-                # Skip if no documents to process
-                if not document_list:
-                    log_info(f"No new documents to insert for {url}")
-                    continue
-                    
-                # Insert documents into vector db
-                if upsert and self.vector_db.upsert_available():
-                    log_debug(f"Upserting {len(document_list)} documents")
-                    self.vector_db.upsert(documents=document_list, filters=filters)
-                else:
-                    log_debug(f"Inserting {len(document_list)} documents")
-                    self.vector_db.insert(documents=document_list, filters=filters)
-                    
-                num_documents += len(document_list)
-                log_info(f"Loaded {num_documents} documents to knowledge base")
-                
+                urls_to_read = [url for url in self.urls if not self.vector_db.name_exists(name=url)]
+                skipped = len(self.urls) - len(urls_to_read)
+                if skipped > 0:
+                    logger.info(f"Skipping {skipped} already loaded URLs")
             except Exception as e:
-                logger.error(f"Error processing URL {url}: {str(e)}")
-                # Continue with next URL
-                continue
+                logger.error(f"Error checking existing URLs: {str(e)}")
+                urls_to_read = self.urls.copy()
 
-        # Optimize vector db if needed
-        if self.optimize_on is not None and num_documents > self.optimize_on:
-            log_debug("Optimizing Vector DB")
-            self.vector_db.optimize()
+        # Process URLs in parallel with batched vector DB insertion
+        total_documents = 0
+        
+        # Keep track of crawling vs upsert timing
+        crawl_start_time = time.time()
+
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            # Submit all URLs for processing
+            future_to_url = {executor.submit(self._process_url, url): url for url in urls_to_read}
+            all_documents = []
             
-        log_info(f"Successfully loaded {num_documents} documents to knowledge base") 
+            # Process completed futures as they finish
+            for future in as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    documents = future.result()
+                    total_documents += len(documents)
+                    
+                    # Collect documents for batch processing
+                    all_documents.extend(documents)
+                        
+                except Exception as e:
+                    logger.error(f"Error processing URL {url}: {str(e)}")
+        
+        crawl_end_time = time.time()
+        crawl_duration = crawl_end_time - crawl_start_time
+        logger.info(f"Crawling completed - {len(urls_to_read)} URLs, {total_documents} documents, {crawl_duration:.2f}s")
+        
+        # Make sure all documents are embedded before upsert (final check for any that were missed)
+        unembedded_count = sum(1 for doc in all_documents if doc.embedding is None)
+        if unembedded_count > 0 and self.vector_db and hasattr(self.vector_db, 'embedder'):
+            logger.info(f"Embedding remaining {unembedded_count} documents")
+            unembedded_docs = [doc for doc in all_documents if doc.embedding is None]
+            
+            # Use ThreadPoolExecutor for parallel embedding with a high worker count for best parallelism
+            with ThreadPoolExecutor(max_workers=min(32, len(unembedded_docs))) as executor:
+                # Create a list of future tasks
+                futures = []
+                for doc in unembedded_docs:
+                    futures.append(executor.submit(self._embed_document, doc, self.vector_db.embedder))
+                
+                # Wait for all embeddings to complete
+                for future in as_completed(futures):
+                    try:
+                        future.result()  # Get any exceptions that occurred
+                    except Exception as e:
+                        logger.error(f"Error during embedding: {str(e)}")
+        
+        # Process all documents in optimally sized batches
+        if all_documents and upsert:
+            logger.info(f"Inserting {len(all_documents)} documents into vector database")
+            
+            # Process in larger batches for better DB performance
+            for i in range(0, len(all_documents), self.batch_size):
+                batch = all_documents[i:i + self.batch_size]
+                self._process_document_batch(batch, filters)
+            
+        # Optimize vector db if needed
+        if self.optimize_on is not None and total_documents > self.optimize_on and hasattr(self.vector_db, 'optimize'):
+            logger.info("Optimizing vector database...")
+            try:
+                self.vector_db.optimize()
+            except Exception as e:
+                logger.error(f"Vector DB optimization failed: {str(e)}")
+
+        total_end_time = time.time()
+        total_duration = total_end_time - total_start_time
+        logger.info(f"Completed loading {total_documents} documents from {len(urls_to_read)} URLs (Total time: {total_duration:.2f}s)") 
