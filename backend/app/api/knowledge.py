@@ -17,16 +17,14 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Body, Query, status
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 from app.models.user import User
 from app.core.auth import get_current_user, require_permissions
-from app.knowledge.knowledge_base import KnowledgeManager
 from app.core.logger import get_logger
 import json
 import os
 from pydantic import BaseModel
 from sqlalchemy import text
-from datetime import datetime
 from uuid import UUID
 from app.database import get_db
 from app.models.knowledge_to_agent import KnowledgeToAgent
@@ -35,7 +33,6 @@ from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.core.config import settings
-from agno.vectordb.pgvector import PgVector, SearchType
 from sqlalchemy.orm import Session
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
 

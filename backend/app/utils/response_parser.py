@@ -37,37 +37,41 @@ def parse_response_content(response: Any) -> ChatResponse:
     """
     response_content = None
     
-    # Handle response with content attribute (common in Agno responses)
-    if hasattr(response, 'content'):
-        # If content is a dictionary, directly convert to ChatResponse
-        if isinstance(response.content, dict):
-            response_content = ChatResponse(**response.content)
-        # If content is a string, attempt to extract and parse JSON
-        elif isinstance(response.content, str):
-            try:
-                logger.info(f"Response content is string: {response.content}")
-                response_content = extract_json_from_text(response.content)
-            except Exception as e:
-                logger.error(f"Failed to parse response content: {e}")
-                response_content = create_basic_chat_response(response.content)
-        # Use content directly if not dict or string
+    try:
+        # Handle response with content attribute (common in Agno responses)
+        if hasattr(response, 'content'):
+            # If content is a dictionary, directly convert to ChatResponse
+            if isinstance(response.content, dict):
+                response_content = ChatResponse(**response.content)
+            # If content is a string, attempt to extract and parse JSON
+            elif isinstance(response.content, str):
+                try:
+                    logger.info(f"Response content is string: {response.content}")
+                    response_content = extract_json_from_text(response.content)
+                except Exception as e:
+                    logger.error(f"Failed to parse response content: {e}")
+                    response_content = create_basic_chat_response(response.content)
+            # Use content directly if not dict or string
+            else:
+                response_content = response.content
+        # Handle direct response (not wrapped in content attribute)
         else:
-            response_content = response.content
-    # Handle direct response (not wrapped in content attribute)
-    else:
-        # If response is a dictionary, directly convert to ChatResponse
-        if isinstance(response, dict):
-            response_content = ChatResponse(**response)
-        # If response is a string, attempt to extract and parse JSON
-        elif isinstance(response, str):
-            try:
-                response_content = extract_json_from_text(response)
-            except Exception as e:
-                logger.error(f"Failed to parse response: {e}")
-                response_content = create_basic_chat_response(response)
-        # Use response directly if not dict or string
-        else:
-            response_content = response
+            # If response is a dictionary, directly convert to ChatResponse
+            if isinstance(response, dict):
+                response_content = ChatResponse(**response)
+            # If response is a string, attempt to extract and parse JSON
+            elif isinstance(response, str):
+                try:
+                    response_content = extract_json_from_text(response)
+                except Exception as e:
+                    logger.error(f"Failed to parse response: {e}")
+                    response_content = create_basic_chat_response(response)
+            # Use response directly if not dict or string
+            else:
+                response_content = response
+    except Exception as e:
+        logger.error(f"Error in parse_response_content: {e}")
+        return create_basic_chat_response(str(response) if response else "Error processing response")
     
     # If we still don't have a proper response_content, create a basic one
     if not isinstance(response_content, ChatResponse):
@@ -92,18 +96,74 @@ def extract_json_from_text(text: str) -> ChatResponse:
     # Try to extract JSON in multiple ways
     content_dict = None
     
-    # Method 1: Use regex to find JSON-like structure
-    json_pattern = r'({.*})'
-    match = re.search(json_pattern, cleaned_text, re.DOTALL)
-    if match:
+    # Method 1: Handle simple JSON format first
+    if cleaned_text.startswith('{') and '}' in cleaned_text:
         try:
-            json_str = match.group(1)
+            # Try to find a valid JSON substring
+            end_idx = cleaned_text.find('}') + 1
+            json_str = cleaned_text[:end_idx]
             content_dict = json.loads(json_str)
-            logger.debug(f"Extracted JSON using regex: {content_dict}")
+            logger.debug(f"Extracted complete JSON: {content_dict}")
         except json.JSONDecodeError:
-            logger.debug("Failed to extract JSON using regex")
+            # If fails, try to handle trailing characters
+            try:
+                # Find all closing braces
+                all_brace_positions = [pos for pos, char in enumerate(cleaned_text) if char == '}']
+                
+                # Try each closing brace position until we find a valid JSON
+                for end_pos in all_brace_positions:
+                    try:
+                        json_str = cleaned_text[:end_pos + 1]
+                        content_dict = json.loads(json_str)
+                        logger.debug(f"Extracted JSON with truncation at position {end_pos}: {content_dict}")
+                        break
+                    except json.JSONDecodeError:
+                        continue
+            except Exception as e:
+                logger.debug(f"Failed to extract JSON with truncation: {e}")
     
-    # Method 2: Find JSON by braces (if regex didn't work)
+    # Method 2: Handle function call format (e.g., function=search_knowledge_base>{"query": "the dal"} </function>)
+    if not content_dict:
+        function_pattern = r'function=(\w+)>({.*?})\s*</function>'
+        function_match = re.search(function_pattern, cleaned_text, re.DOTALL)
+        if function_match:
+            try:
+                function_name = function_match.group(1)
+                function_params = json.loads(function_match.group(2))
+                logger.debug(f"Found function call: {function_name} with params: {function_params}")
+                # If this is a knowledge base search, we'll create a basic response
+                if function_name == 'search_knowledge_base':
+                    # The rest of the response after the function call should be the actual content
+                    rest_of_text = cleaned_text.split('</function>', 1)
+                    if len(rest_of_text) > 1 and rest_of_text[1].strip():
+                        content = rest_of_text[1].strip()
+                        try:
+                            # Try to parse the content as JSON
+                            content_dict = json.loads(content)
+                            logger.debug(f"Parsed content after function call as JSON: {content_dict}")
+                        except json.JSONDecodeError:
+                            # If it's not valid JSON, use it as a plain message
+                            logger.debug(f"Content after function call is not valid JSON, using as message")
+                            content_dict = {"message": content}
+                    else:
+                        # If there's no content after the function call, use the query as a message
+                        content_dict = {"message": f"Query: {function_params.get('query', 'No query specified')}"}
+            except json.JSONDecodeError:
+                logger.debug("Failed to extract function parameters as JSON")
+    
+    # Method 3: Use regex to find JSON-like structure
+    if not content_dict:
+        json_pattern = r'({.*?})'
+        match = re.search(json_pattern, cleaned_text, re.DOTALL)
+        if match:
+            try:
+                json_str = match.group(1)
+                content_dict = json.loads(json_str)
+                logger.debug(f"Extracted JSON using regex: {content_dict}")
+            except json.JSONDecodeError:
+                logger.debug("Failed to extract JSON using regex")
+    
+    # Method 4: Find JSON by braces (if previous methods didn't work)
     if not content_dict:
         start_idx = cleaned_text.find('{')
         end_idx = cleaned_text.rfind('}') + 1
@@ -121,7 +181,13 @@ def extract_json_from_text(text: str) -> ChatResponse:
     
     # If we successfully extracted a dictionary
     if content_dict:
-        return ChatResponse(**content_dict)
+        try:
+            return ChatResponse(**content_dict)
+        except Exception as e:
+            logger.error(f"Failed to create ChatResponse from dictionary: {e}")
+            # In case of error, use the content dict's message or the original text
+            message = content_dict.get('message', cleaned_text)
+            return create_basic_chat_response(message)
     
     # If no JSON structure found, create a basic response
     return create_basic_chat_response(cleaned_text)

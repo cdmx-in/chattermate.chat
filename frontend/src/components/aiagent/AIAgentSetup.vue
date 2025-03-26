@@ -18,23 +18,19 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <script setup lang="ts">
 import { onMounted, ref, defineAsyncComponent } from 'vue'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 // Lazy load components
 const AISetup = defineAsyncComponent(() => import('../ai/AISetup.vue'))
 const AgentList = defineAsyncComponent(() => import('../agent/AgentList.vue'))
-
-
 
 import { useAgentStorage } from '@/utils/storage'
 import { aiService } from '@/services/ai'
 import { agentService } from '@/services/agent'
 import { AxiosError } from 'axios'
 
-
 const agentStorage = useAgentStorage()
 
-
-const aiSetupRef = ref<InstanceType<typeof AISetup>>()
 const error = ref<string | null>(null)
 const isLoading = ref(false)
 const isAISetupMode = ref(false)
@@ -93,7 +89,12 @@ onMounted(async () => {
             </div>
 
             <div v-else-if="isAISetupMode" class="setup-messages">
-                <AISetup ref="aiSetupRef" @ai-setup-complete="checkAIConfig" />
+                <div class="ai-provider-setup">
+                    <h3>Configure AI Provider</h3>
+                    <div class="ai-setup-container">
+                        <AISetup @ai-setup-complete="checkAIConfig" />
+                    </div>
+                </div>
             </div>
             <div v-else class="agent-list-container">
                 <AgentList />
@@ -108,28 +109,39 @@ onMounted(async () => {
     flex-direction: column;
     height: 100%;
     margin: 0 auto;
-    background: rgba(255, 255, 255, 0.05);
-    border-radius: var(--radius-lg);
-    box-shadow: 0 4px 15px rgb(131, 129, 129);
+    background: #fff;
+    border-radius: 24px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
 }
 
 .messages {
     flex: 1;
-    padding: var(--space-lg);
+    padding: var(--space-xl);
     background: transparent;
     display: flex;
     flex-direction: column;
     min-height: 0;
 }
 
-.agent-list-container {
-    flex: 1;
-    overflow-y: auto;
+.ai-provider-setup {
+    margin-bottom: var(--space-xl);
+}
+
+.ai-provider-setup h3 {
+    margin-bottom: var(--space-lg);
+    color: var(--text-primary);
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    text-align: center;
+}
+
+.ai-setup-container {
+    margin: 0 auto;
 }
 
 .error-message {
     padding: var(--space-md);
-    background: var(--error-color-soft);
+    background: var(--secondary-color);
     color: var(--error-color);
     border-radius: var(--radius-lg);
     text-align: center;
@@ -146,19 +158,14 @@ onMounted(async () => {
 .loader {
     width: 48px;
     height: 48px;
-    border: 5px solid var(--primary-color-soft);
+    border: 5px solid var(--border-color);
     border-bottom-color: var(--primary-color);
     border-radius: 50%;
     animation: rotation 1s linear infinite;
 }
 
 @keyframes rotation {
-    0% {
-        transform: rotate(0deg)
-    }
-
-    100% {
-        transform: rotate(360deg)
-    }
+    0% { transform: rotate(0deg) }
+    100% { transform: rotate(360deg) }
 }
 </style>
