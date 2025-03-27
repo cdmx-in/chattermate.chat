@@ -18,15 +18,16 @@ export function useAISetup() {
 
   const providers = [
     { value: 'openai', label: 'OpenAI' },
-    { value: 'anthropic', label: 'Anthropic' },
-    { value: 'deepseek', label: 'DeepSeek' },
-    { value: 'google', label: 'Google Gemini' },
-    { value: 'googlevertex', label: 'Google Vertex AI' },
-    { value: 'groq', label: 'Groq' },
-    { value: 'mistral', label: 'Mistral' },
-    { value: 'huggingface', label: 'HuggingFace' },
-    { value: 'ollama', label: 'Ollama' },
-    { value: 'xai', label: 'xAI' }
+    { value: 'groq', label: 'Groq' }
+    // Below providers are temporarily disabled
+    // { value: 'anthropic', label: 'Anthropic' },
+    // { value: 'deepseek', label: 'DeepSeek' },
+    // { value: 'google', label: 'Google Gemini' },
+    // { value: 'googlevertex', label: 'Google Vertex AI' },
+    // { value: 'mistral', label: 'Mistral' },
+    // { value: 'huggingface', label: 'HuggingFace' },
+    // { value: 'ollama', label: 'Ollama' },
+    // { value: 'xai', label: 'xAI' }
   ]
 
   const loadExistingConfig = async () => {

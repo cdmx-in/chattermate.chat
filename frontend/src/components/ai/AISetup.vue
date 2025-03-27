@@ -18,7 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <script setup lang="ts">
 import { useAISetup } from '@/composables/useAISetup'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const emit = defineEmits<{
   (e: 'ai-setup-complete'): void
@@ -35,7 +35,32 @@ const {
 } = useAISetup()
 
 const activeTab = ref('chattermate') // 'chattermate' or 'custom'
-const showApiKey = computed(() => setupConfig.value.provider !== 'ollama')
+// API key is always required for our supported providers
+const showApiKey = computed(() => true)
+
+// Model options based on provider
+const modelOptions = computed(() => {
+  const provider = setupConfig.value.provider.toUpperCase();
+  switch (provider) {
+    case 'GROQ':
+      return [
+        { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile' },
+      ]
+    case 'OPENAI':
+      return [
+        { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+        { value: 'o1-mini', label: 'O1 Mini' },
+        { value: 'o3-mini', label: 'O3 Mini' }
+      ]
+    default:
+      return []
+  }
+})
+
+// Reset model when provider changes
+watch(() => setupConfig.value.provider, () => {
+  setupConfig.value.model = ''
+})
 
 const selectTab = (tab: 'chattermate' | 'custom') => {
   activeTab.value = tab
@@ -43,10 +68,6 @@ const selectTab = (tab: 'chattermate' | 'custom') => {
 
 const handleSubmit = async () => {
   try {
-    if (setupConfig.value.provider === 'ollama') {
-      setupConfig.value.apiKey = 'not_required'
-    }
-    
     let success = false
     if (hasExistingConfig.value) {
       success = await updateAISetup()
@@ -140,17 +161,16 @@ const chatterMateButtonText = computed(() => {
             <div class="provider-info">
               <div class="provider-header">
                 <h4>ChatterMate AI</h4>
-                <p>Powered by Groq LLM</p>
               </div>
               
               <div class="plan-table">
                 <div class="plan-row">
                   <div class="plan-cell plan-label">Starter Plan:</div>
-                  <div class="plan-cell plan-value">2,000 messages/month</div>
+                  <div class="plan-cell plan-value">1000 messages/month per seat</div>
                 </div>
                 <div class="plan-row">
                   <div class="plan-cell plan-label">Pro Plan:</div>
-                  <div class="plan-cell plan-value">200,000 messages/month</div>
+                  <div class="plan-cell plan-value">10,000 messages/month per seat</div>
                 </div>
                 <div class="plan-divider"></div>
                 <div class="plan-row rate-limit-row">
@@ -193,14 +213,22 @@ const chatterMateButtonText = computed(() => {
 
               <div class="form-group">
                 <label for="model">Model Name</label>
-                <input
+                <select
                   id="model"
-                  type="text"
                   v-model="setupConfig.model"
                   required
-                  placeholder="Enter model name (e.g. gpt-4)"
                   class="form-control"
-                />
+                  :disabled="!setupConfig.provider || modelOptions.length === 0"
+                >
+                  <option value="" disabled>Select Model</option>
+                  <option 
+                    v-for="model in modelOptions" 
+                    :key="model.value" 
+                    :value="model.value"
+                  >
+                    {{ model.label }}
+                  </option>
+                </select>
               </div>
 
               <div v-if="showApiKey" class="form-group">

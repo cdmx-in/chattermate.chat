@@ -54,18 +54,19 @@ class KnowledgeManager:
         embedder = None
         table_name = f"d_{org_id}"
         
-
+        # Use a more powerful embedding model optimized for semantic search
         embedder = SentenceTransformerEmbedder(
-            id="BAAI/bge-small-en-v1.5"  # Optimized for chatbot applications
+            id="sentence-transformers/all-mpnet-base-v2"  # More powerful model for better search results
         )
-        # Updated dimensions for the smaller model
-        embedder.dimensions = 384  # Reduced from 1024 for faster processing
+
+        # Update dimensions for the new model
+        embedder.dimensions = 768  # Increased from 384 for better semantic understanding
 
         self.vector_db = OptimizedPgVector(
             table_name=table_name,
             db_url=settings.DATABASE_URL,
             schema="ai",
-            search_type=SearchType.hybrid,
+            search_type=SearchType.vector,
             embedder=embedder
         )
         self.knowledge_repo = KnowledgeRepository(self.db)

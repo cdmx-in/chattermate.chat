@@ -221,6 +221,7 @@ async def handle_widget_chat(sid, data):
                 agent_id=session['agent_id'],
                 customer_id=customer_id)
         elif active_session.status == SessionStatus.TRANSFERRED and active_session.user_id is None: # transferred and user has not taken over
+            logger.debug(f"Transferring chat to human for session {session_id}")
             # Get response from agent transfer ai agent
             chat_repo = ChatRepository(db)
             chat_repo.create_message({

@@ -17,9 +17,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import traceback
-from typing import Optional, Dict, Any, List, Union
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from app.utils.agno_utils import create_model
 from app.core.logger import get_logger
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
 from app.database import get_db
@@ -27,7 +26,7 @@ from agno.storage.agent.postgres import PostgresAgentStorage
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
-from app.models.schemas.chat import ChatResponse, TransferReasonType, EndChatReasonType
+from app.models.schemas.chat import ChatResponse,TransferReasonType, EndChatReasonType
 from app.core.config import settings
 from app.agents.transfer_agent import get_agent_availability_response
 from app.models.notification import Notification
@@ -104,15 +103,14 @@ class ChatAgent:
                 "5) The requested task has been completed and confirmed by the customer. "
                 "DO NOT end the chat just because the customer says \"thank you\" or \"thanks\" - "
                 "this is often just politeness and not an indication that they want to end the conversation. "
-                "Always check the conversation history to confirm the issue has been properly addressed before ending the chat."
+                "Always check the conversation history to confirm the issue has been properly addressed before ending the chat. Also generate a response in message field for end chat. e.g: Thank you for your time. Have a great day!"
             )
-            
-
             
             # Build system message
             system_message = ""
             if self.agent_data.instructions:
-                system_message = "\n".join(self.agent_data.instructions)
+                system_message = "\n".join(self.agent_data.instructions) + "Use the knowledge search tool to provide accurate company information. Only use the tool if required, dont use it for general greeting or general queries"
+
             
             # Add transfer instructions if enabled
             if self.agent_data.transfer_to_human:
@@ -163,40 +161,18 @@ class ChatAgent:
                 "You are a helpful customer service agent.",
             ]
 
-        model_type = model_type.upper()
-        if model_type == 'OPENAI':
-            model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000, response_format={"type": "json_object"})
-        elif model_type == 'ANTHROPIC':
-           from agno.models.anthropic import Claude
-           model = Claude(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'DEEPSEEK':
-           from agno.models.deepseek import DeepSeekChat
-           model = DeepSeekChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GOOGLE':
-           from agno.models.google import Gemini
-           model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GOOGLEVERTEX':
-           from agno.models.vertexai import Gemini
-           model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GROQ':
-           from agno.models.groq import Groq
-           model = Groq(api_key=api_key, id=model_name, max_tokens=1000,response_format={"type": "text"})
-        elif model_type == 'MISTRAL':
-           from agno.models.mistral import MistralChat
-           model = MistralChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'HUGGINGFACE':
-           from agno.models.huggingface import HuggingFaceChat
-           model = HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'OLLAMA':
-           from agno.models.ollama import Ollama
-           model = Ollama(id=model_name)
-        elif model_type == 'XAI':
-           from agno.models.xai import xAI
-           model = xAI(api_key=api_key, id=model_name, max_tokens=1000)
-        else:
-           raise ValueError(f"Unsupported model type: {model_type}")
+        # Initialize model with utility function
+        model = create_model(
+            model_type=model_type,
+            api_key=api_key,
+            model_name=model_name,
+            max_tokens=1000,
+            response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
+        )
+
         storage = PostgresAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
-       # Combine all tools
+        
+        # Combine all tools
         all_tools = tools.copy()
         if hasattr(self, 'tools') and self.tools:
            all_tools.extend(self.tools)
@@ -210,6 +186,7 @@ class ChatAgent:
            agent_id=str(agent_id),
            storage=storage,
            add_history_to_messages=True,
+           tool_call_limit=2,
            num_history_responses=10,
            read_chat_history=True,
            markdown=False,
@@ -219,6 +196,7 @@ class ChatAgent:
            response_model=ChatResponse,
            structured_outputs=True,
            system_message_role="system",
+           user_message_role="user",
            show_tool_calls=settings.ENVIRONMENT == "development"
           )
 
@@ -463,24 +441,9 @@ class ChatAgent:
         Raises:
             ValueError: If the model type is not supported
         """
-        model_type = model_type.upper()
-        valid_model_types = {
-            'OPENAI', 'ANTHROPIC', 'DEEPSEEK', 'GOOGLE', 'GOOGLEVERTEX',
-            'GROQ', 'MISTRAL', 'HUGGINGFACE', 'OLLAMA', 'XAI'
-        }
-        
-        if model_type not in valid_model_types:
-            raise ValueError(f"Unsupported model type: {model_type}")
-            
         try:
-            # Initialize a test agent with minimal configuration
-            agent = ChatAgent(
-                api_key=api_key,
-                model_name=model_name,
-                model_type=model_type
-            )
-            await agent.agent.arun(message="Hello, how are you?")
-            return True
+            from app.utils.agno_utils import test_model_api_key
+            return await test_model_api_key(api_key, model_type, model_name)
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error testing API key: {str(e)}")

@@ -79,4 +79,12 @@ export const agentService = {
     const response = await api.get(`/agent/${agentId}`)
     return response.data
   },
+  
+  async generateInstructions(prompt: string, existingInstructions?: string[]): Promise<string[]> {
+    const response = await api.post('/agent/generate-instructions', { 
+        prompt,
+        existing_instructions: existingInstructions 
+    })
+    return response.data
+  }
 }

@@ -16,6 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
+import traceback
 from fastapi import APIRouter, Depends, HTTPException
 from app.core import config
 from app.core.logger import get_logger
@@ -27,6 +28,8 @@ from app.agents.chat_agent import ChatAgent
 from app.models.schemas.ai_config import AIConfigCreate, AIConfigResponse, AISetupResponse, AIConfigUpdate
 from sqlalchemy.orm import Session
 import os
+from enum import Enum
+from pydantic import Field, validator
 
 # Try to import enterprise modules
 try:
@@ -39,6 +42,30 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+# Define allowed models as Enum to restrict choices
+class ModelType(str, Enum):
+    GROQ = "GROQ"
+    OPENAI = "OPENAI"
+    # ANTHROPIC = "ANTHROPIC"
+    # OLLAMA = "OLLAMA"
+    # CLAUDE = "CLAUDE"
+    # MISTRAL = "MISTRAL"
+    # COHERE = "COHERE"
+    CHATTERMATE = "CHATTERMATE"
+
+
+# Define allowed models per provider
+class GroqModels(str, Enum):
+    LLAMA_3_70B = "llama-3.3-70b-versatile"
+
+
+class OpenAIModels(str, Enum):
+    GPT_4O_MINI = "gpt-4o-mini"
+    O1_MINI = "o1-mini"
+    O3_MINI = "o3-mini"
+
+
+# Override model validation in the schemas
 @router.post("/setup", response_model=AISetupResponse)
 async def setup_ai(
     config_data: AIConfigCreate,
@@ -47,14 +74,18 @@ async def setup_ai(
 ):
     """Setup AI configuration for the current user's organization"""
     try:
+        logger.info("Setting up AI config")
+        
+        # Validate model selection based on provider
+        validate_model_selection(config_data.model_type, config_data.model_name)
+        
         # Check if using ChatterMate model
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
             # Use Groq as provider with keys from env
-            model_type = 'GROQ'
-            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'llama3-70b-8192')
+            model_type = 'OPENAI'
+            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
             api_key = os.getenv('CHATTERMATE_API_KEY', '')
         
-                
             if not api_key:
                 logger.error("ChatterMate API key not found in environment")
                 raise HTTPException(
@@ -84,46 +115,42 @@ async def setup_ai(
                 )
             )
             
-            logger.info(
+            logger.debug(
                 f"ChatterMate AI setup completed for org {current_user.organization_id}")
             return response
         
         # Regular custom model setup
         # Test API key before creating config
         try:
-            is_valid = await ChatAgent.test_api_key(
-                api_key=config_data.api_key.get_secret_value(),
-                model_type=config_data.model_type,
-                model_name=config_data.model_name
-            )
-            if not is_valid:
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "Invalid API key",
-                        "type": "invalid_api_key",
-                        "details": "The provided API key is invalid or does not have access to the selected model."
-                    }
+            # Only validate API keys for supported providers
+            model_type_upper = config_data.model_type.upper()
+            if model_type_upper in ["GROQ", "OPENAI"]:
+                is_valid = await ChatAgent.test_api_key(
+                    api_key=config_data.api_key.get_secret_value(),
+                    model_type=config_data.model_type,
+                    model_name=config_data.model_name
                 )
+                if not is_valid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "Invalid API key",
+                            "type": "invalid_api_key",
+                            "details": "The provided API key is invalid or does not have access to the selected model."
+                        }
+                    )
+        except HTTPException:
+            raise
         except Exception as e:
-            if config_data.model_type.upper() == 'OLLAMA':
-                raise HTTPException(
+            raise HTTPException(
                 status_code=400,
                 detail={
-                    "error": "validation failed",
+                    "error": "API key validation failed",
                     "type": "api_key_validation_error",
                     "details": str(e)
                 }
-                )
-            else:    
-                raise HTTPException(
-                    status_code=400,
-                    detail={
-                        "error": "API key validation failed",
-                        "type": "api_key_validation_error",
-                        "details": str(e)
-                    }
-                )
+            )
+
 
         # Create AI configuration
         ai_config_repo = AIConfigRepository(db)
@@ -131,7 +158,7 @@ async def setup_ai(
             org_id=current_user.organization_id,
             model_type=config_data.model_type,
             model_name=config_data.model_name,
-            api_key="" if config_data.model_type.upper() == 'OLLAMA' else config_data.api_key.get_secret_value()
+            api_key=config_data.api_key.get_secret_value()
         )
 
         # Prepare response
@@ -154,6 +181,7 @@ async def setup_ai(
     except HTTPException:
         raise
     except Exception as e:
+        traceback.print_exc()
         logger.error(f"AI setup error: {str(e)}")
         raise HTTPException(
             status_code=500,
@@ -205,6 +233,11 @@ async def update_ai_config(
 ):
     """Update AI configuration for the current user's organization"""
     try:
+        logger.info(f"Updating AI config for org {current_user.organization_id}")
+        
+        # Validate model selection based on provider
+        validate_model_selection(config_data.model_type, config_data.model_name)
+        
         # Get current config
         ai_config_repo = AIConfigRepository(db)
         current_config = ai_config_repo.get_active_config(current_user.organization_id)
@@ -218,8 +251,8 @@ async def update_ai_config(
         # Check if using ChatterMate model
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
             # Use Groq as provider with keys from env
-            model_type = 'GROQ'
-            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'llama3-70b-8192')
+            model_type = 'OPENAI'
+            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
             api_key = os.getenv('CHATTERMATE_API_KEY', '')
             
             if not api_key:
@@ -240,41 +273,38 @@ async def update_ai_config(
             logger.info(f"ChatterMate AI config updated for org {current_user.organization_id}")
         else:
             # For custom model, validate API key first if provided
-            if config_data.api_key and config_data.model_type.upper() != 'OLLAMA':
-                try:
-                    is_valid = await ChatAgent.test_api_key(
-                        api_key=config_data.api_key.get_secret_value(),
-                        model_type=config_data.model_type,
-                        model_name=config_data.model_name
-                    )
-                    if not is_valid:
+            if config_data.api_key:
+                model_type_upper = config_data.model_type.upper()
+                if model_type_upper in ["GROQ", "OPENAI"]:
+                    try:
+                        is_valid = await ChatAgent.test_api_key(
+                            api_key=config_data.api_key.get_secret_value(),
+                            model_type=config_data.model_type,
+                            model_name=config_data.model_name
+                        )
+                        if not is_valid:
+                            raise HTTPException(
+                                status_code=400,
+                                detail={
+                                    "error": "Invalid API key",
+                                    "type": "invalid_api_key",
+                                    "details": "The provided API key is invalid or does not have access to the selected model."
+                                }
+                            )
+                    except Exception as e:
                         raise HTTPException(
                             status_code=400,
                             detail={
-                                "error": "Invalid API key",
-                                "type": "invalid_api_key",
-                                "details": "The provided API key is invalid or does not have access to the selected model."
+                                "error": "API key validation failed",
+                                "type": "api_key_validation_error",
+                                "details": str(e)
                             }
                         )
-                except Exception as e:
-                    raise HTTPException(
-                        status_code=400,
-                        detail={
-                            "error": "API key validation failed",
-                            "type": "api_key_validation_error",
-                            "details": str(e)
-                        }
-                    )
             
             # Determine the API key to use
-            api_key = ""
-            if config_data.model_type.upper() == 'OLLAMA':
-                api_key = ""
-            elif config_data.api_key:
+            api_key = None  # None indicates no change
+            if config_data.api_key:
                 api_key = config_data.api_key.get_secret_value()
-            else:
-                # Keep existing API key if not provided
-                api_key = None  # None indicates no change
             
             # Update AI configuration
             updated_config = ai_config_repo.update_config(
@@ -308,4 +338,54 @@ async def update_ai_config(
         raise HTTPException(
             status_code=500,
             detail="Failed to update AI configuration"
+        )
+
+
+def validate_model_selection(model_type: str, model_name: str):
+    """Validate that the selected model is allowed for the chosen provider"""
+    
+    # ChatterMate is a special case handled separately
+    if model_type.upper() == "CHATTERMATE" and model_name.lower() == "chattermate":
+        return True
+    
+    # For GROQ, only allow specific models
+    if model_type.upper() == "GROQ":
+        try:
+            GroqModels(model_name)
+        except ValueError:
+            valid_models = ", ".join([m.value for m in GroqModels])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Invalid model selection",
+                    "type": "invalid_model",
+                    "details": f"For Groq, only these models are supported: {valid_models}"
+                }
+            )
+    
+    # For OpenAI, only allow specific models
+    elif model_type.upper() == "OPENAI":
+        try:
+            OpenAIModels(model_name)
+        except ValueError:
+            valid_models = ", ".join([m.value for m in OpenAIModels])
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "Invalid model selection",
+                    "type": "invalid_model",
+                    "details": f"For OpenAI, only these models are supported: {valid_models}"
+                }
+            )
+    
+    # Other providers are not supported for now
+    else:
+        valid_providers = ", ".join([m.value for m in ModelType])
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Unsupported provider",
+                "type": "invalid_provider",
+                "details": f"Currently only these providers are supported: {valid_providers}"
+            }
         )

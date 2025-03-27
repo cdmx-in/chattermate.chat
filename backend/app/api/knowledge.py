@@ -447,7 +447,7 @@ async def get_knowledge_by_agent(
             skip=(page - 1) * page_size,
             limit=page_size
         )
-        logger.debug(f"Knowledge items for agent {agent_uuid}: {knowledge_items}")
+
 
         result = []
         for k in knowledge_items:
@@ -499,7 +499,7 @@ async def get_knowledge_by_agent(
 
             result.append(knowledge_data)
 
-        logger.debug(f"Final result for agent {agent_uuid}: {result}")
+        
         return {
             "knowledge": result,
             "pagination": {
@@ -602,7 +602,7 @@ async def get_knowledge_by_organization(
 
             result.append(knowledge_data)
 
-        logger.debug(f"Final result for organization {org_uuid}: {result}")
+        
         return {
             "knowledge": result,
             "pagination": {

@@ -16,7 +16,8 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+import os
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from typing import List
 from app.core.logger import get_logger
 from app.database import get_db
@@ -29,12 +30,16 @@ from sqlalchemy.orm import Session
 from app.models.agent import Agent, AgentCustomization
 from app.models.schemas.agent_customization import CustomizationCreate, CustomizationResponse
 import aiofiles
-import os
 from uuid import uuid4
 from PIL import Image
 from uuid import UUID
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
 from app.core.config import settings
+from pydantic import BaseModel
+from agno.agent import Agent as AgnoAgent
+from agno.models.openai import OpenAIChat
+from app.utils.agno_utils import create_model
+from app.utils.rate_limit import limit_instruction_generation
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -43,6 +48,11 @@ UPLOAD_DIR = "uploads/agents"
 
 ALLOWED_MIME_TYPES = {'image/jpeg', 'image/png', 'image/webp'}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
+
+# Model for instruction generation request
+class InstructionPrompt(BaseModel):
+    prompt: str
+    existing_instructions: List[str] = []  # Optional list of existing instructions
 
 
 async def save_file(file: UploadFile, organization_id: UUID) -> str:
@@ -120,7 +130,7 @@ async def update_agent(
                 status_code=403,
                 detail="Not authorized to update this agent"
             )
-
+        logger.info(f"Updating agent {agent_id} with data: {update_data}")
         # Update agent with provided fields, excluding photo_url
         update_dict = update_data.model_dump(
             exclude={'photo_url'}, exclude_unset=True)
@@ -430,3 +440,176 @@ async def get_agent_by_id(
             pass
     
     return agent
+
+
+@router.post("/generate-instructions", response_model=List[str])
+@limit_instruction_generation
+async def generate_instructions(
+    request: Request,
+    prompt_data: InstructionPrompt,
+    current_user: User = Depends(require_permissions("manage_agents")),
+    db: Session = Depends(get_db)
+):
+    """Generate agent instructions using AI"""
+    try:
+        # Get prompt and existing instructions from request
+        prompt = prompt_data.prompt.strip()
+        existing_instructions = prompt_data.existing_instructions
+        
+        # Validate prompt
+        if not prompt:
+            raise HTTPException(
+                status_code=400,
+                detail="Prompt cannot be empty"
+            )
+        
+        if len(prompt) > 1000:
+            raise HTTPException(
+                status_code=400,
+                detail="Prompt exceeds maximum length of 1000 characters"
+            )
+        
+        # Check if enterprise module is available
+        try:
+            from app.enterprise.repositories.subscription import SubscriptionRepository
+            HAS_ENTERPRISE = True
+        except ImportError:
+            HAS_ENTERPRISE = False
+        
+        # Get API key and model - first check for ChatterMate config if enterprise is available
+        api_key = ""
+        model_name = ""
+        model_type = ""
+        
+        if HAS_ENTERPRISE:
+            # Use Groq/OpenAI with keys from env for ChatterMate model
+            model_type = 'OPENAI'
+            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
+            api_key = os.getenv('CHATTERMATE_API_KEY', '')
+            
+            if not api_key:
+                logger.error("ChatterMate API key not found in environment")
+                raise HTTPException(
+                    status_code=500,
+                    detail="ChatterMate API configuration missing"
+                )
+        else:
+            # Get from organization's AI config
+            from app.repositories.ai_config import AIConfigRepository
+            ai_config_repo = AIConfigRepository(db)
+            ai_config = ai_config_repo.get_active_config(current_user.organization_id)
+            
+            if not ai_config:
+                raise HTTPException(
+                    status_code=404,
+                    detail="No AI configuration found for your organization"
+                )
+            
+            model_type = ai_config.model_type
+            model_name = ai_config.model_name
+            api_key = ai_config.api_key
+            
+            if not api_key:
+                raise HTTPException(
+                    status_code=500,
+                    detail="API configuration missing from your organization settings"
+                )
+        
+        # Create an instruction generation system message with context
+        system_message = """
+        You are an expert at creating instructions for AI assistants from scratch or modify existing instructions based on user's prompt.
+        Your task is to generate a set of clear, concise, and effective instructions based on the user's prompt.
+        
+        Follow these guidelines:
+        1. Each instruction should be specific and actionable
+        2. Avoid contradictions between instructions
+        3. Cover different aspects of the agent's behavior and knowledge
+        4. Include limitations and boundaries where appropriate
+        5. Format your response as a list of instructions, with each instruction separated by a newline
+        6. Return between 3-7 instructions total
+        7. Each instruction should be 1-3 sentences for clarity
+        8. Focus on creating versatile instructions that will work well for customer service
+        
+        If existing instructions are provided:
+        1. Review and understand the existing instructions
+        2. Avoid duplicating existing instructions
+        3. Focus on complementing or enhancing the existing instructions
+        4. If modifying existing instructions, preserve their core intent while improving clarity
+        5. Maintain the existing instructions' order and format when adding new instructions, dont add at starting if existing instructions has starting phrase, rewrite to fit in existing instructions
+        
+        Final output append with existing instruction and give complete one
+        Return ONLY the instructions as a list, with no additional explanation or commentary.
+        The instructions should be immediately usable in an AI agent configuration.
+        """
+        
+        # Create a temporary agent for generation using the utility function
+        model = create_model(
+            model_type=model_type,
+            api_key=api_key,
+            model_name=model_name,
+            max_tokens=800
+        )
+        
+        generator = AgnoAgent(
+            name="Instruction Generator",
+            model=model,
+            instructions=system_message,
+            debug_mode=settings.ENVIRONMENT == "development"
+        )
+        
+        # Generate instructions with context
+        user_message = f"Please generate instructions for an AI agent with the following purpose: {prompt}"
+        if existing_instructions:
+            existing_instructions_text = "\n".join(f"- {instr}" for instr in existing_instructions)
+            user_message += f"\n\nExisting instructions for context:\n{existing_instructions_text}"
+        
+        response = await generator.arun(user_message)
+        
+        # Parse response to get instructions list
+        response_text = response.content if hasattr(response, 'content') else str(response)
+        
+        # Split the response into separate instructions
+        instructions = []
+        for line in response_text.strip().split('\n'):
+            line = line.strip()
+            # Skip empty lines and list markers
+            if line and not line.startswith('```') and not line.endswith('```'):
+                # Remove list markers if present (1., -, *, etc.)
+                clean_line = line
+                if line[0].isdigit() and line[1:3] in ['. ', '- ', ') ']:
+                    clean_line = line[3:].strip()
+                elif line[0] in ['-', '*', '•']:
+                    clean_line = line[1:].strip()
+                
+                if clean_line:
+                    instructions.append(clean_line)
+        
+        # Ensure the instructions are within limits
+        total_length = sum(len(instruction) for instruction in instructions)
+        if total_length > 2000:
+            # Trim instructions to fit within 1500 characters
+            result = []
+            current_length = 0
+            for instruction in instructions:
+                if current_length + len(instruction) <= 1500:
+                    result.append(instruction)
+                    current_length += len(instruction)
+                else:
+                    # Try to add a truncated version of the instruction
+                    remaining = 2000 - current_length
+                    if remaining > 50:  # Only add if we can include something meaningful
+                        truncated = instruction[:remaining - 3] + "..."
+                        result.append(truncated)
+                    break
+            instructions = result
+        
+        return instructions
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating instructions: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to generate instructions"
+        )

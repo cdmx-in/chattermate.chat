@@ -71,10 +71,10 @@ class KnowledgeSearchByAgent(Toolkit):
                 # Use the first knowledge source's table and schema since they should all be in the same table
                 source = knowledge_sources[0]
                 embedder = SentenceTransformerEmbedder(
-                    id="BAAI/bge-small-en-v1.5"  # Optimized for chatbot applications
+                    id="sentence-transformers/all-mpnet-base-v2"  # Optimized for chatbot applications
                 )
                 # Updated dimensions for the smaller model
-                embedder.dimensions = 384  # Reduced from 1024 for faster processing
+                embedder.dimensions = 768  # Reduced from 1024 for faster processing
                 # Initialize vector db
                 vector_db = PgVector(
                     table_name=source.table_name,
