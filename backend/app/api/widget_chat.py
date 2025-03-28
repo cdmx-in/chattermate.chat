@@ -38,7 +38,7 @@ from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
 from app.repositories.rating import RatingRepository
 from app.repositories.jira import JiraRepository
-from app.enterprise.repositories.subscription import SubscriptionRepository
+
 
 # Try to import enterprise modules
 try:
