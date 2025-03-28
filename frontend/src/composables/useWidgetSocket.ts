@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { io, Socket } from 'socket.io-client'
-import type { Customer, SocketError } from '../types/widget'
+import type { HumanAgent, SocketError } from '../types/widget'
 import { getErrorMessage } from '../types/widget'
 import { widgetEnv } from '../webclient/widget-env'
 import type { Message } from '@/types/chat'
@@ -17,7 +17,7 @@ export function useWidgetSocket() {
     const connectionStatus = ref<ConnectionStatus>('connecting')
     const retryCount = ref(0)
     const MAX_RETRIES = 5
-    const customer = ref<Customer>({})
+    const humanAgent = ref<HumanAgent>({})
 
     let socket: Socket | null = null
     let onTakeoverCallback: ((data: { session_id: string, user_name: string }) => void) | null = null
@@ -97,11 +97,11 @@ export function useWidgetSocket() {
                 session_id: data.session_id
             })
 
-            // Update customer info with agent details
-            customer.value = {
-                ...customer.value,
-                agent_name: data.user_name,
-                agent_profile_pic: data.profile_picture
+            
+            humanAgent.value = {
+                ...humanAgent.value,
+                human_agent_name: data.user_name,
+                human_agent_profile_pic: data.profile_picture
             }
 
             // Call the callback if registered
@@ -227,7 +227,8 @@ export function useWidgetSocket() {
     // Send message function
     const sendMessage = async (newMessage: string, email: string) => {
         if (!socket || !newMessage.trim()) return
-        if(!customer.value.full_name) 
+        
+        if(!humanAgent.value.human_agent_name) 
            loading.value = true
         messages.value.push({
             message: newMessage,
@@ -280,7 +281,7 @@ export function useWidgetSocket() {
         connect,
         reconnect,
         cleanup,
-        customer,
+        humanAgent,
         onTakeover,
         submitRating
     }

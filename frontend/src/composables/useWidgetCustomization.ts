@@ -1,18 +1,17 @@
 import { ref } from 'vue'
-import type { AgentCustomization, Customer } from '../types/widget'
+import type { AgentCustomization } from '../types/widget'
 import WebFont from 'webfontloader'
 
 export function useWidgetCustomization() {
     const customization = ref<AgentCustomization>({})
     const agentName = ref('')
 
-    const applyCustomization = (newCustomization: AgentCustomization, newAgentName: string, newCustomer: Customer) => {
+    const applyCustomization = (newCustomization: AgentCustomization) => {
         customization.value = newCustomization
  
-
-        agentName.value = newCustomer.full_name ? newCustomer.full_name : newAgentName
-        if (newCustomer.profile_pic) {
-            customization.value.photo_url = newCustomer.profile_pic
+        
+        if (newCustomization.photo_url) {
+            customization.value.photo_url = newCustomization.photo_url
         }
 
         // Load font if specified
@@ -43,7 +42,8 @@ export function useWidgetCustomization() {
     const initializeFromData = () => {
         const initialData = window.__INITIAL_DATA__
         if (initialData) {
-            applyCustomization(initialData.customization || {}, initialData.agentName || '', initialData.customer || '')
+            applyCustomization(initialData.customization || {})
+            agentName.value = initialData.agentName || ''
         }
     }
 

@@ -10,11 +10,9 @@ export interface WidgetCreate {
   agent_id: string
 }
 
-export interface Customer {
-    full_name?: string
-    profile_pic?: string
-    agent_name?: string
-    agent_profile_pic?: string
+export interface HumanAgent {
+    human_agent_name?: string
+    human_agent_profile_pic?: string
 }
 
 export interface AgentCustomization {

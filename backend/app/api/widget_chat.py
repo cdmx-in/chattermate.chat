@@ -174,15 +174,6 @@ async def handle_widget_chat(sid, data):
             await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
             return
 
-        # Check message limit from session
-        if HAS_ENTERPRISE and session.get('message_limit_reached'):
-            logger.error(f"Message limit reached")
-            await sio.emit('error', {
-                    'error': 'Unable to process your message. Please contact support.',
-                    'type': 'message_limit_exceeded'
-            }, to=sid, namespace='/widget')
-            return
-
         # Process message
         message = data.get('message', '').strip()
         if not message:
@@ -202,6 +193,15 @@ async def handle_widget_chat(sid, data):
         active_session = session_repo.get_active_customer_session(
             customer_id=customer_id
         )
+
+        # Check message limit from session
+        if HAS_ENTERPRISE and session.get('message_limit_reached') and active_session and active_session.user_id is None:
+            logger.error(f"Message limit reached")
+            await sio.emit('error', {
+                    'error': 'Unable to process your message. Please contact support.',
+                    'type': 'message_limit_exceeded'
+            }, to=sid, namespace='/widget')
+            return
 
         if not active_session:
             # Check if there's a closed session that can be reopened

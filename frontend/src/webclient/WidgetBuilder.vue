@@ -73,7 +73,7 @@ const {
     connect,
     reconnect,
     cleanup,
-    customer,
+    humanAgent,
     onTakeover,
     submitRating: socketSubmitRating
 } = useWidgetSocket()
@@ -201,8 +201,13 @@ const checkAuthorization = async () => {
         await fetchChatHistory()
         
         if (data.agent?.customization) {
-            customer.value = data.customer
-            applyCustomization(data.agent.customization, data.agent.display_name, data.customer)
+            applyCustomization(data.agent.customization)
+        }
+        if(data.agent && !data?.human_agent) {
+            agentName.value = data.agent.name
+        }
+        if (data?.human_agent) {
+            humanAgent.value = data.human_agent
         }
         return true
     } catch (error) {
@@ -275,7 +280,7 @@ const handleEndChat = (message) => {
     
     if (message.attributes?.end_chat && message.attributes?.request_rating) {
         // Determine the agent name with proper fallbacks
-        const displayAgentName = message.agent_name || customer.value?.agent_name || agentName.value || 'our agent'
+        const displayAgentName = message.agent_name || humanAgent.value?.human_agent_name || agentName.value || 'our agent'
         
         messages.value.push({
             message: `Rate the chat session that you had with ${displayAgentName}`,
@@ -407,13 +412,13 @@ onUnmounted(() => {
             <div class="chat-header" :style="headerBorderStyles">
                 <div class="header-content">
                     <img 
-                        v-if="customer.agent_profile_pic || photoUrl" 
-                        :src="customer.agent_profile_pic || photoUrl" 
-                        :alt="customer.agent_name || agentName" 
+                        v-if="humanAgent.human_agent_profile_pic || photoUrl" 
+                        :src="humanAgent.human_agent_profile_pic || photoUrl" 
+                        :alt="humanAgent.human_agent_name || agentName" 
                         class="header-avatar"
                     >
                     <div class="header-info">
-                        <h3 :style="messageNameStyles">{{ customer.agent_name || agentName }}</h3>
+                        <h3 :style="messageNameStyles">{{ humanAgent.human_agent_name || agentName }}</h3>
                         <div class="status">
                             <span class="status-indicator online"></span>
                             <span class="status-text" :style="messageNameStyles">Online</span>
@@ -450,7 +455,7 @@ onUnmounted(() => {
                         >
                             <template v-if="message.message_type === 'rating'">
                                 <div class="rating-content">
-                                    <p class="rating-prompt">Rate the chat session that you had with {{ message.agent_name || customer.agent_name || agentName || 'our agent' }}</p>
+                                    <p class="rating-prompt">Rate the chat session that you had with {{ message.agent_name || humanAgent.human_agent_name || agentName || 'our agent' }}</p>
                                     
                                     <!-- Rating stars -->
                                     <div class="star-rating" :class="{ 'submitted': isSubmittingRating || message.isSubmitted }">
