@@ -30,7 +30,6 @@ import { notificationService } from '@/services/notification'
 import { useRoute, useRouter } from 'vue-router'
 import { updateUserStatus } from '@/services/users'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
-import type { SubscriptionPlan } from '@/modules/enterprise/types/subscription'
 
 const isSidebarOpen = ref(true)
 const showUserMenu = ref(false)
