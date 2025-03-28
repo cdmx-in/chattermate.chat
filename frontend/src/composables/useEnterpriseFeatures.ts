@@ -1,4 +1,4 @@
-import { ref, readonly, defineComponent, h } from 'vue'
+import { ref, readonly, defineComponent, h, computed } from 'vue'
 import type { Component } from 'vue'
 
 // Create a proper Vue component for the fallback
@@ -24,6 +24,8 @@ interface Plan {
 
 interface SubscriptionPlan {
   plan: Plan
+  message_count?: number
+  message_limit?: number
 }
 
 interface SubscriptionStore {
@@ -32,6 +34,12 @@ interface SubscriptionStore {
   isInTrial: boolean
   trialDaysLeft: number
   fetchCurrentPlan: () => Promise<void>
+}
+
+interface MessageLimitStatus {
+  type: 'warning' | 'error'
+  message: string
+  percentage: number
 }
 
 interface SubscriptionGuard {
@@ -64,6 +72,46 @@ const defaultSubscriptionState: SubscriptionStore = {
 
 export const useEnterpriseFeatures = () => {
   const subscriptionStore = ref<SubscriptionStore>(defaultSubscriptionState)
+
+  const showMessageLimitWarning = computed(() => {
+    const plan = subscriptionStore.value.currentPlan
+    if (!plan?.plan) return false
+    
+    const messageCount = plan.message_count || 0
+    const messageLimit = plan.message_limit
+    
+    if (!messageLimit) return false
+    
+    return messageCount >= (messageLimit * 0.9)
+  })
+
+  const messageLimitStatus = computed<MessageLimitStatus | null>(() => {
+    const plan = subscriptionStore.value.currentPlan
+    if (!plan?.plan) return null
+    
+    const messageCount = plan.message_count || 0
+    const messageLimit = plan.message_limit
+    
+    if (!messageLimit) return null
+    
+    const usagePercentage = (messageCount / messageLimit) * 100
+    
+    if (messageCount >= messageLimit) {
+      return {
+        type: 'error',
+        message: 'Message limit exceeded! Switch to your own model or upgrade plan.',
+        percentage: 100
+      }
+    } else if (usagePercentage >= 90) {
+      return {
+        type: 'warning',
+        message: `Approaching message limit (${Math.round(usagePercentage)}%). Consider upgrading your plan.`,
+        percentage: usagePercentage
+      }
+    }
+    
+    return null
+  })
 
   // Create a single glob pattern that matches all possible enterprise module paths
   const modules = import.meta.glob<EnterpriseModule>([
@@ -112,6 +160,8 @@ export const useEnterpriseFeatures = () => {
     initializeSubscriptionStore,
     loadModule,
     moduleImports,
-    NotAvailableComponent
+    NotAvailableComponent,
+    showMessageLimitWarning,
+    messageLimitStatus
   }
 } 

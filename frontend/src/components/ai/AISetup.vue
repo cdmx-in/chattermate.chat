@@ -19,10 +19,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 <script setup lang="ts">
 import { useAISetup } from '@/composables/useAISetup'
 import { computed, ref, watch } from 'vue'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const emit = defineEmits<{
   (e: 'ai-setup-complete'): void
 }>()
+
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 
 const {
   isLoading,
@@ -34,7 +37,8 @@ const {
   hasExistingConfig
 } = useAISetup()
 
-const activeTab = ref('chattermate') // 'chattermate' or 'custom'
+// Set initial tab based on enterprise availability
+const activeTab = ref(hasEnterpriseModule ? 'chattermate' : 'custom')
 // API key is always required for our supported providers
 const showApiKey = computed(() => true)
 
@@ -63,6 +67,7 @@ watch(() => setupConfig.value.provider, () => {
 })
 
 const selectTab = (tab: 'chattermate' | 'custom') => {
+  if (tab === 'chattermate' && !hasEnterpriseModule) return
   activeTab.value = tab
 }
 
@@ -131,6 +136,7 @@ const chatterMateButtonText = computed(() => {
       <div class="tabs-container">
         <div class="tabs">
           <div 
+            v-if="hasEnterpriseModule"
             class="tab" 
             :class="{ active: activeTab === 'chattermate' }"
             @click="selectTab('chattermate')"
@@ -157,7 +163,7 @@ const chatterMateButtonText = computed(() => {
         </div>
         
         <div class="tab-content">
-          <div v-if="activeTab === 'chattermate'" class="chattermate-content">
+          <div v-if="activeTab === 'chattermate' && hasEnterpriseModule" class="chattermate-content">
             <div class="provider-info">
               <div class="provider-header">
                 <h4>ChatterMate AI</h4>

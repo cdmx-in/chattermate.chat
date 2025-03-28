@@ -46,53 +46,12 @@ const route = useRoute()
 const router = useRouter()
 
 // Initialize enterprise features
-const { hasEnterpriseModule, subscriptionStore, initializeSubscriptionStore } = useEnterpriseFeatures()
+const { hasEnterpriseModule, subscriptionStore, initializeSubscriptionStore, showMessageLimitWarning, messageLimitStatus } = useEnterpriseFeatures()
 
 const currentPlan = computed(() => subscriptionStore.value.currentPlan)
 const isLoadingPlan = computed(() => subscriptionStore.value.isLoadingPlan)
 const isInTrial = computed(() => subscriptionStore.value.isInTrial)
 const trialDaysLeft = computed(() => subscriptionStore.value.trialDaysLeft)
-
-const showMessageLimitWarning = computed(() => {
-    const plan = currentPlan.value as SubscriptionPlan | null
-    if (!plan?.plan) return false
-    
-    const messageCount = plan.message_count || 0
-    const messageLimit = plan.message_limit
-    
-    if (!messageLimit) return false
-    
-    // Show warning if usage is over 90% or exceeded
-    return messageCount >= (messageLimit * 0.9)
-})
-
-const messageLimitStatus = computed(() => {
-    const plan = currentPlan.value as SubscriptionPlan | null
-    if (!plan?.plan) return null
-    
-    const messageCount = plan.message_count || 0
-    const messageLimit = plan.message_limit
-    
-    if (!messageLimit) return null
-    
-    const usagePercentage = (messageCount / messageLimit) * 100
-    
-    if (messageCount >= messageLimit) {
-        return {
-            type: 'error',
-            message: 'Message limit exceeded! Switch to your own model or upgrade plan.',
-            percentage: 100
-        }
-    } else if (usagePercentage >= 90) {
-        return {
-            type: 'warning',
-            message: `Approaching message limit (${Math.round(usagePercentage)}%). Consider upgrading your plan.`,
-            percentage: usagePercentage
-        }
-    }
-    
-    return null
-})
 
 const userAvatarSrc = computed(() => {
   if (currentUser.value?.profile_pic) {
