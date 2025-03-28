@@ -21,19 +21,62 @@ from typing import List, Optional
 from app.models.chat_history import ChatHistory
 from app.models.customer import Customer
 from uuid import UUID
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select, text, and_
 from sqlalchemy.sql import case
 from app.models.agent import Agent
 from app.models.session_to_agent import SessionToAgent
 from app.core.logger import get_logger
 from app.models.user import User
 from sqlalchemy.orm import joinedload
+from datetime import datetime
 
 logger = get_logger(__name__)
 
 class ChatRepository:
     def __init__(self, db: Session):
         self.db = db
+
+    def get_message_count_for_period(
+        self,
+        org_id: UUID | str,
+        start_date: datetime,
+        end_date: datetime
+    ) -> int:
+        """
+        Get the total number of bot messages for an organization within a specific date range.
+        Only counts messages with message_type='bot'.
+        
+        Args:
+            org_id: Organization ID
+            start_date: Start date of the period
+            end_date: End date of the period
+            
+        Returns:
+            int: Total number of bot messages in the period
+        """
+        if isinstance(org_id, str):
+            org_id = UUID(org_id)
+            
+        try:
+            # Build filter conditions
+            conditions = [
+                ChatHistory.organization_id == org_id,
+                ChatHistory.message_type == 'bot'  # Only count bot messages
+            ]
+            
+            # Add date range conditions if they are not None
+            if start_date is not None:
+                conditions.append(ChatHistory.created_at >= start_date)
+            if end_date is not None:
+                conditions.append(ChatHistory.created_at <= end_date)
+            
+            count = self.db.query(func.count(ChatHistory.id))\
+                .filter(and_(*conditions))\
+                .scalar()
+            return count or 0
+        except Exception as e:
+            logger.error(f"Error getting message count: {str(e)}")
+            return 0
 
     def create_message(self, message_data: dict) -> ChatHistory:
         """Create a new chat message"""

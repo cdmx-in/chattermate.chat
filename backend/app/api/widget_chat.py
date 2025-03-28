@@ -38,6 +38,14 @@ from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
 from app.repositories.rating import RatingRepository
 from app.repositories.jira import JiraRepository
+from app.enterprise.repositories.subscription import SubscriptionRepository
+
+# Try to import enterprise modules
+try:
+    from app.enterprise.services.message_limit import check_message_limit
+    HAS_ENTERPRISE = True
+except ImportError:
+    HAS_ENTERPRISE = False
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -72,6 +80,13 @@ async def widget_connect(sid, environ, auth):
                 'type': 'ai_config_missing'
             }, to=sid, namespace='/widget')
             return False
+        
+        message_limit_reached = False
+        # Check message limits if enterprise module is available
+        if HAS_ENTERPRISE:
+            if not await check_message_limit(db, org_id, sid, sio):
+                message_limit_reached = True
+
         
         session_repo = SessionToAgentRepository(db)
                 
@@ -119,7 +134,8 @@ async def widget_connect(sid, environ, auth):
             # Add rate limiting settings
             'enable_rate_limiting': enable_rate_limiting,
             'overall_limit_per_ip': overall_limit_per_ip,
-            'requests_per_sec': requests_per_sec
+            'requests_per_sec': requests_per_sec,
+            'message_limit_reached': message_limit_reached
         }
 
         # Log rate limiting settings
@@ -156,6 +172,15 @@ async def handle_widget_chat(sid, data):
         if not widget_id or not org_id:
             logger.error(f"Widget authentication failed for sid {sid}")
             await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
+            return
+
+        # Check message limit from session
+        if HAS_ENTERPRISE and session.get('message_limit_reached'):
+            logger.error(f"Message limit reached")
+            await sio.emit('error', {
+                    'error': 'Unable to process your message. Please contact support.',
+                    'type': 'message_limit_exceeded'
+            }, to=sid, namespace='/widget')
             return
 
         # Process message
