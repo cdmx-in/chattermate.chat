@@ -25,6 +25,7 @@ from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
 from agno.embedder import Embedder
 from app.core.logger import get_logger
+from app.core.config import settings
 from pydantic import model_validator
 
 from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
@@ -39,15 +40,15 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     urls: List[str] = []
     reader: Optional[EnhancedWebsiteReader] = None
 
-    # Reader parameters - adjusted for better subpage crawling
-    max_depth: int = 5  # Increased from 3 to ensure deeper page crawling
-    max_links: int = 25  # Increased from 10 to allow for more content discovery 
-    min_content_length: int = 100
-    timeout: int = 30
-    max_retries: int = 3
-    max_workers: int = 5  # Number of parallel workers for crawling
-    batch_size: int = 5  # Increased batch size for vector DB operations (was 10)
-    optimize_on: Optional[int] = 1000  # Trigger vector DB optimization after this many documents
+    # Reader parameters - using settings from config
+    max_depth: int = settings.KB_MAX_DEPTH
+    max_links: int = settings.KB_MAX_LINKS 
+    min_content_length: int = settings.KB_MIN_CONTENT_LENGTH
+    timeout: int = settings.KB_TIMEOUT
+    max_retries: int = settings.KB_MAX_RETRIES
+    max_workers: int = settings.KB_MAX_WORKERS
+    batch_size: int = settings.KB_BATCH_SIZE
+    optimize_on: Optional[int] = settings.KB_OPTIMIZE_ON
 
     @model_validator(mode="after")
     def set_reader(self) -> "EnhancedWebsiteKnowledgeBase":
