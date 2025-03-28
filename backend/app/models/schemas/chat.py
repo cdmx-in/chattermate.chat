@@ -84,7 +84,7 @@ class ChatDetailResponse(BaseModel):
     updated_at: datetime
 
 class ChatResponse(BaseModel):
-    message: str = Field(description="The response from the agent")
+    message: str = Field(description="The response from the agent, its mandatory field, always generate a response in message field")
     transfer_to_human: bool = Field(description="Whether to transfer the conversation to a human")
     end_chat: bool = Field(description="Whether to end the chat and request rating")
     transfer_reason: Optional[TransferReasonType] = Field(default=None, description="Transfer reason Type should be one of the following: UNABLE_TO_ANSWER, NEED_MORE_INFO, KNOWLEDGE_GAP, NEED_TO_CALL, NEED_TO_EMAIL, NEED_TO_MEET, FRUSTRATED, REPEAT_INSTRUCTIONS, DIRECT_REQUEST, HIGH_PRIORITY_ISSUE, COMPLIANCE_ISSUE")

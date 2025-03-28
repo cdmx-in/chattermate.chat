@@ -23,6 +23,27 @@ export function useAgentEdit(agent: Agent) {
   const removeInstruction = (index: number) => {
     instructions.value.splice(index, 1)
   }
+  
+  // Generate instructions with AI
+  const generateInstructions = async (prompt: string): Promise<string[]> => {
+    try {
+      isLoading.value = true
+      error.value = null
+      
+      const response = await agentService.generateInstructions(prompt, instructions.value)
+      return response
+    } catch (err: any) {
+      if (err?.response?.status === 429) {
+        error.value = err?.response?.data?.detail || 'Rate limit exceeded. Please try again later.';
+      } else {
+        error.value = 'Failed to generate instructions'
+      }
+      console.error('Generate instructions error:', err)
+      return []
+    } finally {
+      isLoading.value = false
+    }
+  }
 
   // Save handler
   const handleSave = async () => {
@@ -57,6 +78,7 @@ export function useAgentEdit(agent: Agent) {
     error,
     addInstruction,
     removeInstruction,
+    generateInstructions,
     handleSave,
   }
 }

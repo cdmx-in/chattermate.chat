@@ -31,6 +31,7 @@ from uuid import uuid4
 from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 from agno.storage.base import Storage
+from fastapi import HTTPException
 
 # Create a mock storage class that inherits from AgentStorage
 class MockAgentStorage(Storage):
@@ -253,12 +254,14 @@ async def test_chat_agent_get_response(test_organization_id, test_agent, test_us
 async def test_chat_agent_api_key_validation():
     """Test API key validation for different model types"""
     # Test invalid model type
-    with pytest.raises(ValueError, match="Unsupported model type: INVALID_MODEL"):
+    with pytest.raises(HTTPException) as excinfo:
         await ChatAgent(
             api_key="test_key",
             model_name="test-model",
             model_type="INVALID_MODEL"
         )
+    assert excinfo.value.status_code == 500
+    assert "Failed to initialize model: Unsupported model type: INVALID_MODEL" in excinfo.value.detail
 
 @pytest.mark.asyncio
 async def test_chat_agent_error_handling(test_organization_id, test_agent, test_user, mock_db_session):

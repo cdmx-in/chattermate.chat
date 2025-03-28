@@ -112,6 +112,8 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
     if agent_customization:
         # Get signed URL for photo if using S3
         photo_url = agent_customization.photo_url
+        if settings.S3_FILE_STORAGE and photo_url:
+            photo_url = await get_s3_signed_url(photo_url)
 
         customization_dict = {
             "chat_background_color": agent_customization.chat_background_color,
@@ -121,9 +123,6 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
             "photo_url": photo_url
         }
         
-        # Only add photo_url_signed if using S3 storage
-        if settings.S3_FILE_STORAGE and photo_url:
-            customization_dict["photo_url"] = await get_s3_signed_url(photo_url)
 
     return f"""
         <!DOCTYPE html>
@@ -151,36 +150,26 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
         </html>
     """
 
-async def get_customer_session_info(db: Session, customer_id: str) -> dict:
+async def get_human_agent_session_info(db: Session, customer_id: str) -> dict:
     """Get customer session info including human agent details if assigned"""
-    customer_info = {}
+    human_agent_info = {}
     session_repo = SessionToAgentRepository(db)
     sessions = session_repo.get_customer_sessions(customer_id, SessionStatus.OPEN)
     
     if sessions and len(sessions) > 0:
-        session_model, user_full_name, user_profile_pic = sessions[0]
+        session_model,user_full_name, user_profile_pic = sessions[0]
         
         if user_full_name:  # If there's a human agent assigned
-            profile_pic = user_profile_pic
-            if settings.S3_FILE_STORAGE and profile_pic:
-                profile_pic = await get_s3_signed_url(profile_pic)
+            if settings.S3_FILE_STORAGE and user_profile_pic:
+                user_profile_pic = await get_s3_signed_url(user_profile_pic)
 
             # Get human agent info from session
-            agent_name = user_full_name if session_model.user_id else None
-            agent_profile_pic = None
-            if user_profile_pic:
-                agent_profile_pic = user_profile_pic
-                if settings.S3_FILE_STORAGE:
-                    agent_profile_pic = await get_s3_signed_url(user_profile_pic)
-
-            customer_info = {
-                "full_name": user_full_name,
-                "profile_pic": profile_pic,
-                "agent_name": agent_name,
-                "agent_profile_pic": agent_profile_pic
+            human_agent_info = {
+                "human_agent_name": user_full_name,
+                "human_agent_profile_pic": user_profile_pic,
             }
     
-    return customer_info
+    return human_agent_info
 
 @router.get("/{widget_id}", response_model=WidgetResponse)
 async def get_widget_data(
@@ -227,7 +216,7 @@ async def get_widget_data(
 
         
         customer_repo = CustomerRepository(db)
-        customer_info = {}
+        human_agent_info = {}
         
         if should_create_customer:
             # Try to get existing customer first
@@ -239,7 +228,7 @@ async def get_widget_data(
             
             # Get session info for existing customer
             if customer:
-                customer_info = await get_customer_session_info(db, customer.id)
+                human_agent_info = await get_human_agent_session_info(db, customer.id)
             
             # Generate new token with customer_id
             new_token = create_conversation_token(
@@ -258,7 +247,7 @@ async def get_widget_data(
                 "id": widget.id,
                 "organization_id": widget.organization_id,
                 "customer_id": customer.id,
-                "customer": customer_info,
+                "human_agent": human_agent_info,
                 "agent": {
                     "id": agent.id,
                     "name": agent.name,
@@ -275,7 +264,7 @@ async def get_widget_data(
                 )
             
             # Get session info for existing customer
-            customer_info = await get_customer_session_info(db, customer_id)
+            human_agent_info = await get_human_agent_session_info(db, customer_id)
 
     except JWTError:
         logger.error(f"JWTError: {JWTError}")
@@ -284,7 +273,7 @@ async def get_widget_data(
             detail="Unauthorized"
         )
     
-                # Create a copy of customization to modify photo_url
+    # Create a copy of customization to modify photo_url
     customization = agent.customization
           
     if settings.S3_FILE_STORAGE and customization and customization.photo_url:
@@ -295,7 +284,7 @@ async def get_widget_data(
         "id": widget.id,
         "organization_id": widget.organization_id,
         "customer_id": customer_id,
-        "customer": customer_info,
+        "human_agent": human_agent_info,
         "agent": {
             "id": agent.id,
             "name": agent.name,
@@ -346,6 +335,13 @@ async def get_widget_details(
     agent = agent_repo.get_by_id(widget.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    
+        # Create a copy of customization to modify photo_url
+    customization = agent.customization
+          
+    if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+        # Get signed URL for the photo
+        customization.photo_url = await get_s3_signed_url(customization.photo_url)
 
     return {
         "id": widget.id,
@@ -354,6 +350,6 @@ async def get_widget_details(
             "id": agent.id,
             "name": agent.name,
             "display_name": agent.display_name,
-            "customization": agent.customization
+            "customization": customization
         }
     }

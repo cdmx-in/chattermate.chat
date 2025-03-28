@@ -16,4 +16,8 @@ export const aiService = {
   async setupAI(config: AIConfig): Promise<void> {
     await api.post('/ai/setup', config)
   },
+  
+  async updateAI(config: AIConfig): Promise<void> {
+    await api.put('/ai/config', config)
+  },
 }

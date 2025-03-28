@@ -33,6 +33,7 @@ class AIModelType(str, Enum):
     HUGGINGFACE = "HUGGINGFACE"
     OLLAMA = "OLLAMA"
     XAI = "XAI"
+    CHATTERMATE = "CHATTERMATE"
 
 class AIConfig(Base):
     __tablename__ = "ai_configs"

@@ -18,7 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <script setup lang="ts">
 import { useAISetup } from '@/composables/useAISetup'
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 const emit = defineEmits<{
   (e: 'ai-setup-complete'): void
@@ -29,17 +29,52 @@ const {
   error,
   providers,
   setupConfig,
-  saveAISetup
+  saveAISetup,
+  updateAISetup,
+  hasExistingConfig
 } = useAISetup()
 
-const showApiKey = computed(() => setupConfig.value.provider !== 'ollama')
+const activeTab = ref('chattermate') // 'chattermate' or 'custom'
+// API key is always required for our supported providers
+const showApiKey = computed(() => true)
+
+// Model options based on provider
+const modelOptions = computed(() => {
+  const provider = setupConfig.value.provider.toUpperCase();
+  switch (provider) {
+    case 'GROQ':
+      return [
+        { value: 'llama-3.3-70b-versatile', label: 'Llama 3.3 70B Versatile' },
+      ]
+    case 'OPENAI':
+      return [
+        { value: 'gpt-4o-mini', label: 'GPT-4o Mini' },
+        { value: 'o1-mini', label: 'O1 Mini' },
+        { value: 'o3-mini', label: 'O3 Mini' }
+      ]
+    default:
+      return []
+  }
+})
+
+// Reset model when provider changes
+watch(() => setupConfig.value.provider, () => {
+  setupConfig.value.model = ''
+})
+
+const selectTab = (tab: 'chattermate' | 'custom') => {
+  activeTab.value = tab
+}
 
 const handleSubmit = async () => {
   try {
-    if (setupConfig.value.provider === 'ollama') {
-      setupConfig.value.apiKey = 'not_required'
+    let success = false
+    if (hasExistingConfig.value) {
+      success = await updateAISetup()
+    } else {
+      success = await saveAISetup()
     }
-    const success = await saveAISetup()
+    
     if (success) {
       emit('ai-setup-complete')
     }
@@ -47,6 +82,39 @@ const handleSubmit = async () => {
     console.error('Submit error:', error)
   }
 }
+
+const setupChatterMateAI = async () => {
+  try {
+    // Set the config values first
+    setupConfig.value.provider = 'chattermate'
+    setupConfig.value.model = 'chattermate'
+    setupConfig.value.apiKey = ''
+    
+    // Then save using the existing function without arguments
+    let success = false
+    if (hasExistingConfig.value) {
+      success = await updateAISetup()
+    } else {
+      success = await saveAISetup()
+    }
+    
+    if (success) {
+      emit('ai-setup-complete')
+    }
+  } catch (error) {
+    console.error('ChatterMate setup error:', error)
+  }
+}
+
+// Button text based on whether we're creating or updating
+const submitButtonText = computed(() => {
+  if (isLoading.value) return 'Saving...'
+  return hasExistingConfig.value ? 'Update Configuration' : 'Save Configuration'
+})
+
+const chatterMateButtonText = computed(() => {
+  return hasExistingConfig.value ? 'Update to ChatterMate AI' : 'Proceed with ChatterMate AI'
+})
 </script>
 
 <template>
@@ -55,135 +123,147 @@ const handleSubmit = async () => {
       <div class="loader"></div>
     </div>
     
-    <form v-else @submit.prevent="handleSubmit" class="setup-form">
+    <div v-else>
       <div v-if="error" class="error-message">
         {{ error }}
       </div>
 
-      <div class="form-group">
-      
-        <p class="setup-description">Set up your AI provider to start using ChatterMate's intelligent features.</p>
-
-        <label for="provider">AI Provider</label>
-        <select 
-          id="provider" 
-          v-model="setupConfig.provider"
-          required
-          class="form-control"
-        >
-          <option value="">Select Provider</option>
-          <option 
-            v-for="provider in providers" 
-            :key="provider.value" 
-            :value="provider.value"
+      <div class="tabs-container">
+        <div class="tabs">
+          <div 
+            class="tab" 
+            :class="{ active: activeTab === 'chattermate' }"
+            @click="selectTab('chattermate')"
           >
-            {{ provider.label }}
-          </option>
-        </select>
-      </div>
+            <span class="tab-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/>
+              </svg>
+            </span>
+            <span class="tab-label">ChatterMate AI</span>
+          </div>
+          <div 
+            class="tab" 
+            :class="{ active: activeTab === 'custom' }"
+            @click="selectTab('custom')"
+          >
+            <span class="tab-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+              </svg>
+            </span>
+            <span class="tab-label">Bring Your Own Model</span>
+          </div>
+        </div>
+        
+        <div class="tab-content">
+          <div v-if="activeTab === 'chattermate'" class="chattermate-content">
+            <div class="provider-info">
+              <div class="provider-header">
+                <h4>ChatterMate AI</h4>
+              </div>
+              
+              <div class="plan-table">
+                <div class="plan-row">
+                  <div class="plan-cell plan-label">Starter Plan:</div>
+                  <div class="plan-cell plan-value">1000 messages/month per seat</div>
+                </div>
+                <div class="plan-row">
+                  <div class="plan-cell plan-label">Pro Plan:</div>
+                  <div class="plan-cell plan-value">10,000 messages/month per seat</div>
+                </div>
+                <div class="plan-divider"></div>
+                <div class="plan-row rate-limit-row">
+                  <div class="plan-cell">Rate limit: 100 messages/minute</div>
+                </div>
+              </div>
+              
+              <div class="action-area">
+                <button class="continue-button" @click="setupChatterMateAI">
+                  {{ chatterMateButtonText }}
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          <div v-else class="custom-content">
+            <form @submit.prevent="handleSubmit" class="setup-form">
+              <p class="setup-description">
+                {{ hasExistingConfig ? 'Update your AI provider settings' : 'Set up your AI provider to start using ChatterMate\'s intelligent features' }}
+              </p>
 
-      <div class="form-group">
-        <label for="model">Model Name</label>
-        <input
-          id="model"
-          type="text"
-          v-model="setupConfig.model"
-          required
-          placeholder="Enter model name (e.g. gpt-4)"
-          class="form-control"
-        />
-      </div>
+              <div class="form-group">
+                <label for="provider">AI Provider</label>
+                <select 
+                  id="provider" 
+                  v-model="setupConfig.provider"
+                  required
+                  class="form-control"
+                >
+                  <option value="">Select Provider</option>
+                  <option 
+                    v-for="provider in providers" 
+                    :key="provider.value" 
+                    :value="provider.value"
+                  >
+                    {{ provider.label }}
+                  </option>
+                </select>
+              </div>
 
-      <div v-if="showApiKey" class="form-group">
-        <label for="apiKey">API Key</label>
-        <input
-          id="apiKey"
-          type="password"
-          v-model="setupConfig.apiKey"
-          :required="showApiKey"
-          placeholder="Enter your API key"
-          class="form-control"
-        />
-        <p class="key-hint">Your API key will be encrypted and stored securely</p>
-      </div>
+              <div class="form-group">
+                <label for="model">Model Name</label>
+                <select
+                  id="model"
+                  v-model="setupConfig.model"
+                  required
+                  class="form-control"
+                  :disabled="!setupConfig.provider || modelOptions.length === 0"
+                >
+                  <option value="" disabled>Select Model</option>
+                  <option 
+                    v-for="model in modelOptions" 
+                    :key="model.value" 
+                    :value="model.value"
+                  >
+                    {{ model.label }}
+                  </option>
+                </select>
+              </div>
 
-      <button 
-        type="submit" 
-        class="btn btn-primary"
-        :disabled="isLoading"
-      >
-        {{ isLoading ? 'Saving...' : 'Save Configuration' }}
-      </button>
-    </form>
+              <div v-if="showApiKey" class="form-group">
+                <label for="apiKey">API Key</label>
+                <input
+                  id="apiKey"
+                  type="password"
+                  v-model="setupConfig.apiKey"
+                  :required="showApiKey"
+                  placeholder="Enter your API key"
+                  class="form-control"
+                />
+                <p class="key-hint">Your API key will be encrypted and stored securely</p>
+              </div>
+
+              <button 
+                type="submit" 
+                class="btn btn-primary"
+                :disabled="isLoading"
+              >
+                {{ submitButtonText }}
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
 .ai-setup {
   width: 100%;
-  max-width: 500px;
+  max-width: 750px;
   margin: 0 auto;
-  padding: var(--space-lg);
-  border-radius: var(--radius-lg);
-  box-shadow: 0 4px 15px rgb(131, 129, 129);
-}
-
-.setup-form {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-  
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  
-}
-
-.form-group label {
-  font-weight: 500;
-  color: var(--text-color);
-}
-
-.form-control {
-  padding: var(--space-sm) var(--space-md);
-  border: 2px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  font-family: inherit;
-  background: var(--background-color);
-  color: var(--text-color);
-}
-
-.key-hint {
-  font-size: 0.875rem;
-  color: var(--text-muted);
-  margin-top: var(--space-xs);
-}
-
-.submit-button {
-  padding: var(--space-sm) var(--space-lg);
-  background: var(--primary-color);
-  color: white;
-  border: none;
-  border-radius: var(--radius-lg);
-  cursor: pointer;
-  font-weight: 500;
-}
-
-.submit-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.error-message {
-  padding: var(--space-sm) var(--space-md);
-  margin-bottom: var(--space-md);
-  background: var(--error-soft);
-  color: var(--error-color);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--error-color);
 }
 
 .loading-container {
@@ -194,37 +274,203 @@ const handleSubmit = async () => {
 }
 
 .loader {
-  width: 48px;
-  height: 48px;
-  border: 4px solid var(--border-color);
-  border-bottom-color: var(--primary-color);
+  border: 3px solid var(--border-color);
+  border-top: 3px solid var(--primary-color);
   border-radius: 50%;
-  display: inline-block;
-  animation: rotation 1s linear infinite;
+  width: 30px;
+  height: 30px;
+  animation: spin 1s linear infinite;
 }
 
-@keyframes rotation {
-  0% { transform: rotate(0deg) }
-  100% { transform: rotate(360deg) }
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
-.setup-header {
-  margin-bottom: var(--space-lg);
-  text-align: left;
+.error-message {
+  background-color: var(--secondary-color);
+  color: var(--error-color);
+  padding: 12px;
+  border-radius: var(--radius-md);
+  margin-bottom: 20px;
 }
 
-.setup-header h3 {
-  color: var(--text-primary);
-  font-size: var(--text-xl);
-  font-weight: 600;
-  margin-bottom: var(--space-sm);
-  line-height: 1.4;
+.tabs-container {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background-color: var(--background-color);
+  box-shadow: var(--shadow-sm);
+}
+
+.tabs {
+  display: flex;
+  background-color: var(--background-soft);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.tab {
+  padding: 12px 16px;
+  cursor: pointer;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  transition: var(--transition-fast);
+  border-bottom: 2px solid transparent;
+}
+
+.tab:hover {
+  color: var(--primary-color);
+  background-color: var(--background-mute);
+}
+
+.tab.active {
+  color: var(--primary-color);
+  border-bottom: 2px solid var(--primary-color);
+  background-color: var(--background-color);
+}
+
+.tab-icon {
+  display: flex;
+  align-items: center;
+}
+
+.tab-content {
+  padding: var(--space-lg);
+}
+
+.setup-form {
+  max-width: 500px;
 }
 
 .setup-description {
-  color: var(--text-secondary);
-  font-size: var(--text-base);
-  line-height: 1.6;
   margin-bottom: var(--space-lg);
+  color: var(--text-secondary);
+}
+
+.form-group {
+  margin-bottom: var(--space-lg);
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: var(--space-sm);
+  font-weight: 500;
+}
+
+.form-control {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+}
+
+.key-hint {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+}
+
+.btn {
+  padding: 10px 16px;
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-weight: 500;
+  transition: var(--transition-fast);
+}
+
+.btn-primary {
+  background-color: var(--primary-color);
+  color: var(--text-color-light);
+}
+
+.btn-primary:hover {
+  background-color: var(--accent-color);
+}
+
+.btn-primary:disabled {
+  background-color: var(--background-mute);
+  cursor: not-allowed;
+}
+
+.provider-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+  max-width: 600px;
+}
+
+.provider-header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.provider-header h4 {
+  font-size: var(--text-xl);
+  margin: 0;
+  color: var(--text-primary);
+}
+
+.provider-header p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-weight: normal;
+}
+
+.plan-table {
+  background-color: var(--background-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-md);
+  border: 1px solid var(--border-color);
+}
+
+.plan-row {
+  display: flex;
+  padding: var(--space-sm) 0;
+}
+
+.plan-cell {
+  flex: 1;
+}
+
+.plan-label {
+  font-weight: 500;
+}
+
+.plan-divider {
+  height: 1px;
+  background-color: var(--border-color);
+  margin: var(--space-sm) 0;
+}
+
+.rate-limit-row {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.action-area {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: var(--space-sm);
+}
+
+.continue-button {
+  background-color: var(--primary-color);
+  color: var(--text-color-light);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.continue-button:hover {
+  background-color: var(--accent-color);
 }
 </style>

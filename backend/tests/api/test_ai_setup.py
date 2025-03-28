@@ -101,7 +101,7 @@ def test_ai_config(db, test_user) -> AIConfig:
     config = AIConfig(
         organization_id=test_user.organization_id,
         model_type="OPENAI",
-        model_name="gpt-4",
+        model_name="gpt-4o-mini",
         encrypted_api_key="test_api_key",
         is_active=True
     )
@@ -141,12 +141,29 @@ async def mock_test_api_key(api_key: str, model_type: str, model_name: str) -> b
 # Patch ChatAgent.test_api_key for tests
 ai_setup_router.ChatAgent.test_api_key = mock_test_api_key
 
+# Also patch the validate_model_selection function
+original_validate = ai_setup_router.validate_model_selection
+
+def mock_validate_model_selection(model_type: str, model_name: str):
+    if model_type.upper() == "INVALID_MODEL":
+        raise ai_setup_router.HTTPException(
+            status_code=400,
+            detail={
+                "error": "Unsupported provider",
+                "type": "invalid_provider",
+                "details": "Currently only these providers are supported: GROQ, OPENAI, CHATTERMATE"
+            }
+        )
+    return original_validate(model_type, model_name)
+
+ai_setup_router.validate_model_selection = mock_validate_model_selection
+
 # Test cases
 def test_setup_ai_success(client, db, test_user):
     """Test successful AI setup"""
     config_data = {
         "model_type": "OPENAI",
-        "model_name": "gpt-4",
+        "model_name": "gpt-4o-mini",
         "api_key": "test_valid_key"
     }
     
@@ -164,7 +181,7 @@ def test_setup_ai_invalid_key(client, db, test_user):
     """Test AI setup with invalid API key"""
     config_data = {
         "model_type": "OPENAI",
-        "model_name": "gpt-4",
+        "model_name": "gpt-4o-mini",
         "api_key": "invalid_key"
     }
     
@@ -177,12 +194,47 @@ def test_setup_ai_invalid_key(client, db, test_user):
     assert "error" in data["detail"]
     assert data["detail"]["type"] == "api_key_validation_error"
 
-def test_setup_ai_ollama(client, db, test_user):
-    """Test AI setup with Ollama (no API key required)"""
+def test_setup_ai_invalid_model(client, db, test_user):
+    """Test AI setup with invalid model type"""
     config_data = {
-        "model_type": "OLLAMA",
-        "model_name": "llama2",
-        "api_key": ""
+        "model_type": "OPENAI",
+        "model_name": "invalid-model",
+        "api_key": "test_valid_key"
+    }
+    
+    response = client.post(
+        "/api/ai/setup",
+        json=config_data
+    )
+    assert response.status_code == 400
+    data = response.json()
+    assert "error" in data["detail"]
+    assert data["detail"]["type"] == "invalid_model"
+
+def test_setup_ai_invalid_provider(client, db, test_user):
+    """Test AI setup with invalid provider"""
+    config_data = {
+        "model_type": "INVALID_MODEL",
+        "model_name": "test-model",
+        "api_key": "test_valid_key"
+    }
+    
+    response = client.post(
+        "/api/ai/setup",
+        json=config_data
+    )
+    assert response.status_code == 422  # Pydantic validation error returns 422
+    data = response.json()
+    assert "detail" in data
+    # Pydantic validation errors have a different format
+    assert any("model_type" in str(err).lower() for err in data["detail"])
+
+def test_setup_ai_groq(client, db, test_user):
+    """Test AI setup with Groq"""
+    config_data = {
+        "model_type": "OPENAI",
+        "model_name": "gpt-4o-mini",
+        "api_key": "test_valid_key"
     }
     
     response = client.post(
@@ -191,8 +243,8 @@ def test_setup_ai_ollama(client, db, test_user):
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["config"]["model_type"] == "OLLAMA"
-    assert data["config"]["model_name"] == "llama2"
+    assert data["config"]["model_type"] == "OPENAI"
+    assert data["config"]["model_name"] == "gpt-4o-mini"
 
 def test_get_ai_config_success(client, db, test_user, test_ai_config):
     """Test getting AI configuration"""

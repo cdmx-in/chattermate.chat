@@ -20,7 +20,7 @@ from typing import Dict, Any
 from datetime import datetime
 import pytz
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from app.utils.agno_utils import create_model
 from app.repositories.agent import AgentRepository
 from app.repositories.customer import CustomerRepository
 from app.core.logger import get_logger
@@ -29,44 +29,18 @@ from app.repositories.group import GroupRepository
 from app.tools.jira_toolkit import JiraTools
 from app.models.schemas.chat import ChatResponse
 from app.utils.response_parser import parse_response_content
-
+from app.core.config import settings
 logger = get_logger(__name__)
 
 class TransferResponseAgent:
     def __init__(self, api_key: str, model_name: str, model_type: str = "OPENAI", agent_id: str = None):
-        # Initialize model based on type
-        if model_type == 'OPENAI':
-            model = OpenAIChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'ANTHROPIC':
-            from agno.models.anthropic import Claude
-            model = Claude(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'DEEPSEEK':
-            from agno.models.deepseek import DeepSeekChat
-            model = DeepSeekChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GOOGLE':
-            from agno.models.google import Gemini
-            model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GOOGLEVERTEX':
-            from agno.models.vertexai import Gemini
-            model = Gemini(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'GROQ':
-            from agno.models.groq import Groq
-            model = Groq(api_key=api_key, id=model_name, max_tokens=1000,response_format={"type": "text"})
-        elif model_type == 'MISTRAL':
-            from agno.models.mistral import MistralChat
-            model = MistralChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'HUGGINGFACE':
-            from agno.models.huggingface import HuggingFaceChat
-            model = HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=1000)
-        elif model_type == 'OLLAMA':
-            from agno.models.ollama import Ollama
-            model = Ollama(id=model_name)
-        elif model_type == 'XAI':
-            from agno.models.xai import xAI
-            model = xAI(api_key=api_key, id=model_name, max_tokens=1000)
-        else:
-            raise ValueError(f"Unsupported model type: {model_type}")
-
+        # Initialize model based on type using the utility function
+        model = create_model(
+            model_type=model_type,
+            api_key=api_key,
+            model_name=model_name,
+            max_tokens=1000
+        )
 
         # Define instructions for transfer response agent
         instructions = [
@@ -74,7 +48,8 @@ class TransferResponseAgent:
             "If within business hours and agents are available, explain that you need to transfer to a better qualified agent to help.",
             "If outside business hours or no agents available, apologize and explain that the team will contact them via email.",
             "Be empathetic and professional in your response.",
-            "Keep responses concise and clear."
+            "Keep responses concise and clear.",
+            "If already transferred, do not transfer again. Tell that someone will get back to them shortly."
         ]
 
         agent_data_repo = AgentRepository(next(get_db()))
@@ -82,18 +57,20 @@ class TransferResponseAgent:
             agent_id) if agent_id else None
 
         if agent_data:
-            instructions = [
-                f"You are {agent_data.display_name if agent_data.display_name else agent_data.name}, representing our company.",
-                *agent_data.instructions
-            ]
+            # Prepend the identity instruction to the list instead of replacing all instructions
+            agent_identity = f"You are {agent_data.display_name if agent_data.display_name else agent_data.name}, representing our company."
+            instructions = [agent_identity] + instructions
 
         self.agent = Agent(
             name="Transfer Response Agent",
             model=model,
             instructions=instructions,
             markdown=True,
-            debug_mode=False,
-            system_message_role="system"
+            debug_mode=settings.ENVIRONMENT == "development",
+            system_message_role="system",
+            user_message_role="user",
+            num_history_responses=10
+
         )
         logger.debug(f"Transfer Response Agent: {self.agent.instructions}")
 

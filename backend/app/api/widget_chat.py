@@ -39,6 +39,14 @@ from app.repositories.agent import AgentRepository
 from app.repositories.rating import RatingRepository
 from app.repositories.jira import JiraRepository
 
+
+# Try to import enterprise modules
+try:
+    from app.enterprise.services.message_limit import check_message_limit
+    HAS_ENTERPRISE = True
+except ImportError:
+    HAS_ENTERPRISE = False
+
 router = APIRouter()
 logger = get_logger(__name__)
 
@@ -72,6 +80,13 @@ async def widget_connect(sid, environ, auth):
                 'type': 'ai_config_missing'
             }, to=sid, namespace='/widget')
             return False
+        
+        message_limit_reached = False
+        # Check message limits if enterprise module is available
+        if HAS_ENTERPRISE:
+            if not await check_message_limit(db, org_id, sid, sio):
+                message_limit_reached = True
+
         
         session_repo = SessionToAgentRepository(db)
                 
@@ -119,7 +134,8 @@ async def widget_connect(sid, environ, auth):
             # Add rate limiting settings
             'enable_rate_limiting': enable_rate_limiting,
             'overall_limit_per_ip': overall_limit_per_ip,
-            'requests_per_sec': requests_per_sec
+            'requests_per_sec': requests_per_sec,
+            'message_limit_reached': message_limit_reached
         }
 
         # Log rate limiting settings
@@ -178,6 +194,15 @@ async def handle_widget_chat(sid, data):
             customer_id=customer_id
         )
 
+        # Check message limit from session
+        if HAS_ENTERPRISE and session.get('message_limit_reached') and active_session and active_session.user_id is None:
+            logger.error(f"Message limit reached")
+            await sio.emit('error', {
+                    'error': 'Unable to process your message. Please contact support.',
+                    'type': 'message_limit_exceeded'
+            }, to=sid, namespace='/widget')
+            return
+
         if not active_session:
             # Check if there's a closed session that can be reopened
             latest_session = session_repo.get_latest_customer_session(
@@ -221,6 +246,7 @@ async def handle_widget_chat(sid, data):
                 agent_id=session['agent_id'],
                 customer_id=customer_id)
         elif active_session.status == SessionStatus.TRANSFERRED and active_session.user_id is None: # transferred and user has not taken over
+            logger.debug(f"Transferring chat to human for session {session_id}")
             # Get response from agent transfer ai agent
             chat_repo = ChatRepository(db)
             chat_repo.create_message({

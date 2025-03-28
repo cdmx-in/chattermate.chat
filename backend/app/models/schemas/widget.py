@@ -71,28 +71,28 @@ class AgentResponse(BaseModel):
     customization: Optional[AgentCustomizationResponse] = None
 
 
-class CustomerResponse(BaseModel):
-    full_name: Optional[str] = None
-    profile_pic: Optional[str] = None
+class HumanAgentResponse(BaseModel):
+    human_agent_name: Optional[str] = None
+    human_agent_profile_pic: Optional[str] = None
 
     @property
-    def profile_pic_url(self) -> Optional[str]:
+    def human_agent_profile_pic_url(self) -> Optional[str]:
         """Get signed URL for profile picture if using S3"""
-        if not self.profile_pic:
+        if not self.human_agent_profile_pic:
             return None
         
         from app.core.config import settings
         if settings.S3_FILE_STORAGE:
             from app.core.s3 import get_s3_signed_url
             import asyncio
-            return asyncio.run(get_s3_signed_url(self.profile_pic))
-        return self.profile_pic
+            return asyncio.run(get_s3_signed_url(self.human_agent_profile_pic))
+        return self.human_agent_profile_pic
 
     class Config:
         from_attributes = True
         json_schema_extra = {
             "properties": {
-                "profile_pic_url": {
+                "human_agent_profile_pic_url": {
                     "type": "string",
                     "description": "Signed URL for profile picture if using S3"
                 }
@@ -104,7 +104,7 @@ class WidgetResponse(BaseModel):
     id: str
     organization_id: UUID
     agent: AgentResponse
-    customer: Optional[CustomerResponse] = None
+    human_agent: Optional[HumanAgentResponse] = None
     # Include agent ID in response if set
     agent_id: Optional[UUID] = None
     token: Optional[str] = None

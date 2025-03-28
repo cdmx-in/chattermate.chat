@@ -148,7 +148,7 @@ def test_get_widget_data(client: TestClient, test_widget: Widget):
     assert data["id"] == str(test_widget.id)
     assert data["organization_id"] == str(test_widget.organization_id)
     assert data["agent"]["id"] == str(test_widget.agent_id)
-    assert "customer" in data  # Verify customer info is present
+    assert "human_agent" in data  # Verify human_agent info is present
     assert "token" in data  # Verify new token is present in response
 
 def test_get_widget_data_without_token(client: TestClient, test_widget: Widget):
