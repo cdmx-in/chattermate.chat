@@ -33,7 +33,7 @@ class AIModelType(str, Enum):
     HUGGINGFACE = "HUGGINGFACE"
     OLLAMA = "OLLAMA"
     XAI = "XAI"
-    CHATTERMATE = "CHATTERMATE"
+    CHATTERMATE = "CHATTERMATE" # own model for enterprise customers
 
 class AIConfig(Base):
     __tablename__ = "ai_configs"

@@ -45,14 +45,12 @@ const route = useRoute()
 const router = useRouter()
 
 // Initialize enterprise features
-const { hasEnterpriseModule, subscriptionStore, initializeSubscriptionStore } = useEnterpriseFeatures()
+const { hasEnterpriseModule, subscriptionStore, initializeSubscriptionStore, showMessageLimitWarning, messageLimitStatus } = useEnterpriseFeatures()
 
 const currentPlan = computed(() => subscriptionStore.value.currentPlan)
 const isLoadingPlan = computed(() => subscriptionStore.value.isLoadingPlan)
 const isInTrial = computed(() => subscriptionStore.value.isInTrial)
 const trialDaysLeft = computed(() => subscriptionStore.value.trialDaysLeft)
-
-
 
 const userAvatarSrc = computed(() => {
   if (currentUser.value?.profile_pic) {
@@ -91,8 +89,6 @@ const toggleOnlineStatus = async () => {
   }
 }
 
-
-
 // Add this watch to close settings when route changes
 watch(
   () => route.path,
@@ -128,12 +124,9 @@ const toggleSidebar = () => {
     isSidebarOpen.value = !isSidebarOpen.value
 }
 
-
-
 const navigateToUpgrade = () => {
     router.push('/settings/subscription')
 }
-
 
 </script>
 
@@ -146,6 +139,33 @@ const navigateToUpgrade = () => {
 
         <!-- Main Content -->
         <div class="main-content">
+            <!-- Message Limit Warning Banner -->
+            <div v-if="hasEnterpriseModule && showMessageLimitWarning && messageLimitStatus" 
+                 class="message-limit-banner"
+                 :class="messageLimitStatus.type">
+                <div class="banner-content">
+                    <div class="banner-text">
+                        <span class="banner-icon" v-if="messageLimitStatus.type === 'error'">⚠️</span>
+                        <span class="banner-icon" v-else>ℹ️</span>
+                        {{ messageLimitStatus.message }}
+                    </div>
+                    <div class="banner-actions">
+                        <button class="action-button" @click="navigateToUpgrade">
+                            Upgrade Plan
+                        </button>
+                        <button class="action-button secondary" @click="router.push('/settings/ai-config')">
+                            Configure Own Model
+                        </button>
+                    </div>
+                </div>
+                <div class="usage-bar">
+                    <div class="usage-progress" 
+                         :style="{ width: `${Math.min(messageLimitStatus.percentage, 100)}%` }"
+                         :class="{ 'exceeded': messageLimitStatus.percentage >= 100 }">
+                    </div>
+                </div>
+            </div>
+
             <!-- Header -->
             <header class="header">
                 <div class="header-content">
@@ -652,5 +672,94 @@ const navigateToUpgrade = () => {
 
 .trial-badge.clickable {
     cursor: pointer;
+}
+
+.message-limit-banner {
+    position: relative;
+    padding: var(--space-md) var(--space-xl);
+    background: var(--warning-soft);
+    border-bottom: 1px solid var(--warning-color);
+}
+
+.message-limit-banner.error {
+    background: var(--error-soft);
+    border-bottom: 1px solid var(--error-color);
+}
+
+.banner-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.banner-text {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-weight: 500;
+}
+
+.banner-icon {
+    font-size: 1.2em;
+}
+
+.banner-actions {
+    display: flex;
+    gap: var(--space-sm);
+}
+
+.action-button {
+    padding: var(--space-xs) var(--space-sm);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    background: var(--primary-color);
+    color: white;
+    transition: all 0.2s ease;
+}
+
+.action-button:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.1);
+}
+
+.action-button.secondary {
+    background: var(--background-soft);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+}
+
+.usage-bar {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 2px;
+    background: var(--background-mute);
+}
+
+.usage-progress {
+    height: 100%;
+    background: var(--warning-color);
+    transition: width 0.3s ease;
+}
+
+.usage-progress.exceeded {
+    background: var(--error-color);
+}
+
+/* Adjust main content to account for banner */
+.main-content {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+.content {
+    flex: 1;
+    padding: var(--space-xl);
 }
 </style>

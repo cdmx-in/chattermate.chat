@@ -31,6 +31,8 @@ import os
 from enum import Enum
 from pydantic import Field, validator
 
+from app.models.ai_config import AIModelType
+
 # Try to import enterprise modules
 try:
     from app.enterprise.repositories.subscription import SubscriptionRepository
@@ -82,7 +84,7 @@ async def setup_ai(
         # Check if using ChatterMate model
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
             # Use Groq as provider with keys from env
-            model_type = 'OPENAI'
+            model_type = AIModelType.CHATTERMATE
             model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
             api_key = os.getenv('CHATTERMATE_API_KEY', '')
         
@@ -251,7 +253,7 @@ async def update_ai_config(
         # Check if using ChatterMate model
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
             # Use Groq as provider with keys from env
-            model_type = 'OPENAI'
+            model_type = AIModelType.CHATTERMATE
             model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
             api_key = os.getenv('CHATTERMATE_API_KEY', '')
             
