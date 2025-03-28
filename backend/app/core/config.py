@@ -88,6 +88,16 @@ class Settings(BaseSettings):
     AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID", "")
     AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY", "")
 
+    # Enhanced Website Knowledge Base Configuration
+    KB_MAX_DEPTH: int = int(os.getenv("KB_MAX_DEPTH", "5"))
+    KB_MAX_LINKS: int = int(os.getenv("KB_MAX_LINKS", "25"))
+    KB_MIN_CONTENT_LENGTH: int = int(os.getenv("KB_MIN_CONTENT_LENGTH", "100"))
+    KB_TIMEOUT: int = int(os.getenv("KB_TIMEOUT", "30"))
+    KB_MAX_RETRIES: int = int(os.getenv("KB_MAX_RETRIES", "3"))
+    KB_MAX_WORKERS: int = int(os.getenv("KB_MAX_WORKERS", "5"))
+    KB_BATCH_SIZE: int = int(os.getenv("KB_BATCH_SIZE", "5"))
+    KB_OPTIMIZE_ON: int = int(os.getenv("KB_OPTIMIZE_ON", "1000"))
+
     model_config = {
         "case_sensitive": True,
         "env_file": ".env",
