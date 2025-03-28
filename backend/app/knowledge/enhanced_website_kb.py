@@ -46,7 +46,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     timeout: int = 30
     max_retries: int = 3
     max_workers: int = 10  # Number of parallel workers for crawling
-    batch_size: int = 20  # Increased batch size for vector DB operations (was 10)
+    batch_size: int = 10  # Increased batch size for vector DB operations (was 10)
     optimize_on: Optional[int] = 1000  # Trigger vector DB optimization after this many documents
 
     @model_validator(mode="after")
