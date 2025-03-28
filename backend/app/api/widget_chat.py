@@ -38,6 +38,7 @@ from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
 from app.repositories.rating import RatingRepository
 from app.repositories.jira import JiraRepository
+from app.models.ai_config import AIModelType
 
 
 # Try to import enterprise modules
@@ -83,7 +84,7 @@ async def widget_connect(sid, environ, auth):
         
         message_limit_reached = False
         # Check message limits if enterprise module is available
-        if HAS_ENTERPRISE:
+        if HAS_ENTERPRISE and ai_config.model_type == AIModelType.CHATTERMATE:
             if not await check_message_limit(db, org_id, sid, sio):
                 message_limit_reached = True
 
