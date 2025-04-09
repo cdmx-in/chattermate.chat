@@ -71,3 +71,6 @@ groq
 sentence-transformers
 
 fastembed
+
+# Shopify API
+shopify-api-python

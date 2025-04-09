@@ -65,6 +65,8 @@ class Organization(Base):
     groups = relationship("UserGroup", back_populates="organization")
  
     jira_tokens = relationship("JiraToken", back_populates="organization", cascade="all, delete-orphan")
+    shops = relationship("Shop", back_populates="organization", cascade="all, delete-orphan")
+    
     class Config:
         orm_mode = True
 

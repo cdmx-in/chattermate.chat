@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     VITE_WIDGET_URL: str = os.getenv("VITE_WIDGET_URL", "http://localhost:5173")
+    APP_BASE_URL: str = os.getenv("APP_BASE_URL", "http://localhost:8000")
 
     ENCRYPTION_KEY: str = os.getenv("ENCRYPTION_KEY", "RFQ4SzhyRTVYdGtsLUxsc25SaDB0QlZpbTdQRmlVRlpsZUlCaFRlU2Vxbz0=")
 
@@ -77,6 +78,11 @@ class Settings(BaseSettings):
     PAYPAL_CLIENT_SECRET: str = os.getenv("PAYPAL_CLIENT_SECRET", "test")
     PAYPAL_SANDBOX_MODE: bool = os.getenv("PAYPAL_SANDBOX_MODE", "true").lower() == "true"
     PAYPAL_WEBHOOK_ID: str = os.getenv("PAYPAL_WEBHOOK_ID", "test")
+    
+    # Shopify
+    SHOPIFY_API_KEY: str = os.getenv("SHOPIFY_API_KEY", "")
+    SHOPIFY_API_SECRET: str = os.getenv("SHOPIFY_API_SECRET", "")
+    SHOPIFY_API_VERSION: str = os.getenv("SHOPIFY_API_VERSION", "2023-10")
     
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     TRIAL_DAYS: int = 7  # 7-day trial period
@@ -103,8 +109,5 @@ class Settings(BaseSettings):
         "env_file": ".env",
         "extra": "allow",  # This allows extra fields from .env
     }
-
-
-
 
 settings = Settings()
