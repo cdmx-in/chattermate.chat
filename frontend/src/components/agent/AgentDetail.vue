@@ -110,7 +110,16 @@ const {
   saveJiraConfig,
   fetchAgentJiraConfig,
   handleProjectChange,
-  handleIssueTypeChange
+  handleIssueTypeChange,
+  // Shopify integration
+  shopifyConnected,
+  shopifyLoading,
+  shopifyIntegrationEnabled,
+  checkShopifyStatus,
+  fetchAgentShopifyConfig,
+  toggleShopifyIntegration,
+  saveShopifyConfig,
+  shopifyShopDomain
 } = useAgentDetail(agentData, emit)
 
 const { cleanup } = useAgentChat(agentData.value.id)
@@ -247,6 +256,10 @@ onMounted(async () => {
     // First check Jira status, then fetch agent config
     await checkJiraStatus()
     await fetchAgentJiraConfig()
+    
+    // Check Shopify status and fetch config
+    await checkShopifyStatus()
+    await fetchAgentShopifyConfig()
 })
 
 </script>
@@ -353,10 +366,14 @@ onMounted(async () => {
                         :selected-issue-type="selectedIssueType"
                         :loading-projects="loadingProjects"
                         :loading-issue-types="loadingIssueTypes"
+                        :shopify-integration-enabled="shopifyIntegrationEnabled"
+                        :shopify-shop-domain="shopifyShopDomain"
                         @toggle-create-ticket="toggleCreateTicket"
                         @handle-project-change="handleProjectChange"
                         @handle-issue-type-change="handleIssueTypeChange"
                         @save-jira-config="(config) => saveJiraConfig(config.projectKey, config.issueTypeId)"
+                        @toggle-shopify-integration="toggleShopifyIntegration"
+                        @save-shopify-config="saveShopifyConfig"
                     />
                 </div>
 

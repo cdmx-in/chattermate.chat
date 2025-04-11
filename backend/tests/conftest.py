@@ -35,6 +35,13 @@ from app.repositories.widget import create_widget
 from app.models.schemas.widget import WidgetCreate
 from app.core.security import encrypt_api_key, get_password_hash, create_access_token, create_refresh_token, create_conversation_token
 from unittest.mock import MagicMock
+from fastapi.testclient import TestClient
+from app.main import app
+from app.models.shopify.shopify_shop import ShopifyShop
+from app.models.shopify.agent_shopify_config import AgentShopifyConfig
+import jwt
+from datetime import datetime, timedelta
+from app.core.config import settings
 
 # Test database URL
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -199,4 +206,38 @@ def mock_socketio():
     mock_sio.emit = MagicMock()
     mock_sio.save_session = MagicMock()
     mock_sio.get_session = MagicMock()
-    return mock_sio 
+    return mock_sio
+
+@pytest.fixture
+def test_shopify_shop(db, test_organization):
+    """Create a test Shopify shop."""
+    shop = ShopifyShop(
+        id=str(uuid.uuid4()),
+        shop_domain="test-store.myshopify.com",
+        access_token="test_access_token",
+        scope="read_products,write_products",
+        is_installed=True,
+        organization_id=test_organization.id
+    )
+    db.add(shop)
+    db.commit()
+    db.refresh(shop)
+    yield shop
+    db.delete(shop)
+    db.commit()
+
+@pytest.fixture
+def test_agent_shopify_config(db, test_agent, test_shopify_shop):
+    """Create a test agent Shopify config."""
+    config = AgentShopifyConfig(
+        id=str(uuid.uuid4()),
+        agent_id=test_agent.id,
+        shop_id=test_shopify_shop.id,
+        enabled=True
+    )
+    db.add(config)
+    db.commit()
+    db.refresh(config)
+    yield config
+    db.delete(config)
+    db.commit() 

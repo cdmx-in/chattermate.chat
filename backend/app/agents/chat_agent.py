@@ -35,7 +35,9 @@ from app.models.user import User, user_groups
 from datetime import datetime
 from app.repositories.jira import JiraRepository
 from app.tools.jira_toolkit import JiraTools
+from app.tools.shopify_toolkit import ShopifyTools
 from app.utils.response_parser import parse_response_content
+from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
 
 logger = get_logger(__name__)
 
@@ -60,6 +62,7 @@ class ChatAgent:
         self.model_name = model_name
         self.model_type = model_type
         self.jira_instructions_added = False
+        self.shopify_instructions_added = False
         self.org_id = org_id
         self.agent_id = agent_id
         self.customer_id = customer_id
@@ -79,6 +82,22 @@ class ChatAgent:
                 self.tools.append(self.jira_tools)
             except Exception as e:
                 logger.error(f"Failed to initialize Jira tools: {e}")
+        
+        # Add Shopify tools if agent has Shopify enabled
+        if self.agent_id and self.org_id and self.session_id and not self.agent_data.transfer_to_human:
+            try:
+                # Check if Shopify is enabled for this agent
+                shopify_config_repo = AgentShopifyConfigRepository(db)
+                shopify_config = shopify_config_repo.get_agent_shopify_config(self.agent_id)
+                if shopify_config and shopify_config.enabled:
+                    self.shopify_tools = ShopifyTools(
+                        agent_id=self.agent_id,
+                        org_id=self.org_id,
+                        session_id=self.session_id
+                    )
+                    self.tools.append(self.shopify_tools)
+            except Exception as e:
+                logger.error(f"Failed to initialize Shopify tools: {e}")
 
         if self.agent_data:
             # Define end chat instructions to avoid long lines
@@ -156,6 +175,35 @@ class ChatAgent:
                 """
                 system_message += "\n\n" + jira_instructions
                 self.jira_instructions_added = True
+            
+            # Add Shopify instructions if Shopify is enabled
+            if shopify_config and shopify_config.enabled and not self.agent_data.transfer_to_human:
+                shopify_instructions = """
+                You have access to Shopify tools that allow you to help customers with products and orders in the connected Shopify store.
+                
+                For customer product inquiries, you can:
+                1. Search for products using keywords
+                2. Get detailed information about specific products
+                3. Recommend similar products based on customer interests
+                4. List all available products
+                
+                For customer order inquiries, you can:
+                1. Search for a customer's orders (using email, order number, or general queries)
+                2. Check the status of specific orders
+                3. Provide shipping/tracking information for orders
+                
+                Remember to:
+                - Be helpful and informative about product details (price, description, etc.)
+                - Ask clarifying questions when customers provide vague inquiries
+                - Suggest similar or complementary products when appropriate
+                - Be empathetic when handling order status inquiries, especially for delayed orders
+                - Collect necessary information before searching (order number, email, etc.)
+                - Explain order status in customer-friendly terms
+                
+                Only create or modify products if you have explicit permission to manage store inventory.
+                """
+                system_message += "\n\n" + shopify_instructions
+                self.shopify_instructions_added = True
         else:
             system_message = [
                 "You are a helpful customer service agent.",
@@ -376,6 +424,14 @@ class ChatAgent:
                     "ticket_id": response_content.ticket_id,
                     "ticket_status": response_content.ticket_status,
                     "ticket_priority": response_content.ticket_priority
+                })
+            
+            # Add product attributes if present (for Shopify integration)
+            if hasattr(response_content, 'product_id') and response_content.product_id:
+                attributes.update({
+                    "product_id": response_content.product_id,
+                    "product_title": response_content.product_title if hasattr(response_content, 'product_title') else None,
+                    "integration_type": "SHOPIFY"
                 })
             
             chat_repo.create_message({

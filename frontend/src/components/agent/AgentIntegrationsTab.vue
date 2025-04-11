@@ -17,7 +17,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
+import { checkShopifyConnection } from '@/services/shopify'
 
 interface JiraProject {
   id: string;
@@ -31,7 +32,14 @@ interface JiraIssueType {
   description?: string;
 }
 
+interface ShopifyProduct {
+  id: string;
+  title: string;
+  handle: string;
+}
+
 const props = defineProps({
+  // Jira props
   jiraConnected: {
     type: Boolean,
     required: true
@@ -67,14 +75,26 @@ const props = defineProps({
   loadingIssueTypes: {
     type: Boolean,
     required: true
+  },
+  // Shopify props
+  shopifyIntegrationEnabled: {
+    type: Boolean,
+    default: false
   }
 })
+
+// Local state for Shopify connection
+const shopifyConnected = ref(false)
+const shopifyShopDomain = ref('')
+const shopifyLoading = ref(true)
 
 const emit = defineEmits([
   'toggle-create-ticket',
   'handle-project-change',
   'handle-issue-type-change',
-  'save-jira-config'
+  'save-jira-config',
+  'toggle-shopify-integration',
+  'save-shopify-config'
 ])
 
 // Create local copies of the props
@@ -102,8 +122,24 @@ const ticketTooltipContent = computed(() => {
   return `Create tickets when:\n${ticketReasons.map(reason => `• ${reason}`).join('\n')}`
 })
 
+const shopifyReasons = [
+  "Display product information",
+  "Answer product-specific questions",
+  "Handle product recommendations",
+  "Check stock availability",
+  "Process product inquiries"
+]
+
+const shopifyTooltipContent = computed(() => {
+  return `Enable Shopify features for:\n${shopifyReasons.map(reason => `• ${reason}`).join('\n')}`
+})
+
 const toggleCreateTicket = () => {
   emit('toggle-create-ticket')
+}
+
+const toggleShopifyIntegration = () => {
+  emit('toggle-shopify-integration')
 }
 
 const handleProjectChange = () => {
@@ -120,12 +156,40 @@ const saveJiraConfig = () => {
     issueTypeId: localSelectedIssueType.value
   })
 }
+
+const saveShopifyConfig = () => {
+  emit('save-shopify-config')
+}
+
+// Fetch Shopify connection status
+const fetchShopifyStatus = async () => {
+  try {
+    shopifyLoading.value = true
+    const data = await checkShopifyConnection()
+    shopifyConnected.value = data.connected
+    shopifyShopDomain.value = data.shop_domain || ''
+    console.log('Shopify connection status:', data)
+  } catch (error) {
+    console.error('Error checking Shopify connection:', error)
+    shopifyConnected.value = false
+  } finally {
+    shopifyLoading.value = false
+  }
+}
+
+// Fetch connection status on component mount
+onMounted(async () => {
+  await fetchShopifyStatus()
+})
 </script>
 
 <template>
   <section class="detail-section">
-    <h4>Jira Integration</h4>
+    <h4>Integrations</h4>
+    
+    <!-- Jira Integration -->
     <div class="integration-section">
+      <h5 class="integration-title">Jira Integration</h5>
       <!-- Jira Ticket Creation Toggle -->
       <div class="ticket-toggle">
         <div class="toggle-header">
@@ -210,6 +274,40 @@ const saveJiraConfig = () => {
         </div>
       </div>
     </div>
+    
+    <!-- Shopify Integration -->
+    <div class="integration-section">
+      <h5 class="integration-title">Shopify Integration</h5>
+      <div class="ticket-toggle">
+        <div class="toggle-header">
+          <h4>Enable Shopify Features</h4>
+          <label class="switch" v-tooltip="shopifyTooltipContent">
+            <input type="checkbox" 
+              :checked="shopifyIntegrationEnabled"
+              @change="toggleShopifyIntegration"
+            >
+            <span class="slider"></span>
+          </label>
+        </div>
+        <p class="helper-text">Enable Shopify product information and features for this agent</p>
+        
+        <!-- Shopify Connection Status -->
+        <div v-if="shopifyLoading" class="jira-status loading">
+          Checking Shopify connection...
+        </div>
+        <div v-else-if="!shopifyConnected" class="jira-status not-connected">
+          <span class="status-icon">⚠️</span>
+          Shopify is not connected
+          <router-link to="/settings/integrations" class="connect-link">
+            Connect Shopify
+          </router-link>
+        </div>
+        <div v-else class="jira-status connected">
+          <span class="status-icon">✓</span>
+          Connected to {{ shopifyShopDomain }}
+        </div>
+      </div>
+    </div>
   </section>
 </template>
 
@@ -228,6 +326,14 @@ const saveJiraConfig = () => {
   border-radius: var(--radius-md);
   padding: var(--space-md);
   background-color: var(--background-soft);
+  margin-bottom: var(--space-lg);
+}
+
+.integration-title {
+  margin-bottom: var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  font-weight: 600;
 }
 
 .ticket-toggle {
@@ -347,6 +453,18 @@ input:checked + .slider:before {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+}
+
+.shopify-info {
+  background-color: var(--background-soft);
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--primary-color);
+}
+
+.shopify-info p {
+  margin-bottom: var(--space-xs);
+  font-size: var(--text-sm);
 }
 
 .form-group {

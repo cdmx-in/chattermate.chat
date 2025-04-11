@@ -4,4 +4,10 @@ from app.models.schemas.shopify.shopify_shop import (
     ShopifyShopUpdate,
     ShopifyShopInDB,
     ShopifyShop,
+)
+from .agent_shopify_config import (
+    AgentShopifyConfigBase,
+    AgentShopifyConfigCreate,
+    AgentShopifyConfigUpdate,
+    AgentShopifyConfig
 ) 

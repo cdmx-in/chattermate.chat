@@ -21,72 +21,99 @@ from app.models.shopify import ShopifyShop
 from app.models.schemas.shopify import ShopifyShopCreate, ShopifyShopUpdate
 from typing import List, Optional
 import uuid
+from app.core.logger import get_logger
 
-def get_shop(db: Session, shop_id: str) -> Optional[ShopifyShop]:
-    """
-    Get a shop by ID
-    """
-    return db.query(ShopifyShop).filter(ShopifyShop.id == shop_id).first()
+logger = get_logger(__name__)
 
-def get_shop_by_domain(db: Session, shop_domain: str) -> Optional[ShopifyShop]:
-    """
-    Get a shop by domain
-    """
-    return db.query(ShopifyShop).filter(ShopifyShop.shop_domain == shop_domain).first()
-
-def get_shops(db: Session, skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
-    """
-    Get all shops with pagination
-    """
-    return db.query(ShopifyShop).offset(skip).limit(limit).all()
-
-def get_shops_by_organization(db: Session, organization_id: str) -> List[ShopifyShop]:
-    """
-    Get all shops for an organization
-    """
-    return db.query(ShopifyShop).filter(ShopifyShop.organization_id == organization_id).all()
-
-def create_shop(db: Session, shop: ShopifyShopCreate) -> ShopifyShop:
-    """
-    Create a new shop
-    """
-    db_shop = ShopifyShop(
-        id=str(uuid.uuid4()),
-        shop_domain=shop.shop_domain,
-        access_token=shop.access_token,
-        scope=shop.scope,
-        is_installed=shop.is_installed,
-        organization_id=shop.organization_id
-    )
-    db.add(db_shop)
-    db.commit()
-    db.refresh(db_shop)
-    return db_shop
-
-def update_shop(db: Session, shop_id: str, shop_update: ShopifyShopUpdate) -> Optional[ShopifyShop]:
-    """
-    Update a shop
-    """
-    db_shop = get_shop(db, shop_id)
-    if not db_shop:
-        return None
+class ShopifyShopRepository:
+    def __init__(self, db: Session):
+        self.db = db
     
-    update_data = shop_update.model_dump(exclude_unset=True)
-    for key, value in update_data.items():
-        setattr(db_shop, key, value)
+    def get_shop(self, shop_id: str) -> Optional[ShopifyShop]:
+        """
+        Get a shop by ID
+        """
+        shop = self.db.query(ShopifyShop).filter(ShopifyShop.id == shop_id).first()
+        if shop and shop.organization_id:
+            shop.organization_id = str(shop.organization_id)
+        return shop
     
-    db.commit()
-    db.refresh(db_shop)
-    return db_shop
-
-def delete_shop(db: Session, shop_id: str) -> bool:
-    """
-    Delete a shop
-    """
-    db_shop = get_shop(db, shop_id)
-    if not db_shop:
-        return False
+    def get_shop_by_domain(self, shop_domain: str) -> Optional[ShopifyShop]:
+        """
+        Get a shop by domain
+        """
+        shop = self.db.query(ShopifyShop).filter(ShopifyShop.shop_domain == shop_domain).first()
+        if shop and shop.organization_id:
+            shop.organization_id = str(shop.organization_id)
+        return shop
     
-    db.delete(db_shop)
-    db.commit()
-    return True 
+    def get_shops(self, skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
+        """
+        Get all shops with pagination
+        """
+        shops = self.db.query(ShopifyShop).offset(skip).limit(limit).all()
+        
+        # Ensure organization_id is properly serialized as a string
+        for shop in shops:
+            if shop.organization_id:
+                shop.organization_id = str(shop.organization_id)
+        
+        return shops
+    
+    def get_shops_by_organization(self, organization_id: str, skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
+        """
+        Get all shops for an organization with pagination
+        """
+        shops = self.db.query(ShopifyShop).filter(ShopifyShop.organization_id == organization_id).offset(skip).limit(limit).all()
+        
+        # Ensure organization_id is properly serialized as a string
+        for shop in shops:
+            if shop.organization_id:
+                shop.organization_id = str(shop.organization_id)
+        
+        return shops
+    
+    def create_shop(self, shop: ShopifyShopCreate) -> ShopifyShop:
+        """
+        Create a new shop
+        """
+        db_shop = ShopifyShop(
+            id=str(uuid.uuid4()),
+            shop_domain=shop.shop_domain,
+            access_token=shop.access_token,
+            scope=shop.scope,
+            is_installed=shop.is_installed,
+            organization_id=shop.organization_id
+        )
+        self.db.add(db_shop)
+        self.db.commit()
+        self.db.refresh(db_shop)
+        return db_shop
+    
+    def update_shop(self, shop_id: str, shop_update: ShopifyShopUpdate) -> Optional[ShopifyShop]:
+        """
+        Update a shop
+        """
+        db_shop = self.get_shop(shop_id)
+        if not db_shop:
+            return None
+        
+        update_data = shop_update.model_dump(exclude_unset=True)
+        for key, value in update_data.items():
+            setattr(db_shop, key, value)
+        
+        self.db.commit()
+        self.db.refresh(db_shop)
+        return db_shop
+    
+    def delete_shop(self, shop_id: str) -> bool:
+        """
+        Delete a shop
+        """
+        db_shop = self.get_shop(shop_id)
+        if not db_shop:
+            return False
+        
+        self.db.delete(db_shop)
+        self.db.commit()
+        return True 
