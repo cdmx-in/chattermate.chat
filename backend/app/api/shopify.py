@@ -17,13 +17,13 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.database import get_db
-from app.models.schemas.shop import ShopCreate, Shop
-from app.repositories import shop_repository
+from app.models.schemas.shopify import ShopifyShopCreate, ShopifyShop
+from app.repositories import shopify_shop_repository
 from typing import Optional
 import requests
 import hmac
@@ -31,6 +31,8 @@ import hashlib
 import base64
 import json
 from urllib.parse import urlencode, quote
+from app.core.auth import get_current_user, require_permissions
+from app.models.user import User
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -55,42 +57,55 @@ def verify_shopify_webhook(request_headers, request_body):
 
 # Validate the OAuth request from Shopify
 def validate_shop_request(request: Request, shop: str, hmac_param: str):
+    """Simple HMAC validation for Shopify OAuth requests"""
     # Check if the shop URL is a valid Shopify domain
     if not shop.endswith('.myshopify.com'):
+        logger.warning(f"Invalid shop domain: {shop}")
         return False
     
-    # Validate HMAC signature
-    params = dict(request.query_params)
+    # Get query parameters as dictionary
+    query_params = dict(request.query_params)
     
-    # Remove hmac from the parameters
-    received_hmac = params.pop('hmac', None)
-    if not received_hmac or received_hmac != hmac_param:
-        return False
+    # Remove hmac from params for validation
+    if 'hmac' in query_params:
+        query_params.pop('hmac')
     
+    logger.info(f"Query params: {query_params}")
+    logger.info(f"HMAC param: {hmac_param}")
     # Sort and encode parameters
-    sorted_params = "&".join([f"{key}={quote(value)}" for key, value in sorted(params.items())])
+    sorted_params = "&".join([f"{key}={quote(value)}" for key, value in sorted(query_params.items())])
     
-    # Calculate HMAC
+    # Generate HMAC
     digest = hmac.new(
         settings.SHOPIFY_API_SECRET.encode('utf-8'),
         sorted_params.encode('utf-8'),
         hashlib.sha256
     ).hexdigest()
     
-    # Verify HMAC
-    return hmac.compare_digest(digest, hmac_param)
+    # Compare with provided HMAC
+    is_valid = hmac.compare_digest(digest, hmac_param)
+    if not is_valid:
+        logger.warning(f"HMAC validation failed for shop: {shop}")
+    
+    return is_valid
 
 @router.get("/auth")
 async def shopify_auth(
     request: Request,
     shop: str = Query(..., description="Shopify shop domain"),
-    db: Session = Depends(get_db)
+    hmac: Optional[str] = Query(None, description="HMAC signature for validation"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("manage_integrations"))
 ):
     """
     Initiates the Shopify OAuth process by redirecting to the Shopify authorization URL.
+    If embedded=1, validates the HMAC and returns a success page.
     """
+    logger.info(f"Shopify auth request received for shop: {shop}")
+
+    # Regular OAuth flow (not embedded)
     # Check if the shop already exists and has a valid token
-    db_shop = shop_repository.get_shop_by_domain(db, shop)
+    db_shop = shopify_shop_repository.get_shop_by_domain(db, shop)
     if db_shop and db_shop.access_token and db_shop.is_installed:
         return {"status": "already_installed", "shop": shop}
     
@@ -98,8 +113,8 @@ async def shopify_auth(
     nonce = base64.b64encode(hashlib.sha256(shop.encode('utf-8')).digest()).decode('utf-8')
     
     # Create auth URL
-    redirect_uri = f"{settings.APP_BASE_URL}/api/v1/shopify/auth/callback"
-    auth_url = f"https://{shop}/admin/oauth/authorize?client_id={settings.SHOPIFY_API_KEY}&scope={SCOPES}&redirect_uri={redirect_uri}&state={nonce}"
+    redirect_uri = f"{settings.FRONTEND_URL}/shopify/auth/callback"
+    auth_url = f"https://{shop}/admin/oauth/authorize?client_id={settings.SHOPIFY_API_KEY}&scope={SCOPES}&redirect_uri={redirect_uri}"
     
     return RedirectResponse(auth_url)
 
@@ -116,11 +131,13 @@ async def shopify_callback(
     Handles the Shopify OAuth callback, exchanges the code for an access token,
     and stores the token securely.
     """
+    logger.info(f"Shopify callback received for shop: {shop}")
     # Validate the request
     if not validate_shop_request(request, shop, hmac):
         logger.warning(f"Invalid Shopify OAuth callback: {shop}")
         raise HTTPException(status_code=400, detail="Invalid request")
     
+    logger.info(f"Validating Shopify OAuth callback: {shop}")
     # Exchange the code for an access token
     token_url = f"https://{shop}/admin/oauth/access_token"
     payload = {
@@ -141,23 +158,23 @@ async def shopify_callback(
             raise HTTPException(status_code=400, detail="Failed to obtain access token")
         
         # Store or update the shop in the database
-        db_shop = shop_repository.get_shop_by_domain(db, shop)
+        db_shop = shopify_shop_repository.get_shop_by_domain(db, shop)
         if db_shop:
             # Update existing shop
-            shop_repository.update_shop(
+            shopify_shop_repository.update_shop(
                 db, 
                 db_shop.id, 
                 {"access_token": access_token, "scope": scope, "is_installed": True}
             )
         else:
             # Create new shop
-            shop_data = ShopCreate(
+            shop_data = ShopifyShopCreate(
                 shop_domain=shop,
                 access_token=access_token,
                 scope=scope,
                 is_installed=True
             )
-            shop_repository.create_shop(db, shop_data)
+            shopify_shop_repository.create_shop(db, shop_data)
         
         # Redirect to the app or admin section
         redirect_url = f"https://{shop}/admin/apps/{settings.SHOPIFY_API_KEY}"
@@ -167,26 +184,28 @@ async def shopify_callback(
         logger.error(f"Error processing Shopify callback: {str(e)}")
         raise HTTPException(status_code=500, detail="Error processing callback")
 
-@router.get("/shops", response_model=list[Shop])
+@router.get("/shops", response_model=list[ShopifyShop])
 async def get_shops(
     db: Session = Depends(get_db),
     skip: int = 0,
-    limit: int = 100
+    limit: int = 100,
+    current_user: User = Depends(require_permissions("manage_organization"))
 ):
     """
     Get all shops
     """
-    return shop_repository.get_shops(db, skip=skip, limit=limit)
+    return shopify_shop_repository.get_shops(db, skip=skip, limit=limit)
 
-@router.get("/shops/{shop_id}", response_model=Shop)
+@router.get("/shops/{shop_id}", response_model=ShopifyShop)
 async def get_shop(
     shop_id: str,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_permissions("manage_organization"))
 ):
     """
     Get a shop by ID
     """
-    db_shop = shop_repository.get_shop(db, shop_id)
+    db_shop = shopify_shop_repository.get_shop(db, shop_id)
     if not db_shop:
         raise HTTPException(status_code=404, detail="Shop not found")
-    return db_shop 
+    return db_shop

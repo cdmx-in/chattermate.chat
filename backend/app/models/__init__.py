@@ -30,7 +30,7 @@ from .chat_history import ChatHistory
 from .session_to_agent import SessionToAgent, SessionStatus
 from .rating import Rating
 from app.models.jira import JiraToken
-from .shop import Shop
+from app.models.shopify import ShopifyShop
 
 # This ensures all models are imported in the correct order
 __all__ = [
@@ -49,5 +49,5 @@ __all__ = [
     "SessionStatus",
     "Rating",
     "JiraToken",
-    "Shop"
+    "ShopifyShop"
 ]

@@ -1,0 +1,1 @@
+from app.models.shopify.shopify_shop import ShopifyShop 

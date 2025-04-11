@@ -1,5 +1,5 @@
 """
-ChatterMate - Shop Schemas
+ChatterMate - Shopify Shop Schemas
 Copyright (C) 2024 ChatterMate
 
 This program is free software: you can redistribute it and/or modify
@@ -20,26 +20,26 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 
-class ShopBase(BaseModel):
-    """Base schema for Shop"""
+class ShopifyShopBase(BaseModel):
+    """Base schema for ShopifyShop"""
     shop_domain: str = Field(..., description="Shopify shop domain")
     organization_id: Optional[str] = Field(None, description="ID of the organization this shop belongs to")
 
-class ShopCreate(ShopBase):
-    """Schema for creating a shop"""
+class ShopifyShopCreate(ShopifyShopBase):
+    """Schema for creating a shopify shop"""
     access_token: Optional[str] = Field(None, description="Shopify access token")
     scope: Optional[str] = Field(None, description="Shopify OAuth scopes")
     is_installed: bool = Field(False, description="Whether the app is installed on this shop")
 
-class ShopUpdate(BaseModel):
-    """Schema for updating a shop"""
+class ShopifyShopUpdate(BaseModel):
+    """Schema for updating a shopify shop"""
     access_token: Optional[str] = None
     scope: Optional[str] = None
     is_installed: Optional[bool] = None
     organization_id: Optional[str] = None
 
-class ShopInDB(ShopBase):
-    """Schema for shop from database"""
+class ShopifyShopInDB(ShopifyShopBase):
+    """Schema for shopify shop from database"""
     id: str
     access_token: Optional[str] = None
     scope: Optional[str] = None
@@ -50,6 +50,6 @@ class ShopInDB(ShopBase):
     class Config:
         from_attributes = True
 
-class Shop(ShopInDB):
-    """Schema for shop response"""
+class ShopifyShop(ShopifyShopInDB):
+    """Schema for shopify shop response"""
     pass 

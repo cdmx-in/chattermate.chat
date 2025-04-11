@@ -1,5 +1,5 @@
 """
-ChatterMate - Shop Model
+ChatterMate - Shopify Shop Model
 Copyright (C) 2024 ChatterMate
 
 This program is free software: you can redistribute it and/or modify
@@ -19,13 +19,14 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from sqlalchemy import Column, String, Boolean, DateTime, Integer, ForeignKey
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import UUID
 import uuid
 from app.database import Base
 
 
-class Shop(Base):
+class ShopifyShop(Base):
     """Shopify shop model for storing shop information and credentials"""
-    __tablename__ = "shops"
+    __tablename__ = "shopify_shops"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
     shop_domain = Column(String, nullable=False, unique=True, index=True)
@@ -36,5 +37,5 @@ class Shop(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     
     # Optional - link to organization if needed
-    organization_id = Column(String, ForeignKey("organizations.id"), nullable=True)
-    organization = relationship("Organization", back_populates="shops") 
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True)
+    organization = relationship("Organization", back_populates="shopify_shops") 

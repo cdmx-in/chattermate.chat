@@ -1,5 +1,5 @@
 """
-ChatterMate - Shop Repository
+ChatterMate - Shopify Shop Repository
 Copyright (C) 2024 ChatterMate
 
 This program is free software: you can redistribute it and/or modify
@@ -17,40 +17,40 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from sqlalchemy.orm import Session
-from app.models import Shop
-from app.models.schemas.shop import ShopCreate, ShopUpdate
+from app.models.shopify import ShopifyShop
+from app.models.schemas.shopify import ShopifyShopCreate, ShopifyShopUpdate
 from typing import List, Optional
 import uuid
 
-def get_shop(db: Session, shop_id: str) -> Optional[Shop]:
+def get_shop(db: Session, shop_id: str) -> Optional[ShopifyShop]:
     """
     Get a shop by ID
     """
-    return db.query(Shop).filter(Shop.id == shop_id).first()
+    return db.query(ShopifyShop).filter(ShopifyShop.id == shop_id).first()
 
-def get_shop_by_domain(db: Session, shop_domain: str) -> Optional[Shop]:
+def get_shop_by_domain(db: Session, shop_domain: str) -> Optional[ShopifyShop]:
     """
     Get a shop by domain
     """
-    return db.query(Shop).filter(Shop.shop_domain == shop_domain).first()
+    return db.query(ShopifyShop).filter(ShopifyShop.shop_domain == shop_domain).first()
 
-def get_shops(db: Session, skip: int = 0, limit: int = 100) -> List[Shop]:
+def get_shops(db: Session, skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
     """
     Get all shops with pagination
     """
-    return db.query(Shop).offset(skip).limit(limit).all()
+    return db.query(ShopifyShop).offset(skip).limit(limit).all()
 
-def get_shops_by_organization(db: Session, organization_id: str) -> List[Shop]:
+def get_shops_by_organization(db: Session, organization_id: str) -> List[ShopifyShop]:
     """
     Get all shops for an organization
     """
-    return db.query(Shop).filter(Shop.organization_id == organization_id).all()
+    return db.query(ShopifyShop).filter(ShopifyShop.organization_id == organization_id).all()
 
-def create_shop(db: Session, shop: ShopCreate) -> Shop:
+def create_shop(db: Session, shop: ShopifyShopCreate) -> ShopifyShop:
     """
     Create a new shop
     """
-    db_shop = Shop(
+    db_shop = ShopifyShop(
         id=str(uuid.uuid4()),
         shop_domain=shop.shop_domain,
         access_token=shop.access_token,
@@ -63,7 +63,7 @@ def create_shop(db: Session, shop: ShopCreate) -> Shop:
     db.refresh(db_shop)
     return db_shop
 
-def update_shop(db: Session, shop_id: str, shop_update: ShopUpdate) -> Optional[Shop]:
+def update_shop(db: Session, shop_id: str, shop_update: ShopifyShopUpdate) -> Optional[ShopifyShop]:
     """
     Update a shop
     """
