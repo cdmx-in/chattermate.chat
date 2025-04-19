@@ -253,7 +253,7 @@ onMounted(async () => {
                         <div class="product-text-area">
                           <div class="product-title-compact">{{ product.title }}</div>
                           <div class="product-variant-compact" v-if="product.variant_title">{{ product.variant_title }}</div>
-                          <div class="product-price-compact">{{ product.price_formatted }}</div>
+                          <div class="product-price-compact">{{ product.price }}</div>
                         </div>
                         <div class="product-actions-compact">
                           <button 
@@ -825,6 +825,7 @@ onMounted(async () => {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   min-height: 2.8em;
+  color: black;
 }
 
 .product-variant-compact {
@@ -835,7 +836,7 @@ onMounted(async () => {
 .product-price-compact {
   font-size: var(--text-sm);
   font-weight: 600;
-  color: var(--text-primary);
+  color: black;
 }
 
 .view-details-button-compact {

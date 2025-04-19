@@ -38,8 +38,18 @@ from app.tools.jira_toolkit import JiraTools
 from app.tools.shopify_toolkit import ShopifyTools
 from app.utils.response_parser import parse_response_content
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
+import re
 
 logger = get_logger(__name__)
+
+# Add a function to remove URLs from message content
+def remove_urls_from_message(message: str) -> str:
+    """Remove URLs from message text"""
+    if not message:
+        return message
+    # Replace URLs with [link removed] to maintain context
+    url_pattern = r'https?://[^\s\)\]"]+'
+    return re.sub(url_pattern, '[link removed]', message)
 
 class ChatAgent:
     def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None):
@@ -183,11 +193,30 @@ class ChatAgent:
                 You have access to Shopify tools (`search_products`, `get_product`, `recommend_products`, etc.). 
                 When using `search_products` or `recommend_products`, use a `limit` of 5 unless the user specifies otherwise.
                 
-                **Important Display Rules:**
-                - DO NOT include product images or image URLs in your message text - these are already included in the `shopify_output` field
-                - Keep your product descriptions in the message concise and focused on key details
-                - Let the UI handle the visual display of products through the `shopify_output` data
+                **Search Query Construction (`search_products`):**
+                - When the user mentions multiple characteristics (e.g., "kids snowboard"), construct the `searchTerm` to combine them using `OR` and wildcards.
+                - Example: If the user asks "recommend a snowboard for my son", a good `searchTerm` would be `(title:*kids snowboard*) OR (title:*snowboard*)`. Always use OR conditions and wrap terms in wildcards (`*term*`) for broader matching.
+                - When the user specifies price constraints (e.g., "snowboard below 500 rs"), add a price range condition:
+                  - Example: For "snowboard below 500", use `(title:*snowboard*) AND price:<=500`
+                  - Example: For "snowboard between 200 and 500", use `(title:*snowboard*) AND price:>200 AND price:<=500`
+                - Following Shopify's search syntax, you can combine multiple conditions using AND/OR operators and parentheses for grouping.
+
+                **❗❗ CRITICAL DISPLAY RULES - STRICTLY ENFORCED ❗❗:**
+                - 🚫 **ABSOLUTELY NEVER** include product images, image URLs, or hyperlinks in the message field
+                - 🚫 **ABSOLUTELY NEVER** include product details like prices, vendor names, dimensions, or specifications in the message field
+                - 🚫 **ABSOLUTELY NEVER** use numbered lists or bullet points to display products with details in the message field
+                - 🚫 **ABSOLUTELY NEVER** include HTML tags, markdown image syntax, or any form of image embedding in the message field
                 
+                - ✅ The message field must ONLY contain simple conversational text such as:
+                  - "Here are some snowboard options that might work for your son."
+                  - "I found several products matching your search. What do you think?"
+                  - "Would you like more information about any of these options?"
+                
+                - ✅ ALL product information, without exception, must ONLY be included in the `shopify_output` field structure
+                - ✅ The system has a dedicated display component that will automatically render all products from the `shopify_output` field
+                
+                This is critically important: The UI automatically displays all product details and images from the `shopify_output` field separately from your message. Your message should ONLY contain simple conversational text like you're referring to products that are being shown separately.
+
                 **Pagination:**
                 - These tools support pagination. The output will include `pageInfo` containing `hasNextPage` (boolean) and `endCursor` (string).
                 - If `hasNextPage` is true, it means there are more results available.
@@ -310,6 +339,10 @@ class ChatAgent:
 
             logger.debug(f"Response content: {response_content}")
             
+            # If shopify_output is present, remove URLs from message
+            if response_content.shopify_output:
+                response_content.message = remove_urls_from_message(response_content.message)
+                logger.debug(f"Cleaned message for Shopify output: {response_content.message}")
             
             # Handle end chat and rating request
             if response_content.end_chat:

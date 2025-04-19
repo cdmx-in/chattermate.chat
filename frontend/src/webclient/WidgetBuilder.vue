@@ -374,6 +374,14 @@ const handleViewDetails = (productId) => {
     }
 };
 
+// Add this function in the script section after the other helper functions
+const removeUrls = (text) => {
+    if (!text) return '';
+    // Replace URLs with empty string
+    // This regex looks for http/https URLs and removes them
+    return text.replace(/https?:\/\/[^\s\)]+/g, '[link removed]');
+}
+
 onMounted(async () => {
     const isAuthorized = await checkAuthorization()
     if (!isAuthorized) {
@@ -553,7 +561,7 @@ onUnmounted(() => {
                             <template v-else-if="message.shopify_output || message.message_type === 'product'">
                                 <div class="product-message-container">
                                     <!-- Display the message text -->
-                                    <div v-if="message.message" v-html="marked(message.message, { renderer })" class="product-message-text"></div>
+                                    <div v-if="message.message" v-html="marked(removeUrls(message.message), { renderer })" class="product-message-text"></div>
                                     
                                     <!-- Always use carousel/list display -->
                                     <div v-if="message.shopify_output?.products && message.shopify_output.products.length > 0" class="products-carousel">
