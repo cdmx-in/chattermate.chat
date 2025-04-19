@@ -26,7 +26,7 @@ from app.agents.chat_agent import ChatAgent, ChatResponse
 from app.core.auth_utils import authenticate_socket, authenticate_socket_conversation_token
 from app.database import get_db
 from app.repositories.ai_config import AIConfigRepository
-from app.repositories.widget import get_widget
+from app.repositories.widget import WidgetRepository
 from app.core.security import decrypt_api_key
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.repositories.chat import ChatRepository
@@ -68,7 +68,8 @@ async def widget_connect(sid, environ, auth):
 
         # Get widget and verify it exists
         db = next(get_db())
-        widget = get_widget(db, widget_id)
+        widget_repo = WidgetRepository(db)
+        widget = widget_repo.get_widget(widget_id)
         if not widget:
             raise ValueError("Invalid widget ID")
 
@@ -299,7 +300,8 @@ async def handle_widget_chat(sid, data):
                     "end_chat": response_content.end_chat,
                     "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
                     "end_chat_description": response_content.end_chat_description,
-                    "request_rating": response_content.request_rating
+                    "request_rating": response_content.request_rating,
+                    "shopify_output": response_content.shopify_output
                 }
             })
             response = response_content
@@ -344,15 +346,34 @@ async def handle_widget_chat(sid, data):
             return # don't do anything if the session is closed or the user has already taken over
         
         # Emit response to the specific room
-        await sio.emit('chat_response', {
+        response_payload = {
             'message': response.message,
             'type': 'chat_response',
             'transfer_to_human': response.transfer_to_human,
             'end_chat': response.end_chat,
-            'end_chat_reason': response.end_chat_reason,
+            'end_chat_reason': response.end_chat_reason.value if response.end_chat_reason else None,
             'end_chat_description': response.end_chat_description,
-            'request_rating': response.request_rating
-        }, room=session_id, namespace='/widget')
+            'request_rating': response.request_rating,
+            # Initialize shopify_output to None. It will be populated if data exists.
+            'shopify_output': None 
+        }
+        
+        # Check if the response object has the structured shopify_output field
+        # and assign it directly if it's valid (should be a Pydantic model or dict)
+        if hasattr(response, 'shopify_output') and response.shopify_output:
+            # Assuming response.shopify_output is already the correct 
+            # ShopifyOutputData model instance from ChatResponse
+            # We need to convert it to a dict for JSON serialization
+            try:
+                response_payload['shopify_output'] = response.shopify_output.model_dump(exclude_unset=True)
+            except AttributeError:
+                 # Handle cases where it might be a plain dict already (less likely but safe)
+                 if isinstance(response.shopify_output, dict):
+                     response_payload['shopify_output'] = response.shopify_output
+                 else:
+                     logger.warning(f"Unexpected type for shopify_output: {type(response.shopify_output)}")
+
+        await sio.emit('chat_response', response_payload, room=session_id, namespace='/widget')
 
     except Exception as e:
         logger.error(f"Widget chat error for sid {sid}: {str(e)}")
@@ -496,7 +517,8 @@ async def handle_agent_message(sid, data):
                 "end_chat": data.get('end_chat', False),
                 "request_rating": data.get('request_rating', False),
                 "end_chat_reason": data.get('end_chat_reason', None),
-                "end_chat_description": data.get('end_chat_description', None)
+                "end_chat_description": data.get('end_chat_description', None),
+                "shopify_output": data.get('shopify_output', None)
             }
         }
         
@@ -510,15 +532,31 @@ async def handle_agent_message(sid, data):
             
         
         # Emit to widget clients
-        await sio.emit('chat_response', {
+        response_payload = {
             'message': data['message'],
             'type': 'agent_message',
             'message_type': data.get('message_type', 'agent'),
             'end_chat': data.get('end_chat', False),
             'request_rating': data.get('request_rating', False),
             'end_chat_reason': data.get('end_chat_reason', None),
-            'end_chat_description': data.get('end_chat_description', None)
-        }, room=session_id, namespace='/widget')
+            'end_chat_description': data.get('end_chat_description', None),
+            'shopify_output': data.get('shopify_output', False)
+        }
+        
+        # Add individual product fields if shopify_output is true
+        if response_payload['shopify_output']:
+            response_payload.update({
+                'product_id': data.get('product_id'),
+                'product_title': data.get('product_title'),
+                'product_description': data.get('product_description'),
+                'product_handle': data.get('product_handle'),
+                'product_inventory': data.get('product_inventory'),
+                'product_price': data.get('product_price'),
+                'product_currency': data.get('product_currency'),
+                'product_image': data.get('product_image'),
+            })
+            
+        await sio.emit('chat_response', response_payload, room=session_id, namespace='/widget')
 
 
     except Exception as e:

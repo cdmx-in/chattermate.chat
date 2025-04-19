@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from app.models.chat_history import ChatHistory
 from app.models.customer import Customer
 from uuid import UUID
@@ -29,6 +29,7 @@ from app.core.logger import get_logger
 from app.models.user import User
 from sqlalchemy.orm import joinedload
 from datetime import datetime
+from pydantic import BaseModel
 
 logger = get_logger(__name__)
 
@@ -78,21 +79,33 @@ class ChatRepository:
             logger.error(f"Error getting message count: {str(e)}")
             return 0
 
-    def create_message(self, message_data: dict) -> ChatHistory:
-        """Create a new chat message"""
-        # Convert string IDs to UUID if needed
-        for field in ['organization_id', 'user_id', 'customer_id', 'agent_id', 'session_id']:
-            if field in message_data and isinstance(message_data[field], str):
-                try:
-                    message_data[field] = UUID(message_data[field])
-                except (ValueError, AttributeError):
-                    message_data[field] = None
+    def create_message(self, message_data: Dict[str, Any]) -> ChatHistory:
+        """Create a new chat message."""
+        try:
+            # Convert any Pydantic models in attributes to dict
+            if 'attributes' in message_data:
+                attributes = message_data['attributes']
+                if 'shopify_output' in attributes and attributes['shopify_output'] is not None:
+                    if isinstance(attributes['shopify_output'], BaseModel):
+                        attributes['shopify_output'] = attributes['shopify_output'].dict()
+                    elif isinstance(attributes['shopify_output'], dict):
+                        # If it's already a dict, ensure all nested objects are serialized
+                        if 'products' in attributes['shopify_output']:
+                            products = attributes['shopify_output']['products']
+                            attributes['shopify_output']['products'] = [
+                                p.dict() if isinstance(p, BaseModel) else p 
+                                for p in products
+                            ]
 
-        message = ChatHistory(**message_data)
-        self.db.add(message)
-        self.db.commit()
-        self.db.refresh(message)
-        return message
+            message = ChatHistory(**message_data)
+            self.db.add(message)
+            self.db.commit()
+            self.db.refresh(message)
+            return message
+        except Exception as e:
+            logger.error(f"Error creating message: {str(e)}")
+            self.db.rollback()
+            raise
 
     def get_session_history(self, session_id: str | UUID) -> List[ChatHistory]:
         """Get chat history for a session with joined relationships"""

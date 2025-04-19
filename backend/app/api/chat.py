@@ -151,6 +151,20 @@ async def get_chat_detail(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Chat session not found"
             )
+
+        # Process messages to include Shopify data from attributes
+        if chat_detail.get('messages'):
+            for message in chat_detail['messages']:
+                # If message has Shopify data in attributes, add it to the message
+                if message.get('attributes') and message['attributes'].get('shopify_output'):
+                    message['message_type'] = 'product'  # Set message type to product
+                    message['shopify_output'] = message['attributes']['shopify_output']
+                
+                # Keep other attributes that might be needed
+                if message.get('attributes'):
+                    message['end_chat'] = message['attributes'].get('end_chat')
+                    message['end_chat_reason'] = message['attributes'].get('end_chat_reason')
+                    message['end_chat_description'] = message['attributes'].get('end_chat_description')
         
         return chat_detail
     except ValueError:

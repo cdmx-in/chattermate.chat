@@ -20,28 +20,43 @@ from sqlalchemy.orm import Session
 from app.models.widget import Widget
 from app.models.schemas.widget import WidgetCreate
 
+class WidgetRepository:
+    def __init__(self, db: Session):
+        self.db = db
+
+    def create_widget(self, widget: WidgetCreate, organization_id: str) -> Widget:
+        db_widget = Widget(
+            name=widget.name,
+            organization_id=organization_id,
+            agent_id=widget.agent_id
+        )
+        self.db.add(db_widget)
+        self.db.commit()
+        self.db.refresh(db_widget)
+        return db_widget
 
 
-def create_widget(db: Session, widget: WidgetCreate, organization_id: str) -> Widget:
-    db_widget = Widget(
-        name=widget.name,
-        organization_id=organization_id,
-        agent_id=widget.agent_id
-    )
-    db.add(db_widget)
-    db.commit()
-    db.refresh(db_widget)
-    return db_widget
+    def get_widget(self, widget_id: str) -> Widget:
+        return self.db.query(Widget).filter(Widget.id == widget_id).first()
 
 
-def get_widget(db: Session, widget_id: str) -> Widget:
-    return db.query(Widget).filter(Widget.id == widget_id).first()
+    def get_widgets(self, organization_id: str) -> list[Widget]:
+        return self.db.query(Widget).filter(Widget.organization_id == organization_id).all()
 
 
-def get_widgets(db: Session, organization_id: str) -> list[Widget]:
-    return db.query(Widget).filter(Widget.organization_id == organization_id).all()
+    def get_widgets_by_agent(self, agent_id: str) -> list[Widget]:
+        """
+        Get all widgets associated with a specific agent.
+        
+        Args:
+            agent_id: The ID of the agent
+            
+        Returns:
+            List of Widget objects associated with the agent
+        """
+        return self.db.query(Widget).filter(Widget.agent_id == agent_id).all()
 
 
-def delete_widget(db: Session, widget_id: str) -> None:
-    db.query(Widget).filter(Widget.id == widget_id).delete()
-    db.commit()
+    def delete_widget(self, widget_id: str) -> None:
+        self.db.query(Widget).filter(Widget.id == widget_id).delete()
+        self.db.commit()

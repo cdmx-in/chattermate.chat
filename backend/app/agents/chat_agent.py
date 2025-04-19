@@ -178,29 +178,45 @@ class ChatAgent:
             
             # Add Shopify instructions if Shopify is enabled
             if shopify_config and shopify_config.enabled and not self.agent_data.transfer_to_human:
+                # UPDATED Shopify Instructions (v3)
                 shopify_instructions = """
-                You have access to Shopify tools that allow you to help customers with products and orders in the connected Shopify store.
+                You have access to Shopify tools (`search_products`, `get_product`, `recommend_products`, etc.). 
+                When using `search_products` or `recommend_products`, use a `limit` of 5 unless the user specifies otherwise.
                 
-                For customer product inquiries, you can:
-                1. Search for products using keywords
-                2. Get detailed information about specific products
-                3. Recommend similar products based on customer interests
-                4. List all available products
+                **Important Display Rules:**
+                - DO NOT include product images or image URLs in your message text - these are already included in the `shopify_output` field
+                - Keep your product descriptions in the message concise and focused on key details
+                - Let the UI handle the visual display of products through the `shopify_output` data
                 
-                For customer order inquiries, you can:
-                1. Search for a customer's orders (using email, order number, or general queries)
-                2. Check the status of specific orders
-                3. Provide shipping/tracking information for orders
+                **Pagination:**
+                - These tools support pagination. The output will include `pageInfo` containing `hasNextPage` (boolean) and `endCursor` (string).
+                - If `hasNextPage` is true, it means there are more results available.
+                - You should inform the user if more results are available (e.g., "I found 5 products matching your search. There might be more available. Would you like to see the next set?").
+                - **Do not** automatically fetch the next page unless the user asks for it.
+                - If the user asks for more results, call the *same* tool again, passing the `endCursor` value from the previous response as the `cursor` argument in the new tool call.
+
+                **Output Formatting:**
+                - When a Shopify tool returns product data, you MUST populate the `shopify_output` field in your final JSON response.
+                - The `shopify_output` field expects a specific JSON structure containing a list of products and optionally pageInfo.
+                - Copy the **entire relevant JSON output** from the tool directly into the `shopify_output` field. 
+                  - If the tool output contains a `shopify_output` key with a nested `products` list like `{"shopify_output": {"products": [...], "pageInfo": {...}}}` , copy that entire inner `shopify_output` object.
+                  - If the tool output contains just `shopify_product` for a single item (e.g., from `get_product`), structure it as `{"products": [ ...the_single_product... ]}` within your response's `shopify_output` field.
                 
-                Remember to:
-                - Be helpful and informative about product details (price, description, etc.)
-                - Ask clarifying questions when customers provide vague inquiries
-                - Suggest similar or complementary products when appropriate
-                - Be empathetic when handling order status inquiries, especially for delayed orders
-                - Collect necessary information before searching (order number, email, etc.)
-                - Explain order status in customer-friendly terms
-                
-                Only create or modify products if you have explicit permission to manage store inventory.
+                - Example Structure for your `shopify_output` field (when multiple products with pagination info):
+                  ```json
+                  "shopify_output": {
+                    "products": [
+                      { "id": "...", "title": "Product A", "price": "...", "image": {"src": "..."}, ... },
+                      { "id": "...", "title": "Product B", "price": "...", "image": {"src": "..."}, ... }
+                    ],
+                    "search_query": "optional search term",
+                    "total_count": 5, // Example count from the first page
+                    "pageInfo": {
+                        "hasNextPage": true,
+                        "endCursor": "CURSOR_STRING_FROM_TOOL" 
+                    }
+                  }
+                  ```
                 """
                 system_message += "\n\n" + shopify_instructions
                 self.shopify_instructions_added = True
@@ -214,7 +230,7 @@ class ChatAgent:
             model_type=model_type,
             api_key=api_key,
             model_name=model_name,
-            max_tokens=1000,
+            max_tokens=2000 if self.shopify_instructions_added else 1000,
             response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
         )
 
@@ -293,6 +309,7 @@ class ChatAgent:
             response_content = parse_response_content(response)
 
             logger.debug(f"Response content: {response_content}")
+            
             
             # Handle end chat and rating request
             if response_content.end_chat:
@@ -379,7 +396,8 @@ class ChatAgent:
                     end_chat_reason=None,
                     end_chat_description=None,
                     request_rating=False,
-                    create_ticket=False
+                    create_ticket=False,
+                    shopify_output=None
                 )
                 
                 # Store AI response with transfer status
@@ -397,7 +415,8 @@ class ChatAgent:
                         "end_chat": response_content.end_chat,
                         "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
                         "end_chat_description": response_content.end_chat_description,
-                        "request_rating": response_content.request_rating
+                        "request_rating": response_content.request_rating,
+                        "shopify_output": response_content.shopify_output
                     }
                 })
 
@@ -411,7 +430,8 @@ class ChatAgent:
                 "end_chat": response_content.end_chat,
                 "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
                 "end_chat_description": response_content.end_chat_description,
-                "request_rating": response_content.request_rating
+                "request_rating": response_content.request_rating,
+                "shopify_output": response_content.shopify_output
             }
             
             # Add ticket attributes if present
@@ -426,13 +446,6 @@ class ChatAgent:
                     "ticket_priority": response_content.ticket_priority
                 })
             
-            # Add product attributes if present (for Shopify integration)
-            if hasattr(response_content, 'product_id') and response_content.product_id:
-                attributes.update({
-                    "product_id": response_content.product_id,
-                    "product_title": response_content.product_title if hasattr(response_content, 'product_title') else None,
-                    "integration_type": "SHOPIFY"
-                })
             
             chat_repo.create_message({
                 "message": response_content.message,
@@ -461,7 +474,8 @@ class ChatAgent:
                 end_chat_reason=None,
                 end_chat_description=None,
                 request_rating=False,
-                create_ticket=False
+                create_ticket=False,
+                shopify_output=None
             )
             
             # Store error message

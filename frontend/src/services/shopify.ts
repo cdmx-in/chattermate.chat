@@ -67,7 +67,6 @@ export const getShopifyShops = async () => {
  */
 export const saveAgentShopifyConfig = async (agentId: string, config: {
   enabled: boolean;
-  shop_id?: string;
 }) => {
   try {
     const response = await api.post(`/shopify/agent-config/${agentId}`, config)

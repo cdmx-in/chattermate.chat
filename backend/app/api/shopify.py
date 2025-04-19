@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.database import get_db
-from app.models.schemas.shopify import ShopifyShopCreate, ShopifyShop
+from app.models.schemas.shopify import ShopifyShopCreate, ShopifyShop, ShopifyShopUpdate
 from app.models.schemas.shopify import AgentShopifyConfigBase, AgentShopifyConfig, AgentShopifyConfigCreate, AgentShopifyConfigUpdate
 from app.repositories.shopify_shop_repository import ShopifyShopRepository
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
@@ -36,12 +36,21 @@ from urllib.parse import urlencode, quote
 from app.core.auth import get_current_user, require_permissions, get_current_organization
 from app.models.user import User
 from app.models.organization import Organization
+from app.repositories.widget import WidgetRepository
+from app.services.shopify import ShopifyService
+from app.repositories.knowledge import KnowledgeRepository
+from app.repositories.knowledge_queue import KnowledgeQueueRepository
+from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
+from app.models.knowledge import SourceType
+from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
+from app.models.knowledge_to_agent import KnowledgeToAgent
+from uuid import UUID
 
 router = APIRouter()
 logger = get_logger(__name__)
 
 # Define the scopes needed for your app
-SCOPES = "read_products,write_products"
+SCOPES = "read_products,read_themes,write_themes,write_script_tags,read_script_tags,read_orders,read_customers"
 
 # Validate Shopify HMAC signature
 def verify_shopify_webhook(request_headers, request_body):
@@ -102,18 +111,40 @@ async def shopify_auth(
 ):
     """
     Initiates the Shopify OAuth process by redirecting to the Shopify authorization URL.
-    If embedded=1, validates the HMAC and returns a success page.
+    If the shop is already installed, validates the token before proceeding.
     """
     logger.info(f"Shopify auth request received for shop: {shop}")
 
-    # Regular OAuth flow (not embedded)
-    # Check if the shop already exists and has a valid token
     shop_repository = ShopifyShopRepository(db)
     db_shop = shop_repository.get_shop_by_domain(shop)
+
     if db_shop and db_shop.access_token and db_shop.is_installed:
-        return {"status": "already_installed", "shop": shop}
+        logger.info(f"Shop {shop} found and marked as installed. Verifying token...")
+        shopify_service = ShopifyService(db)
+        validation_query = "query { shop { name } }"
+        
+        # Use the async version if available, otherwise adapt
+        # Assuming _execute_graphql_async exists and is appropriate here
+        validation_result = await shopify_service._execute_graphql_async(db_shop, validation_query)
+
+        if validation_result.get("success"):
+            logger.info(f"Token for shop {shop} is valid.")
+            return {"status": "already_installed", "shop": shop}
+        else:
+            # Instantiate ShopifyShopUpdate with the required fields
+            shop_update_data = ShopifyShopUpdate(
+                is_installed=False,
+                access_token=None, # Clear invalid token
+                scope=None # Clear scope as well
+            )
+            # Pass the Pydantic model instance
+            shop_repository.update_shop(db_shop.id, shop_update_data) 
+            db.commit()
+                # Let the function continue to initiate the OAuth flow below
+            
     
-    # Initialize OAuth flow
+    # Initialize OAuth flow (if shop not installed, or token was invalid)
+    logger.info(f"Initiating OAuth flow for shop: {shop}")
     nonce = base64.b64encode(hashlib.sha256(shop.encode('utf-8')).digest()).decode('utf-8')
     
     # Create auth URL
@@ -170,12 +201,13 @@ async def shopify_callback(
         db_shop = shop_repository.get_shop_by_domain(shop)
         if db_shop:
             # Update existing shop
-            shop_update = {
-                "access_token": access_token,
-                "scope": scope,
-                "is_installed": True,
-                "organization_id": org_id_str
-            }
+            # Instantiate ShopifyShopUpdate for updating existing shop
+            shop_update = ShopifyShopUpdate( 
+                access_token=access_token,
+                scope=scope,
+                is_installed=True,
+                organization_id=org_id_str
+            )
             shop_repository.update_shop(db_shop.id, shop_update)
         else:
             # Create new shop
@@ -189,7 +221,7 @@ async def shopify_callback(
             shop_repository.create_shop(shop_data)
         
         # Redirect to the app or admin section
-        redirect_url = f"https://{shop}/admin/apps/{settings.SHOPIFY_API_KEY}"
+        redirect_url = f"https://{shop}/admin/themes/current/editor?context=apps"
         return RedirectResponse(redirect_url)
     
     except Exception as e:
@@ -369,7 +401,7 @@ async def get_agent_shopify_config(
     config = agent_config_repository.get_agent_shopify_config(agent_id)
     if not config:
         # Return a default config if none exists
-        return {"id": "", "agent_id": agent_id, "enabled": False, "shop_id": None, "created_at": None, "updated_at": None}
+        raise HTTPException(status_code=404, detail="Shopify configuration not found for this agent")
     return config
 
 @router.post("/agent-config/{agent_id}", response_model=AgentShopifyConfig)
@@ -382,32 +414,109 @@ async def save_agent_shopify_config(
 ):
     """
     Save Shopify configuration for an agent.
+    Automatically determines the shop ID for the organization.
     """
-    # Check if Shopify is connected
-    shop_repository = ShopifyShopRepository(db)
-    shops = shop_repository.get_shops(limit=1)
-    shopify_connected = len(shops) > 0 and any(shop.is_installed for shop in shops)
-    
-    if not shopify_connected and config.enabled:
-        raise HTTPException(status_code=400, detail="Cannot enable Shopify integration: Shopify is not connected")
-    
-    # If enabled and no shop_id is provided, use the first available shop
-    if config.enabled and not config.shop_id and shopify_connected:
-        config.shop_id = shops[0].id
-    
-    # Check if config already exists
     agent_config_repository = AgentShopifyConfigRepository(db)
+    shop_repository = ShopifyShopRepository(db)
+    
+    org_id_str = str(organization.id)
+    
+    # Get the current config for the agent, if it exists
     existing_config = agent_config_repository.get_agent_shopify_config(agent_id)
     
-    if existing_config:
-        # Update existing config
-        updated_config = agent_config_repository.update_agent_shopify_config(
-            agent_id, config
-        )
-        return updated_config
+    # Automatically determine the shop ID for this organization
+    target_shop = None
+    
+    # Find the available installed shop for the organization
+    shops = shop_repository.get_shops_by_organization(org_id_str, limit=10)
+    installed_shops = [s for s in shops if s.is_installed]
+    
+    if installed_shops:
+        target_shop = installed_shops[0]
+        target_shop_id = target_shop.id
     else:
-        # Create new config
-        new_config = agent_config_repository.create_agent_shopify_config(
-            AgentShopifyConfigCreate(agent_id=agent_id, enabled=config.enabled, shop_id=config.shop_id)
+        target_shop_id = None
+
+    if not installed_shops and config.enabled:
+        raise HTTPException(
+            status_code=400, 
+            detail="Cannot enable Shopify integration: No installed Shopify shops found for this organization."
         )
-        return new_config
+    
+    # --- Save Config to DB --- 
+    try:
+        if existing_config:
+            # Update existing config
+            # Always use the automatically determined shop_id
+            update_config = AgentShopifyConfigUpdate(
+                enabled=config.enabled,
+                shop_id=target_shop_id if config.enabled else None
+            )
+            updated_config = agent_config_repository.update_agent_shopify_config(
+                agent_id, update_config
+            )
+            logger.info(f"Updated Shopify config for agent {agent_id}")
+            saved_config = updated_config
+        else:
+            # Create new config
+            # Always use the automatically determined shop_id
+            config_create_data = AgentShopifyConfigCreate(
+                agent_id=agent_id, 
+                enabled=config.enabled, 
+                shop_id=target_shop_id if config.enabled else None
+            )
+            new_config = agent_config_repository.create_agent_shopify_config(config_create_data)
+            logger.info(f"Created Shopify config for agent {agent_id}")
+            saved_config = new_config
+
+        # --- Link or Queue Knowledge Source --- 
+        if config.enabled and target_shop: 
+            try:
+                org_uuid = UUID(org_id_str)
+                agent_uuid = UUID(agent_id)
+                shop_domain = target_shop.shop_domain
+
+                if shop_domain:
+                    knowledge_repo = KnowledgeRepository(db)
+                    # Check if knowledge source already exists for this shop domain and org
+                    existing_knowledge_list = knowledge_repo.get_by_sources(org_uuid, [shop_domain])
+                    existing_knowledge = existing_knowledge_list[0] if existing_knowledge_list else None
+
+                    if existing_knowledge is None:
+                        # Knowledge doesn't exist, queue it
+                        logger.info(f"Shop domain {shop_domain} not found in knowledge base for org {org_uuid}. Queuing...")
+                        queue_repo = KnowledgeQueueRepository(db)
+                        queue_item = KnowledgeQueue(
+                            organization_id=org_uuid,
+                            agent_id=agent_uuid, # Link to current agent
+                            user_id=current_user.id, # Added user_id
+                            source_type=SourceType.WEBSITE,
+                            source=shop_domain,
+                            status=QueueStatus.PENDING,
+                            queue_metadata={}
+                        )
+                        queue_repo.create(queue_item)
+                        logger.info(f"Shop domain {shop_domain} queued for knowledge processing for agent {agent_id}.")
+                    else:
+                        # Knowledge exists, check if linked to agent
+                        logger.info(f"Shop domain {shop_domain} found in knowledge base (ID: {existing_knowledge.id}). Checking agent link...")
+                        link_repo = KnowledgeToAgentRepository(db)
+                        existing_link = link_repo.get_by_ids(existing_knowledge.id, agent_uuid)
+                        if existing_link is None:
+                            # Link doesn't exist, create it
+                            logger.info(f"Linking knowledge source {existing_knowledge.id} to agent {agent_id}...")
+                            link = KnowledgeToAgent(knowledge_id=existing_knowledge.id, agent_id=agent_uuid)
+                            link_repo.create(link)
+                            # Optional: Could add vector DB filter update here later if needed
+                            logger.info(f"Successfully linked knowledge source {existing_knowledge.id} to agent {agent_id}.")
+                        else:
+                            logger.info(f"Knowledge source {existing_knowledge.id} already linked to agent {agent_id}.")
+
+            except Exception as ke:
+                # Log the error but don't fail the main config saving operation
+                logger.error(f"Failed to link or queue knowledge for shop {target_shop.id if target_shop else 'N/A'} / agent {agent_id}: {str(ke)}", exc_info=True)
+
+        return saved_config # Return the saved/updated config
+    except Exception as e:
+        logger.error(f"Failed to save agent Shopify config to DB: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to save Shopify configuration to database.")

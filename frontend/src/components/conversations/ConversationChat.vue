@@ -24,6 +24,8 @@ import { useJiraTicket } from '@/composables/useJiraTicket'
 import JiraTicketModal from '@/components/jira/JiraTicketModal.vue'
 import sendIcon from '@/assets/sendbutton.svg'
 import { userService } from '@/services/user'
+import { marked } from 'marked'
+import type { Renderer } from 'marked'
 
 const props = defineProps<{
   chat: ChatDetail
@@ -33,6 +35,7 @@ const emit = defineEmits<{
   (e: 'refresh'): void
   (e: 'chatUpdated', data: ChatDetail): void
   (e: 'clearUnread', sessionId: string): void
+  (e: 'view-product', productId: string): void
 }>()
 
 // Create a local ref to track the current chat state
@@ -67,6 +70,22 @@ const ticketSummary = ref('')
 
 // Add state for end chat confirmation
 const showEndChatConfirm = ref(false)
+
+// Add marked configuration
+marked.setOptions({
+  renderer: new marked.Renderer(),
+  gfm: true,
+  breaks: true
+})
+
+// Configure marked renderer to add target="_blank" to links
+const renderer = new marked.Renderer() as Renderer
+renderer.link = function({ href, title, text }) {
+  if (!href) return text || ''
+  const link = `<a href="${href}"${title ? ` title="${title}"` : ''}>${text}</a>`
+  return link.replace(/^<a /, '<a target="_blank" rel="nofollow" ')
+}
+marked.use({ renderer })
 
 // Computed property to determine if the current user can end the chat
 const canEndChat = computed(() => {
@@ -217,7 +236,42 @@ onMounted(async () => {
         >
           <div class="message-content">
             <div class="message-bubble">
-              {{ message.message }}
+              <!-- Product message -->
+              <template v-if="message.message_type === 'product' && message.attributes?.shopify_output?.products?.length">
+                <div class="products-carousel">
+                  <div v-html="marked(message.message || '')" class="product-message-text"></div>
+                  <div class="carousel-items">
+                    <div 
+                      v-for="product in message.attributes.shopify_output.products" 
+                      :key="product.id" 
+                      class="product-card-compact"
+                    >
+                      <div class="product-image-compact" v-if="product.image?.src">
+                        <img :src="product.image.src" :alt="product.title || ''" class="product-thumbnail">
+                      </div>
+                      <div class="product-info-compact">
+                        <div class="product-text-area">
+                          <div class="product-title-compact">{{ product.title }}</div>
+                          <div class="product-variant-compact" v-if="product.variant_title">{{ product.variant_title }}</div>
+                          <div class="product-price-compact">{{ product.price_formatted }}</div>
+                        </div>
+                        <div class="product-actions-compact">
+                          <button 
+                            class="view-details-button-compact"
+                            @click="$emit('view-product', String(product?.id || 'unknown'))"
+                          >
+                            View product <span class="external-link-icon">↗</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+              <!-- Regular message with markdown -->
+              <template v-else>
+                <div v-html="marked(message.message || '')"></div>
+              </template>
               <span class="message-time">{{ message.timeAgo }}</span>
             </div>
             <span v-if="message.message_type === 'bot' || message.message_type === 'agent'" class="agent-name">
@@ -690,5 +744,144 @@ onMounted(async () => {
 .create-ticket-btn:hover {
   transform: translateY(-1px);
   filter: brightness(1.1);
+}
+
+/* Add product carousel styles */
+.products-carousel {
+  margin: var(--space-xs) 0;
+  width: 100%;
+  padding: var(--space-xs);
+  background: rgba(0, 0, 0, 0.02);
+  border-radius: 20px;
+}
+
+.product-message-text {
+  margin-bottom: var(--space-sm);
+}
+
+.carousel-items {
+  display: flex;
+  flex-direction: row;
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+  overflow-x: auto;
+  padding: var(--space-xs);
+  padding-bottom: var(--space-md);
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.3) rgba(0, 0, 0, 0.1);
+}
+
+.product-card-compact {
+  background-color: white;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 20px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06),
+              0 1px 2px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+  width: 180px;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.product-card-compact:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08),
+              0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.product-image-compact {
+  width: 100%;
+  aspect-ratio: 1;
+  overflow: hidden;
+}
+
+.product-thumbnail {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.2s;
+}
+
+.product-thumbnail:hover {
+  transform: scale(1.05);
+}
+
+.product-info-compact {
+  padding: var(--space-sm);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.product-title-compact {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  min-height: 2.8em;
+}
+
+.product-variant-compact {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.product-price-compact {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.view-details-button-compact {
+  width: 100%;
+  padding: 8px 12px;
+  background-color: white;
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 16px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  gap: 4px;
+}
+
+.view-details-button-compact:hover {
+  background-color: var(--background-soft);
+  border-color: var(--border-color-hover);
+}
+
+.external-link-icon {
+  font-size: 1em;
+  line-height: 1;
+}
+
+/* Add styles for markdown content */
+.message-bubble :deep(img) {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 8px 0;
+}
+
+.message-bubble :deep(p) {
+  margin: 0;
+}
+
+.message-bubble :deep(a) {
+  color: var(--primary-color);
+  text-decoration: none;
+}
+
+.message-bubble :deep(a:hover) {
+  text-decoration: underline;
 }
 </style> 

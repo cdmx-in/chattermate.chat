@@ -25,6 +25,7 @@ from app.models.schemas.shopify.agent_shopify_config import (
     AgentShopifyConfigUpdate
 )
 from app.core.logger import get_logger
+from sqlalchemy import cast, String
 
 logger = get_logger(__name__)
 
@@ -39,6 +40,27 @@ class AgentShopifyConfigRepository:
     def get_configs_by_shop(self, shop_id: str) -> List[AgentShopifyConfig]:
         """Get all agent configurations for a specific shop."""
         return self.db.query(AgentShopifyConfig).filter(AgentShopifyConfig.shop_id == shop_id).all()
+    
+    def get_enabled_configs_for_org(self, organization_id: str) -> List[AgentShopifyConfig]:
+        """
+        Get all enabled Shopify configurations for agents belonging to a specific organization.
+        
+        Args:
+            organization_id: The ID of the organization to check
+            
+        Returns:
+            List of AgentShopifyConfig objects that are enabled and belong to the organization
+        """
+        # We need to join with the User/Agent table to filter by organization_id
+        from app.models.user import User
+        
+        return (self.db.query(AgentShopifyConfig)
+                .join(User, User.id.cast(String) == AgentShopifyConfig.agent_id)
+                .filter(
+                    AgentShopifyConfig.enabled == True,
+                    User.organization_id == organization_id
+                )
+                .all())
     
     def create_agent_shopify_config(self, config: AgentShopifyConfigCreate) -> AgentShopifyConfig:
         """Create a new Shopify configuration for an agent."""

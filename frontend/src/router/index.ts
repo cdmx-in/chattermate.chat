@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import type { RouteLocationNormalized, NavigationGuardNext } from 'vue-router'
 import { userService } from '@/services/user'
-import { listOrganizations } from '@/services/organization'
+import { getSetupStatus } from '@/services/organization'
 import { permissionChecks, hasAnyPermission } from '@/utils/permissions'
 import HumanAgentView from '@/views/HumanAgentView.vue'
 import OrganizationSettings from '@/views/settings/OrganizationSettings.vue'
@@ -267,7 +267,7 @@ router.beforeEach(async (to, from, next) => {
   
   // Now check for standard app conditions
   const isAuthenticated = userService.isAuthenticated()
-  const hasOrganization = await listOrganizations()
+  const isSetupComplete = await getSetupStatus()
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
   const requiredPermissions = to.meta.permissions as string[] | undefined
   
@@ -290,13 +290,13 @@ router.beforeEach(async (to, from, next) => {
   }
 
   // Standard app navigation logic
-  if (!hasOrganization && to.path !== '/setup') {
+  if (!isSetupComplete && to.path !== '/setup') {
     return next('/setup')
   } else if (!isAuthenticated && requiresAuth) {
     return next('/login')
   } else if (to.path === '/login' && isAuthenticated) {
     return next('/ai-agents')
-  } else if (to.path === '/setup' && hasOrganization) {
+  } else if (to.path === '/setup' && isSetupComplete) {
     return next('/ai-agents')
   } else if (requiredPermissions && !hasAnyPermission(requiredPermissions)) {
     // Redirect to 403 page or dashboard if user lacks required permissions

@@ -32,11 +32,6 @@ interface JiraIssueType {
   description?: string;
 }
 
-interface ShopifyProduct {
-  id: string;
-  title: string;
-  handle: string;
-}
 
 const props = defineProps({
   // Jira props
@@ -80,6 +75,14 @@ const props = defineProps({
   shopifyIntegrationEnabled: {
     type: Boolean,
     default: false
+  },
+  shopifyLoading: {
+    type: Boolean,
+    default: false
+  },
+  shopifyError: {
+    type: String,
+    default: ''
   }
 })
 
@@ -87,6 +90,9 @@ const props = defineProps({
 const shopifyConnected = ref(false)
 const shopifyShopDomain = ref('')
 const shopifyLoading = ref(true)
+const localShopifyEnabled = ref(props.shopifyIntegrationEnabled)
+const shopifyToggleInProgress = ref(false)
+const shopifyError = ref('')
 
 const emit = defineEmits([
   'toggle-create-ticket',
@@ -108,6 +114,22 @@ watch(() => props.selectedProject, (newValue) => {
 
 watch(() => props.selectedIssueType, (newValue) => {
   localSelectedIssueType.value = newValue
+})
+
+// Update localShopifyEnabled when prop changes
+watch(() => props.shopifyIntegrationEnabled, (newValue) => {
+  localShopifyEnabled.value = newValue
+  // Reset error when parent updates the enabled state successfully
+  shopifyError.value = ''
+})
+
+// Update error state when parent passes error
+watch(() => props.shopifyError, (newValue) => {
+  if (newValue) {
+    shopifyError.value = newValue
+    // Revert the toggle if there's an error
+    localShopifyEnabled.value = props.shopifyIntegrationEnabled
+  }
 })
 
 const ticketReasons = [
@@ -139,7 +161,28 @@ const toggleCreateTicket = () => {
 }
 
 const toggleShopifyIntegration = () => {
+  // Store the previous value in case we need to revert
+  
+  // Show loading state
+  shopifyToggleInProgress.value = true
+  
+  // Update the local state optimistically
+  localShopifyEnabled.value = !localShopifyEnabled.value
+  
+  // Emit the event for parent to handle
   emit('toggle-shopify-integration')
+  
+  // The parent component should call an API method and handle errors
+  // If an error occurs, the watch on props.shopifyError will revert the state
+  
+  // For demo purposes, let's set a timeout to simulate API call
+  // This should be removed in production as the parent component should control this
+  setTimeout(() => {
+    // Auto-reset progress after 3 seconds if parent doesn't control it
+    if (shopifyToggleInProgress.value) {
+      shopifyToggleInProgress.value = false
+    }
+  }, 3000)
 }
 
 const handleProjectChange = () => {
@@ -157,9 +200,6 @@ const saveJiraConfig = () => {
   })
 }
 
-const saveShopifyConfig = () => {
-  emit('save-shopify-config')
-}
 
 // Fetch Shopify connection status
 const fetchShopifyStatus = async () => {
@@ -281,13 +321,21 @@ onMounted(async () => {
       <div class="ticket-toggle">
         <div class="toggle-header">
           <h4>Enable Shopify Features</h4>
-          <label class="switch" v-tooltip="shopifyTooltipContent">
-            <input type="checkbox" 
-              :checked="shopifyIntegrationEnabled"
-              @change="toggleShopifyIntegration"
-            >
-            <span class="slider"></span>
-          </label>
+          <div class="toggle-with-loader">
+            <div class="toggle-loader" v-if="shopifyToggleInProgress">
+              <span class="loader-dot"></span>
+              <span class="loader-dot"></span>
+              <span class="loader-dot"></span>
+            </div>
+            <label class="switch" v-tooltip="shopifyTooltipContent">
+              <input type="checkbox" 
+                v-model="localShopifyEnabled"
+                @change="toggleShopifyIntegration"
+                :disabled="shopifyLoading || props.shopifyLoading || shopifyToggleInProgress"
+              >
+              <span class="slider" :class="{ 'in-progress': shopifyToggleInProgress }"></span>
+            </label>
+          </div>
         </div>
         <p class="helper-text">Enable Shopify product information and features for this agent</p>
         
@@ -306,6 +354,11 @@ onMounted(async () => {
           <span class="status-icon">✓</span>
           Connected to {{ shopifyShopDomain }}
         </div>
+      </div>
+      <!-- Add error message display -->
+      <div v-if="shopifyError" class="shopify-error">
+        <span class="error-icon">❌</span>
+        {{ shopifyError }}
       </div>
     </div>
   </section>
@@ -520,5 +573,78 @@ input:checked + .slider:before {
   opacity: 0.7;
   cursor: not-allowed;
   filter: grayscale(0.5);
+}
+
+.shopify-error {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  background-color: var(--error-light, #FEEAEA);
+  color: var(--error, #EF4444);
+  font-size: var(--text-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.error-icon {
+  margin-right: var(--space-xs);
+}
+
+.toggle-with-loader {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.toggle-loader {
+  position: absolute;
+  right: 55px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.loader-dot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--primary-color);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite ease-in-out;
+}
+
+.loader-dot:nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.loader-dot:nth-child(3) {
+  animation-delay: 1s;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(0.75);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.slider.in-progress {
+  opacity: 0.7;
+  background-image: linear-gradient(45deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent);
+  background-size: 20px 20px;
+  animation: progress-animation 1s linear infinite;
+}
+
+@keyframes progress-animation {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 20px 0;
+  }
 }
 </style> 

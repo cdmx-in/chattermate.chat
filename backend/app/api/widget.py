@@ -28,7 +28,7 @@ from app.models.user import User
 
 from app.core.auth import get_current_user
 from app.database import get_db
-from app.repositories.widget import create_widget, get_widget, get_widgets, delete_widget
+from app.repositories.widget import WidgetRepository
 from app.repositories.agent import AgentRepository
 from app.core.security import create_conversation_token, verify_conversation_token
 from app.repositories.customer import CustomerRepository
@@ -49,7 +49,8 @@ def create_new_widget(
     current_user=Depends(get_current_user)
 ):
     """Create a new widget for the organization"""
-    return create_widget(db, widget, current_user.organization_id)
+    widget_repo = WidgetRepository(db)
+    return widget_repo.create_widget(widget, current_user.organization_id)
 
 
 @router.get("/{widget_id}/data", response_class=HTMLResponse)
@@ -300,7 +301,8 @@ def list_widgets(
     current_user=Depends(get_current_user)
 ):
     """List all widgets for the organization"""
-    return get_widgets(db, current_user.organization_id)
+    widget_repo = WidgetRepository(db)
+    return widget_repo.get_widgets(current_user.organization_id)
 
 
 @router.delete("/{widget_id}")
@@ -310,10 +312,11 @@ def remove_widget(
     current_user=Depends(get_current_user)
 ):
     """Delete a widget"""
-    widget = get_widget(db, widget_id)
+    widget_repo = WidgetRepository(db)
+    widget = widget_repo.get_widget(widget_id)
     if not widget or widget.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Widget not found")
-    delete_widget(db, widget_id)
+    widget_repo.delete_widget(widget_id)
     return {"message": "Widget deleted"}
 
 @router.get("/{widget_id}/details", response_model=WidgetResponse)

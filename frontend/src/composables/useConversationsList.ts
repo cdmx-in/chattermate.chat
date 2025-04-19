@@ -32,6 +32,7 @@ export function useConversationsList(props: {
     agent_name?: string
     created_at: string
     session_id: string
+    attributes?: any
   }) => {
     // Create unique message identifier
     const messageKey = `${data.session_id}-${data.created_at}`;
@@ -51,11 +52,20 @@ export function useConversationsList(props: {
       // Ensure created_at is a valid ISO string
       const created_at = new Date(data.created_at).toISOString()
 
+      // Base message structure
       const newMessage: Message = {
         message: data.message,
         message_type: data.type === 'agent_message' ? 'agent' : data.type,
         created_at,
-        session_id: data.session_id
+        session_id: data.session_id,
+        attributes: data.attributes || {},
+        agent_name: data.agent_name
+      }
+
+      // Check if message has Shopify data in attributes
+      if (data.attributes?.shopify_output && typeof data.attributes.shopify_output === 'object') {
+        newMessage.message_type = 'product'
+        newMessage.shopify_output = data.attributes.shopify_output
       }
 
       // Create a completely new chat object with all properties
@@ -149,7 +159,9 @@ export function useConversationsList(props: {
     
     return props.conversations.map(conv => ({
       ...conv,
-      timeAgo: formatDistanceToNow(new Date(conv.updated_at), { addSuffix: true })
+      timeAgo: formatDistanceToNow(new Date(conv.updated_at), { addSuffix: true }),
+      message_type: conv.attributes?.message_type || 'text',
+      shopify_output: conv.attributes?.shopify_output
     }))
   })
 

@@ -55,11 +55,84 @@ class EndChatReasonType(str, Enum):
     NATURAL_CONCLUSION = "NATURAL_CONCLUSION"
     TASK_COMPLETED = "TASK_COMPLETED"
 
+# Define a model for a single Shopify product image
+class ShopifyProductImage(BaseModel):
+    src: Optional[str] = Field(default=None)
+    alt: Optional[str] = Field(default=None)
+
+    class Config:
+        json_encoders = {
+            UUID: str  # Convert UUID to string
+        }
+        from_attributes = True
+
+# Define a model for a single Shopify product
+class ShopifyProduct(BaseModel):
+    id: Optional[str] = Field(default=None)
+    title: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None)
+    handle: Optional[str] = Field(default=None)
+    product_type: Optional[str] = Field(default=None)
+    vendor: Optional[str] = Field(default=None)
+    total_inventory: Optional[int] = Field(default=None)
+    price: Optional[str] = Field(default=None)
+    price_max: Optional[str] = Field(default=None)
+    currency: Optional[str] = Field(default=None)
+    image: Optional[ShopifyProductImage] = Field(default=None)
+    tags: Optional[List[str]] = Field(default_factory=list)
+    created_at: Optional[str] = Field(default=None)
+    updated_at: Optional[str] = Field(default=None)
+    price_formatted: Optional[str] = Field(default=None)
+    variant_title: Optional[str] = Field(default=None)
+
+    class Config:
+        json_encoders = {
+            UUID: str  # Convert UUID to string
+        }
+        from_attributes = True
+
+# Define the structure for the shopify_output field
+class ShopifyOutputData(BaseModel):
+    products: Optional[List[ShopifyProduct]] = Field(default_factory=list)
+    search_query: Optional[str] = Field(default=None)
+    search_type: Optional[str] = Field(default=None)
+    total_count: Optional[int] = Field(default=None)
+    has_more: Optional[bool] = Field(default=None)
+
+    class Config:
+        json_encoders = {
+            UUID: str  # Convert UUID to string
+        }
+        from_attributes = True
+
+    def dict(self, *args, **kwargs):
+        # Override dict method to ensure proper serialization
+        d = super().dict(*args, **kwargs)
+        # Convert any remaining non-serializable objects to strings
+        return d
+
+    def json(self, *args, **kwargs):
+        # Override json method to ensure proper serialization
+        return self.dict()
+
 class Message(BaseModel):
     message: str
     message_type: str
     created_at: datetime
     attributes: Optional[dict] = None
+    shopify_output: Optional[ShopifyOutputData] = None
+    end_chat: Optional[bool] = None
+    end_chat_reason: Optional[EndChatReasonType] = None
+    end_chat_description: Optional[str] = None
+    agent_name: Optional[str] = None
+    user_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            UUID: str,
+            datetime: lambda v: v.isoformat()
+        }
 
 class ChatOverviewResponse(BaseModel):
     customer: CustomerInfo
@@ -83,6 +156,13 @@ class ChatDetailResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    class Config:
+        from_attributes = True
+        json_encoders = {
+            UUID: str,
+            datetime: lambda v: v.isoformat()
+        }
+
 class ChatResponse(BaseModel):
     message: str = Field(description="The response from the agent, its mandatory field, always generate a response in message field")
     transfer_to_human: bool = Field(description="Whether to transfer the conversation to a human")
@@ -101,6 +181,9 @@ class ChatResponse(BaseModel):
     ticket_id: Optional[str] = Field(default=None, description="ID of the created ticket (filled after creation)")
     ticket_status: Optional[str] = Field(default=None, description="Status of the created ticket (filled after creation)")
     ticket_priority: Optional[str] = Field(default=None, description="Priority level for the ticket (e.g., 'High', 'Medium', 'Low')")
+    
+    # Shopify Output Field (Updated)
+    shopify_output: Optional[ShopifyOutputData] = Field(default=None, description="Structured Shopify product data including a list of products.")
 
     class Config:
         from_attributes = True
@@ -112,7 +195,6 @@ class ChatResponse(BaseModel):
         if isinstance(data, dict):
             normalized = dict(data)
             
-            # Create a mapping of possible field variations to canonical field names
             key_mappings = {
                 'requestRating': 'request_rating',
                 'requestrating': 'request_rating',
@@ -140,29 +222,29 @@ class ChatResponse(BaseModel):
                 'ticketid': 'ticket_id',
                 'ticketStatus': 'ticket_status',
                 'ticketstatus': 'ticket_status',
-                'ticketPriority': 'ticket_priority',
                 'ticketpriority': 'ticket_priority',
-                'content': 'message'  # Add mapping for 'content' to 'message'
+                'content': 'message',
+                # Map incoming shopifyOutput/shopify_output to the new field name
+                'shopifyOutput': 'shopify_output',
+                'shopifyoutput': 'shopify_output',
+                
+
             }
             
-            # Normalize keys from camelCase to snake_case
             for key in list(normalized.keys()):
                 if key in key_mappings:
                     normalized[key_mappings[key]] = normalized.pop(key)
+            
+
                     
-            # Set default values for required fields if they don't exist
             if 'message' not in normalized:
                 normalized['message'] = "No response generated"
-            
             if 'transfer_to_human' not in normalized:
                 normalized['transfer_to_human'] = False
-                
             if 'end_chat' not in normalized:
                 normalized['end_chat'] = False
-                
             if 'request_rating' not in normalized:
                 normalized['request_rating'] = False
-                
             if 'create_ticket' not in normalized:
                 normalized['create_ticket'] = False
             

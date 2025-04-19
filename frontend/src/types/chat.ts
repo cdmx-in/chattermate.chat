@@ -5,7 +5,7 @@ export interface CustomerInfo {
 }
 
 export interface Message {
-  message: string
+  message?: string
   message_type: string
   created_at: string
   session_id: string
@@ -15,6 +15,21 @@ export interface Message {
   end_chat?: boolean
   end_chat_reason?: string
   end_chat_description?: string
+  
+  // Updated shopify_output to match Conversation structure
+  shopify_output?: {
+    products: Array<{
+      id: string
+      title: string
+      price: string
+      image?: ShopifyProductImage // Reuse existing ShopifyProductImage type
+    }>
+  }
+}
+
+export interface ShopifyProductImage {
+    src?: string
+    alt?: string
 }
 
 export interface Conversation {
@@ -26,7 +41,21 @@ export interface Conversation {
   message_count: number
   session_id: string
   user_id: string
-  status: 'open' | 'transferred' | 'closed'
+  status: 'open' | 'closed' | 'transferred'
+  attributes?: {
+    message_type?: string
+    shopify_output?: {
+      products: Array<{
+        id: string
+        title: string
+        price: string
+        image?: {
+          src: string
+          alt?: string
+        }
+      }>
+    }
+  }
 }
 
 export interface ChatDetail {

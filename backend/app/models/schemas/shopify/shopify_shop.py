@@ -41,7 +41,6 @@ class ShopifyShopUpdate(BaseModel):
 class ShopifyShopInDB(ShopifyShopBase):
     """Schema for shopify shop from database"""
     id: str
-    access_token: Optional[str] = None
     scope: Optional[str] = None
     is_installed: bool
     created_at: datetime

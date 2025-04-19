@@ -20,7 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { OrganizationCreate } from '@/types/organization'
-import { createOrganization, listOrganizations } from '@/services/organization'
+import { createOrganization, getSetupStatus } from '@/services/organization'
 import { validatePassword, validateDomain, validateEmail, validateName, validateOrgName, type PasswordStrength } from '@/utils/validators'
 // @ts-ignore
 import { listTz, clientTz } from 'timezone-select-js'
@@ -35,8 +35,8 @@ const checkingOrganization = ref(true)
 // Check if organization exists
 onMounted(async () => {
     try {
-        const organizations = await listOrganizations()
-        if (organizations) {
+        const isSetupComplete = await getSetupStatus()
+        if (isSetupComplete) {
             router.push('/ai-agents')
         }
     } catch (e) {

@@ -24,6 +24,8 @@ from sqlalchemy.orm import Session
 from app.repositories.shopify_shop_repository import ShopifyShopRepository
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
 import json
+import re # Import regex module
+import aiohttp
 
 logger = get_logger(__name__)
 
@@ -34,7 +36,7 @@ class ShopifyService:
         self.db = db
         self.shopify_shop_repository = ShopifyShopRepository(db)
         self.agent_shopify_config_repository = AgentShopifyConfigRepository(db)
-        self.api_version = "2025-04"
+        self.api_version = "2025-07"
 
     def _execute_graphql(self, shop: ShopifyShop, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -87,7 +89,7 @@ class ShopifyService:
                     "errors": result["errors"],
                     "message": result["errors"][0]["message"] if result["errors"] else "Unknown GraphQL error"
                 }
-                
+            
             return {
                 "success": True,
                 "data": result.get("data", {}),
@@ -98,6 +100,72 @@ class ShopifyService:
             logger.error(f"Error executing GraphQL query: {str(e)}")
             return {
                 "success": False,
+                "message": f"Error executing GraphQL query: {str(e)}"
+            }
+    
+    async def _execute_graphql_async(self, shop: ShopifyShop, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Execute a GraphQL query against the Shopify Admin API asynchronously.
+        
+        Args:
+            shop: The ShopifyShop model containing credentials
+            query: The GraphQL query string
+            variables: Optional variables for the GraphQL query
+            
+        Returns:
+            Dict containing the GraphQL response or error information
+        """
+        try:
+            if not shop or not shop.access_token or not shop.is_installed:
+                return {
+                    "success": False,
+                    "message": "Shop not connected or missing access token"
+                }
+
+            url = f"https://{shop.shop_domain}/admin/api/{self.api_version}/graphql.json"
+            headers = {
+                "X-Shopify-Access-Token": shop.access_token,
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "query": query
+            }
+            
+            if variables:
+                payload["variables"] = variables
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, json=payload) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Failed to execute GraphQL query: {error_text}")
+                        return {
+                            "success": False,
+                            "message": f"Failed to execute GraphQL query: {error_text}"
+                        }
+                        
+                    result = await response.json()
+                    
+                    # Check for GraphQL errors
+                    if "errors" in result:
+                        logger.error(f"GraphQL errors: {result['errors']}")
+                        return {
+                            "success": False,
+                            "errors": result["errors"],
+                            "message": result["errors"][0]["message"] if result["errors"] else "Unknown GraphQL error"
+                        }
+                    
+                    return {
+                        "success": True,
+                        "data": result.get("data", {}),
+                        "extensions": result.get("extensions", {})
+                    }
+        
+        except Exception as e:
+            logger.error(f"Error executing GraphQL query: {str(e)}")
+            return {
+                    "success": False,
                 "message": f"Error executing GraphQL query: {str(e)}"
             }
 
@@ -203,14 +271,14 @@ class ShopifyService:
             }
             
             transformed_products.append(transformed_product)
-        
-        return {
-            "success": True,
+            
+            return {
+                "success": True,
             "products": transformed_products,
             "count": len(transformed_products),
             "has_next_page": result.get("data", {}).get("products", {}).get("pageInfo", {}).get("hasNextPage", False),
             "end_cursor": result.get("data", {}).get("products", {}).get("pageInfo", {}).get("endCursor")
-        }
+            }
     
     def get_product(self, shop: ShopifyShop, product_id: str) -> Dict[str, Any]:
         """
@@ -371,7 +439,7 @@ class ShopifyService:
         return {
             "success": True,
             "product": transformed_product
-        }
+            }
     
     def create_product(self, shop: ShopifyShop, product_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -1009,4 +1077,232 @@ class ShopifyService:
         return {
             "success": True,
             "order": transformed_order
-        } 
+            }
+
+    def _make_rest_request(self, shop: ShopifyShop, method: str, endpoint: str, payload: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """
+        Make a REST request to the Shopify Admin API.
+        
+        Args:
+            shop: The ShopifyShop model containing credentials.
+            method: HTTP method (GET, POST, PUT, DELETE).
+            endpoint: API endpoint path (e.g., 'themes.json', 'themes/{theme_id}/assets.json').
+            payload: Optional dictionary for request body (for POST/PUT).
+            
+        Returns:
+            Dict containing the API response or error information.
+        """
+        try:
+            if not shop or not shop.access_token or not shop.is_installed:
+                return {"success": False, "message": "Shop not connected or missing access token"}
+
+            url = f"https://{shop.shop_domain}/admin/api/{self.api_version}/{endpoint}"
+            headers = {
+                "X-Shopify-Access-Token": shop.access_token,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+            
+            response = requests.request(method, url, headers=headers, json=payload)
+            
+            # Handle rate limits (basic example)
+            if response.status_code == 429:
+                retry_after = response.headers.get("Retry-After", 1)
+                logger.warning(f"Shopify rate limit hit. Retrying after {retry_after} seconds.")
+                # Consider adding actual retry logic here if needed
+                return {"success": False, "message": f"Rate limit exceeded. Try again in {retry_after} seconds.", "status_code": 429}
+
+            if not (200 <= response.status_code < 300):
+                logger.error(f"Shopify REST API error ({method} {url}): {response.status_code} - {response.text}")
+                return {"success": False, "message": f"API Error: {response.text}", "status_code": response.status_code}
+            
+            # DELETE might return 204 No Content
+            if response.status_code == 204:
+                 return {"success": True, "data": {}}
+                 
+            return {"success": True, "data": response.json()}
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error making Shopify REST request: {str(e)}")
+            return {"success": False, "message": f"Request Exception: {str(e)}"}
+        except Exception as e:
+            logger.error(f"Unexpected error during Shopify REST request: {str(e)}", exc_info=True)
+            return {"success": False, "message": f"Unexpected Error: {str(e)}"}
+
+    async def inject_widget_script(self, shop: ShopifyShop, script_tag: str) -> None:
+        """
+        Creates a Shopify Script Tag to inject the ChatterMate widget using the scriptTagCreate GraphQL mutation.
+        
+        Args:
+            shop: The ShopifyShop object.
+            script_tag: The full HTML script tag string to inject (not used directly in this implementation).
+            
+        Note:
+            This implementation uses Shopify's scriptTagCreate mutation instead of modifying theme files.
+            It extracts the script URL from the provided script_tag string and creates a proper Shopify Script Tag.
+        """
+        logger.info(f"Starting widget script injection for shop: {shop.shop_domain}")
+        
+        # 1. Extract the script URL from the script_tag string
+        # The script_tag is in format: 
+        # <script>/* ChatterMate Start */window.chattermateId='widget_id';</script><script src="script_url" async defer></script>
+        # We need to extract the script_url
+        
+        import re
+        script_url_match = re.search(r'<script src=["\']([^"\']+)["\']', script_tag)
+        widget_id_match = re.search(r"window\.chattermateId=\'([^\']+)\'", script_tag)
+        
+        if not script_url_match:
+            raise Exception("Could not extract script URL from the provided script tag.")
+        
+        script_url = script_url_match.group(1)
+        widget_id = widget_id_match.group(1) if widget_id_match else None
+        
+        # 2. Check if this script is already installed
+        existing_script_query = """
+        query {
+          scriptTags(first: 50) {
+            edges {
+              node {
+                id
+                src
+              }
+            }
+          }
+        }
+        """
+        
+        script_response = await self._execute_graphql_async(shop, existing_script_query)
+        if not script_response.get("success"):
+            raise Exception(f"Failed to fetch existing scripts: {script_response.get('message')}")
+        
+        # Check if our script is already installed
+        script_edges = script_response["data"]["scriptTags"]["edges"]
+        for edge in script_edges:
+            if edge["node"]["src"] == script_url:
+                logger.info(f"ChatterMate script already installed at {script_url}. Skipping injection.")
+                return
+        
+        # 3. Create the script tag using scriptTagCreate mutation
+        create_mutation = """
+        mutation scriptTagCreate($input: ScriptTagInput!) {
+          scriptTagCreate(input: $input) {
+            scriptTag {
+              id
+              src
+              displayScope
+            }
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        
+        create_vars = {
+            "input": {
+                "src": script_url,
+                "displayScope": "ONLINE_STORE",  # Apply to the online store
+                "cache": False  # Don't cache the script to ensure updates are applied immediately
+            }
+        }
+        
+        create_response = await self._execute_graphql_async(shop, create_mutation, create_vars)
+        if not create_response.get("success"):
+            raise Exception(f"Failed to create script tag: {create_response.get('message')}")
+        
+        user_errors = create_response["data"]["scriptTagCreate"]["userErrors"]
+        if user_errors:
+            error_msg = user_errors[0]["message"]
+            logger.error(f"GraphQL error creating script tag: {error_msg}")
+            raise Exception(f"Failed to create script tag: {error_msg}")
+        
+        script_tag_id = create_response["data"]["scriptTagCreate"]["scriptTag"]["id"]
+        logger.info(f"Successfully created script tag with ID {script_tag_id} for shop {shop.shop_domain}")
+        
+        # 4. Store the script tag ID in the database for future reference
+        if widget_id:
+            # Optional: store the mapping between widget_id and script_tag_id
+            # This could be useful for removing the script tag later
+            # You'll need to implement this storage mechanism based on your database schema
+            logger.info(f"Associated widget {widget_id} with script tag {script_tag_id}")
+
+    async def remove_widget_script(self, shop: ShopifyShop, widget_id: str) -> None:
+        """
+        Removes the ChatterMate widget script tag using scriptTagDelete GraphQL mutation.
+        
+        Args:
+            shop: The ShopifyShop object.
+            widget_id: The ID of the widget to remove (used to identify the correct script tag).
+        """
+        logger.info(f"Starting widget script removal for shop: {shop.shop_domain}")
+        
+        # 1. Get all script tags
+        script_query = """
+        query {
+          scriptTags(first: 50) {
+            edges {
+              node {
+                id
+                src
+              }
+            }
+          }
+        }
+        """
+        
+        script_response = await self._execute_graphql_async(shop, script_query)
+        if not script_response.get("success"):
+            raise Exception(f"Failed to fetch script tags: {script_response.get('message')}")
+        
+        # Extract the script edges
+        script_edges = script_response["data"]["scriptTags"]["edges"]
+        
+        # 2. Find scripts matching our widget
+        # The approach depends on how your scripts are identified
+        # Look for scripts containing your domain and potentially the widget ID
+        widget_scripts = []
+        for edge in script_edges:
+            src = edge["node"]["src"]
+            # Match any scripts from your domain and potentially containing the widget ID
+            # Adjust this condition based on your script URL structure
+            if "chattermate" in src.lower():
+                widget_scripts.append(edge["node"]["id"])
+        
+        if not widget_scripts:
+            logger.info(f"No ChatterMate script tags found for shop {shop.shop_domain}. Nothing to remove.")
+            return
+        
+        # 3. Delete each matching script tag
+        delete_mutation = """
+        mutation scriptTagDelete($id: ID!) {
+          scriptTagDelete(id: $id) {
+            deletedScriptTagId
+            userErrors {
+              field
+              message
+            }
+          }
+        }
+        """
+        
+        for script_id in widget_scripts:
+            delete_vars = {
+                "id": script_id
+            }
+            
+            delete_response = await self._execute_graphql_async(shop, delete_mutation, delete_vars)
+            if not delete_response.get("success"):
+                logger.warning(f"Failed to delete script tag {script_id}: {delete_response.get('message')}")
+                continue
+            
+            user_errors = delete_response["data"]["scriptTagDelete"]["userErrors"]
+            if user_errors:
+                error_msg = user_errors[0]["message"]
+                logger.warning(f"GraphQL error deleting script tag {script_id}: {error_msg}")
+                continue
+            
+            logger.info(f"Successfully removed script tag with ID {script_id} from shop {shop.shop_domain}")
+        
+        logger.info(f"Completed widget script removal for shop {shop.shop_domain}") 

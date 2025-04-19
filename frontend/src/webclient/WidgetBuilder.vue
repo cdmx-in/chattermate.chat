@@ -338,6 +338,42 @@ const handleSubmitRating = async (sessionId: string, rating: number, feedback: s
     }
 }
 
+const handleAddToCart = (message) => {
+    const productData = message.shopify_output || {
+        id: message.product_id,
+        title: message.product_title,
+        price: message.product_price,
+        image: message.product_image,
+        vendor: message.product_vendor
+    };
+    
+    if (productData) {
+        // Send a message to the parent window (the main shop)
+        window.parent.postMessage({
+            type: 'ADD_TO_CART',
+            product: productData
+        }, '*');
+    }
+};
+
+const handleAddToCartFromCarousel = (product) => {
+    if (product) {
+        window.parent.postMessage({
+            type: 'ADD_TO_CART',
+            product: product
+        }, '*');
+    }
+};
+
+const handleViewDetails = (productId) => {
+    if (productId) {
+        window.parent.postMessage({
+            type: 'VIEW_PRODUCT',
+            productId: productId
+        }, '*');
+    }
+};
+
 onMounted(async () => {
     const isAuthorized = await checkAuthorization()
     if (!isAuthorized) {
@@ -445,11 +481,12 @@ onUnmounted(() => {
                             message.message_type === 'agent' ? 'agent-message' : 
                             message.message_type === 'system' ? 'system-message' :
                             message.message_type === 'rating' ? 'rating-message' :
+                            message.message_type === 'product' || message.shopify_output ? 'product-message' :
                             'user-message'
                         ]"
                     >
                         <div class="message-bubble" 
-                            :style="message.message_type === 'system' || message.message_type === 'rating' ? {} : 
+                            :style="message.message_type === 'system' || message.message_type === 'rating' || message.message_type === 'product' || message.shopify_output ? {} : 
                                    message.message_type === 'user' ? userBubbleStyles : 
                                    agentBubbleStyles"
                         >
@@ -511,6 +548,48 @@ onUnmounted(() => {
                                     <div v-else-if="message.isSubmitted" class="submitted-message">
                                         Thank you for your rating!
                                     </div>
+                                </div>
+                            </template>
+                            <template v-else-if="message.shopify_output || message.message_type === 'product'">
+                                <div class="product-message-container">
+                                    <!-- Display the message text -->
+                                    <div v-if="message.message" v-html="marked(message.message, { renderer })" class="product-message-text"></div>
+                                    
+                                    <!-- Always use carousel/list display -->
+                                    <div v-if="message.shopify_output?.products && message.shopify_output.products.length > 0" class="products-carousel">
+                                        <h3 class="carousel-title">Products</h3>
+                                        <div class="carousel-items">
+                                            <div v-for="product in message.shopify_output.products" :key="product.id" class="product-card-compact carousel-item">
+                                                <div class="product-image-compact" v-if="product.image?.src">
+                                                    <img :src="product.image.src" :alt="product.title" class="product-thumbnail">
+                                                </div>
+                                                <div class="product-info-compact">
+                                                    <div class="product-text-area">
+                                                        <div class="product-title-compact">{{ product.title }}</div>
+                                                        <div class="product-variant-compact" v-if="product.variant_title && product.variant_title !== 'Default Title'">{{ product.variant_title }}</div>
+                                                        <div class="product-price-compact">{{ product.price_formatted || `₹${product.price}` }}</div>
+                                                    </div>
+                                                    <div class="product-actions-compact">
+                                                        <button 
+                                                            class="view-details-button-compact"
+                                                            @click="handleViewDetails(product.id)"
+                                                        >
+                                                            View product <span class="external-link-icon">↗</span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- No products found message (remains the same) -->
+                                    <div v-else-if="message.shopify_output?.products && message.shopify_output.products.length === 0" class="no-products-message">
+                                        <p>No products found.</p>
+                                    </div>
+                                    <!-- Add a message if shopify_output exists but has no products array (edge case) -->
+                                     <div v-else-if="message.shopify_output && !message.shopify_output.products" class="no-products-message">
+                                        <p>No products to display.</p>
+                                     </div>
                                 </div>
                             </template>
                             <template v-else>
@@ -708,7 +787,7 @@ onUnmounted(() => {
 .message {
     display: flex;
     gap: var(--space-sm);
-    max-width: 80%;
+    max-width: 85%;
     align-items: flex-start;
     margin-bottom: var(--space-md);
 }
@@ -1318,5 +1397,436 @@ onUnmounted(() => {
     text-align: center;
     font-weight: 500;
     margin-top: 8px;
+}
+
+/* Compact Product Card Styles - UPDATED */
+.message.product-message .message-bubble {
+    padding: 0;
+    background: none;
+    border: none;
+    box-shadow: none;
+    width: 100%;
+    max-width: none;
+}
+
+.product-card-compact {
+    display: flex; 
+    flex-direction: row; 
+    align-items: flex-start; 
+    border: 1px solid var(--border-color); /* Keep border, ensure it uses token */
+    border-radius: var(--radius-lg); /* Slightly larger radius for modern feel */
+    overflow: hidden;
+    background-color: var(--background-base);
+    box-shadow: var(--shadow-sm); /* Use softer shadow */
+    padding: var(--space-md); /* Increased padding */
+    gap: var(--space-md); /* Increased gap */
+    width: 100%; 
+    transition: box-shadow var(--transition-fast); /* Add transition */
+}
+
+.product-card-compact:hover {
+    box-shadow: var(--shadow-md); /* Slightly elevate on hover */
+}
+
+.product-card-compact.carousel-item {
+    flex-direction: column; 
+    align-items: stretch;
+    width: 160px; 
+    flex-shrink: 0;
+    padding: 0; 
+    gap: 0;
+    height: auto; 
+    border-radius: var(--radius-md); /* Keep standard radius for carousel */
+    box-shadow: var(--shadow-sm);
+}
+
+.product-card-compact.carousel-item:hover {
+     box-shadow: var(--shadow-md);
+}
+
+.product-card-compact.single-product {
+    max-width: 280px; /* Reduced max width */
+    align-self: flex-start; 
+    padding: var(--space-sm); /* Reduced padding */
+    gap: var(--space-sm); /* Reduced gap */
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start; /* Align items at the start */
+}
+
+.product-card-compact.single-product .product-image-compact {
+    width: 50px; /* Smaller image */
+    height: 50px;
+    border-radius: var(--radius-xs); /* Smaller radius */
+    flex-shrink: 0;
+}
+
+.product-card-compact.single-product .product-info-compact {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between; /* Space out text and button */
+    flex: 1; /* Take remaining space */
+    min-height: 50px; /* Match image height */
+    gap: var(--space-xxs); /* Reduced gap */
+}
+
+.product-card-compact.single-product .product-text-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px; /* Very small gap between text lines */
+}
+
+.product-card-compact.single-product .product-title-compact {
+    font-size: var(--text-xs); /* Smaller font */
+    font-weight: 500;
+    line-height: 1.3; 
+    white-space: normal; /* Allow wrapping */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 0;
+}
+
+.product-card-compact.single-product .product-variant-compact {
+    font-size: 10px; /* Even smaller variant text */
+    color: var(--text-muted);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.product-card-compact.single-product .product-price-compact {
+    font-size: var(--text-xs); /* Smaller font */
+    font-weight: 600;
+    margin-top: 2px;
+}
+
+.product-card-compact.single-product .product-actions-compact {
+    margin-top: auto; /* Push button to bottom */
+    width: 100%; /* Make container full width */
+}
+
+.product-card-compact.single-product .view-details-button-compact {
+    width: 100%; /* Make button full width */
+    padding: 5px 8px; /* Smaller padding */
+    font-size: 11px; /* Smaller font */
+    justify-content: center; /* Center text/icon */
+}
+
+.product-image-compact {
+    position: relative;
+    width: 60px; /* Fixed width for thumbnail */
+    height: 60px; /* Fixed height for thumbnail */
+    aspect-ratio: 1 / 1;
+    background-color: var(--background-soft);
+    overflow: hidden;
+    border: none; /* Remove border */
+    border-radius: var(--radius-sm); /* Rounded corners */
+    flex-shrink: 0; /* Prevent image from shrinking */
+}
+
+.product-card-compact.carousel-item .product-image-compact {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1 / 1;
+    border-radius: 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.product-thumbnail {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform var(--transition-fast);
+}
+
+.product-thumbnail:hover {
+    transform: scale(1.05);
+}
+
+.product-info-compact {
+    display: flex;
+    flex-direction: column;
+    gap: 2px; /* Reduced gap */
+    flex: 1; /* Allow info to take remaining space */
+    justify-content: center; /* Center content vertically */
+    min-width: 0; /* Prevent flex item overflow */
+}
+
+.product-card-compact.carousel-item .product-info-compact {
+    padding: var(--space-sm);
+    gap: var(--space-xs);
+    justify-content: flex-start; /* Align items to start for carousel */
+}
+
+.product-title-compact {
+    margin: 0;
+    font-size: var(--text-sm);
+    font-weight: 500;
+    line-height: 1.4;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap; /* Single line */
+}
+
+.product-variant-compact {
+    font-size: var(--text-xs);
+    color: var(--text-muted);
+    line-height: 1.3;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.product-price-compact {
+    font-size: var(--text-sm); /* Adjusted size */
+    font-weight: 600; /* Adjusted weight */
+    color: var(--text-primary);
+    white-space: nowrap;
+    margin-top: 2px; /* Small top margin */
+}
+
+.product-actions-compact {
+    display: flex;
+    gap: var(--space-xs);
+    margin-top: var(--space-sm); /* Add margin for single card */
+}
+
+.product-actions-compact.single {
+     justify-content: flex-start; /* Align button left */
+}
+
+.product-card-compact.carousel-item .product-actions-compact {
+    margin-top: auto; /* Push actions to bottom */
+    padding-top: var(--space-xs);
+}
+
+.add-to-cart-button-compact,
+.view-details-button-compact {
+    flex: none; /* Don't grow */
+    padding: 6px 10px; /* Adjusted padding */
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    font-weight: 500;
+    font-size: var(--text-xs);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    text-align: center;
+    white-space: nowrap;
+    background-color: var(--background-base);
+    color: var(--text-secondary);
+    line-height: 1;
+}
+
+.add-to-cart-button-compact {
+    background-color: var(--primary-color);
+    color: white;
+    border-color: transparent;
+    box-shadow: var(--shadow-xs);
+    flex: 1; /* Allow add button to take space in carousel */
+}
+
+.view-details-button-compact {
+     display: inline-flex; /* Align icon */
+     align-items: center;
+     gap: 4px;
+}
+
+.external-link-icon {
+    font-size: 1em;
+    line-height: 1;
+    display: inline-block;
+}
+
+.add-to-cart-button-compact:hover:not(:disabled) {
+    opacity: 0.9;
+    box-shadow: var(--shadow-sm);
+}
+
+.add-to-cart-button-compact:disabled {
+    background-color: #cccccc;
+    cursor: not-allowed;
+    opacity: 0.7;
+    box-shadow: none;
+}
+
+.view-details-button-compact:hover {
+    background-color: var(--background-soft);
+    border-color: var(--border-color-hover);
+    color: var(--text-primary);
+}
+
+/* Remove old .product-card styles */
+/* .product-card { ... } */
+/* .product-image-container { ... } */
+/* .product-image { ... } */
+/* .product-badge { ... } */
+/* .product-details { ... } */
+/* .product-title { ... } */
+/* .product-price { ... } */
+/* .current-price { ... } */
+/* .product-meta { ... } */
+/* .product-vendor { ... } */
+/* .label { ... } */
+/* .product-type { ... } */
+/* .product-description { ... } */
+/* .product-actions { ... } */
+/* .add-to-cart-button { ... } */
+/* .view-details-button { ... } */
+
+/* Ensure product message container uses full width */
+.product-message-container {
+    width: 100%;
+    overflow: hidden; /* Hide scrollbar overflow from container */
+}
+
+.products-carousel {
+    margin: var(--space-xs) 0;
+    width: 100%;
+    padding: var(--space-xs);
+    background: rgba(0, 0, 0, 0.02);
+    border-radius: 20px;
+}
+
+.carousel-title {
+    font-size: var(--text-base);
+    font-weight: 600;
+    margin-bottom: var(--space-sm);
+    color: var(--text-primary);
+    padding: 0 var(--space-xs);
+}
+
+.carousel-items {
+    display: flex;
+    flex-direction: row;
+    gap: var(--space-sm);
+    margin-top: var(--space-xs);
+    overflow-x: auto;
+    padding: var(--space-xs);
+    padding-bottom: var(--space-md);
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.3) rgba(0, 0, 0, 0.1);
+}
+
+/* Modern scrollbar styling */
+.carousel-items::-webkit-scrollbar {
+    display: block;
+    height: 8px;
+}
+
+.carousel-items::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+}
+
+.carousel-items::-webkit-scrollbar-thumb {
+    background-color: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    transition: background-color 0.2s;
+}
+
+.carousel-items::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(0, 0, 0, 0.3);
+}
+
+/* Enhanced product card styling */
+.product-card-compact {
+    background-color: white;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06),
+                0 1px 2px rgba(0, 0, 0, 0.04);
+    overflow: hidden;
+    width: 180px; /* Slightly reduced width */
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+}
+
+.product-card-compact:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08),
+                0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.product-card-compact .product-info-compact {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-sm) var(--space-sm);
+    gap: var(--space-xs);
+    background-color: white;
+}
+
+.product-card-compact .product-title-compact {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    line-height: 1.4;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    margin: 0;
+    min-height: 2.8em;
+}
+
+.product-card-compact .product-price-compact {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-top: 2px;
+}
+
+.product-card-compact .view-details-button-compact {
+    width: 100%;
+    padding: 8px 12px;
+    background-color: white;
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    font-size: var(--text-xs);
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    margin-top: var(--space-xs);
+}
+
+.product-card-compact .view-details-button-compact:hover {
+    background-color: var(--background-soft);
+    border-color: var(--border-color-hover);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.product-message-container {
+    width: 100%;
+    margin: var(--space-sm) 0;
+    padding: 0 var(--space-xs);
+}
+
+/* Adjust carousel title spacing */
+.carousel-title {
+    font-size: var(--text-base);
+    font-weight: 600;
+    margin-bottom: var(--space-sm);
+    color: var(--text-primary);
+    padding: 0 var(--space-xs);
+}
+
+.no-products-message {
+    padding: var(--space-md);
+    color: var(--text-muted);
+    text-align: center;
+    font-style: italic;
+    font-size: var(--text-sm);
 }
 </style>
