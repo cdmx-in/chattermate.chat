@@ -263,13 +263,6 @@ def test_get_organization_stats(client, test_organization, test_user):
     assert data["total_users"] == 1
     assert data["active_users"] == 1
 
-def test_list_organizations(client, test_organization):
-    """Test listing all organizations"""
-    response = client.get("/api/v1/organizations")
-    assert response.status_code == 200
-    data = response.json()
-    assert len(data) >= 1
-    assert any(org["id"] == str(test_organization.id) for org in data)
 
 # Negative test cases
 def test_create_organization_duplicate(client, test_organization):

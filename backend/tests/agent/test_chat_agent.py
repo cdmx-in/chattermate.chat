@@ -190,15 +190,21 @@ async def test_chat_agent_initialization(test_organization_id, test_agent, mock_
     """Test ChatAgent initialization"""
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
+         patch('app.agents.chat_agent.AgentShopifyConfigRepository') as mock_shopify_config_repo, \
          patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
+        mock_shopify_config_repo.return_value.get_agent_shopify_config.return_value = None
+        
+        # Create a mock session_id to ensure shopify_config is properly initialized
+        mock_session_id = str(uuid4())
         
         chat_agent = ChatAgent(
             api_key="test_key",
             model_name="gpt-4",
             model_type="OPENAI",
             org_id=str(test_organization_id),
-            agent_id=str(test_agent.id)
+            agent_id=str(test_agent.id),
+            session_id=mock_session_id
         )
         
         assert chat_agent.agent_data is not None
@@ -213,8 +219,13 @@ async def test_chat_agent_get_response(test_organization_id, test_agent, test_us
     """Test ChatAgent get_response method"""
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
+         patch('app.agents.chat_agent.AgentShopifyConfigRepository') as mock_shopify_config_repo, \
          patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
+        mock_shopify_config_repo.return_value.get_agent_shopify_config.return_value = None
+        
+        # Create a mock session_id to ensure shopify_config is properly initialized
+        mock_session_id = str(uuid4())
         
         chat_agent = ChatAgent(
             api_key="test_key",
@@ -222,7 +233,8 @@ async def test_chat_agent_get_response(test_organization_id, test_agent, test_us
             model_type="OPENAI",
             org_id=str(test_organization_id),
             agent_id=str(test_agent.id),
-            customer_id=str(test_user.id)
+            customer_id=str(test_user.id),
+            session_id=mock_session_id
         )
         
         # Mock the agent's run method
@@ -268,8 +280,13 @@ async def test_chat_agent_error_handling(test_organization_id, test_agent, test_
     """Test ChatAgent error handling"""
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
+         patch('app.agents.chat_agent.AgentShopifyConfigRepository') as mock_shopify_config_repo, \
          patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
+        mock_shopify_config_repo.return_value.get_agent_shopify_config.return_value = None
+        
+        # Create a mock session_id to ensure shopify_config is properly initialized
+        mock_session_id = str(uuid4())
         
         chat_agent = ChatAgent(
             api_key="invalid_key",  # Invalid key to trigger error
@@ -277,7 +294,8 @@ async def test_chat_agent_error_handling(test_organization_id, test_agent, test_
             model_type="OPENAI",
             org_id=str(test_organization_id),
             agent_id=str(test_agent.id),
-            customer_id=str(test_user.id)
+            customer_id=str(test_user.id),
+            session_id=mock_session_id
         )
         
         # Mock the agent's run method to raise an exception

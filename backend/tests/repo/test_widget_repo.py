@@ -22,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.models.widget import Widget
 from app.models.schemas.widget import WidgetCreate
-from app.repositories import widget as widget_repo
+from app.repositories.widget import WidgetRepository
 from app.models.agent import Agent, AgentType
 from app.models.organization import Organization
 from uuid import UUID, uuid4
@@ -87,7 +87,8 @@ def test_widget(db, test_organization_id, test_agent):
         name="Test Widget",
         agent_id=test_agent.id
     )
-    widget = widget_repo.create_widget(db, widget_data, test_organization_id)
+    widget_repo = WidgetRepository(db)
+    widget = widget_repo.create_widget(widget_data, test_organization_id)
     return widget
 
 def test_create_widget(db, test_organization_id, test_agent):
@@ -97,21 +98,23 @@ def test_create_widget(db, test_organization_id, test_agent):
         agent_id=test_agent.id
     )
     
-    widget = widget_repo.create_widget(db, widget_data, test_organization_id)
+    widget_repo = WidgetRepository(db)
+    widget = widget_repo.create_widget(widget_data, test_organization_id)
     assert widget is not None
     assert widget.name == widget_data.name
     assert widget.agent_id == test_agent.id
     assert widget.organization_id == test_organization_id
 
     # Verify widget was saved to database
-    saved_widget = widget_repo.get_widget(db, str(widget.id))
+    saved_widget = widget_repo.get_widget(str(widget.id))
     assert saved_widget is not None
     assert saved_widget.name == widget_data.name
 
 def test_get_widget(db, test_widget):
     """Test retrieving a widget by ID"""
     # Get existing widget
-    widget = widget_repo.get_widget(db, str(test_widget.id))
+    widget_repo = WidgetRepository(db)
+    widget = widget_repo.get_widget(str(test_widget.id))
     assert widget is not None
     assert widget.id == test_widget.id
     assert widget.name == test_widget.name
@@ -119,7 +122,7 @@ def test_get_widget(db, test_widget):
     assert widget.organization_id == test_widget.organization_id
 
     # Try to get non-existent widget
-    non_existent_widget = widget_repo.get_widget(db, str(uuid4()))
+    non_existent_widget = widget_repo.get_widget(str(uuid4()))
     assert non_existent_widget is None
 
 def test_get_widgets(db, test_organization_id, test_widget):
@@ -152,17 +155,18 @@ def test_get_widgets(db, test_organization_id, test_widget):
         name="Other Widget",
         agent_id=other_agent.id
     )
-    widget_repo.create_widget(db, other_widget_data, other_org.id)
+    widget_repo = WidgetRepository(db)
+    widget_repo.create_widget(other_widget_data, other_org.id)
 
     # Get widgets for test organization
-    widgets = widget_repo.get_widgets(db, test_organization_id)
+    widgets = widget_repo.get_widgets(test_organization_id)
     assert len(widgets) == 1
     assert widgets[0].id == test_widget.id
     assert widgets[0].name == test_widget.name
     assert widgets[0].organization_id == test_organization_id
 
     # Get widgets for other organization
-    other_widgets = widget_repo.get_widgets(db, other_org.id)
+    other_widgets = widget_repo.get_widgets(other_org.id)
     assert len(other_widgets) == 1
     assert other_widgets[0].name == other_widget_data.name
     assert other_widgets[0].organization_id == other_org.id
@@ -170,11 +174,12 @@ def test_get_widgets(db, test_organization_id, test_widget):
 def test_delete_widget(db, test_widget):
     """Test deleting a widget"""
     # Delete existing widget
-    widget_repo.delete_widget(db, str(test_widget.id))
+    widget_repo = WidgetRepository(db)
+    widget_repo.delete_widget(str(test_widget.id))
 
     # Verify widget was deleted
-    deleted_widget = widget_repo.get_widget(db, str(test_widget.id))
+    deleted_widget = widget_repo.get_widget(str(test_widget.id))
     assert deleted_widget is None
 
     # Try to delete non-existent widget (should not raise error)
-    widget_repo.delete_widget(db, str(uuid4()))
+    widget_repo.delete_widget(str(uuid4()))

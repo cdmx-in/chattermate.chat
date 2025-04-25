@@ -61,16 +61,10 @@ class ShopifyShopRepository:
         return shops
     
     def get_shops_by_organization(self, organization_id: str, skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
-        """
-        Get all shops for an organization with pagination
-        """
-        shops = self.db.query(ShopifyShop).filter(ShopifyShop.organization_id == organization_id).offset(skip).limit(limit).all()
-        
-        # Ensure organization_id is properly serialized as a string
-        for shop in shops:
-            if shop.organization_id:
-                shop.organization_id = str(shop.organization_id)
-        
+        """Get all Shopify shops for an organization."""
+        # Make sure organization_id is a string
+        org_id_str = str(organization_id)
+        shops = self.db.query(ShopifyShop).filter(ShopifyShop.organization_id == org_id_str).offset(skip).limit(limit).all()
         return shops
     
     def create_shop(self, shop: ShopifyShopCreate) -> ShopifyShop:

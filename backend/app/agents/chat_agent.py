@@ -93,6 +93,7 @@ class ChatAgent:
             except Exception as e:
                 logger.error(f"Failed to initialize Jira tools: {e}")
         
+        shopify_config = None
         # Add Shopify tools if agent has Shopify enabled
         if self.agent_id and self.org_id and self.session_id and not self.agent_data.transfer_to_human:
             try:

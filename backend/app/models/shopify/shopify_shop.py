@@ -37,5 +37,5 @@ class ShopifyShop(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     
     # Optional - link to organization if needed
-    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True)
+    organization_id = Column(String, ForeignKey("organizations.id"), nullable=True)
     organization = relationship("Organization", back_populates="shopify_shops") 
