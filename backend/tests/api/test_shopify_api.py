@@ -193,7 +193,7 @@ async def test_shopify_auth_new_shop(mock_shopify_service, mock_shop_repo, mock_
         response = await shopify_auth(mock_request, shop, "test_hmac", mock_db, mock_user)
         
         # Assert
-        assert response.status_code == 302  # Check that it's a redirect response
+        assert response.status_code == 307  # Update expected status code to 307 for RedirectResponse
 
 
 @pytest.mark.asyncio
@@ -235,7 +235,7 @@ async def test_shopify_callback(mock_shop_repo, mock_post, mock_validate, mock_d
         # Should create a new shop
         mock_shop_repo_instance.create_shop.assert_called_once()
         # Should redirect to the shop admin
-        assert response.status_code == 302  # Check that it's a redirect response
+        assert response.status_code == 307  # Update expected status code to 307 for RedirectResponse
 
 
 @pytest.mark.asyncio
