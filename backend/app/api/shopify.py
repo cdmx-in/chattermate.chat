@@ -183,7 +183,12 @@ async def shopify_callback(
     }
     
     try:
-        response = requests.post(token_url, json=payload)
+        # Check if we should verify SSL certificates (default to True for production)
+        # For development/testing environments, this can be set to False in settings
+        verify_ssl = settings.VERIFY_SSL_CERTIFICATES
+        
+        # Add verify parameter to control SSL certificate verification
+        response = requests.post(token_url, json=payload, verify=verify_ssl)
         response.raise_for_status()
         token_data = response.json()
         access_token = token_data.get("access_token")
@@ -226,6 +231,8 @@ async def shopify_callback(
     
     except Exception as e:
         logger.error(f"Error processing Shopify callback: {str(e)}")
+        if isinstance(e, requests.exceptions.SSLError):
+            logger.error("SSL Certificate verification failed. If this is a development environment, consider setting VERIFY_SSL_CERTIFICATES=False in settings.")
         raise HTTPException(status_code=500, detail="Error processing callback")
 
 @router.get("/shops", response_model=list[ShopifyShop])
