@@ -16,6 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
+import traceback
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
@@ -186,7 +187,9 @@ async def shopify_callback(
         # Check if we should verify SSL certificates (default to True for production)
         # For development/testing environments, this can be set to False in settings
         verify_ssl = settings.VERIFY_SSL_CERTIFICATES
-        
+        logger.info(f"Verify SSL Certificates: {verify_ssl}")
+        logger.info(f"Token URL: {token_url}")
+        logger.info(f"Payload: {payload}")
         # Add verify parameter to control SSL certificate verification
         response = requests.post(token_url, json=payload, verify=verify_ssl)
         response.raise_for_status()
@@ -231,6 +234,7 @@ async def shopify_callback(
     
     except Exception as e:
         logger.error(f"Error processing Shopify callback: {str(e)}")
+        traceback.print_exc()
         if isinstance(e, requests.exceptions.SSLError):
             logger.error("SSL Certificate verification failed. If this is a development environment, consider setting VERIFY_SSL_CERTIFICATES=False in settings.")
         raise HTTPException(status_code=500, detail="Error processing callback")
