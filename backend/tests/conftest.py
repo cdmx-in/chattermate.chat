@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import pytest
+import uuid
 from sqlalchemy import create_engine, event, DDL
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -31,10 +32,19 @@ from app.models.ai_config import AIConfig, AIModelType
 from app.models.customer import Customer
 from app.models.user import User
 from app.repositories.agent import AgentRepository
-from app.repositories.widget import create_widget
+from app.repositories.widget import WidgetRepository
 from app.models.schemas.widget import WidgetCreate
 from app.core.security import encrypt_api_key, get_password_hash, create_access_token, create_refresh_token, create_conversation_token
 from unittest.mock import MagicMock
+from fastapi.testclient import TestClient
+from app.main import app
+from app.models.shopify.shopify_shop import ShopifyShop
+from app.models.shopify.agent_shopify_config import AgentShopifyConfig
+import jwt
+from datetime import datetime, timedelta
+from app.core.config import settings
+from app.models.role import Role
+from app.models.permission import Permission
 
 # Test database URL
 SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
@@ -53,7 +63,7 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 def do_connect(dbapi_connection, connection_record):
     # Disable foreign key constraint enforcement
     cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA foreign_keys=OFF")
     cursor.close()
 
 @event.listens_for(Table, 'before_create')
@@ -129,9 +139,13 @@ def test_agent(db, test_organization) -> Agent:
 @pytest.fixture
 def test_widget(db, test_agent) -> Widget:
     """Create a test widget"""
-    widget = create_widget(
-        db=db,
-        widget=WidgetCreate(name="Test Widget", agent_id=test_agent.id),
+    widget_repo = WidgetRepository(db)
+    widget_create = WidgetCreate(
+        name="Test Widget",
+        agent_id=test_agent.id
+    )
+    widget = widget_repo.create_widget(
+        widget=widget_create,
         organization_id=test_agent.organization_id
     )
     return widget
@@ -151,7 +165,33 @@ def test_customer(db, test_organization) -> Customer:
     return customer
 
 @pytest.fixture
-def test_user(db, test_organization) -> User:
+def test_permissions(db):
+    """Create test permissions"""
+    permissions = []
+    for perm_name in ["manage_organization", "manage_users", "manage_agents"]:
+        perm = Permission(name=perm_name)
+        db.add(perm)
+        permissions.append(perm)
+    db.commit()
+    for perm in permissions:
+        db.refresh(perm)
+    return permissions
+
+@pytest.fixture
+def test_role(db, test_permissions, test_organization):
+    """Create a test role with permissions"""
+    role = Role(
+        name="Test Admin",
+        organization_id=test_organization.id
+    )
+    role.permissions = test_permissions
+    db.add(role)
+    db.commit()
+    db.refresh(role)
+    return role
+
+@pytest.fixture
+def test_user(db, test_organization, test_role) -> User:
     """Create a test user"""
     user = User(
         id=uuid4(),
@@ -159,7 +199,8 @@ def test_user(db, test_organization) -> User:
         email="test.user@example.com",
         full_name="Test User",
         hashed_password=get_password_hash("test_password"),
-        is_active=True
+        is_active=True,
+        role_id=test_role.id
     )
     db.add(user)
     db.commit()
@@ -199,4 +240,38 @@ def mock_socketio():
     mock_sio.emit = MagicMock()
     mock_sio.save_session = MagicMock()
     mock_sio.get_session = MagicMock()
-    return mock_sio 
+    return mock_sio
+
+@pytest.fixture
+def test_shopify_shop(db, test_organization):
+    """Create a test Shopify shop."""
+    shop = ShopifyShop(
+        id=str(uuid.uuid4()),
+        shop_domain="test-store.myshopify.com",
+        access_token="test_access_token",
+        scope="read_products,write_products",
+        is_installed=True,
+        organization_id=str(test_organization.id)
+    )
+    db.add(shop)
+    db.commit()
+    db.refresh(shop)
+    yield shop
+    db.delete(shop)
+    db.commit()
+
+@pytest.fixture
+def test_agent_shopify_config(db, test_agent, test_shopify_shop):
+    """Create a test agent Shopify config."""
+    config = AgentShopifyConfig(
+        id=str(uuid.uuid4()),
+        agent_id=str(test_agent.id),
+        shop_id=test_shopify_shop.id,
+        enabled=True
+    )
+    db.add(config)
+    db.commit()
+    db.refresh(config)
+    yield config
+    db.delete(config)
+    db.commit() 

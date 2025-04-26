@@ -20,18 +20,15 @@ export const createOrganization = async (data: OrganizationCreate) => {
   return response.data
 }
 
-export async function listOrganizations(): Promise<boolean> {
+export async function getSetupStatus(): Promise<boolean> {
   try {
-    const response = await api.get<Organization[]>('/organizations')
-    // Check if we have at least one active organization
-    return !!(response.data && response.data.length > 0 && response.data[0].is_active)
+    const response = await api.get<{ is_setup: boolean }>('/organizations/setup-status')
+    return response.data.is_setup
   } catch (err) {
-    const axiosError = err as AxiosError<ErrorResponse>
-    if (axiosError.response?.status === 404) {
-      return false
-    }
-    // For other errors, assume no organization
-    return false
+    console.error('Failed to fetch organization setup status:', err)
+    // In case of error, assume setup might be needed or system is unavailable
+    // Returning true might prevent setup, returning false allows setup check again.
+    return false 
   }
 }
 

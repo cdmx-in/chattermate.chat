@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import type { RouteLocationNormalized, NavigationGuardNext } from 'vue-router'
 import { userService } from '@/services/user'
-import { listOrganizations } from '@/services/organization'
+import { getSetupStatus } from '@/services/organization'
 import { permissionChecks, hasAnyPermission } from '@/utils/permissions'
 import HumanAgentView from '@/views/HumanAgentView.vue'
 import OrganizationSettings from '@/views/settings/OrganizationSettings.vue'
@@ -29,6 +30,60 @@ const baseRoutes = [
     name: 'setup',
     component: () => import('@/views/SetupView.vue'),
     meta: { requiresAuth: false },
+  },
+  {
+    path: '/shopify/success',
+    name: 'shopify-success',
+    component: () => import('@/views/ShopifySuccessView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    path: '/shopify/auth',
+    name: 'shopify-auth',
+    component: () => import('@/views/AIAgentView.vue'), // Dummy component, will redirect before rendering
+    beforeEnter: (to: RouteLocationNormalized, from: RouteLocationNormalized, next: NavigationGuardNext) => {
+      // Get the shop parameter from the URL
+      const shop = to.query.shop as string
+      const embedded = to.query.embedded as string
+      
+      if (!shop) {
+        next('/ai-agents')
+        return
+      }
+      
+      // If embedded=1, redirect to success page instead of backend
+      if (embedded === '1') {
+        console.log('Embedded Shopify app detected, redirecting to success page')
+        return next({ 
+          name: 'shopify-success',
+          query: { shop: shop } 
+        })
+      }
+      
+      const queryParams = Object.entries(to.query)
+      .map(([key, value]) => `${key}=${encodeURIComponent(value as string)}`)
+      .join('&')
+      
+      // Redirect to backend auth endpoint
+      window.location.href = `${import.meta.env.VITE_API_URL}/shopify/auth?${queryParams}`
+    },
+    meta: { requiresAuth: true },
+  },
+  {
+    path: '/shopify/auth/callback',
+    name: 'shopify-callback',
+    component: () => import('@/views/AIAgentView.vue'), // Dummy component, will redirect before rendering
+    beforeEnter: (to: RouteLocationNormalized, from: RouteLocationNormalized, next: NavigationGuardNext) => {
+      // Extract all query parameters
+      const queryParams = Object.entries(to.query)
+        .map(([key, value]) => `${key}=${encodeURIComponent(value as string)}`)
+        .join('&')
+      
+     
+      // Redirect to backend callback endpoint with all query parameters
+      window.location.href = `${import.meta.env.VITE_API_URL}/shopify/auth/callback?${queryParams}`
+    },
+    meta: { requiresAuth: false }, // Shopify callback doesn't require authentication
   },
   {
     path: '/ai-agents',
@@ -170,24 +225,84 @@ if (hasEnterpriseModule) {
 
 // Navigation guard
 router.beforeEach(async (to, from, next) => {
+  // First, handle special routes that need immediate redirection
+  const shopifyShop = to.query.shop as string
+  const isShopifyRequest = !!shopifyShop && shopifyShop.endsWith('.myshopify.com')
+  const embedded = to.query.embedded as string
+  
+  // If this is a Shopify callback route or success page, don't process further
+  if (to.path === '/shopify/auth/callback' || to.path === '/shopify/success') {
+    return next()
+  }
+  
+  // Handle Shopify API request with shop parameter
+  if (isShopifyRequest) {
+    // If embedded=1, redirect to the success page
+    if (embedded === '1') {
+      console.log('Embedded Shopify app detected in navigation guard, redirecting to success page')
+      return next({ 
+        name: 'shopify-success',
+        query: { shop: shopifyShop } 
+      })
+    }
+    
+    const isAuthenticated = userService.isAuthenticated()
+    
+    if (!isAuthenticated) {
+      // Save Shopify parameters in localStorage to restore after login
+      localStorage.setItem('shopifyRedirect', JSON.stringify({
+        shop: shopifyShop,
+        ...to.query
+      }))
+      // Redirect to login page
+      return next('/login')
+    } else {
+      // User is authenticated, redirect to backend Shopify auth endpoint with embedded param
+      const apiUrl = `${import.meta.env.VITE_API_URL}/shopify/auth?shop=${encodeURIComponent(shopifyShop)}&embedded=1`
+      window.location.href = apiUrl
+      // Return next() to prevent the Vue Router warning, even though we're redirecting
+      return next()
+    }
+  }
+  
+  // Now check for standard app conditions
   const isAuthenticated = userService.isAuthenticated()
-  const hasOrganization = await listOrganizations()
+  const isSetupComplete = await getSetupStatus()
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
   const requiredPermissions = to.meta.permissions as string[] | undefined
+  
+  // Handle login completion for Shopify redirects
+  if (to.path === '/ai-agents' && isAuthenticated && localStorage.getItem('shopifyRedirect')) {
+    try {
+      const shopifyParams = JSON.parse(localStorage.getItem('shopifyRedirect') || '{}')
+      if (shopifyParams.shop) {
+        // Clear stored redirect
+        localStorage.removeItem('shopifyRedirect')
+        // Redirect to backend Shopify auth endpoint with embedded param
+        const apiUrl = `${import.meta.env.VITE_API_URL}/shopify/auth?shop=${encodeURIComponent(shopifyParams.shop)}&embedded=1`
+        window.location.href = apiUrl
+        return next()
+      }
+    } catch (e) {
+      console.error('Error parsing Shopify redirect params:', e)
+      localStorage.removeItem('shopifyRedirect')
+    }
+  }
 
-  if (!hasOrganization && to.path !== '/setup') {
-    next('/setup')
+  // Standard app navigation logic
+  if (!isSetupComplete && to.path !== '/setup') {
+    return next('/setup')
   } else if (!isAuthenticated && requiresAuth) {
-    next('/login')
+    return next('/login')
   } else if (to.path === '/login' && isAuthenticated) {
-    next('/ai-agents')
-  } else if (to.path === '/setup' && hasOrganization) {
-    next('/ai-agents')
+    return next('/ai-agents')
+  } else if (to.path === '/setup' && isSetupComplete) {
+    return next('/ai-agents')
   } else if (requiredPermissions && !hasAnyPermission(requiredPermissions)) {
     // Redirect to 403 page or dashboard if user lacks required permissions
-    next('/403')
+    return next('/403')
   } else {
-    next()
+    return next()
   }
 })
 

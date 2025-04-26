@@ -8,6 +8,7 @@ import type { UserGroup } from '@/types/user'
 import { listGroups } from '@/services/groups'
 import { agentStorage } from '@/utils/storage'
 import { useJiraIntegration } from './useJiraIntegration'
+import { useShopifyIntegration } from './useShopifyIntegration'
 
 export function useAgentDetail(agentData: { value: AgentWithCustomization }, emit: (e: 'close') => void) {
   const fileInput = ref<HTMLInputElement | null>(null)
@@ -23,6 +24,9 @@ export function useAgentDetail(agentData: { value: AgentWithCustomization }, emi
   
   // Initialize Jira integration
   const jiraIntegration = useJiraIntegration(agentData.value.id)
+  
+  // Initialize Shopify integration
+  const shopifyIntegration = useShopifyIntegration(agentData.value.id)
 
   const MAX_FILE_SIZE = 5 * 1024 * 1024 // 5MB
   const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -232,6 +236,9 @@ export function useAgentDetail(agentData: { value: AgentWithCustomization }, emi
     updateAgentGroups,
     
     // Jira integration - spread all properties and methods from jiraIntegration
-    ...jiraIntegration
+    ...jiraIntegration,
+    
+    // Shopify integration - spread all properties and methods from shopifyIntegration
+    ...shopifyIntegration
   }
 } 

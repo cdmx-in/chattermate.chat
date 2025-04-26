@@ -56,7 +56,10 @@ export function useWidgetSocket() {
         })
 
         socket.on('chat_response', (data) => {
+            loading.value = false // Stop loading indicator first
+
             if (data.type === 'agent_message') {
+                // Handle human agent messages (no change needed here)
                 messages.value.push({
                     message: data.message,
                     message_type: 'agent',
@@ -70,7 +73,25 @@ export function useWidgetSocket() {
                         request_rating: data.request_rating
                     }
                 })
+            // UPDATED CHECK: Look for the shopify_output object and products array
+            } else if (data.shopify_output && typeof data.shopify_output === 'object' && data.shopify_output.products) {
+                // Handle structured Shopify product data
+                messages.value.push({
+                    message: data.message, // Keep the accompanying text message
+                    message_type: 'product', // Use 'product' type for rendering
+                    created_at: new Date().toISOString(),
+                    session_id: '', 
+                    agent_name: data.agent_name,
+                    // Assign the whole structured object
+                    shopify_output: data.shopify_output, 
+                    // Remove the old flattened fields (product_id, product_title, etc.)
+                    attributes: { // Keep other attributes if needed
+                         end_chat: data.end_chat,
+                         request_rating: data.request_rating
+                    }
+                })
             } else {
+                // Handle regular bot messages (without Shopify data)
                 messages.value.push({
                     message: data.message,
                     message_type: 'bot',
@@ -85,7 +106,7 @@ export function useWidgetSocket() {
                     }
                 })
             }
-            loading.value = false
+            // loading.value = false // Moved to the top
         })
 
         socket.on('handle_taken_over', (data: { session_id: string, user_name: string, profile_picture?: string }) => {
@@ -180,21 +201,35 @@ export function useWidgetSocket() {
         messages: Message[];
     }) => {
         if (data.type === 'chat_history' && Array.isArray(data.messages)) {
-            const historyMessages = data.messages.map((msg: Message) => ({
-                message: msg.message,
-                message_type: msg.message_type as "assistant" | "user" | "error" | "bot" | "agent" | "system",
-                created_at: msg.created_at,
-                attributes: msg.attributes || {},
-                session_id: '',
-                agent_name: msg.agent_name || '',
-                user_name: msg.user_name || ''
-            }))
+            const historyMessages = data.messages.map((msg: Message) => {
+                // Base message structure
+                const messageObj = {
+                    message: msg.message,
+                    message_type: msg.message_type as "assistant" | "user" | "error" | "bot" | "agent" | "system" | "product",
+                    created_at: msg.created_at,
+                    session_id: '',
+                    agent_name: msg.agent_name || '',
+                    user_name: msg.user_name || '',
+                    attributes: msg.attributes || {}
+                }
+
+                // Check if message has Shopify data in attributes
+                if (msg.attributes?.shopify_output && typeof msg.attributes.shopify_output === 'object') {
+                    return {
+                        ...messageObj,
+                        message_type: 'product',
+                        shopify_output: msg.attributes.shopify_output
+                    }
+                }
+
+                return messageObj
+            })
 
             messages.value = [
                 ...historyMessages.filter(newMsg => 
                     !messages.value.some(existingMsg => 
                         existingMsg.message === newMsg.message && 
-                        existingMsg.message_type === newMsg.message_type
+                        existingMsg.created_at === newMsg.created_at
                     )
                 ),
                 ...messages.value

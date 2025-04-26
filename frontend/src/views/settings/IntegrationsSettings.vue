@@ -17,16 +17,46 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
 import DashboardLayout from '@/layouts/DashboardLayout.vue'
 import { checkJiraConnection, getJiraAuthUrl, disconnectJira } from '@/services/jira'
+import { checkShopifyConnection, connectToShopify, disconnectShopify, getShopifyShops } from '@/services/shopify'
 
 // Import logos
 import jiraLogo from '@/assets/jira-logo.svg'
 import slackLogo from '@/assets/slack-logo.svg'
 import zendeskLogo from '@/assets/zendesk-logo.svg'
+import shopifyLogo from '@/assets/shopify-logo.svg'
+
+// Define interface for Shopify shop
+interface ShopifyShop {
+  id: string
+  shop_domain: string
+  is_installed: boolean
+  [key: string]: any
+}
+
+// Shopify state variables
+const shopifyConnected = ref(false)
+const shopifyShopDomain = ref('')
+const shopifyLoading = ref(true)
+
+interface ShopifyForm {
+  shopDomain: string;
+  isSubmitting: boolean;
+  error: string;
+}
+
+const shopifyForm = ref<ShopifyForm>({
+  shopDomain: '',
+  isSubmitting: false,
+  error: ''
+})
+
+// Track if user is actively typing in shopify input
+const isShopifyInputActive = ref(false)
 
 const route = useRoute()
 
@@ -101,6 +131,120 @@ const handleDisconnectJira = async () => {
   }
 }
 
+// Check if Shopify is connected
+const fetchShopifyStatus = async () => {
+  try {
+    shopifyLoading.value = true
+    const data = await checkShopifyConnection()
+    shopifyConnected.value = data.connected
+    shopifyShopDomain.value = data.shop_domain || ''
+  } catch (error) {
+    console.error('Error checking Shopify connection:', error)
+    shopifyConnected.value = false
+  } finally {
+    shopifyLoading.value = false
+  }
+}
+
+// Connect to Shopify
+const handleConnectShopify = () => {
+  try {
+    console.log('Connecting to Shopify with domain:', shopifyForm.value.shopDomain)
+    // Clear any previous error messages
+    lastConnectionError.value = null
+    shopifyForm.value.error = ''
+    shopifyForm.value.isSubmitting = true
+    
+    // Validate shop domain
+    if (!shopifyForm.value.shopDomain) {
+      shopifyForm.value.error = 'Please enter your Shopify shop domain'
+      toast.error('Please enter your Shopify shop domain')
+      shopifyForm.value.isSubmitting = false
+      return
+    }
+    
+    // Clean the domain - remove any .myshopify.com suffix if user added it
+    let cleanDomain = shopifyForm.value.shopDomain.trim()
+    if (cleanDomain.endsWith('.myshopify.com')) {
+      cleanDomain = cleanDomain.replace('.myshopify.com', '')
+    }
+    
+    // Connect to Shopify with the cleaned domain
+    connectToShopify(cleanDomain)
+  } catch (error) {
+    console.error('Error connecting to Shopify:', error)
+    toast.error('Error connecting to Shopify')
+    shopifyForm.value.isSubmitting = false
+  }
+}
+
+// Disconnect from Shopify
+const handleDisconnectShopify = async () => {
+  try {
+    shopifyLoading.value = true
+    // Get shop ID from the shop domain - we'll need to fetch it
+    const shops = await getShopifyShops() as ShopifyShop[]
+    const shop = shops.find((s: ShopifyShop) => s.shop_domain === shopifyShopDomain.value)
+    
+    if (shop) {
+      await disconnectShopify(shop.id)
+      shopifyConnected.value = false
+      shopifyShopDomain.value = ''
+      
+      // Reset the form
+      shopifyForm.value = {
+        shopDomain: '',
+        isSubmitting: false,
+        error: ''
+      }
+      
+      toast.success('Shopify disconnected successfully')
+    } else {
+      throw new Error('Shop not found')
+    }
+  } catch (error: any) {
+    console.error('Error disconnecting from Shopify:', error)
+    let errorMessage = 'Error disconnecting from Shopify'
+    
+    // Try to extract a more detailed error message if available
+    if (error.response && error.response.data && error.response.data.detail) {
+      errorMessage = error.response.data.detail
+    }
+    
+    toast.error(errorMessage)
+  } finally {
+    shopifyLoading.value = false
+    showDisconnectConfirm.value = false
+    disconnectingIntegration.value = null
+  }
+}
+
+// Watch for blur event on shopify input to reset active state
+const handleShopifyInputFocus = () => {
+  isShopifyInputActive.value = true
+}
+
+const handleShopifyInputBlur = () => {
+  isShopifyInputActive.value = false
+}
+
+// Define interface for IntegrationCard
+interface IntegrationCard {
+  id: string;
+  name: string;
+  description: string;
+  logo: string;
+  connected: boolean;
+  isLoading?: boolean;
+  siteUrl?: string;
+  shopDomain?: string;
+  comingSoon?: boolean;
+  connectAction?: () => void;
+  disconnectAction?: () => void;
+  requiresForm?: boolean;
+  form?: ShopifyForm;
+}
+
 // List of available integrations
 const availableIntegrations = computed(() => [
   {
@@ -113,6 +257,19 @@ const availableIntegrations = computed(() => [
     isLoading: isLoading.value,
     connectAction: connectJira,
     disconnectAction: handleDisconnectJira
+  },
+  {
+    id: 'shopify',
+    name: 'Shopify',
+    description: 'Connect to Shopify to integrate your store with ChatterMate for product management.',
+    logo: shopifyLogo,
+    connected: shopifyConnected.value,
+    shopDomain: shopifyShopDomain.value,
+    isLoading: shopifyLoading.value,
+    connectAction: handleConnectShopify,
+    disconnectAction: handleDisconnectShopify,
+    requiresForm: true,
+    form: shopifyForm
   },
   // Future integrations
   {
@@ -134,22 +291,30 @@ const availableIntegrations = computed(() => [
 ])
 
 onMounted(async () => {
-  await fetchJiraStatus()
+  await Promise.all([
+    fetchJiraStatus(),
+    fetchShopifyStatus()
+  ])
   
   // Check if we're returning from an OAuth flow
   if (route.query.status) {
     if (route.query.status === 'success') {
-      toast.success('Jira connected successfully!')
+      if (route.query.integration === 'shopify') {
+        toast.success('Shopify connected successfully!')
+      } else {
+        toast.success('Jira connected successfully!')
+      }
       lastConnectionError.value = null
     } else if (route.query.status === 'failure') {
       // Handle different failure reasons
       const reason = route.query.reason as string || 'unknown'
+      const integration = route.query.integration as string || 'integration'
       
-      let errorMessage = 'Failed to connect to Jira'
+      let errorMessage = `Failed to connect to ${integration}`
       
       // Map common error reasons to user-friendly messages
       if (reason === 'cancelled') {
-        errorMessage = 'Jira connection was cancelled'
+        errorMessage = `${integration} connection was cancelled`
       } else if (reason === 'invalid_state') {
         errorMessage = 'Authentication session expired or is invalid'
       } else if (reason.includes('unauthorized')) {
@@ -157,7 +322,7 @@ onMounted(async () => {
       } else if (reason) {
         // Format the reason to be more readable
         const formattedReason = reason.replace(/_/g, ' ')
-        errorMessage = `Failed to connect to Jira: ${formattedReason}`
+        errorMessage = `Failed to connect to ${integration}: ${formattedReason}`
       }
       
       toast.error(errorMessage)
@@ -216,6 +381,11 @@ onMounted(async () => {
                 <span class="loading-spinner"></span>
                 Loading...
               </span>
+              <!-- Shopify loading state -->
+              <span v-else-if="integration.id === 'shopify' && integration.isLoading" class="loading-indicator">
+                <span class="loading-spinner"></span>
+                Loading...
+              </span>
               <template v-else>
                 <!-- Connected status for Jira -->
                 <div v-if="integration.id === 'jira' && integration.connected" class="connected-info">
@@ -238,11 +408,55 @@ onMounted(async () => {
                     {{ lastConnectionError }}
                   </div>
                 </div>
+                <!-- Connected status for Shopify -->
+                <div v-else-if="integration.id === 'shopify' && integration.connected" class="connected-info">
+                  <span class="status-badge connected">
+                    <span class="status-icon">✓</span>
+                    Connected
+                  </span>
+                  <div class="shop-info">
+                    <span class="shop-domain">{{ integration.shopDomain }}</span>
+                    <a 
+                      :href="`https://${integration.shopDomain}/admin`" 
+                      target="_blank" 
+                      class="site-link"
+                    >
+                      <span class="link-icon">↗</span>
+                      Visit Shopify Admin
+                    </a>
+                  </div>
+                </div>
+                <!-- Not connected status for Shopify -->
+                <div v-else-if="integration.id === 'shopify'" class="not-connected-info">
+                  <span class="status-badge not-connected">
+                    Not Connected
+                  </span>
+                </div>
                 <!-- Coming soon status -->
                 <span v-else-if="integration.comingSoon" class="status-badge coming-soon">
                   Coming Soon
                 </span>
               </template>
+            </div>
+            
+            <!-- Shopify Connection Form -->
+            <div v-if="integration.id === 'shopify' && !integration.connected && integration.requiresForm" class="integration-form">
+              <div class="form-group">
+                <label for="shopify-domain">Shopify Shop Name</label>
+                <div class="input-with-label">
+                  <input 
+                    id="shopify-domain" 
+                    v-model="shopifyForm.shopDomain" 
+                    type="text" 
+                    placeholder="your-store"
+                    :disabled="shopifyForm.isSubmitting"
+                    @focus="handleShopifyInputFocus"
+                    @blur="handleShopifyInputBlur"
+                  />
+                  <span v-if="!isShopifyInputActive && !shopifyForm.shopDomain" class="input-suffix">.myshopify.com</span>
+                </div>
+                <small v-if="shopifyForm.error" class="form-error">{{ shopifyForm.error }}</small>
+              </div>
             </div>
             
             <div class="integration-actions">
@@ -267,6 +481,30 @@ onMounted(async () => {
                   Disconnect
                 </button>
               </template>
+              
+              <!-- Shopify connect/disconnect buttons -->
+              <template v-else-if="integration.id === 'shopify'">
+                <button 
+                  v-if="!integration.connected" 
+                  @click="integration.connectAction" 
+                  class="btn btn-primary"
+                  :disabled="integration.isLoading || shopifyForm.isSubmitting"
+                >
+                  <span v-if="shopifyForm.isSubmitting" class="loading-spinner"></span>
+                  <span v-else class="btn-icon">+</span>
+                  Connect
+                </button>
+                <button 
+                  v-else 
+                  @click="showDisconnectConfirmation(integration.id)" 
+                  class="btn btn-danger"
+                  :disabled="integration.isLoading"
+                >
+                  <span class="btn-icon">×</span>
+                  Disconnect
+                </button>
+              </template>
+              
               <!-- Coming soon button -->
               <button 
                 v-else-if="integration.comingSoon" 
@@ -305,6 +543,15 @@ onMounted(async () => {
             <li>Require you to reconnect and reconfigure Jira settings if you want to use it again</li>
           </ul>
         </div>
+        
+        <div v-if="disconnectingIntegration === 'shopify'" class="integration-specific-warning">
+          <p>Disconnecting Shopify will:</p>
+          <ul>
+            <li>Remove your Shopify store connection</li>
+            <li>Disable product management functionality</li>
+            <li>Require you to reconnect your Shopify store if you want to use it again</li>
+          </ul>
+        </div>
       </div>
       <div class="disconnect-modal-actions">
         <button class="btn-cancel" @click="cancelDisconnect">Cancel</button>
@@ -316,6 +563,15 @@ onMounted(async () => {
         >
           <span v-if="isLoading" class="loading-spinner"></span>
           <span v-else>Disconnect Jira</span>
+        </button>
+        <button 
+          v-if="disconnectingIntegration === 'shopify'" 
+          class="btn-disconnect" 
+          @click="handleDisconnectShopify"
+          :disabled="shopifyLoading"
+        >
+          <span v-if="shopifyLoading" class="loading-spinner"></span>
+          <span v-else>Disconnect Shopify</span>
         </button>
       </div>
     </div>
@@ -789,5 +1045,79 @@ onMounted(async () => {
 .error-icon {
   font-size: 12px;
   flex-shrink: 0;
+}
+
+.shop-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.shop-domain {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.integration-form {
+  margin-top: var(--space-sm);
+  border-top: 1px solid var(--border-color);
+  padding-top: var(--space-sm);
+}
+
+.form-group {
+  margin-bottom: var(--space-md);
+}
+
+.form-group label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  margin-bottom: var(--space-xs);
+  color: var(--text-primary);
+}
+
+.input-with-label {
+  display: flex;
+  align-items: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: var(--background-color);
+  overflow: hidden;
+}
+
+.input-with-label input {
+  flex: 1;
+  padding: var(--space-sm);
+  border: none;
+  font-size: var(--text-sm);
+  background: transparent;
+  min-width: 0;
+}
+
+.input-with-label input:focus {
+  outline: none;
+}
+
+.input-suffix {
+  padding: var(--space-sm) var(--space-sm) var(--space-sm) 0;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.form-help {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin-top: var(--space-xs);
+}
+
+.form-error {
+  display: block;
+  font-size: var(--text-xs);
+  color: var(--error-color);
+  margin-top: var(--space-xs);
 }
 </style> 

@@ -17,7 +17,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
+import { checkShopifyConnection } from '@/services/shopify'
 
 interface JiraProject {
   id: string;
@@ -31,7 +32,9 @@ interface JiraIssueType {
   description?: string;
 }
 
+
 const props = defineProps({
+  // Jira props
   jiraConnected: {
     type: Boolean,
     required: true
@@ -67,14 +70,37 @@ const props = defineProps({
   loadingIssueTypes: {
     type: Boolean,
     required: true
+  },
+  // Shopify props
+  shopifyIntegrationEnabled: {
+    type: Boolean,
+    default: false
+  },
+  shopifyLoading: {
+    type: Boolean,
+    default: false
+  },
+  shopifyError: {
+    type: String,
+    default: ''
   }
 })
+
+// Local state for Shopify connection
+const shopifyConnected = ref(false)
+const shopifyShopDomain = ref('')
+const shopifyLoading = ref(true)
+const localShopifyEnabled = ref(props.shopifyIntegrationEnabled)
+const shopifyToggleInProgress = ref(false)
+const shopifyError = ref('')
 
 const emit = defineEmits([
   'toggle-create-ticket',
   'handle-project-change',
   'handle-issue-type-change',
-  'save-jira-config'
+  'save-jira-config',
+  'toggle-shopify-integration',
+  'save-shopify-config'
 ])
 
 // Create local copies of the props
@@ -90,6 +116,22 @@ watch(() => props.selectedIssueType, (newValue) => {
   localSelectedIssueType.value = newValue
 })
 
+// Update localShopifyEnabled when prop changes
+watch(() => props.shopifyIntegrationEnabled, (newValue) => {
+  localShopifyEnabled.value = newValue
+  // Reset error when parent updates the enabled state successfully
+  shopifyError.value = ''
+})
+
+// Update error state when parent passes error
+watch(() => props.shopifyError, (newValue) => {
+  if (newValue) {
+    shopifyError.value = newValue
+    // Revert the toggle if there's an error
+    localShopifyEnabled.value = props.shopifyIntegrationEnabled
+  }
+})
+
 const ticketReasons = [
   "Issues without immediate resolution",
   "No transfer agent available",
@@ -102,8 +144,45 @@ const ticketTooltipContent = computed(() => {
   return `Create tickets when:\n${ticketReasons.map(reason => `• ${reason}`).join('\n')}`
 })
 
+const shopifyReasons = [
+  "Display product information",
+  "Answer product-specific questions",
+  "Handle product recommendations",
+  "Check stock availability",
+  "Process product inquiries"
+]
+
+const shopifyTooltipContent = computed(() => {
+  return `Enable Shopify features for:\n${shopifyReasons.map(reason => `• ${reason}`).join('\n')}`
+})
+
 const toggleCreateTicket = () => {
   emit('toggle-create-ticket')
+}
+
+const toggleShopifyIntegration = () => {
+  // Store the previous value in case we need to revert
+  
+  // Show loading state
+  shopifyToggleInProgress.value = true
+  
+  // Update the local state optimistically
+  localShopifyEnabled.value = !localShopifyEnabled.value
+  
+  // Emit the event for parent to handle
+  emit('toggle-shopify-integration')
+  
+  // The parent component should call an API method and handle errors
+  // If an error occurs, the watch on props.shopifyError will revert the state
+  
+  // For demo purposes, let's set a timeout to simulate API call
+  // This should be removed in production as the parent component should control this
+  setTimeout(() => {
+    // Auto-reset progress after 3 seconds if parent doesn't control it
+    if (shopifyToggleInProgress.value) {
+      shopifyToggleInProgress.value = false
+    }
+  }, 3000)
 }
 
 const handleProjectChange = () => {
@@ -120,12 +199,37 @@ const saveJiraConfig = () => {
     issueTypeId: localSelectedIssueType.value
   })
 }
+
+
+// Fetch Shopify connection status
+const fetchShopifyStatus = async () => {
+  try {
+    shopifyLoading.value = true
+    const data = await checkShopifyConnection()
+    shopifyConnected.value = data.connected
+    shopifyShopDomain.value = data.shop_domain || ''
+    console.log('Shopify connection status:', data)
+  } catch (error) {
+    console.error('Error checking Shopify connection:', error)
+    shopifyConnected.value = false
+  } finally {
+    shopifyLoading.value = false
+  }
+}
+
+// Fetch connection status on component mount
+onMounted(async () => {
+  await fetchShopifyStatus()
+})
 </script>
 
 <template>
   <section class="detail-section">
-    <h4>Jira Integration</h4>
+    <h4>Integrations</h4>
+    
+    <!-- Jira Integration -->
     <div class="integration-section">
+      <h5 class="integration-title">Jira Integration</h5>
       <!-- Jira Ticket Creation Toggle -->
       <div class="ticket-toggle">
         <div class="toggle-header">
@@ -210,6 +314,53 @@ const saveJiraConfig = () => {
         </div>
       </div>
     </div>
+    
+    <!-- Shopify Integration -->
+    <div class="integration-section">
+      <h5 class="integration-title">Shopify Integration</h5>
+      <div class="ticket-toggle">
+        <div class="toggle-header">
+          <h4>Enable Shopify Features</h4>
+          <div class="toggle-with-loader">
+            <div class="toggle-loader" v-if="shopifyToggleInProgress">
+              <span class="loader-dot"></span>
+              <span class="loader-dot"></span>
+              <span class="loader-dot"></span>
+            </div>
+            <label class="switch" v-tooltip="shopifyTooltipContent">
+              <input type="checkbox" 
+                v-model="localShopifyEnabled"
+                @change="toggleShopifyIntegration"
+                :disabled="shopifyLoading || props.shopifyLoading || shopifyToggleInProgress"
+              >
+              <span class="slider" :class="{ 'in-progress': shopifyToggleInProgress }"></span>
+            </label>
+          </div>
+        </div>
+        <p class="helper-text">Enable Shopify product information and features for this agent</p>
+        
+        <!-- Shopify Connection Status -->
+        <div v-if="shopifyLoading" class="jira-status loading">
+          Checking Shopify connection...
+        </div>
+        <div v-else-if="!shopifyConnected" class="jira-status not-connected">
+          <span class="status-icon">⚠️</span>
+          Shopify is not connected
+          <router-link to="/settings/integrations" class="connect-link">
+            Connect Shopify
+          </router-link>
+        </div>
+        <div v-else class="jira-status connected">
+          <span class="status-icon">✓</span>
+          Connected to {{ shopifyShopDomain }}
+        </div>
+      </div>
+      <!-- Add error message display -->
+      <div v-if="shopifyError" class="shopify-error">
+        <span class="error-icon">❌</span>
+        {{ shopifyError }}
+      </div>
+    </div>
   </section>
 </template>
 
@@ -228,6 +379,14 @@ const saveJiraConfig = () => {
   border-radius: var(--radius-md);
   padding: var(--space-md);
   background-color: var(--background-soft);
+  margin-bottom: var(--space-lg);
+}
+
+.integration-title {
+  margin-bottom: var(--space-sm);
+  color: var(--text-secondary);
+  font-size: var(--text-md);
+  font-weight: 600;
 }
 
 .ticket-toggle {
@@ -349,6 +508,18 @@ input:checked + .slider:before {
   gap: var(--space-md);
 }
 
+.shopify-info {
+  background-color: var(--background-soft);
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--primary-color);
+}
+
+.shopify-info p {
+  margin-bottom: var(--space-xs);
+  font-size: var(--text-sm);
+}
+
 .form-group {
   display: flex;
   flex-direction: column;
@@ -402,5 +573,78 @@ input:checked + .slider:before {
   opacity: 0.7;
   cursor: not-allowed;
   filter: grayscale(0.5);
+}
+
+.shopify-error {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  border-radius: var(--radius-md);
+  background-color: var(--error-light, #FEEAEA);
+  color: var(--error, #EF4444);
+  font-size: var(--text-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.error-icon {
+  margin-right: var(--space-xs);
+}
+
+.toggle-with-loader {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.toggle-loader {
+  position: absolute;
+  right: 55px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.loader-dot {
+  width: 6px;
+  height: 6px;
+  background-color: var(--primary-color);
+  border-radius: 50%;
+  animation: pulse 1.5s infinite ease-in-out;
+}
+
+.loader-dot:nth-child(2) {
+  animation-delay: 0.5s;
+}
+
+.loader-dot:nth-child(3) {
+  animation-delay: 1s;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(0.75);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.slider.in-progress {
+  opacity: 0.7;
+  background-image: linear-gradient(45deg, rgba(255,255,255,0.15) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.15) 75%, transparent 75%, transparent);
+  background-size: 20px 20px;
+  animation: progress-animation 1s linear infinite;
+}
+
+@keyframes progress-animation {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 20px 0;
+  }
 }
 </style> 

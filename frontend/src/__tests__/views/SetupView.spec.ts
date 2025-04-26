@@ -19,11 +19,11 @@ vi.mock('timezone-select-js', () => ({
 // Mock the organization service
 vi.mock('@/services/organization', () => ({
   createOrganization: vi.fn(),
-  listOrganizations: vi.fn().mockResolvedValue(null)
+  getSetupStatus: vi.fn().mockResolvedValue(false)
 }))
 
 // Import mocked services
-import { createOrganization, listOrganizations } from '@/services/organization'
+import { createOrganization, getSetupStatus } from '@/services/organization'
 
 describe('SetupView', () => {
   let wrapper: VueWrapper
@@ -65,12 +65,12 @@ describe('SetupView', () => {
   })
 
   it('checks for existing organization on mount', async () => {
-    expect(listOrganizations).toHaveBeenCalled()
+    expect(getSetupStatus).toHaveBeenCalled()
   })
 
   it('redirects to ai-agents if organization exists', async () => {
     // Mock organization exists
-    ;(listOrganizations as any).mockResolvedValueOnce([{ id: 1 }])
+    vi.mocked(getSetupStatus).mockResolvedValueOnce(true)
     
     // Remount component
     wrapper = mount(SetupView, {
@@ -84,6 +84,7 @@ describe('SetupView', () => {
     await router.isReady()
     
     expect(router.currentRoute.value.path).toBe('/ai-agents')
+    expect(getSetupStatus).toHaveBeenCalled()
   })
 
   it('displays form fields with default values', () => {

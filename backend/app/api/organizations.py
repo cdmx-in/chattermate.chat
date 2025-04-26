@@ -225,24 +225,45 @@ async def create_organization(
         )
 
 
-@router.get("", response_model=List[OrganizationResponse])
-async def list_organizations(
-    skip: int = 0,
-    limit: int = 100,
+@router.get("/setup-status", response_model=dict)
+async def is_organization_setup(
     db: Session = Depends(get_db)
 ):
-    """List all organizations with pagination"""
+    """Check if at least one active organization is set up."""
     try:
-        organizations = db.query(Organization)\
-            .offset(skip)\
-            .limit(limit)\
-            .all()
-        return organizations
+        active_org_exists = db.query(Organization.id)\
+            .filter(Organization.is_active == True)\
+            .first() is not None
+        
+        return {"is_setup": active_org_exists}
     except Exception as e:
-        logger.error(f"Failed to list organizations: {str(e)}", exc_info=True)
+        logger.error(f"Failed to check organization setup status: {str(e)}", exc_info=True)
+        # In case of error, conservatively assume setup might be needed or report error
+        # Returning False might lock users out if DB is temporarily unavailable
+        # A 500 error might be better to indicate a server issue
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to retrieve organizations. Please try again later."
+            detail="Failed to check organization setup status"
+        )
+
+
+@router.get("/check-domain/{domain}")
+async def check_domain_availability(
+    domain: str,
+    db: Session = Depends(get_db)
+):
+    """Check if an organization domain is available"""
+    try:
+        existing_org = db.query(Organization).filter(Organization.domain == domain).first()
+        return {
+            "available": not existing_org,
+            "message": "Domain is available" if not existing_org else "Domain already exists"
+        }
+    except Exception as e:
+        logger.error(f"Failed to check domain availability: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to check domain availability"
         )
 
 
@@ -405,23 +426,3 @@ async def get_organization_stats(
         ).count(),
         "settings": org.settings
     }
-
-
-@router.get("/check-domain/{domain}")
-async def check_domain_availability(
-    domain: str,
-    db: Session = Depends(get_db)
-):
-    """Check if an organization domain is available"""
-    try:
-        existing_org = db.query(Organization).filter(Organization.domain == domain).first()
-        return {
-            "available": not existing_org,
-            "message": "Domain is available" if not existing_org else "Domain already exists"
-        }
-    except Exception as e:
-        logger.error(f"Failed to check domain availability: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to check domain availability"
-        )

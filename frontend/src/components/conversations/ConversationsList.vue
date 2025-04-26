@@ -209,7 +209,17 @@ onBeforeUnmount(() => {
           </div>
           <div class="conversation-preview">
             <span class="agent-name">{{ conv.agent_name }}:</span>
-            <p class="last-message">{{ conv.last_message }}</p>
+            <!-- Product message preview -->
+            <template v-if="conv.message_type === 'product' && conv.shopify_output?.products?.length">
+              <p class="last-message product-preview">
+                <span class="product-icon">🛍️</span>
+                {{ conv.shopify_output.products.length }} product{{ conv.shopify_output.products.length > 1 ? 's' : '' }} shared
+              </p>
+            </template>
+            <!-- Regular message preview -->
+            <template v-else>
+              <p class="last-message">{{ conv.last_message }}</p>
+            </template>
             <div v-if="unreadMessages[conv.session_id]" class="unread-bubble">
               {{ unreadMessages[conv.session_id] }}
             </div>
@@ -622,5 +632,23 @@ onBeforeUnmount(() => {
 
 .scroll-to-top-btn:active {
   transform: translateY(0);
+}
+
+.product-preview {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--primary-color);
+  font-weight: 500;
+}
+
+.product-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.last-message.product-preview {
+  color: var(--primary-color);
+  max-width: 160px;
 }
 </style> 

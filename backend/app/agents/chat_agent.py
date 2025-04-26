@@ -35,9 +35,21 @@ from app.models.user import User, user_groups
 from datetime import datetime
 from app.repositories.jira import JiraRepository
 from app.tools.jira_toolkit import JiraTools
+from app.tools.shopify_toolkit import ShopifyTools
 from app.utils.response_parser import parse_response_content
+from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
+import re
 
 logger = get_logger(__name__)
+
+# Add a function to remove URLs from message content
+def remove_urls_from_message(message: str) -> str:
+    """Remove URLs from message text"""
+    if not message:
+        return message
+    # Replace URLs with [link removed] to maintain context
+    url_pattern = r'https?://[^\s\)\]"]+'
+    return re.sub(url_pattern, '[link removed]', message)
 
 class ChatAgent:
     def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None):
@@ -60,6 +72,7 @@ class ChatAgent:
         self.model_name = model_name
         self.model_type = model_type
         self.jira_instructions_added = False
+        self.shopify_instructions_added = False
         self.org_id = org_id
         self.agent_id = agent_id
         self.customer_id = customer_id
@@ -79,6 +92,23 @@ class ChatAgent:
                 self.tools.append(self.jira_tools)
             except Exception as e:
                 logger.error(f"Failed to initialize Jira tools: {e}")
+        
+        shopify_config = None
+        # Add Shopify tools if agent has Shopify enabled
+        if self.agent_id and self.org_id and self.session_id and not self.agent_data.transfer_to_human:
+            try:
+                # Check if Shopify is enabled for this agent
+                shopify_config_repo = AgentShopifyConfigRepository(db)
+                shopify_config = shopify_config_repo.get_agent_shopify_config(self.agent_id)
+                if shopify_config and shopify_config.enabled:
+                    self.shopify_tools = ShopifyTools(
+                        agent_id=self.agent_id,
+                        org_id=self.org_id,
+                        session_id=self.session_id
+                    )
+                    self.tools.append(self.shopify_tools)
+            except Exception as e:
+                logger.error(f"Failed to initialize Shopify tools: {e}")
 
         if self.agent_data:
             # Define end chat instructions to avoid long lines
@@ -156,6 +186,70 @@ class ChatAgent:
                 """
                 system_message += "\n\n" + jira_instructions
                 self.jira_instructions_added = True
+            
+            # Add Shopify instructions if Shopify is enabled
+            if shopify_config and shopify_config.enabled and not self.agent_data.transfer_to_human:
+                # UPDATED Shopify Instructions (v3)
+                shopify_instructions = """
+                You have access to Shopify tools (`search_products`, `get_product`, `recommend_products`, etc.). 
+                When using `search_products` or `recommend_products`, use a `limit` of 5 unless the user specifies otherwise.
+                
+                **Search Query Construction (`search_products`):**
+                - When the user mentions multiple characteristics (e.g., "kids snowboard"), construct the `searchTerm` to combine them using `OR` and wildcards.
+                - Example: If the user asks "recommend a snowboard for my son", a good `searchTerm` would be `(title:*kids snowboard*) OR (title:*snowboard*)`. Always use OR conditions and wrap terms in wildcards (`*term*`) for broader matching.
+                - When the user specifies price constraints (e.g., "snowboard below 500 rs"), add a price range condition:
+                  - Example: For "snowboard below 500", use `(title:*snowboard*) AND price:<=500`
+                  - Example: For "snowboard between 200 and 500", use `(title:*snowboard*) AND price:>200 AND price:<=500`
+                - Following Shopify's search syntax, you can combine multiple conditions using AND/OR operators and parentheses for grouping.
+
+                **❗❗ CRITICAL DISPLAY RULES - STRICTLY ENFORCED ❗❗:**
+                - 🚫 **ABSOLUTELY NEVER** include product images, image URLs, or hyperlinks in the message field
+                - 🚫 **ABSOLUTELY NEVER** include product details like prices, vendor names, dimensions, or specifications in the message field
+                - 🚫 **ABSOLUTELY NEVER** use numbered lists or bullet points to display products with details in the message field
+                - 🚫 **ABSOLUTELY NEVER** include HTML tags, markdown image syntax, or any form of image embedding in the message field
+                
+                - ✅ The message field must ONLY contain simple conversational text such as:
+                  - "Here are some snowboard options that might work for your son."
+                  - "I found several products matching your search. What do you think?"
+                  - "Would you like more information about any of these options?"
+                
+                - ✅ ALL product information, without exception, must ONLY be included in the `shopify_output` field structure
+                - ✅ The system has a dedicated display component that will automatically render all products from the `shopify_output` field
+                
+                This is critically important: The UI automatically displays all product details and images from the `shopify_output` field separately from your message. Your message should ONLY contain simple conversational text like you're referring to products that are being shown separately.
+
+                **Pagination:**
+                - These tools support pagination. The output will include `pageInfo` containing `hasNextPage` (boolean) and `endCursor` (string).
+                - If `hasNextPage` is true, it means there are more results available.
+                - You should inform the user if more results are available (e.g., "I found 5 products matching your search. There might be more available. Would you like to see the next set?").
+                - **Do not** automatically fetch the next page unless the user asks for it.
+                - If the user asks for more results, call the *same* tool again, passing the `endCursor` value from the previous response as the `cursor` argument in the new tool call.
+
+                **Output Formatting:**
+                - When a Shopify tool returns product data, you MUST populate the `shopify_output` field in your final JSON response.
+                - The `shopify_output` field expects a specific JSON structure containing a list of products and optionally pageInfo.
+                - Copy the **entire relevant JSON output** from the tool directly into the `shopify_output` field. 
+                  - If the tool output contains a `shopify_output` key with a nested `products` list like `{"shopify_output": {"products": [...], "pageInfo": {...}}}` , copy that entire inner `shopify_output` object.
+                  - If the tool output contains just `shopify_product` for a single item (e.g., from `get_product`), structure it as `{"products": [ ...the_single_product... ]}` within your response's `shopify_output` field.
+                
+                - Example Structure for your `shopify_output` field (when multiple products with pagination info):
+                  ```json
+                  "shopify_output": {
+                    "products": [
+                      { "id": "...", "title": "Product A", "price": "...", "image": {"src": "..."}, ... },
+                      { "id": "...", "title": "Product B", "price": "...", "image": {"src": "..."}, ... }
+                    ],
+                    "search_query": "optional search term",
+                    "total_count": 5, // Example count from the first page
+                    "pageInfo": {
+                        "hasNextPage": true,
+                        "endCursor": "CURSOR_STRING_FROM_TOOL" 
+                    }
+                  }
+                  ```
+                """
+                system_message += "\n\n" + shopify_instructions
+                self.shopify_instructions_added = True
         else:
             system_message = [
                 "You are a helpful customer service agent.",
@@ -166,7 +260,7 @@ class ChatAgent:
             model_type=model_type,
             api_key=api_key,
             model_name=model_name,
-            max_tokens=1000,
+            max_tokens=2000 if self.shopify_instructions_added else 1000,
             response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
         )
 
@@ -245,6 +339,11 @@ class ChatAgent:
             response_content = parse_response_content(response)
 
             logger.debug(f"Response content: {response_content}")
+            
+            # If shopify_output is present, remove URLs from message
+            if response_content.shopify_output:
+                response_content.message = remove_urls_from_message(response_content.message)
+                logger.debug(f"Cleaned message for Shopify output: {response_content.message}")
             
             # Handle end chat and rating request
             if response_content.end_chat:
@@ -331,7 +430,8 @@ class ChatAgent:
                     end_chat_reason=None,
                     end_chat_description=None,
                     request_rating=False,
-                    create_ticket=False
+                    create_ticket=False,
+                    shopify_output=None
                 )
                 
                 # Store AI response with transfer status
@@ -349,7 +449,8 @@ class ChatAgent:
                         "end_chat": response_content.end_chat,
                         "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
                         "end_chat_description": response_content.end_chat_description,
-                        "request_rating": response_content.request_rating
+                        "request_rating": response_content.request_rating,
+                        "shopify_output": response_content.shopify_output
                     }
                 })
 
@@ -363,7 +464,8 @@ class ChatAgent:
                 "end_chat": response_content.end_chat,
                 "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
                 "end_chat_description": response_content.end_chat_description,
-                "request_rating": response_content.request_rating
+                "request_rating": response_content.request_rating,
+                "shopify_output": response_content.shopify_output
             }
             
             # Add ticket attributes if present
@@ -377,6 +479,7 @@ class ChatAgent:
                     "ticket_status": response_content.ticket_status,
                     "ticket_priority": response_content.ticket_priority
                 })
+            
             
             chat_repo.create_message({
                 "message": response_content.message,
@@ -405,7 +508,8 @@ class ChatAgent:
                 end_chat_reason=None,
                 end_chat_description=None,
                 request_rating=False,
-                create_ticket=False
+                create_ticket=False,
+                shopify_output=None
             )
             
             # Store error message
