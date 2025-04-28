@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
+from uuid import UUID
 
 class ShopifyShopBase(BaseModel):
     """Base schema for ShopifyShop"""
@@ -48,6 +49,11 @@ class ShopifyShopInDB(ShopifyShopBase):
 
     class Config:
         from_attributes = True
+        
+        # Add JSON encoders to convert UUID to string
+        json_encoders = {
+            UUID: str  # Convert UUID to string
+        }
 
 class ShopifyShop(ShopifyShopInDB):
     """Schema for shopify shop response"""

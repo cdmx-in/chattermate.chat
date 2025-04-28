@@ -36,6 +36,6 @@ class ShopifyShop(Base):
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     
-    # Optional - link to organization if needed
-    organization_id = Column(String, ForeignKey("organizations.id"), nullable=True)
+    # Use UUID type to match the database schema from Alembic migration
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True)
     organization = relationship("Organization", back_populates="shopify_shops") 

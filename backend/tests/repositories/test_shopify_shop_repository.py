@@ -225,7 +225,7 @@ def test_create_shop(repository, mock_db, sample_shop_data):
     assert result.shop_domain == shop_create.shop_domain
     assert result.access_token == shop_create.access_token
     assert result.is_installed == shop_create.is_installed
-    assert result.organization_id == shop_create.organization_id
+    assert str(result.organization_id) == shop_create.organization_id
     
     mock_db.add.assert_called_once()
     mock_db.commit.assert_called_once()
