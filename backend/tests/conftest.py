@@ -251,7 +251,7 @@ def test_shopify_shop(db, test_organization):
         access_token="test_access_token",
         scope="read_products,write_products",
         is_installed=True,
-        organization_id=str(test_organization.id)
+        organization_id=test_organization.id
     )
     db.add(shop)
     db.commit()
