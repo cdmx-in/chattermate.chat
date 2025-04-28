@@ -30,6 +30,7 @@ from app.repositories.agent_shopify_config_repository import AgentShopifyConfigR
 from uuid import UUID
 import json
 import traceback
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -250,7 +251,8 @@ class ShopifyTools(Toolkit):
             }
             
             import requests
-            response = requests.post(url, headers=headers, json=payload)
+            verify_ssl = settings.VERIFY_SSL_CERTIFICATES
+            response = requests.post(url, headers=headers, json=payload, verify=verify_ssl)
             
             if response.status_code != 200:
                 logger.error(f"Failed to search products: {response.text}")
@@ -480,7 +482,8 @@ class ShopifyTools(Toolkit):
             }
             
             import requests
-            response = requests.post(url, headers=headers, json=payload)
+            verify_ssl = settings.VERIFY_SSL_CERTIFICATES
+            response = requests.post(url, headers=headers, json=payload, verify=verify_ssl)
             
             if response.status_code != 200:
                 logger.error(f"Failed to search orders: {response.text}")
@@ -723,7 +726,8 @@ class ShopifyTools(Toolkit):
                 }
                 
                 import requests
-                response = requests.post(url, headers=headers, json=payload)
+                verify_ssl = settings.VERIFY_SSL_CERTIFICATES
+                response = requests.post(url, headers=headers, json=payload, verify=verify_ssl)
                 
                 if response.status_code == 200:
                     result = response.json()
@@ -889,7 +893,8 @@ class ShopifyTools(Toolkit):
             }
             
             import requests
-            response = requests.post(url, headers=headers, json=payload)
+            verify_ssl = settings.VERIFY_SSL_CERTIFICATES
+            response = requests.post(url, headers=headers, json=payload, verify=verify_ssl)
             
             if response.status_code != 200:
                 logger.error(f"Failed to get recommendations: {response.text}")
