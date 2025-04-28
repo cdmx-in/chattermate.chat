@@ -250,9 +250,17 @@ async def get_shops(
     """
     Get all shops for the current organization
     """
-    org_id_str = str(organization.id) if organization.id else None
+    # Ensure organization_id is a string, not a UUID object
+    org_id_str = str(organization.id) if organization and organization.id else None
     shop_repository = ShopifyShopRepository(db)
-    return shop_repository.get_shops_by_organization(org_id_str, skip=skip, limit=limit)
+    shops = shop_repository.get_shops_by_organization(org_id_str, skip=skip, limit=limit)
+    
+    # Ensure organization_id is a string in each shop object
+    for shop in shops:
+        if shop.organization_id and not isinstance(shop.organization_id, str):
+            shop.organization_id = str(shop.organization_id)
+    
+    return shops
 
 @router.get("/shops/{shop_id}", response_model=ShopifyShop)
 async def get_shop(
@@ -272,6 +280,10 @@ async def get_shop(
     # Convert organization IDs to strings for comparison
     shop_org_id = str(db_shop.organization_id) if db_shop.organization_id else None
     current_org_id = str(organization.id) if organization.id else None
+    
+    # Ensure organization_id is a string, not a UUID object
+    if db_shop.organization_id and not isinstance(db_shop.organization_id, str):
+        db_shop.organization_id = str(db_shop.organization_id)
     
     # Verify that the shop belongs to the current organization
     if shop_org_id != current_org_id:

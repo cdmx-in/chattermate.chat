@@ -16,11 +16,12 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from sqlalchemy.orm import Session
-from app.models.shopify import ShopifyShop
-from app.models.schemas.shopify import ShopifyShopCreate, ShopifyShopUpdate
-from typing import List, Optional
+from typing import List, Optional, Union
 import uuid
+from sqlalchemy.orm import Session
+from app.models.shopify.shopify_shop import ShopifyShop
+from app.models.schemas.shopify import ShopifyShopCreate, ShopifyShopUpdate
+from uuid import UUID
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -33,51 +34,55 @@ class ShopifyShopRepository:
         """
         Get a shop by ID
         """
-        shop = self.db.query(ShopifyShop).filter(ShopifyShop.id == shop_id).first()
-        if shop and shop.organization_id:
-            shop.organization_id = str(shop.organization_id)
-        return shop
+        return self.db.query(ShopifyShop).filter(ShopifyShop.id == shop_id).first()
     
     def get_shop_by_domain(self, shop_domain: str) -> Optional[ShopifyShop]:
         """
         Get a shop by domain
         """
-        shop = self.db.query(ShopifyShop).filter(ShopifyShop.shop_domain == shop_domain).first()
-        if shop and shop.organization_id:
-            shop.organization_id = str(shop.organization_id)
-        return shop
+        return self.db.query(ShopifyShop).filter(ShopifyShop.shop_domain == shop_domain).first()
     
     def get_shops(self, skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
         """
-        Get all shops with pagination
+        Get all shops
         """
-        shops = self.db.query(ShopifyShop).offset(skip).limit(limit).all()
-        
-        # Ensure organization_id is properly serialized as a string
-        for shop in shops:
-            if shop.organization_id:
-                shop.organization_id = str(shop.organization_id)
-        
-        return shops
+        return self.db.query(ShopifyShop).offset(skip).limit(limit).all()
     
-    def get_shops_by_organization(self, organization_id: str, skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
-        """Get all Shopify shops for an organization."""
-        # Make sure organization_id is a string
-        org_id_str = str(organization_id)
-        shops = self.db.query(ShopifyShop).filter(ShopifyShop.organization_id == org_id_str).offset(skip).limit(limit).all()
-        return shops
+    def get_shops_by_organization(self, organization_id: Union[str, UUID], skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
+        """
+        Get all shops for an organization
+        """
+        # Convert organization_id to UUID if it's a string
+        org_id = organization_id
+        if organization_id and isinstance(organization_id, str):
+            try:
+                org_id = UUID(organization_id)
+            except ValueError:
+                # If not a valid UUID, continue with string version
+                pass
+                
+        return self.db.query(ShopifyShop).filter(ShopifyShop.organization_id == org_id).offset(skip).limit(limit).all()
     
     def create_shop(self, shop: ShopifyShopCreate) -> ShopifyShop:
         """
         Create a new shop
         """
+        # Convert organization_id to UUID if it's a string
+        org_id = shop.organization_id
+        if shop.organization_id and isinstance(shop.organization_id, str):
+            try:
+                org_id = UUID(shop.organization_id)
+            except ValueError:
+                # If not a valid UUID, continue with string version
+                pass
+                
         db_shop = ShopifyShop(
             id=str(uuid.uuid4()),
             shop_domain=shop.shop_domain,
             access_token=shop.access_token,
             scope=shop.scope,
             is_installed=shop.is_installed,
-            organization_id=shop.organization_id
+            organization_id=org_id
         )
         self.db.add(db_shop)
         self.db.commit()
@@ -93,6 +98,15 @@ class ShopifyShopRepository:
             return None
         
         update_data = shop_update.model_dump(exclude_unset=True)
+        
+        # Convert organization_id to UUID if it's a string
+        if 'organization_id' in update_data and update_data['organization_id'] and isinstance(update_data['organization_id'], str):
+            try:
+                update_data['organization_id'] = UUID(update_data['organization_id'])
+            except ValueError:
+                # If not a valid UUID, continue with string version
+                pass
+        
         for key, value in update_data.items():
             setattr(db_shop, key, value)
         
