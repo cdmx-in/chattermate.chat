@@ -18,7 +18,9 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 import json
 import os
-from typing import Set
+import time
+import asyncio
+from typing import Set, List
 from functools import lru_cache
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,19 +72,20 @@ def refresh_cors_origins() -> None:
     """
     get_cors_origins.cache_clear()
 
-def update_cors_middleware(app: FastAPI) -> None:
+def update_local_cors(app: FastAPI, new_origins: List[str]) -> bool:
     """
-    Update the CORS middleware with new origins
-    """
-    logger.info("Refreshing CORS origins")
-    # Get fresh CORS origins
-    refresh_cors_origins()
-    new_origins = list(get_cors_origins())
+    Update local CORS middleware with new origins
     
-    # Check if we have access to the middleware
+    Args:
+        app: FastAPI application instance
+        new_origins: List of CORS origins to set
+        
+    Returns:
+        bool: True if CORS middleware was found and updated, False otherwise
+    """
     middleware_found = False
     
-    # In standard deployment mode
+    # First try standard FastAPI middleware structure
     if hasattr(app, 'user_middleware'):
         for middleware in app.user_middleware:
             logger.debug(f"Middleware: {middleware}")
@@ -93,23 +96,127 @@ def update_cors_middleware(app: FastAPI) -> None:
                 middleware_found = True
                 break
     
-    # In AWS ECS or other environments where middleware can't be found
+    # If middleware not found, try rebuilding the middleware stack
     if not middleware_found:
         logger.warning("Could not find CORS middleware in app.user_middleware, applying global update")
-        # Add a new middleware instance with updated origins
-        # Remove any existing CORS middleware first to avoid duplicates
-        app.middleware_stack = None  # This forces FastAPI to rebuild the middleware stack
-        # Re-add the middleware with updated origins
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=new_origins,
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
-        )
-        logger.info(f"Added new CORS middleware with origins: {new_origins}")
+        try:
+            # Force FastAPI to rebuild the middleware stack
+            app.middleware_stack = None
+            # Re-add the middleware with updated origins
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=new_origins,
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+            logger.info(f"Added new CORS middleware with origins: {new_origins}")
+            middleware_found = True
+        except Exception as e:
+            logger.error(f"Failed to rebuild middleware stack: {str(e)}")
     
     # Update Socket.IO CORS settings
-    from app.core.socketio import sio
-    sio.eio.cors_allowed_origins = new_origins
-    logger.info(f"Updated Socket.IO CORS origins: {new_origins}") 
+    try:
+        from app.core.socketio import sio
+        sio.eio.cors_allowed_origins = new_origins
+        logger.info(f"Updated Socket.IO CORS origins: {new_origins}")
+    except Exception as e:
+        logger.error(f"Failed to update Socket.IO CORS origins: {str(e)}")
+    
+    return middleware_found
+
+def update_cors_middleware(app: FastAPI) -> None:
+    """
+    Update the CORS middleware with new origins and notify all workers
+    """
+    logger.info("Refreshing CORS origins")
+    
+    # Get fresh CORS origins
+    refresh_cors_origins()
+    new_origins = list(get_cors_origins())
+    
+    # Update local instance
+    update_local_cors(app, new_origins)
+    
+    # Store updated origins in Redis with timestamp for other workers
+    try:
+        from app.core.redis import get_redis
+        redis_client = get_redis()
+        
+        if redis_client:
+            # Store CORS origins with timestamp in Redis
+            redis_client.set(
+                "cors:origins", 
+                json.dumps({"origins": new_origins, "updated_at": time.time()})
+            )
+            
+            # Publish event to notify other workers
+            redis_client.publish("cors:update", "refresh")
+            logger.info("Published CORS update to other workers via Redis")
+        else:
+            logger.warning("Redis not available, CORS update will only apply to this worker")
+    except Exception as e:
+        logger.error(f"Failed to publish CORS update to Redis: {str(e)}")
+
+async def listen_for_cors_updates(app: FastAPI):
+    """
+    Listen for CORS update notifications from Redis
+    """
+    from app.core.redis import get_redis
+    redis_client = get_redis()
+    
+    if not redis_client:
+        logger.warning("Redis not available, skipping CORS update listener")
+        return
+    
+    pubsub = redis_client.pubsub()
+    pubsub.subscribe("cors:update")
+    
+    # Also check periodically for updates as fallback
+    last_check = 0
+    
+    logger.info("Started CORS update listener")
+    
+    while True:
+        try:
+            # Listen for published messages
+            message = pubsub.get_message(timeout=5.0)
+            if message and message["type"] == "message":
+                # Get updated origins from Redis
+                origins_data = json.loads(redis_client.get("cors:origins") or "{}")
+                if origins_data and "origins" in origins_data:
+                    logger.info("Received CORS update notification")
+                    update_local_cors(app, origins_data["origins"])
+            
+            # Periodically check for updates (fallback mechanism)
+            now = time.time()
+            if now - last_check > 300:  # 5 minutes
+                origins_data = json.loads(redis_client.get("cors:origins") or "{}")
+                if origins_data and "origins" in origins_data:
+                    # Only update if we haven't updated in the last 5 minutes
+                    last_updated = origins_data.get("updated_at", 0)
+                    if last_updated > last_check:
+                        logger.info("Periodic CORS check found updated origins")
+                        update_local_cors(app, origins_data["origins"])
+                last_check = now
+        except Exception as e:
+            logger.error(f"Error in CORS update listener: {str(e)}")
+        
+        await asyncio.sleep(1)
+
+def start_cors_listener(app: FastAPI):
+    """
+    Start background task to listen for CORS updates
+    """
+    try:
+        # Check if Redis is available before starting listener
+        from app.core.redis import get_redis
+        redis_client = get_redis()
+        
+        if redis_client:
+            asyncio.create_task(listen_for_cors_updates(app))
+            logger.info("Started CORS update listener task")
+        else:
+            logger.warning("Redis not available, CORS synchronization between workers disabled")
+    except Exception as e:
+        logger.error(f"Failed to start CORS listener: {str(e)}") 
