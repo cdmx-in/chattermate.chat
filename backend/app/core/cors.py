@@ -160,7 +160,7 @@ def update_cors_middleware(app: FastAPI) -> None:
 
 async def listen_for_cors_updates(app: FastAPI):
     """
-    Listen for CORS update notifications from Redis
+    Listen for CORS update notifications from Redis using an efficient pattern
     """
     from app.core.redis import get_redis
     redis_client = get_redis()
@@ -169,40 +169,39 @@ async def listen_for_cors_updates(app: FastAPI):
         logger.warning("Redis not available, skipping CORS update listener")
         return
     
-    pubsub = redis_client.pubsub()
-    pubsub.subscribe("cors:update")
-    
-    # Also check periodically for updates as fallback
-    last_check = 0
-    
-    logger.info("Started CORS update listener")
-    
-    while True:
-        try:
-            # Listen for published messages
-            message = pubsub.get_message(timeout=5.0)
-            if message and message["type"] == "message":
+    # Use a dedicated Redis connection for PubSub to avoid blocking other operations
+    try:
+        pubsub = redis_client.pubsub()
+        pubsub.subscribe("cors:update")
+        logger.info("Started CORS update listener")
+        
+        # Use an event-driven approach instead of continuous polling
+        for message in pubsub.listen():
+            # Skip subscription confirmation messages
+            if message["type"] != "message":
+                continue
+                
+            try:
                 # Get updated origins from Redis
-                origins_data = json.loads(redis_client.get("cors:origins") or "{}")
+                origins_data = redis_client.get("cors:origins")
+                if not origins_data:
+                    continue
+                    
+                origins_data = json.loads(origins_data)
                 if origins_data and "origins" in origins_data:
                     logger.info("Received CORS update notification")
                     update_local_cors(app, origins_data["origins"])
-            
-            # Periodically check for updates (fallback mechanism)
-            now = time.time()
-            if now - last_check > 300:  # 5 minutes
-                origins_data = json.loads(redis_client.get("cors:origins") or "{}")
-                if origins_data and "origins" in origins_data:
-                    # Only update if we haven't updated in the last 5 minutes
-                    last_updated = origins_data.get("updated_at", 0)
-                    if last_updated > last_check:
-                        logger.info("Periodic CORS check found updated origins")
-                        update_local_cors(app, origins_data["origins"])
-                last_check = now
-        except Exception as e:
-            logger.error(f"Error in CORS update listener: {str(e)}")
-        
-        await asyncio.sleep(1)
+            except Exception as e:
+                logger.error(f"Error processing CORS update: {str(e)}")
+                
+    except Exception as e:
+        logger.error(f"Error in CORS update listener: {str(e)}")
+        # Try to clean up subscription
+        try:
+            pubsub.unsubscribe("cors:update")
+            pubsub.close()
+        except:
+            pass
 
 def start_cors_listener(app: FastAPI):
     """
@@ -214,7 +213,23 @@ def start_cors_listener(app: FastAPI):
         redis_client = get_redis()
         
         if redis_client:
-            asyncio.create_task(listen_for_cors_updates(app))
+            # Create background task with proper error handling
+            background_task = asyncio.create_task(listen_for_cors_updates(app))
+            
+            # Add exception handler to restart if it fails
+            def handle_exception(task):
+                if not task.cancelled() and task.exception():
+                    logger.error(f"CORS listener crashed: {task.exception()}")
+                    # Wait a moment before restarting
+                    asyncio.create_task(restart_listener(app))
+                    
+            async def restart_listener(app):
+                await asyncio.sleep(5)  # Wait before restarting
+                logger.info("Restarting CORS listener")
+                new_task = asyncio.create_task(listen_for_cors_updates(app))
+                new_task.add_done_callback(handle_exception)
+                
+            background_task.add_done_callback(handle_exception)
             logger.info("Started CORS update listener task")
         else:
             logger.warning("Redis not available, CORS synchronization between workers disabled")
