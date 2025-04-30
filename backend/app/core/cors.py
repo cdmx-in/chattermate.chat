@@ -74,16 +74,40 @@ def update_cors_middleware(app: FastAPI) -> None:
     """
     Update the CORS middleware with new origins
     """
+    logger.info("Refreshing CORS origins")
     # Get fresh CORS origins
     refresh_cors_origins()
     new_origins = list(get_cors_origins())
     
-    # Find and update the CORS middleware
-    for middleware in app.user_middleware:
-        if isinstance(middleware.cls, CORSMiddleware):
-            middleware.cls.options['allow_origins'] = new_origins
-            logger.info(f"Updated FastAPI CORS origins: {new_origins}")
-            break
+    # Check if we have access to the middleware
+    middleware_found = False
+    
+    # In standard deployment mode
+    if hasattr(app, 'user_middleware'):
+        for middleware in app.user_middleware:
+            logger.debug(f"Middleware: {middleware}")
+            if isinstance(middleware.cls, CORSMiddleware):
+                logger.debug(f"Updating CORS origins: {new_origins}")
+                middleware.cls.options['allow_origins'] = new_origins
+                logger.info(f"Updated FastAPI CORS origins: {new_origins}")
+                middleware_found = True
+                break
+    
+    # In AWS ECS or other environments where middleware can't be found
+    if not middleware_found:
+        logger.warning("Could not find CORS middleware in app.user_middleware, applying global update")
+        # Add a new middleware instance with updated origins
+        # Remove any existing CORS middleware first to avoid duplicates
+        app.middleware_stack = None  # This forces FastAPI to rebuild the middleware stack
+        # Re-add the middleware with updated origins
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=new_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+        logger.info(f"Added new CORS middleware with origins: {new_origins}")
     
     # Update Socket.IO CORS settings
     from app.core.socketio import sio
