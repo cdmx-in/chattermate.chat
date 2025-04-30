@@ -17,10 +17,25 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from fastapi import FastAPI
+from app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 # Create FastAPI app instance
 app = FastAPI(
     title="ChatterMate API",
     description="AI-Powered Customer Support Platform",
     version="1.0.0"
-) 
+)
+
+def initialize_cors_listener():
+    """
+    Initialize the CORS listener for multi-worker environments
+    This function is called during application startup
+    """
+    try:
+        from app.core.cors import start_cors_listener
+        start_cors_listener(app)
+        logger.info("CORS listener initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize CORS listener: {str(e)}") 

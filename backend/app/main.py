@@ -31,7 +31,7 @@ from contextlib import asynccontextmanager
 import os
 from app.core.socketio import socket_app, configure_socketio, sio
 from app.core.cors import get_cors_origins
-from app.core.application import app
+from app.core.application import app, initialize_cors_listener
 
 # Import models to ensure they're registered with SQLAlchemy
 from app.models import Organization, User, Customer
@@ -72,6 +72,9 @@ app.add_middleware(
 async def startup_event():
     """Configure Socket.IO on startup"""
     configure_socketio(cors_origins)
+    
+    # Start CORS listener for multi-worker synchronization
+    initialize_cors_listener()
 
 # Include routers
 app.include_router(
