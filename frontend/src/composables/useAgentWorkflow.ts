@@ -36,11 +36,20 @@ export function useAgentWorkflow(agentId: string) {
       workflow.value = await workflowService.getWorkflowByAgent(agentId)
     } catch (error: any) {
       console.error('Error fetching workflow:', error)
-      workflowError.value = error.response?.data?.detail || 'Failed to fetch workflow'
-      toast.error('Failed to fetch workflow', {
-        duration: 4000,
-        closeButton: true
-      })
+      
+      // Don't show error toast for 404 - it means agent doesn't have a workflow yet (normal state)
+      if (error.response?.status !== 404) {
+        workflowError.value = error.response?.data?.detail || 'Failed to fetch workflow'
+        toast.error('Failed to fetch workflow', {
+          duration: 4000,
+          closeButton: true
+        })
+      } else {
+        // For 404, just log and set workflow to null
+        console.log('No workflow found for agent - agent has no workflow yet')
+        workflow.value = null
+        workflowError.value = ''
+      }
     } finally {
       workflowLoading.value = false
     }

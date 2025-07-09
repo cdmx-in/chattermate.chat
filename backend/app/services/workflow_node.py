@@ -19,12 +19,33 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from typing import List, Dict, Any
 from uuid import UUID
 import uuid
+import re
 from sqlalchemy.orm import Session
 from app.repositories.workflow_node import WorkflowNodeRepository
 from app.repositories.workflow import WorkflowRepository
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+
+def sanitize_utf8_text(text: str) -> str:
+    """
+    Sanitize text to remove invalid UTF-8 characters and surrogates
+    """
+    if not text:
+        return text
+    
+    # Remove surrogate characters (like \udcac, \udd16)
+    text = re.sub(r'[\ud800-\udfff]', '', text)
+    
+    # Encode to UTF-8 and decode to handle any remaining issues
+    try:
+        text = text.encode('utf-8', errors='ignore').decode('utf-8')
+    except UnicodeError:
+        # If still failing, remove all non-ASCII characters
+        text = re.sub(r'[^\x00-\x7F]', '', text)
+    
+    return text.strip()
 
 
 class WorkflowNodeService:
@@ -59,6 +80,33 @@ class WorkflowNodeService:
             existing_nodes_map = {str(node.id): node for node in existing_nodes}
             existing_connections_map = {str(conn.id): conn for conn in existing_connections}
             
+            # Create ID mapping for text IDs to UUIDs
+            id_mapping = {}
+            
+            def is_text_id(node_id: str) -> bool:
+                """Check if ID is a text ID (like message-1, llm-2) instead of UUID"""
+                try:
+                    UUID(node_id)
+                    return False
+                except ValueError:
+                    return True
+            
+            # First pass: Create ID mappings for text IDs
+            for node_data in nodes_data:
+                node_id = str(node_data.get('id', ''))
+                if node_id and is_text_id(node_id):
+                    if node_id not in id_mapping:
+                        id_mapping[node_id] = str(uuid.uuid4())
+                        logger.info(f"Mapped text ID '{node_id}' to UUID '{id_mapping[node_id]}'")
+            
+            # Also create mappings for connection IDs if they are text IDs
+            for conn_data in connections_data:
+                conn_id = str(conn_data.get('id', ''))
+                if conn_id and is_text_id(conn_id):
+                    if conn_id not in id_mapping:
+                        id_mapping[conn_id] = str(uuid.uuid4())
+                        logger.info(f"Mapped connection text ID '{conn_id}' to UUID '{id_mapping[conn_id]}'")
+            
             # Process nodes
             processed_node_ids = set()
             created_nodes = []
@@ -71,6 +119,18 @@ class WorkflowNodeService:
                 # Convert workflow_id to UUID if it's a string
                 if isinstance(node_data_copy['workflow_id'], str):
                     node_data_copy['workflow_id'] = UUID(node_data_copy['workflow_id'])
+                
+                # Sanitize text fields to prevent UTF-8 encoding errors
+                text_fields = ['name', 'description', 'message_text', 'system_prompt', 
+                              'condition_expression', 'action_type']
+                for field in text_fields:
+                    if field in node_data_copy and isinstance(node_data_copy[field], str):
+                        node_data_copy[field] = sanitize_utf8_text(node_data_copy[field])
+                
+                # Replace text ID with UUID if mapped
+                original_id = str(node_data_copy.get('id', ''))
+                if original_id in id_mapping:
+                    node_data_copy['id'] = id_mapping[original_id]
                 
                 if 'id' in node_data_copy and node_data_copy['id'] and str(node_data_copy['id']) in existing_nodes_map:
                     # Update existing node
@@ -85,7 +145,6 @@ class WorkflowNodeService:
                         updated_nodes.append(updated_node)
                 else:
                     # Create new node
-                    # Keep the ID from frontend to maintain references in connections
                     if 'id' not in node_data_copy or not node_data_copy['id']:
                         # Generate new ID if not provided
                         node_data_copy['id'] = uuid.uuid4()
@@ -120,6 +179,26 @@ class WorkflowNodeService:
                 if isinstance(conn_data_copy['workflow_id'], str):
                     conn_data_copy['workflow_id'] = UUID(conn_data_copy['workflow_id'])
                 
+                # Sanitize text fields to prevent UTF-8 encoding errors
+                text_fields = ['label', 'condition']
+                for field in text_fields:
+                    if field in conn_data_copy and isinstance(conn_data_copy[field], str):
+                        conn_data_copy[field] = sanitize_utf8_text(conn_data_copy[field])
+                
+                # Replace text ID with UUID if mapped
+                original_id = str(conn_data_copy.get('id', ''))
+                if original_id in id_mapping:
+                    conn_data_copy['id'] = id_mapping[original_id]
+                
+                # Map source and target node IDs if they are text IDs
+                source_node_id = str(conn_data_copy.get('source_node_id', ''))
+                if source_node_id in id_mapping:
+                    conn_data_copy['source_node_id'] = id_mapping[source_node_id]
+                
+                target_node_id = str(conn_data_copy.get('target_node_id', ''))
+                if target_node_id in id_mapping:
+                    conn_data_copy['target_node_id'] = id_mapping[target_node_id]
+                
                 if 'id' in conn_data_copy and conn_data_copy['id'] and str(conn_data_copy['id']) in existing_connections_map:
                     # Update existing connection
                     conn_id = UUID(str(conn_data_copy['id']))
@@ -142,7 +221,6 @@ class WorkflowNodeService:
                     updated_connections.append(new_conn)
                 else:
                     # Create new connection
-                    # Keep the ID from frontend or generate new one
                     if 'id' not in conn_data_copy or not conn_data_copy['id']:
                         # Generate new ID if not provided
                         conn_data_copy['id'] = uuid.uuid4()

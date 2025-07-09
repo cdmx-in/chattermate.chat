@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { ref, onMounted, computed } from 'vue'
 import { useAgentWorkflow } from '@/composables/useAgentWorkflow'
 import type { AgentWithCustomization } from '@/types/agent'
+import WorkflowBuilder from '../workflow/WorkflowBuilder.vue'
 
 const props = defineProps<{
   agent: AgentWithCustomization
@@ -45,6 +46,14 @@ const {
 const showCreateForm = ref(false)
 const workflowName = ref('')
 const workflowDescription = ref('')
+
+// Edit workflow form state
+const showEditForm = ref(false)
+const editWorkflowName = ref('')
+const editWorkflowDescription = ref('')
+
+// Workflow builder state
+const showWorkflowBuilder = ref(false)
 
 // Computed properties
 const workflowStatus = computed(() => {
@@ -97,8 +106,39 @@ const handleCreateWorkflow = async () => {
 }
 
 const handleEditWorkflow = () => {
-  // TODO: Implement workflow editing
-  console.log('Edit workflow:', workflow.value)
+  if (!workflow.value) return
+  
+  // Pre-populate form with current values
+  editWorkflowName.value = workflow.value.name
+  editWorkflowDescription.value = workflow.value.description || ''
+  showEditForm.value = true
+  showCreateForm.value = false // Ensure create form is hidden
+}
+
+const handleUpdateWorkflow = async () => {
+  if (!workflow.value || !editWorkflowName.value.trim()) {
+    return
+  }
+
+  try {
+    await updateWorkflow(workflow.value.id, {
+      name: editWorkflowName.value.trim(),
+      description: editWorkflowDescription.value.trim() || undefined
+    })
+    
+    // Reset form
+    editWorkflowName.value = ''
+    editWorkflowDescription.value = ''
+    showEditForm.value = false
+  } catch (error) {
+    // Error handling is done in the composable
+  }
+}
+
+const cancelEditForm = () => {
+  editWorkflowName.value = ''
+  editWorkflowDescription.value = ''
+  showEditForm.value = false
 }
 
 const handleDeleteWorkflow = async () => {
@@ -115,6 +155,20 @@ const handleDeleteWorkflow = async () => {
 
 const toggleFullscreen = () => {
   emit('toggle-fullscreen', true)
+}
+
+const openWorkflowBuilder = () => {
+  showWorkflowBuilder.value = true
+}
+
+const closeWorkflowBuilder = () => {
+  showWorkflowBuilder.value = false
+}
+
+const handleWorkflowSave = () => {
+  // Refresh workflow data after saving
+  fetchWorkflow()
+  showWorkflowBuilder.value = false
 }
 
 const cancelCreateForm = () => {
@@ -151,7 +205,7 @@ onMounted(() => {
       </div>
 
       <!-- No Workflow State -->
-      <div v-else-if="!hasWorkflow && !showCreateForm" class="no-workflow-container">
+      <div v-else-if="!hasWorkflow && !showCreateForm && !showEditForm" class="no-workflow-container">
         <div class="no-workflow-content">
           <div class="no-workflow-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -167,7 +221,7 @@ onMounted(() => {
             Create a workflow to design custom conversation journeys for your agent. 
             Use our drag-and-drop interface to build sophisticated chat flows.
           </p>
-          <button class="create-workflow-button" @click="showCreateForm = true">
+          <button class="create-workflow-button" @click="showCreateForm = true; showEditForm = false">
             <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <line x1="12" y1="5" x2="12" y2="19"></line>
               <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -236,8 +290,67 @@ onMounted(() => {
         </form>
       </div>
 
+      <!-- Edit Workflow Form -->
+      <div v-else-if="showEditForm" class="create-form-container">
+        <div class="form-header">
+          <h4 class="form-title">Edit Workflow</h4>
+          <button class="close-form-button" @click="cancelEditForm">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        
+        <form @submit.prevent="handleUpdateWorkflow" class="create-form">
+          <div class="form-group">
+            <label for="edit-workflow-name" class="form-label">Workflow Name *</label>
+            <input
+              id="edit-workflow-name"
+              v-model="editWorkflowName"
+              type="text"
+              class="form-input"
+              placeholder="Enter workflow name"
+              required
+              :disabled="workflowLoading"
+            />
+          </div>
+          
+          <div class="form-group">
+            <label for="edit-workflow-description" class="form-label">Description</label>
+            <textarea
+              id="edit-workflow-description"
+              v-model="editWorkflowDescription"
+              class="form-textarea"
+              placeholder="Describe what this workflow does (optional)"
+              rows="3"
+              :disabled="workflowLoading"
+            ></textarea>
+          </div>
+          
+          <div class="form-actions">
+            <button
+              type="button"
+              class="cancel-button"
+              @click="cancelEditForm"
+              :disabled="workflowLoading"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              class="submit-button"
+              :disabled="!editWorkflowName.trim() || workflowLoading"
+            >
+              <div v-if="workflowLoading" class="button-spinner"></div>
+              <span v-else>Update Workflow</span>
+            </button>
+          </div>
+        </form>
+      </div>
+
       <!-- Existing Workflow -->
-      <div v-else-if="hasWorkflow" class="workflow-container">
+      <div v-else-if="hasWorkflow && !showEditForm" class="workflow-container">
         <div class="workflow-card">
           <div class="workflow-content">
             <div class="workflow-info">
@@ -262,7 +375,7 @@ onMounted(() => {
             </div>
             
             <div class="workflow-actions">
-              <button class="action-button primary" @click="toggleFullscreen">
+              <button class="action-button primary" @click="openWorkflowBuilder">
                 <svg class="button-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"></path>
                 </svg>
@@ -289,6 +402,14 @@ onMounted(() => {
         </div>
       </div>
     </section>
+
+    <!-- Workflow Builder -->
+    <WorkflowBuilder
+      v-if="showWorkflowBuilder && workflow"
+      :workflow="workflow"
+      @close="closeWorkflowBuilder"
+      @save="handleWorkflowSave"
+    />
   </div>
 </template>
 
