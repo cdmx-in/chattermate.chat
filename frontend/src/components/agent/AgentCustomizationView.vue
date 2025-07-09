@@ -141,54 +141,56 @@ const handleFontSelect = (font: string) => {
 
 <template>
     <div class="customization-form">
-        <div class="form-section">
-            <h4>Colors</h4>
-            <div class="color-grid">
+        <div class="form-content">
+            <div class="form-section">
+                <h4>Colors</h4>
+                <div class="color-grid">
 
-                <div class="color-picker">
-                    <label>Background</label>
-                    <div class="color-input">
-                        <input type="color" v-model="customization.chat_background_color">
-                        <span class="color-value">{{ customization.chat_background_color }}</span>
+                    <div class="color-picker">
+                        <label>Background</label>
+                        <div class="color-input">
+                            <input type="color" v-model="customization.chat_background_color">
+                            <span class="color-value">{{ customization.chat_background_color }}</span>
+                        </div>
                     </div>
-                </div>
 
-                <div class="color-picker">
-                    <label>Chat Bubble</label>
-                    <div class="color-input">
-                        <input type="color" v-model="customization.chat_bubble_color"
-                            @input="emit('preview', { ...customization, showBubblePreview: true })"
-                            @focus="emit('preview', { ...customization, showBubblePreview: true })"
-                            @blur="emit('preview', { ...customization, showBubblePreview: false })">
-                        <span class="color-value">{{ customization.chat_bubble_color }}</span>
+                    <div class="color-picker">
+                        <label>Chat Bubble</label>
+                        <div class="color-input">
+                            <input type="color" v-model="customization.chat_bubble_color"
+                                @input="emit('preview', { ...customization, showBubblePreview: true })"
+                                @focus="emit('preview', { ...customization, showBubblePreview: true })"
+                                @blur="emit('preview', { ...customization, showBubblePreview: false })">
+                            <span class="color-value">{{ customization.chat_bubble_color }}</span>
+                        </div>
                     </div>
-                </div>
 
-                <div class="color-picker">
-                    <label>Accent</label>
-                    <div class="color-input">
-                        <input type="color" v-model="customization.accent_color">
-                        <span class="color-value">{{ customization.accent_color }}</span>
+                    <div class="color-picker">
+                        <label>Accent</label>
+                        <div class="color-input">
+                            <input type="color" v-model="customization.accent_color">
+                            <span class="color-value">{{ customization.accent_color }}</span>
+                        </div>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <div class="form-section">
-            <h4>Typography</h4>
-            <div class="form-group">
-                <label>Font Family</label>
-                <div class="font-picker">
-                    <div class="font-dropdown" :class="{ 'active': showFontDropdown }">
-                        <input type="text" :value="showFontDropdown ? fontSearch : customization.font_family"
-                            @input="e => fontSearch = (e.target as HTMLInputElement).value"
-                            placeholder="Search fonts..." class="font-search"
-                            :style="!showFontDropdown ? { fontFamily: customization.font_family } : {}"
-                            :disabled="isLoadingFonts" @focus="showFontDropdown = true">
-                        <div v-if="showFontDropdown" class="font-options">
-                            <div v-for="font in filteredFonts" :key="font.family" class="font-option"
-                                :style="{ fontFamily: font.family }" @click="handleFontSelect(font.family)">
-                                {{ font.family }}
+            <div class="form-section">
+                <h4>Typography</h4>
+                <div class="form-group">
+                    <label>Font Family</label>
+                    <div class="font-picker">
+                        <div class="font-dropdown" :class="{ 'active': showFontDropdown }">
+                            <input type="text" :value="showFontDropdown ? fontSearch : customization.font_family"
+                                @input="e => fontSearch = (e.target as HTMLInputElement).value"
+                                placeholder="Search fonts..." class="font-search"
+                                :style="!showFontDropdown ? { fontFamily: customization.font_family } : {}"
+                                :disabled="isLoadingFonts" @focus="showFontDropdown = true">
+                            <div v-if="showFontDropdown" class="font-options">
+                                <div v-for="font in filteredFonts" :key="font.family" class="font-option"
+                                    :style="{ fontFamily: font.family }" @click="handleFontSelect(font.family)">
+                                    {{ font.family }}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -205,12 +207,25 @@ const handleFontSelect = (font: string) => {
 
 <style scoped>
 .customization-form {
+    padding: 0;
+    max-width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+.form-content {
+    flex: 1;
+    overflow-y: auto;
     padding: var(--space-md);
-    max-width: 480px;
 }
 
 .form-section {
-    margin-bottom: var(--space-lg);
+    margin-bottom: var(--space-xl);
+    padding: var(--space-md);
+    background: var(--background-base);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-color);
 }
 
 .form-section h4 {
@@ -315,13 +330,11 @@ const handleFontSelect = (font: string) => {
 .button-group {
     display: flex;
     gap: var(--space-sm);
-    position: sticky;
-    bottom: 0;
-    background: var(--background-base);
-    padding: var(--space-md);
-    margin: 0 calc(var(--space-md) * -1);
+    padding: var(--space-lg) var(--space-md);
     border-top: 1px solid var(--border-color);
-    box-shadow: 0 -4px 6px -1px rgb(0 0 0 / 0.1);
+    background: var(--background-base);
+    margin-top: auto;
+    flex-shrink: 0;
 }
 
 .save-button,

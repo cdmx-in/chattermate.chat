@@ -224,173 +224,203 @@ onMounted(async () => {
 </script>
 
 <template>
-  <section class="detail-section">
-    <h4>Integrations</h4>
-    
-    <!-- Jira Integration -->
-    <div class="integration-section">
-      <h5 class="integration-title">Jira Integration</h5>
-      <!-- Jira Ticket Creation Toggle -->
-      <div class="ticket-toggle">
-        <div class="toggle-header">
-          <h4>Create Jira Tickets</h4>
-          <label class="switch" v-tooltip="ticketTooltipContent">
-            <input type="checkbox" 
-              :checked="createTicketEnabled"
-              @change="toggleCreateTicket"
-            >
-            <span class="slider"></span>
-          </label>
-        </div>
-        <p class="helper-text">Create Jira tickets for issues that need further attention</p>
-        
-        <!-- Jira Connection Status -->
-        <div v-if="jiraLoading" class="jira-status loading">
-          Checking Jira connection...
-        </div>
-        <div v-else-if="!jiraConnected" class="jira-status not-connected">
-          <span class="status-icon">⚠️</span>
-          Jira is not connected
-          <router-link to="/settings/integrations" class="connect-link">
-            Connect Jira
-          </router-link>
-        </div>
-        <div v-else class="jira-status connected">
-          <span class="status-icon">✓</span>
-          Jira is connected
-        </div>
-        
-        <!-- Jira Project Selection -->
-        <div v-if="createTicketEnabled && jiraConnected" class="jira-config">
-          <div class="form-group">
-            <label for="jira-project">Jira Project</label>
-            <div v-if="loadingProjects" class="loading-indicator">Loading projects...</div>
-            <select 
-              v-else
-              id="jira-project" 
-              v-model="localSelectedProject"
-              @change="handleProjectChange"
-              :disabled="loadingProjects"
-            >
-              <option value="">Select a project</option>
-              <option 
-                v-for="project in jiraProjects" 
-                :key="project.id" 
-                :value="project.key"
-              >
-                {{ project.name }}
-              </option>
-            </select>
-          </div>
-          
-          <div class="form-group">
-            <label for="issue-type">Issue Type</label>
-            <div v-if="loadingIssueTypes" class="loading-indicator">Loading issue types...</div>
-            <select 
-              v-else
-              id="issue-type" 
-              v-model="localSelectedIssueType"
-              @change="handleIssueTypeChange"
-              :disabled="!localSelectedProject || loadingIssueTypes"
-            >
-              <option value="">Select an issue type</option>
-              <option 
-                v-for="issueType in jiraIssueTypes" 
-                :key="issueType.id" 
-                :value="issueType.id"
-              >
-                {{ issueType.name }}
-              </option>
-            </select>
-          </div>
-          
-          <button 
-            class="save-config-btn"
-            @click="saveJiraConfig"
-            :disabled="!localSelectedProject || !localSelectedIssueType"
-          >
-            Save Configuration
-          </button>
-        </div>
-      </div>
-    </div>
-    
-    <!-- Shopify Integration -->
-    <div class="integration-section">
-      <h5 class="integration-title">Shopify Integration</h5>
-      <div class="ticket-toggle">
-        <div class="toggle-header">
-          <h4>Enable Shopify Features</h4>
-          <div class="toggle-with-loader">
-            <div class="toggle-loader" v-if="shopifyToggleInProgress">
-              <span class="loader-dot"></span>
-              <span class="loader-dot"></span>
-              <span class="loader-dot"></span>
-            </div>
-            <label class="switch" v-tooltip="shopifyTooltipContent">
+  <div class="integrations-tab">
+    <section class="detail-section">
+      <h3 class="section-title">Integrations</h3>
+      <p class="section-description">
+        Connect your agent with third-party tools to enhance its capabilities and streamline workflows.
+      </p>
+      
+      <!-- Jira Integration -->
+      <div class="integration-section">
+        <h4 class="integration-title">Jira Integration</h4>
+        <!-- Jira Ticket Creation Toggle -->
+        <div class="ticket-toggle">
+          <div class="toggle-header">
+            <h5 class="toggle-title">Create Jira Tickets</h5>
+            <label class="switch" v-tooltip="ticketTooltipContent">
               <input type="checkbox" 
-                v-model="localShopifyEnabled"
-                @change="toggleShopifyIntegration"
-                :disabled="shopifyLoading || props.shopifyLoading || shopifyToggleInProgress"
+                :checked="createTicketEnabled"
+                @change="toggleCreateTicket"
               >
-              <span class="slider" :class="{ 'in-progress': shopifyToggleInProgress }"></span>
+              <span class="slider"></span>
             </label>
           </div>
-        </div>
-        <p class="helper-text">Enable Shopify product information and features for this agent</p>
-        
-        <!-- Shopify Connection Status -->
-        <div v-if="shopifyLoading" class="jira-status loading">
-          Checking Shopify connection...
-        </div>
-        <div v-else-if="!shopifyConnected" class="jira-status not-connected">
-          <span class="status-icon">⚠️</span>
-          Shopify is not connected
-          <router-link to="/settings/integrations" class="connect-link">
-            Connect Shopify
-          </router-link>
-        </div>
-        <div v-else class="jira-status connected">
-          <span class="status-icon">✓</span>
-          Connected to {{ shopifyShopDomain }}
+          <p class="helper-text">Create Jira tickets for issues that need further attention</p>
+          
+          <!-- Jira Connection Status -->
+          <div v-if="jiraLoading" class="jira-status loading">
+            Checking Jira connection...
+          </div>
+          <div v-else-if="!jiraConnected" class="jira-status not-connected">
+            <span class="status-icon">⚠️</span>
+            Jira is not connected
+            <router-link to="/settings/integrations" class="connect-link">
+              Connect Jira
+            </router-link>
+          </div>
+          <div v-else class="jira-status connected">
+            <span class="status-icon">✓</span>
+            Jira is connected
+          </div>
+          
+          <!-- Jira Project Selection -->
+          <div v-if="createTicketEnabled && jiraConnected" class="jira-config">
+            <div class="form-group">
+              <label for="jira-project">Jira Project</label>
+              <div v-if="loadingProjects" class="loading-indicator">Loading projects...</div>
+              <select 
+                v-else
+                id="jira-project" 
+                v-model="localSelectedProject"
+                @change="handleProjectChange"
+                :disabled="loadingProjects"
+              >
+                <option value="">Select a project</option>
+                <option 
+                  v-for="project in jiraProjects" 
+                  :key="project.id" 
+                  :value="project.key"
+                >
+                  {{ project.name }}
+                </option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label for="issue-type">Issue Type</label>
+              <div v-if="loadingIssueTypes" class="loading-indicator">Loading issue types...</div>
+              <select 
+                v-else
+                id="issue-type" 
+                v-model="localSelectedIssueType"
+                @change="handleIssueTypeChange"
+                :disabled="!localSelectedProject || loadingIssueTypes"
+              >
+                <option value="">Select an issue type</option>
+                <option 
+                  v-for="issueType in jiraIssueTypes" 
+                  :key="issueType.id" 
+                  :value="issueType.id"
+                >
+                  {{ issueType.name }}
+                </option>
+              </select>
+            </div>
+            
+            <button 
+              class="save-config-btn"
+              @click="saveJiraConfig"
+              :disabled="!localSelectedProject || !localSelectedIssueType"
+            >
+              Save Configuration
+            </button>
+          </div>
         </div>
       </div>
-      <!-- Add error message display -->
-      <div v-if="shopifyError" class="shopify-error">
-        <span class="error-icon">❌</span>
-        {{ shopifyError }}
+      
+      <!-- Shopify Integration -->
+      <div class="integration-section">
+        <h4 class="integration-title">Shopify Integration</h4>
+        <div class="ticket-toggle">
+          <div class="toggle-header">
+            <h5 class="toggle-title">Enable Shopify Features</h5>
+            <div class="toggle-with-loader">
+              <div class="toggle-loader" v-if="shopifyToggleInProgress">
+                <span class="loader-dot"></span>
+                <span class="loader-dot"></span>
+                <span class="loader-dot"></span>
+              </div>
+              <label class="switch" v-tooltip="shopifyTooltipContent">
+                <input type="checkbox" 
+                  v-model="localShopifyEnabled"
+                  @change="toggleShopifyIntegration"
+                  :disabled="shopifyLoading || props.shopifyLoading || shopifyToggleInProgress"
+                >
+                <span class="slider" :class="{ 'in-progress': shopifyToggleInProgress }"></span>
+              </label>
+            </div>
+          </div>
+          <p class="helper-text">Enable Shopify product information and features for this agent</p>
+          
+          <!-- Shopify Connection Status -->
+          <div v-if="shopifyLoading" class="jira-status loading">
+            Checking Shopify connection...
+          </div>
+          <div v-else-if="!shopifyConnected" class="jira-status not-connected">
+            <span class="status-icon">⚠️</span>
+            Shopify is not connected
+            <router-link to="/settings/integrations" class="connect-link">
+              Connect Shopify
+            </router-link>
+          </div>
+          <div v-else class="jira-status connected">
+            <span class="status-icon">✓</span>
+            Connected to {{ shopifyShopDomain }}
+          </div>
+        </div>
+        <!-- Add error message display -->
+        <div v-if="shopifyError" class="shopify-error">
+          <span class="error-icon">❌</span>
+          {{ shopifyError }}
+        </div>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 </template>
 
 <style scoped>
+.integrations-tab {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 var(--space-lg);
+}
+
 .detail-section {
   margin-bottom: var(--space-xl);
 }
 
-.detail-section h4 {
-  margin-bottom: var(--space-md);
+.section-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: var(--space-xs);
+}
+
+.section-description {
   color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: var(--space-lg);
+  line-height: 1.5;
 }
 
 .integration-section {
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  padding: var(--space-md);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
   background-color: var(--background-soft);
-  margin-bottom: var(--space-lg);
+  margin-bottom: var(--space-xl);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  width: 100%;
 }
 
 .integration-title {
-  margin-bottom: var(--space-sm);
-  color: var(--text-secondary);
-  font-size: var(--text-md);
+  margin-bottom: var(--space-md);
+  color: var(--text-color);
+  font-size: 1.1rem;
   font-weight: 600;
 }
 
+.toggle-title {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-color);
+  margin: 0;
+}
+
 .ticket-toggle {
-  margin-top: var(--space-sm);
+  margin-top: var(--space-md);
 }
 
 .toggle-header {
@@ -404,6 +434,7 @@ onMounted(async () => {
   color: var(--text-muted);
   font-size: var(--text-sm);
   margin-bottom: var(--space-md);
+  line-height: 1.5;
 }
 
 .switch {
@@ -426,7 +457,7 @@ onMounted(async () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: rgb(252, 0, 0);
+  background-color: rgb(224, 224, 224);
   transition: .4s;
   border-radius: 24px;
 }
@@ -441,10 +472,11 @@ onMounted(async () => {
   background-color: rgb(255, 255, 255);
   transition: .4s;
   border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 input:checked + .slider {
-  background-color: green;
+  background-color: #4caf50;
 }
 
 input:focus + .slider {
@@ -456,8 +488,8 @@ input:checked + .slider:before {
 }
 
 .jira-status {
-  margin-top: var(--space-sm);
-  padding: var(--space-sm);
+  margin-top: var(--space-md);
+  padding: var(--space-md);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
   display: flex;
@@ -499,13 +531,14 @@ input:checked + .slider:before {
 }
 
 .jira-config {
-  margin-top: var(--space-md);
-  padding: var(--space-md);
-  background-color: var(--background-soft);
+  margin-top: var(--space-lg);
+  padding: var(--space-lg);
+  background-color: var(--background-alt);
   border-radius: var(--radius-md);
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
+  border: 1px solid var(--border-color);
 }
 
 .shopify-info {
@@ -523,7 +556,7 @@ input:checked + .slider:before {
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: var(--space-xs);
+  gap: var(--space-sm);
 }
 
 .form-group label {
@@ -533,7 +566,7 @@ input:checked + .slider:before {
 }
 
 .form-group select {
-  padding: var(--space-sm);
+  padding: var(--space-md);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   background-color: var(--background-color);
@@ -553,15 +586,16 @@ input:checked + .slider:before {
 }
 
 .save-config-btn {
-  margin-top: var(--space-sm);
-  padding: var(--space-sm) var(--space-md);
-  background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+  margin-top: var(--space-lg);
+  padding: var(--space-sm) var(--space-lg);
+  background: #bb8873;
   color: white;
   border: none;
   border-radius: var(--radius-full);
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
+  align-self: flex-start;
 }
 
 .save-config-btn:hover {
@@ -576,8 +610,8 @@ input:checked + .slider:before {
 }
 
 .shopify-error {
-  margin-top: var(--space-sm);
-  padding: var(--space-sm);
+  margin-top: var(--space-md);
+  padding: var(--space-md);
   border-radius: var(--radius-md);
   background-color: var(--error-light, #FEEAEA);
   color: var(--error, #EF4444);

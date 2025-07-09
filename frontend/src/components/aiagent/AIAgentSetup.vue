@@ -35,6 +35,14 @@ const error = ref<string | null>(null)
 const isLoading = ref(false)
 const isAISetupMode = ref(false)
 
+const props = defineProps<{
+    model: string
+}>()
+
+const emit = defineEmits<{
+    (e: 'toggle-fullscreen', isFullscreen: boolean): void
+}>()
+
 const checkAIConfig = async () => {
     try {
         isLoading.value = true
@@ -69,6 +77,11 @@ const fetchAgents = async () => {
     }
 }
 
+// Handle fullscreen toggle from agent list
+const handleFullscreenToggle = (isFullscreen: boolean) => {
+    emit('toggle-fullscreen', isFullscreen)
+}
+
 onMounted(async () => {
     const agents = agentStorage.getAgents()
     if (agents.length === 0) {
@@ -97,7 +110,7 @@ onMounted(async () => {
                 </div>
             </div>
             <div v-else class="agent-list-container">
-                <AgentList />
+                <AgentList @toggle-fullscreen="handleFullscreenToggle" />
             </div>
         </div>
     </div>

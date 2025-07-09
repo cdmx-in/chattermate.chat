@@ -18,9 +18,6 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <script setup lang="ts">
 import { ref, defineAsyncComponent } from 'vue'
-
-
-
 import DashboardLayout from '@/layouts/DashboardLayout.vue'
 
 // Lazy load the AIAgentSetup component
@@ -28,17 +25,21 @@ const AIAgentSetup = defineAsyncComponent(() =>
   import('@/components/aiagent/AIAgentSetup.vue')
 )
 
-
-
 const selectedModel = ref('openai')
+const isWorkflowFullscreen = ref(false)
+
+// Handle fullscreen toggle from workflow editor
+const handleWorkflowFullscreenToggle = (isFullscreen: boolean) => {
+    isWorkflowFullscreen.value = isFullscreen
+}
 </script>
 
 <template>
-    <DashboardLayout>
+    <DashboardLayout :hide-sidebar="isWorkflowFullscreen" :hide-header="isWorkflowFullscreen">
         <div class="dashboard-container">
             <!-- Main Chat Area -->
             <div class="chat-section">
-                <AIAgentSetup :model="selectedModel" />
+                <AIAgentSetup :model="selectedModel" @toggle-fullscreen="handleWorkflowFullscreenToggle" />
             </div>
         </div>
     </DashboardLayout>

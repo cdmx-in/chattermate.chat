@@ -14,6 +14,8 @@ export interface Agent {
   enable_rate_limiting: boolean
   overall_limit_per_ip: number
   requests_per_sec: number
+  use_workflow: boolean
+  active_workflow_id: string | null
   knowledge: Array<{
     id: number
     name: string
@@ -35,6 +37,8 @@ export interface AgentUpdate {
   enable_rate_limiting?: boolean
   overall_limit_per_ip?: number
   requests_per_sec?: number
+  use_workflow?: boolean
+  active_workflow_id?: string | null
   customization?: AgentCustomization
 }
 

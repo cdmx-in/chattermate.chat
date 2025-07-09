@@ -54,6 +54,11 @@ class InstructionPrompt(BaseModel):
     prompt: str
     existing_instructions: List[str] = []  # Optional list of existing instructions
 
+# Model for setting active workflow
+class SetActiveWorkflowRequest(BaseModel):
+    workflow_id: UUID
+    use_workflow: bool = True
+
 
 async def save_file(file: UploadFile, organization_id: UUID) -> str:
     """Save uploaded file and return the file path"""
@@ -107,6 +112,70 @@ async def save_file(file: UploadFile, organization_id: UUID) -> str:
         return f"/{file_path}"
 
 
+@router.post("", response_model=AgentWithCustomizationResponse, status_code=status.HTTP_201_CREATED)
+async def create_agent(
+    agent_data: AgentCreate,
+    current_user: User = Depends(require_permissions("manage_agents")),
+    db: Session = Depends(get_db)
+):
+    """Create a new agent"""
+    try:
+        agent_repo = AgentRepository(db)
+        
+        # Check if agent with the same name already exists in the organization
+        existing_agent = agent_repo.get_by_name(agent_data.name, current_user.organization_id)
+        if existing_agent:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Agent with name '{agent_data.name}' already exists"
+            )
+        
+        # Create agent with organization ID from current user
+        agent_dict = agent_data.model_dump()
+        
+        # Override organization_id with the current user's organization
+        agent_dict["organization_id"] = current_user.organization_id
+        
+        # Set display_name to name if not provided
+        if "display_name" not in agent_dict or not agent_dict.get("display_name"):
+            agent_dict["display_name"] = agent_dict["name"]
+        
+        # Create the agent
+        agent = agent_repo.create_agent(**agent_dict)
+        
+        # Prepare response with empty knowledge list
+        response = AgentWithCustomizationResponse(
+            id=agent.id,
+            name=agent.name,
+            display_name=agent.display_name,
+            description=agent.description,
+            agent_type=agent.agent_type,
+            instructions=agent.instructions,
+            is_active=agent.is_active,
+            organization_id=agent.organization_id,
+            customization=None,
+            transfer_to_human=agent.transfer_to_human or False,
+            ask_for_rating=agent.ask_for_rating or False,
+            enable_rate_limiting=agent.enable_rate_limiting or False,
+            overall_limit_per_ip=agent.overall_limit_per_ip or 100,
+            requests_per_sec=agent.requests_per_sec or 1.0,
+            use_workflow=agent.use_workflow or False,
+            active_workflow_id=agent.active_workflow_id,
+            knowledge=[],
+            groups=[]
+        )
+        
+        return response
+        
+    except HTTPException as e:
+        # Re-raise HTTP exceptions
+        raise e
+    except Exception as e:
+        logger.error(f"Error creating agent: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.put("/{agent_id}", response_model=AgentWithCustomizationResponse)
 async def update_agent(
     agent_id: UUID,
@@ -157,6 +226,7 @@ async def update_agent(
             agent_type=agent.agent_type,
             instructions=agent.instructions,
             is_active=agent.is_active,
+            use_workflow=agent.use_workflow,
             organization_id=agent.organization_id,
             customization=customization,
             transfer_to_human=agent.transfer_to_human,
@@ -217,6 +287,10 @@ async def get_organization_agents(
                 enable_rate_limiting=agent.enable_rate_limiting or False,
                 overall_limit_per_ip=agent.overall_limit_per_ip or 100,
                 requests_per_sec=agent.requests_per_sec or 1.0,
+                use_workflow=agent.use_workflow or False,
+                active_workflow_id=agent.active_workflow_id,
+                created_at=agent.created_at,
+                updated_at=agent.updated_at,
                 knowledge=[{
                     "id": k.id,
                     "name": k.source,

@@ -83,127 +83,152 @@ const handleSaveSettings = async () => {
 </script>
 
 <template>
-  <div class="advanced-settings">
-    <h3 class="section-title">Advanced Settings</h3>
-    
-    <!-- Error message -->
-    <div v-if="error" class="error-message">
-      {{ error }}
-    </div>
-    
-    <!-- Rate Limiting Section -->
-    <div class="rate-limiting-section" :class="{ 'loading': isLoading }">
-      <div class="section-header">
-        <h4>Rate Limiting</h4>
-        <div class="toggle-switch">
-          <span class="toggle-label" v-tooltip="rateLimitTooltipContent()">
-            Enable Rate Limiting
-            <i class="fas fa-info-circle info-icon"></i>
-          </span>
-          <label class="switch">
-            <input 
-              type="checkbox" 
-              :checked="localSettings.enableRateLimiting" 
-              @change="handleToggleRateLimiting"
-              :disabled="isLoading"
-            >
-            <span class="slider" :class="{ 'enabled': localSettings.enableRateLimiting }"></span>
-          </label>
-        </div>
+  <div class="advanced-tab">
+    <div class="advanced-settings">
+      <h3 class="section-title">Advanced Settings</h3>
+      <p class="section-description">
+        Configure advanced options for your agent including rate limiting and other technical settings.
+      </p>
+      
+      <!-- Error message -->
+      <div v-if="error" class="error-message">
+        {{ error }}
       </div>
       
-      <div class="rate-limit-settings" v-if="localSettings.enableRateLimiting">
-        <p class="helper-text">Configure rate limiting to protect your agent from abuse and control traffic.</p>
-        
-        <div class="form-group">
-          <label v-tooltip="dailyLimitTooltipContent()">
-            Daily Limit (requests per IP)
-            <i class="fas fa-info-circle info-icon"></i>
-          </label>
-          <div class="input-with-slider">
-            <input 
-              type="number" 
-              v-model="localSettings.overallLimitPerIp"
-              @input="(e) => handleValueChange('overallLimitPerIp', e)"
-              min="10" 
-              max="1000" 
-              step="10"
-              class="number-input"
-              :disabled="isLoading"
-            >
-            <input 
-              type="range" 
-              v-model="localSettings.overallLimitPerIp"
-              @input="(e) => handleValueChange('overallLimitPerIp', e)"
-              min="10" 
-              max="1000" 
-              step="10"
-              class="range-input"
-              :disabled="isLoading"
-            >
+      <!-- Rate Limiting Section -->
+      <div class="rate-limiting-section" :class="{ 'loading': isLoading }">
+        <div class="section-header">
+          <h4 class="subsection-title">Rate Limiting</h4>
+          <div class="toggle-switch">
+            <span class="toggle-label">
+              Enable Rate Limiting
+            </span>
+            <label class="switch">
+              <input 
+                type="checkbox" 
+                :checked="localSettings.enableRateLimiting" 
+                @change="handleToggleRateLimiting"
+                :disabled="isLoading"
+              >
+              <span class="slider" :class="{ 'enabled': localSettings.enableRateLimiting }"></span>
+            </label>
           </div>
         </div>
         
-        <div class="form-group">
-          <label v-tooltip="requestsPerSecTooltipContent()">
-            Rate Limit (requests per second)
-            <i class="fas fa-info-circle info-icon"></i>
-          </label>
-          <div class="input-with-slider">
-            <input 
-              type="number" 
-              v-model="localSettings.requestsPerSec"
-              @input="(e) => handleValueChange('requestsPerSec', e)"
-              min="1" 
-              max="10" 
-              step="1"
-              class="number-input"
-              :disabled="isLoading"
-            >
-            <input 
-              type="range" 
-              v-model="localSettings.requestsPerSec"
-              @input="(e) => handleValueChange('requestsPerSec', e)"
-              min="1" 
-              max="10" 
-              step="1"
-              class="range-input"
-              :disabled="isLoading"
-            >
+        <hr class="divider">
+        
+        <div class="rate-limit-settings" v-if="localSettings.enableRateLimiting">
+          <p class="helper-text">Configure rate limiting to protect your agent from abuse and control traffic.</p>
+          
+          <div class="form-group">
+            <label>
+              Daily Limit (requests per IP)
+            </label>
+            <div class="input-with-slider">
+              <input 
+                type="number" 
+                v-model="localSettings.overallLimitPerIp"
+                @input="(e) => handleValueChange('overallLimitPerIp', e)"
+                min="10" 
+                max="1000" 
+                step="10"
+                class="number-input"
+                :disabled="isLoading"
+              >
+              <input 
+                type="range" 
+                v-model="localSettings.overallLimitPerIp"
+                @input="(e) => handleValueChange('overallLimitPerIp', e)"
+                min="10" 
+                max="1000" 
+                step="10"
+                class="range-input"
+                :disabled="isLoading"
+              >
+            </div>
           </div>
-        </div>
+          
+          <div class="form-group">
+            <label>
+              Rate Limit (requests per second)
+            </label>
+            <div class="input-with-slider">
+              <input 
+                type="number" 
+                v-model="localSettings.requestsPerSec"
+                @input="(e) => handleValueChange('requestsPerSec', e)"
+                min="1" 
+                max="10" 
+                step="1"
+                class="number-input"
+                :disabled="isLoading"
+              >
+              <input 
+                type="range" 
+                v-model="localSettings.requestsPerSec"
+                @input="(e) => handleValueChange('requestsPerSec', e)"
+                min="1" 
+                max="10" 
+                step="1"
+                class="range-input"
+                :disabled="isLoading"
+              >
+            </div>
+          </div>
 
-        <!-- Save Settings Button -->
-        <button 
-          class="save-settings-btn" 
-          @click="handleSaveSettings"
-          :disabled="isLoading || !hasUnsavedChanges"
-        >
-          <i class="fas fa-save"></i>
-          {{ isLoading ? 'Saving...' : 'Save Settings' }}
-        </button>
-      </div>
-      
-      <div class="rate-limit-disabled" v-else>
-        <p class="disabled-message">
-          <i class="fas fa-info-circle"></i>
-          Rate limiting is currently disabled. Enable it to protect your agent from abuse and control traffic.
-        </p>
+          <!-- Save Settings Button -->
+          <button 
+            class="save-settings-btn" 
+            @click="handleSaveSettings"
+            :disabled="isLoading || !hasUnsavedChanges"
+          >
+            Save Settings
+          </button>
+        </div>
+        
+        <div class="rate-limit-disabled" v-else>
+          <p class="disabled-message">
+            <i class="fas fa-info-circle"></i>
+            Rate limiting is currently disabled. Enable it to protect your agent from abuse and control traffic.
+          </p>
+        </div>
       </div>
     </div>
   </div>
 </template>
 
 <style scoped>
+.advanced-tab {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 var(--space-lg);
+}
+
 .advanced-settings {
   animation: fadeIn 0.3s ease;
+  width: 100%;
 }
 
 .section-title {
-  font-size: 1.2rem;
-  margin-bottom: var(--space-md);
-  color: var(--text-color);
+  font-size: 1.25rem;
   font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: var(--space-xs);
+}
+
+.section-description {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: var(--space-lg);
+  line-height: 1.5;
+}
+
+.subsection-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 0;
 }
 
 .rate-limiting-section {
@@ -212,6 +237,9 @@ const handleSaveSettings = async () => {
   padding: var(--space-lg);
   margin-bottom: var(--space-xl);
   transition: opacity 0.3s ease;
+  border: 1px solid var(--border-color);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  width: 100%;
 }
 
 .rate-limiting-section.loading {
@@ -267,13 +295,13 @@ const handleSaveSettings = async () => {
   left: 0;
   right: 0;
   bottom: 0;
-  background-color: var(--error-color, #dc3545);
+  background-color: rgb(224, 224, 224);
   transition: .4s;
   border-radius: 24px;
 }
 
 .slider.enabled {
-  background-color: var(--success-color, #28a745);
+  background-color: #4caf50;
 }
 
 .slider:before {
@@ -286,10 +314,11 @@ const handleSaveSettings = async () => {
   background-color: rgb(255, 255, 255);
   transition: .4s;
   border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 input:checked + .slider {
-  background-color:  #4CAF50;
+  background-color: #4caf50;
 }
 
 input:focus + .slider {
@@ -310,25 +339,27 @@ input:checked + .slider:before {
   color: var(--text-muted);
   font-size: var(--text-sm);
   margin-bottom: var(--space-md);
+  line-height: 1.5;
 }
 
 .form-group {
-  margin-bottom: var(--space-md);
+  margin-bottom: var(--space-xl);
 }
 
 .form-group label {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  margin-bottom: var(--space-xs);
+  display: block;
+  margin-bottom: var(--space-md);
   font-weight: 500;
   color: var(--text-color);
+  font-size: 1rem;
 }
 
 .input-with-slider {
   display: flex;
   align-items: center;
   gap: var(--space-md);
+  width: 100%;
+  max-width: 700px;
 }
 
 .number-input {
@@ -339,27 +370,59 @@ input:checked + .slider:before {
   background: var(--background-color);
   color: var(--text-color);
   font-size: var(--text-sm);
+  flex-shrink: 0;
 }
 
 .range-input {
   flex: 1;
   accent-color: var(--primary-color);
+  height: 6px;
+  width: calc(100% - 100px);
+  -webkit-appearance: none;
+  appearance: none;
+  background: #e0e0e0;
+  border-radius: 4px;
+  outline: none;
+}
+
+.range-input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f34611;
+  cursor: pointer;
+  border: none;
+}
+
+.range-input::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #f34611;
+  cursor: pointer;
+  border: none;
 }
 
 .save-settings-btn {
   margin-top: var(--space-lg);
-  padding: var(--space-sm) var(--space-md);
-  background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+  padding: var(--space-sm) var(--space-lg);
+  background: #bb8873;
   color: white;
   border: none;
   border-radius: var(--radius-full);
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
 }
 
 .save-settings-btn:hover {
-  filter: brightness(1.1);
+  filter: brightness(1.05);
   transform: translateY(-1px);
 }
 
@@ -381,19 +444,29 @@ input:checked + .slider:before {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  line-height: 1.5;
+  margin: 0;
 }
 
 .disabled-message i {
   color: var(--warning);
+  flex-shrink: 0;
 }
 
 .error-message {
-  padding: var(--space-sm);
+  padding: var(--space-md);
   margin-bottom: var(--space-md);
   background: var(--error-color-soft);
   color: var(--error-color);
   border-radius: var(--radius-lg);
   font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.divider {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: var(--space-md) 0;
 }
 
 @keyframes fadeIn {

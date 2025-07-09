@@ -63,6 +63,7 @@ class Organization(Base):
         "Knowledge", back_populates="organization")
     widgets = relationship("Widget", back_populates="organization")
     groups = relationship("UserGroup", back_populates="organization")
+    workflows = relationship("Workflow", back_populates="organization")
  
     jira_tokens = relationship("JiraToken", back_populates="organization", cascade="all, delete-orphan")
     shopify_shops = relationship("ShopifyShop", back_populates="organization", cascade="all, delete-orphan")

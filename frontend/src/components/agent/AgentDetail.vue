@@ -17,30 +17,36 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, defineEmits, computed, onMounted } from 'vue'
+import { ref, defineEmits, computed, onMounted, nextTick } from 'vue'
 import type { AgentWithCustomization, AgentCustomization } from '@/types/agent'
 import { getAvatarUrl } from '@/utils/avatars'
-import AgentEdit from './AgentEdit.vue'
+
 import KnowledgeGrid from './KnowledgeGrid.vue'
 import AgentCustomizationView from './AgentCustomizationView.vue'
 import AgentChatPreviewPanel from './AgentChatPreviewPanel.vue'
 import AgentIntegrationsTab from './AgentIntegrationsTab.vue'
 import AgentWidgetTab from './AgentWidgetTab.vue'
-import AgentGeneralTab from './AgentGeneralTab.vue'
+
 import AgentAdvancedTab from './AgentAdvancedTab.vue'
+import AgentWorkflowTab from './AgentWorkflowTab.vue'
+import AgentInstructionsTab from './AgentInstructionsTab.vue'
 import { Cropper, CircleStencil } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
 import { useAgentChat } from '@/composables/useAgentChat'
 import { useAgentDetail } from '@/composables/useAgentDetail'
+import { agentService } from '@/services/agent'
+import { toast } from 'vue-sonner'
+import { agentStorage } from '@/utils/storage'
 
 const props = defineProps<{
     agent: AgentWithCustomization
 }>()
 
 const agentData = ref({ ...props.agent })
-const isEditing = ref(false)
-const isCustomizing = ref(false)
-const activeTab = ref('general') // Track the active tab: 'general', 'integrations', etc.
+const activeTab = ref(props.agent.use_workflow ? 'workflow-builder' : 'agent') // Track the active tab: 'agent', 'integrations', etc.
+const isEditingHeader = ref(false)
+const editDisplayName = ref(agentData.value.display_name || agentData.value.name)
+const editIsActive = ref(agentData.value.is_active)
 const previewCustomization = ref<AgentCustomization>({
     id: agentData.value.customization?.id ?? 0,
     agent_id: agentData.value.id,
@@ -54,10 +60,7 @@ const previewCustomization = ref<AgentCustomization>({
     customization_metadata: agentData.value.customization?.customization_metadata ?? {}
 })
 
-// Rate limiting settings
-const enableRateLimiting = ref(agentData.value.enable_rate_limiting || false)
-const overallLimitPerIp = ref(String(agentData.value.overall_limit_per_ip || 100))
-const requestsPerSec = ref(String(agentData.value.requests_per_sec || 1.0))
+
 
 const baseUrl = computed(() => {
     return import.meta.env.VITE_API_URL
@@ -67,8 +70,22 @@ const widgetUrl = computed(() => {
     return import.meta.env.VITE_WIDGET_URL
 })
 
+// Computed property to handle instructions as text
+const instructionsText = computed({
+    get: () => agentData.value.instructions?.join('\n') || '',
+    set: (value) => {
+        agentData.value.instructions = value.split('\n').filter(line => line.trim())
+    }
+})
+
+const iframeUrl = computed(() => {
+    if (!widget.value?.id) return ''
+    return `${baseUrl.value}/widgets/${widget.value.id}/data?widget_id=${widget.value.id}`
+})
+
 const emit = defineEmits<{
     (e: 'close'): void
+    (e: 'toggle-fullscreen', isFullscreen: boolean): void
 }>()
 
 const {
@@ -86,8 +103,6 @@ const {
   handleClose: handleCloseAgent,
   initializeWidget,
   copyWidgetCode: copyWidgetCodeFn,
-  toggleTransferToHuman,
-  toggleAskForRating,
   userGroups,
   selectedGroupIds,
   loadingGroups,
@@ -104,16 +119,11 @@ const {
   loadingProjects,
   loadingIssueTypes,
   checkJiraStatus,
-  fetchJiraProjects,
-  fetchJiraIssueTypes,
   toggleCreateTicket,
   saveJiraConfig,
   fetchAgentJiraConfig,
   handleProjectChange,
   handleIssueTypeChange,
-  // Shopify integration
-  shopifyConnected,
-  shopifyLoading,
   shopifyIntegrationEnabled,
   checkShopifyStatus,
   fetchAgentShopifyConfig,
@@ -150,102 +160,208 @@ const copyWidgetCode = () => {
     copyWidgetCodeFn(widgetUrl.value)
 }
 
-// Computed property to handle instructions as text
-const instructionsText = computed({
-    get: () => agentData.value.instructions.join('\n'),
-    set: (value) => {
-        if (isEditing.value) {
-            agentData.value.instructions = value.split('\n').filter(line => line.trim())
-        }
-    }
+// Dialog state for knowledge tips
+const showTips = ref(false)
+
+const openTips = () => {
+    showTips.value = true
+}
+
+const closeTips = () => {
+    showTips.value = false
+}
+
+// Tab switching function
+const switchTab = (tab: string) => {
+    activeTab.value = tab
+    
+    // Update URL with tab parameter
+    const url = new URL(window.location.href)
+    url.searchParams.set('tab', tab)
+    window.history.replaceState({}, '', url.toString())
+}
+
+// Determine if we should show workflow or general tab
+const showWorkflowTab = computed(() => {
+    return agentData.value.use_workflow === true
 })
 
-const transferReasons = [
-    "Knowledge gaps",
-    "Need human contact",
-    "Customer frustration",
-    "High priority issues",
-    "Compliance matters"
-]
+// Handle fullscreen toggle from workflow tab
+const handleWorkflowFullscreenToggle = (isFullscreen: boolean) => {
+    emit('toggle-fullscreen', isFullscreen)
+}
 
-const tooltipContent = computed(() => {
-    return `Auto-transfer when:\n${transferReasons.map(reason => `• ${reason}`).join('\n')}`
-})
-
-const ratingTooltipContent = computed(() => {
-    return `Enable to:\n• Request feedback after chat ends\n• Collect star ratings (1-5)\n• Gather optional comments\n• Track customer satisfaction`
-})
-
-const iframeUrl = computed(() => {
-    if (!widget.value?.id) return ''
-    return `${baseUrl.value}/widgets/${widget.value.id}/data?widget_id=${widget.value.id}`
-})
-
-const previewContainerStyles = computed(() => ({
-    style: {
-        width: '400px',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column' as const,
-        background: 'transparent',
-        borderRadius: '24px',
-        overflow: 'hidden',
-        boxShadow: '0 8px 32px rgba(0, 0, 0, 0.12)',
-        marginLeft: 'auto',
-        position: 'relative',
-        marginTop: '50px',
-    }
-}))
-
-const toggleRateLimiting = async () => {
+// Handle workflow toggle
+const handleToggleUseWorkflow = async () => {
     try {
-        const response = await fetch(`${baseUrl.value}/agents/${agentData.value.id}`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('token')}`
-            },
-            body: JSON.stringify({
-                enable_rate_limiting: enableRateLimiting.value
-            })
-        })
+        const newValue = !agentData.value.use_workflow
+        const updatedAgent = await agentService.updateAgent(agentData.value.id, { use_workflow: newValue })
         
-        if (response.ok) {
-            const data = await response.json()
-            agentData.value = { ...agentData.value, ...data }
+        // Update the agent data to trigger reactivity
+        Object.assign(agentData.value, updatedAgent)
+        
+        // Update storage to keep data in sync
+        agentStorage.updateAgent(updatedAgent)
+        
+        // Switch to the appropriate tab based on the new mode
+        if (newValue) {
+            // Switched to workflow mode - go to workflow-builder tab
+            activeTab.value = 'workflow-builder'
         } else {
-            console.error('Failed to update rate limiting setting')
+            // Switched to AI mode - go to agent tab
+            activeTab.value = 'agent'
         }
+        
+        // Update URL with new tab
+        const url = new URL(window.location.href)
+        url.searchParams.set('tab', activeTab.value)
+        window.history.replaceState({}, '', url.toString())
+        
+        // Force reactivity update
+        await nextTick()
+        
+        toast.success(`Workflow mode ${newValue ? 'enabled' : 'disabled'}`, {
+            duration: 4000,
+            closeButton: true
+        })
     } catch (error) {
-        console.error('Error updating rate limiting setting:', error)
+        console.error('Error toggling workflow mode:', error)
+        toast.error('Failed to update workflow mode', {
+            duration: 4000,
+            closeButton: true
+        })
     }
 }
 
-const updateRateLimitSettings = async () => {
+// Handle add workflow
+
+// Handle navigate to tab
+
+// Handle save agent changes
+
+// Handle customization save
+const handleCustomizationSave = (updatedAgent: AgentWithCustomization) => {
+    // Update the agent data to trigger reactivity
+    Object.assign(agentData.value, updatedAgent)
+    
+    // Update storage to keep data in sync
+    agentStorage.updateAgent(updatedAgent)
+    
+    // Update preview customization
+    previewCustomization.value = updatedAgent.customization ?? previewCustomization.value
+    
+    // Switch back to general tab
+    switchTab('general')
+}
+
+// Handle save header changes
+const handleSaveHeader = async () => {
     try {
-        const response = await fetch(`${baseUrl.value}/agents/${agentData.value.id}`, {
-            method: 'PATCH',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('token')}`
-            },
-            body: JSON.stringify({
-                overall_limit_per_ip: parseInt(overallLimitPerIp.value),
-                requests_per_sec: parseFloat(requestsPerSec.value)
-            })
+        const updatedAgent = await agentService.updateAgent(agentData.value.id, {
+            display_name: editDisplayName.value,
+            is_active: editIsActive.value
         })
         
-        if (response.ok) {
-            const data = await response.json()
-            agentData.value = { ...agentData.value, ...data }
-            alert('Rate limit settings updated successfully')
-        } else {
-            console.error('Failed to update rate limit settings')
-            alert('Failed to update rate limit settings')
-        }
+        // Update the agent data to trigger reactivity
+        Object.assign(agentData.value, updatedAgent)
+        
+        // Update storage to keep data in sync
+        agentStorage.updateAgent(updatedAgent)
+        
+        isEditingHeader.value = false
+        
+        toast.success('Agent updated successfully', {
+            duration: 4000,
+            closeButton: true
+        })
     } catch (error) {
-        console.error('Error updating rate limit settings:', error)
-        alert('Error updating rate limit settings')
+        console.error('Error saving agent:', error)
+        toast.error('Failed to save agent changes', {
+            duration: 4000,
+            closeButton: true
+        })
+    }
+}
+
+// Handle cancel header edit
+const handleCancelHeaderEdit = () => {
+    editDisplayName.value = agentData.value.display_name || agentData.value.name
+    editIsActive.value = agentData.value.is_active
+    isEditingHeader.value = false
+}
+
+// Handle status toggle
+const handleStatusToggle = async (event: Event) => {
+    const newStatus = (event.target as HTMLInputElement).checked
+    
+    if (isEditingHeader.value) {
+        editIsActive.value = newStatus
+    } else {
+        // Directly update the agent status
+        try {
+            const updatedAgent = await agentService.updateAgent(agentData.value.id, {
+                is_active: newStatus
+            })
+            
+            // Update the agent data to trigger reactivity
+            agentData.value.is_active = newStatus
+            
+            // Update storage to keep data in sync
+            agentStorage.updateAgent(updatedAgent)
+            
+            toast.success(`Agent ${newStatus ? 'activated' : 'deactivated'} successfully`, {
+                duration: 3000,
+                closeButton: true
+            })
+        } catch (error) {
+            console.error('Error updating agent status:', error)
+            toast.error('Failed to update agent status', {
+                duration: 4000,
+                closeButton: true
+            })
+            // Revert the checkbox state on error
+            ;(event.target as HTMLInputElement).checked = agentData.value.is_active
+        }
+    }
+}
+
+// Handle save agent from tab
+const handleSaveAgentFromTab = async (data: any) => {
+    try {
+        // Convert instructions back to array format if it's a string
+        let instructions = data.instructions
+        if (typeof instructions === 'string') {
+            instructions = instructions.split('\n').filter((line: string) => line.trim())
+        }
+
+        const updatedAgent = await agentService.updateAgent(agentData.value.id, {
+            instructions: instructions,
+            transfer_to_human: data.transferToHuman,
+            ask_for_rating: data.askForRating
+        })
+        
+        // Update agent groups if changed
+        if (data.selectedGroupIds && data.selectedGroupIds.length !== selectedGroupIds.value.length || 
+            !data.selectedGroupIds.every((id: string) => selectedGroupIds.value.includes(id))) {
+            await updateAgentGroups(data.selectedGroupIds)
+        }
+        
+        // Update the agent data to trigger reactivity
+        Object.assign(agentData.value, updatedAgent)
+        
+        // Update storage to keep data in sync
+        agentStorage.updateAgent(updatedAgent)
+        
+        toast.success('Agent updated successfully', {
+            duration: 4000,
+            closeButton: true
+        })
+    } catch (error) {
+        console.error('Error saving agent:', error)
+        toast.error('Failed to save agent changes', {
+            duration: 4000,
+            closeButton: true
+        })
     }
 }
 
@@ -260,6 +376,19 @@ onMounted(async () => {
     // Check Shopify status and fetch config
     await checkShopifyStatus()
     await fetchAgentShopifyConfig()
+    
+    // Check if we should switch to knowledge tab based on URL query parameter
+    const urlParams = new URLSearchParams(window.location.search)
+    const tab = urlParams.get('tab')
+    if (tab && ['agent', 'preview', 'knowledge', 'integrations', 'widget', 'advanced', 'workflow-builder', 'customization'].includes(tab)) {
+        activeTab.value = tab
+    } else if (agentData.value.use_workflow === true) {
+        // Show workflow builder tab by default when using workflow
+        activeTab.value = 'workflow-builder'
+    } else {
+        // Show agent tab by default when NOT using workflow
+        activeTab.value = 'agent'
+    }
 })
 
 </script>
@@ -268,9 +397,12 @@ onMounted(async () => {
     <div class="agent-detail">
         <!-- Left Panel -->
         <div class="detail-panel">
-            <div class="panel-header">
+                    <div class="panel-header">
+            <div class="header-layout">
                 <button class="back-button" @click="handleClose" aria-label="Back to agents">
-                    <img src="@/assets/arrow-left.svg" alt="Back" class="back-icon" />
+                    <svg class="back-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 12H5m7-7-7 7 7 7"/>
+                    </svg>
                 </button>
                 <div class="agent-header">
                     <div class="agent-avatar" @click="triggerFileUpload">
@@ -286,127 +418,297 @@ onMounted(async () => {
                     </div>
                     <div class="agent-info">
                         <div class="name-section">
-                            <h3>{{ agentData.display_name || agentData.name }}</h3>
-                            <div class="action-buttons" v-if="!isEditing && !isCustomizing">
-                                <button class="edit-button" @click="isEditing = true">
-                                    Edit
-                                </button>
-                                <button class="customize-button" @click="isCustomizing = true">
-                                    Customize
+                            <div v-if="!isEditingHeader" class="name-display">
+                                <h3>{{ agentData.display_name || agentData.name }}</h3>
+                                <button class="edit-icon-button" @click="isEditingHeader = true" title="Edit name and status">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                                        <path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                                    </svg>
                                 </button>
                             </div>
+                            <div v-else class="name-edit">
+                                <input 
+                                    v-model="editDisplayName" 
+                                    class="name-input"
+                                    placeholder="Enter display name"
+                                    @keyup.enter="handleSaveHeader"
+                                    @keyup.escape="handleCancelHeaderEdit"
+                                >
+                                <div class="edit-actions">
+                                    <button class="save-icon-button" @click="handleSaveHeader" title="Save">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="20,6 9,17 4,12"></polyline>
+                                        </svg>
+                                    </button>
+                                    <button class="cancel-icon-button" @click="handleCancelHeaderEdit" title="Cancel">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                        <div class="status">
-                            <div class="status-indicator" :class="{ 'online': agentData.is_active }"></div>
-                            <span class="status-text">{{ agentData.is_active ? 'Online' : 'Offline' }}</span>
+                        <div class="status-and-mode">
+                            <div class="status-toggle">
+                                <label class="status-switch" :class="{ 'editing': isEditingHeader }">
+                                    <input 
+                                        type="checkbox" 
+                                        :checked="isEditingHeader ? editIsActive : agentData.is_active"
+                                        @change="handleStatusToggle"
+                                    >
+                                    <span class="status-slider"></span>
+                                </label>
+                                <span class="status-text">{{ (isEditingHeader ? editIsActive : agentData.is_active) ? 'Online' : 'Offline' }}</span>
+                            </div>
+                            
+                            <!-- Mode Selection -->
+                            <div class="mode-selection">
+                                <div class="mode-toggle">
+                                    <button 
+                                        class="mode-button" 
+                                        :class="{ 'active': !agentData.use_workflow }"
+                                        @click="!agentData.use_workflow || handleToggleUseWorkflow()"
+                                    >
+                                        <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <circle cx="12" cy="12" r="3"/>
+                                            <path d="M12 1v6m0 6v6m11-7h-6m-6 0H1m15.5-3.5L19 4l-1.5 1.5M6.5 17.5L5 19l1.5 1.5m0-11L5 5l1.5 1.5m11 11L19 19l-1.5-1.5"/>
+                                        </svg>
+                                        <span class="mode-label">AI Mode</span>
+                                    </button>
+                                    <button 
+                                        class="mode-button" 
+                                        :class="{ 'active': agentData.use_workflow }"
+                                        @click="agentData.use_workflow || handleToggleUseWorkflow()"
+                                    >
+                                        <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="3" y="3" width="6" height="6"/>
+                                            <rect x="15" y="3" width="6" height="6"/>
+                                            <rect x="9" y="15" width="6" height="6"/>
+                                            <path d="M6 9v3a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V9"/>
+                                            <path d="M12 15v-3"/>
+                                        </svg>
+                                        <span class="mode-label">Workflow</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+            <div class="panel-content">
+                <div class="content-layout">
+                    <!-- Tab Navigation - Horizontal -->
+                    <div class="tabs-navigation horizontal">
+                        <button 
+                            class="tab-button" 
+                            :class="{ 'active': activeTab === 'agent' }"
+                            @click="switchTab('agent')"
+                            v-if="!showWorkflowTab"
+                        >
+                            Agent
+                        </button>
+                        <button 
+                            class="tab-button" 
+                            :class="{ 'active': activeTab === 'workflow-builder' }"
+                            @click="switchTab('workflow-builder')"
+                            v-if="agentData.use_workflow"
+                        >
+                            Workflow Builder
+                        </button>
+                        <button 
+                            class="tab-button" 
+                            :class="{ 'active': activeTab === 'customization' }"
+                            @click="switchTab('customization')"
+                        >
+                            Chat Customization
+                        </button>
+                        <button 
+                            class="tab-button" 
+                            :class="{ 'active': activeTab === 'preview' }"
+                            @click="switchTab('preview')"
+                        >
+                            Test & Preview
+                        </button>
+                        <button 
+                            class="tab-button" 
+                            :class="{ 'active': activeTab === 'knowledge' }"
+                            @click="switchTab('knowledge')"
+                        >
+                            Knowledge
+                        </button>
+                        <button 
+                            class="tab-button" 
+                            :class="{ 'active': activeTab === 'integrations' }"
+                            @click="switchTab('integrations')"
+                        >
+                            Integrations
+                        </button>
+                        <button 
+                            class="tab-button" 
+                            :class="{ 'active': activeTab === 'widget' }"
+                            @click="switchTab('widget')"
+                        >
+                            Widget
+                        </button>
+                        <button 
+                            class="tab-button" 
+                            :class="{ 'active': activeTab === 'advanced' }"
+                            @click="switchTab('advanced')"
+                        >
+                            Advanced
+                        </button>
+
+ 
+                    </div>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content-container">
+                        <!-- Agent Tab -->
+                        <div v-if="activeTab === 'agent'" class="tab-content">
+                            <AgentInstructionsTab
+                                :instructions="instructionsText"
+                                :transfer-to-human="agentData.transfer_to_human"
+                                :ask-for-rating="agentData.ask_for_rating"
+                                :user-groups="userGroups"
+                                :selected-group-ids="selectedGroupIds"
+                                :loading-groups="loadingGroups"
+                                :is-editing="true"
+                                :agent="agentData"
+                                @save-agent="handleSaveAgentFromTab"
+                            />
+                        </div>
+
+
+
+                        <!-- Preview Tab -->
+                        <div v-if="activeTab === 'preview'" class="tab-content">
+                            <div class="preview-container">
+                                <div class="preview-header">
+                                    <h3 class="section-title">Chat Preview</h3>
+                                    <p class="section-description">
+                                        This is how your chat widget will appear to users. The preview shows the exact interface they will interact with.
+                                    </p>
+                                </div>
+                                <div class="preview-wrapper">
+                                    <iframe 
+                                        v-if="widget?.id"
+                                        :src="iframeUrl"
+                                        class="widget-preview"
+                                        frameborder="0"
+                                        title="Widget Preview"
+                                        allow="clipboard-write"
+                                    ></iframe>
+                                    <div v-else class="loading-preview">
+                                        Loading widget preview...
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Knowledge Tab -->
+                        <div v-if="activeTab === 'knowledge'" class="tab-content">
+                            <div class="knowledge-tab-container">
+                                <div class="knowledge-header">
+                                    <div>
+                                        <h3 class="section-title">Knowledge Sources</h3>
+                                        <p class="section-description">
+                                            Connect your agent to various knowledge sources to enhance its responses with context-relevant information.
+                                        </p>
+                                    </div>
+                                    <div class="knowledge-actions">
+                                        <button class="knowledge-action-button" title="Quick tips for managing knowledge" @click="openTips">
+                                            <span class="icon">💡</span>
+                                            <span>Tips</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <KnowledgeGrid :agent-id="agentData.id" :organization-id="agentData.organization_id" />
+                            </div>
+                        </div>
+
+                        <!-- Integrations Tab -->
+                        <div v-if="activeTab === 'integrations'" class="tab-content">
+                            <AgentIntegrationsTab
+                                :jira-connected="jiraConnected"
+                                :jira-loading="jiraLoading"
+                                :create-ticket-enabled="createTicketEnabled"
+                                :jira-projects="jiraProjects"
+                                :jira-issue-types="jiraIssueTypes"
+                                :selected-project="selectedProject"
+                                :selected-issue-type="selectedIssueType"
+                                :loading-projects="loadingProjects"
+                                :loading-issue-types="loadingIssueTypes"
+                                :shopify-integration-enabled="shopifyIntegrationEnabled"
+                                :shopify-shop-domain="shopifyShopDomain"
+                                @toggle-create-ticket="toggleCreateTicket"
+                                @handle-project-change="handleProjectChange"
+                                @handle-issue-type-change="handleIssueTypeChange"
+                                @save-jira-config="(config) => saveJiraConfig(config.projectKey, config.issueTypeId)"
+                                @toggle-shopify-integration="toggleShopifyIntegration"
+                                @save-shopify-config="saveShopifyConfig"
+                            />
+                        </div>
+
+                        <!-- Widget Tab -->
+                        <div v-if="activeTab === 'widget'" class="tab-content">
+                            <AgentWidgetTab
+                                :widget="widget"
+                                :widget-url="widgetUrl"
+                                :widget-loading="widgetLoading"
+                                @copy-widget-code="copyWidgetCode"
+                            />
+                        </div>
+
+                        <!-- Advanced Tab -->
+                        <div v-if="activeTab === 'advanced'" class="tab-content">
+                            <AgentAdvancedTab
+                                :agent="agentData"
+                                @update="(updatedAgent) => { agentData = updatedAgent }"
+                            />
+                        </div>
+
+                        <!-- Workflow Builder Tab -->
+                        <div v-if="activeTab === 'workflow-builder'" class="tab-content">
+                            <AgentWorkflowTab
+                                :key="`workflow-${agentData.id}-${agentData.use_workflow}`"
+                                :agent="agentData"
+                                @toggle-fullscreen="handleWorkflowFullscreenToggle"
+                            />
+                        </div>
+
+                        <!-- Customization Tab -->
+                        <div v-if="activeTab === 'customization'" class="tab-content">
+                            <div class="customization-tab-layout">
+                                <div class="customization-panel">
+                                    <AgentCustomizationView
+                                        :agent="agentData"
+                                        @preview="handlePreview"
+                                        @save="handleCustomizationSave"
+                                        @cancel="() => switchTab('general')"
+                                    />
+                                </div>
+                                <div class="customization-preview">
+                                    <AgentChatPreviewPanel
+                                        :is-active="agentData.is_active"
+                                        :customization="previewCustomization"
+                                        :agent-type="agentData.agent_type"
+                                        :agent-name="agentData.display_name || agentData.name"
+                                        :agent-id="agentData.id"
+                                    />
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="panel-content" v-if="!isEditing && !isCustomizing">
-                <!-- Tab Navigation -->
-                <div class="tabs-navigation">
-                    <button 
-                        class="tab-button" 
-                        :class="{ 'active': activeTab === 'general' }"
-                        @click="activeTab = 'general'"
-                    >
-                        General
-                    </button>
-                    <button 
-                        class="tab-button" 
-                        :class="{ 'active': activeTab === 'integrations' }"
-                        @click="activeTab = 'integrations'"
-                    >
-                        Integrations
-                    </button>
-                    <button 
-                        class="tab-button" 
-                        :class="{ 'active': activeTab === 'widget' }"
-                        @click="activeTab = 'widget'"
-                    >
-                        Widget
-                    </button>
-                    <button 
-                        class="tab-button" 
-                        :class="{ 'active': activeTab === 'advanced' }"
-                        @click="activeTab = 'advanced'"
-                    >
-                        Advanced
-                    </button>
-                </div>
 
-                <!-- General Tab -->
-                <div v-if="activeTab === 'general'" class="tab-content">
-                    <AgentGeneralTab
-                        :instructions="instructionsText"
-                        :transfer-to-human="agentData.transfer_to_human"
-                        :ask-for-rating="agentData.ask_for_rating"
-                        :user-groups="userGroups"
-                        :selected-group-ids="selectedGroupIds"
-                        :loading-groups="loadingGroups"
-                        :is-editing="isEditing"
-                        @update:instructions="(value: string) => { instructionsText = value }"
-                        @toggle-transfer-to-human="toggleTransferToHuman"
-                        @toggle-ask-for-rating="toggleAskForRating"
-                        @update-agent-groups="(groupIds: string[]) => updateAgentGroups(groupIds)"
-                    />
-                </div>
 
-                <!-- Integrations Tab -->
-                <div v-if="activeTab === 'integrations'" class="tab-content">
-                    <AgentIntegrationsTab
-                        :jira-connected="jiraConnected"
-                        :jira-loading="jiraLoading"
-                        :create-ticket-enabled="createTicketEnabled"
-                        :jira-projects="jiraProjects"
-                        :jira-issue-types="jiraIssueTypes"
-                        :selected-project="selectedProject"
-                        :selected-issue-type="selectedIssueType"
-                        :loading-projects="loadingProjects"
-                        :loading-issue-types="loadingIssueTypes"
-                        :shopify-integration-enabled="shopifyIntegrationEnabled"
-                        :shopify-shop-domain="shopifyShopDomain"
-                        @toggle-create-ticket="toggleCreateTicket"
-                        @handle-project-change="handleProjectChange"
-                        @handle-issue-type-change="handleIssueTypeChange"
-                        @save-jira-config="(config) => saveJiraConfig(config.projectKey, config.issueTypeId)"
-                        @toggle-shopify-integration="toggleShopifyIntegration"
-                        @save-shopify-config="saveShopifyConfig"
-                    />
-                </div>
 
-                <!-- Widget Tab -->
-                <div v-if="activeTab === 'widget'" class="tab-content">
-                    <AgentWidgetTab
-                        :widget="widget"
-                        :widget-url="widgetUrl"
-                        :widget-loading="widgetLoading"
-                        @copy-widget-code="copyWidgetCode"
-                    />
-                </div>
-
-                <!-- Advanced Tab -->
-                <div v-if="activeTab === 'advanced'" class="tab-content">
-                    <AgentAdvancedTab
-                        :agent="agentData"
-                        @update="(updatedAgent) => { agentData = updatedAgent }"
-                    />
-                </div>
-            </div>
-
-            <!-- Edit Mode -->
-            <AgentEdit v-else-if="isEditing" :agent="agentData"
-                @save="(updated: AgentWithCustomization) => { agentData = updated; isEditing = false }"
-                @cancel="isEditing = false" />
-
-            <!-- Customization Mode -->
-            <AgentCustomizationView v-else-if="isCustomizing" :agent="agentData" @preview="handlePreview" @save="(updated: AgentWithCustomization) => {
-                agentData = updated
-                isCustomizing = false
-                previewCustomization = updated.customization ?? previewCustomization
-            }" @cancel="isCustomizing = false" />
 
             <!-- Cropper Modal -->
             <div v-if="showCropper" class="cropper-modal">
@@ -428,78 +730,137 @@ onMounted(async () => {
             </div>
         </div>
 
-        <!-- Right Panel - Chat Window -->
-        <div v-if="!isEditing && !isCustomizing" :style="previewContainerStyles">
-            <iframe 
-                v-if="widget?.id"
-                :src="iframeUrl"
-                class="widget-preview"
-                frameborder="0"
-                title="Widget Preview"
-                allow="clipboard-write"
-            ></iframe>
-            <div v-else class="loading-preview">
-                Loading widget preview...
+        <!-- Knowledge Tips Dialog -->
+        <div v-if="showTips" class="tips-dialog-overlay">
+            <div class="tips-dialog">
+                <div class="tips-dialog-header">
+                    <h3>Knowledge Management Tips</h3>
+                    <button class="close-button" @click="closeTips">×</button>
+                </div>
+                <div class="tips-dialog-content">
+                    <div class="tip-item">
+                        <div class="tip-icon">📄</div>
+                        <div class="tip-content">
+                            <h4>PDF Documents</h4>
+                            <p>Upload PDF files to give your agent access to document content. Best for manuals, reports, and structured documents.</p>
+                        </div>
+                    </div>
+                    <div class="tip-item">
+                        <div class="tip-icon">🔗</div>
+                        <div class="tip-content">
+                            <h4>Web Pages</h4>
+                            <p>Add URLs for web content you want the agent to reference. Great for dynamic information that updates regularly.</p>
+                        </div>
+                    </div>
+                    <div class="tip-item">
+                        <div class="tip-icon">🔄</div>
+                        <div class="tip-content">
+                            <h4>Link Existing Sources</h4>
+                            <p>Reuse knowledge sources across multiple agents to maintain consistency in responses.</p>
+                        </div>
+                    </div>
+                    <div class="tip-item">
+                        <div class="tip-icon">⚙️</div>
+                        <div class="tip-content">
+                            <h4>Processing Time</h4>
+                            <p>Knowledge sources are processed asynchronously. Allow a few minutes for large documents to be fully indexed.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="tips-dialog-footer">
+                    <button class="close-tips-button" @click="closeTips">Got it</button>
+                </div>
             </div>
         </div>
-        <!-- use for customization preview-->
-        <AgentChatPreviewPanel 
-            v-else
-            :is-active="agentData.is_active"
-            :customization="isCustomizing ? previewCustomization : (agentData.customization ?? previewCustomization)"
-            :agent-type="agentData.agent_type" 
-            :agent-name="agentData.display_name || agentData.name"
-            :agent-id="agentData.id" 
-        />
-
-        <!-- Knowledge Grid -->
-        <KnowledgeGrid :agent-id="agentData.id" :organization-id="agentData.organization_id" />
     </div>
 </template>
 
 <style scoped>
 .agent-detail {
-    display: grid;
-    grid-template-columns: 450px 1fr;
-    grid-template-rows: auto auto;
-    gap: var(--space-lg);
-    height: 100%;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    height: auto;
+    background: var(--background-base);
+    overflow: visible;
 }
 
 .detail-panel {
-    border-right: 1px solid var(--border-color);
-    padding: var(--space-lg);
+    flex: 1;
+    background: white;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    overflow: visible;
     display: flex;
     flex-direction: column;
+    margin: var(--space-md);
+    min-height: calc(100vh - 2 * var(--space-md));
 }
 
 .panel-header {
-    margin-bottom: var(--space-xl);
+    padding: var(--space-xl) var(--space-xl) var(--space-lg);
+    border-bottom: 1px solid var(--border-color);
+    background: var(--background-soft);
+}
+
+.header-layout {
+    display: flex;
+    align-items: center;
+    gap: var(--space-lg);
 }
 
 .back-button {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: var(--space-sm);
-    background: transparent;
-    border: none;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    background: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-full);
     cursor: pointer;
-    margin-bottom: var(--space-md);
+    transition: all 0.2s ease;
+    color: var(--text-muted);
+    flex-shrink: 0;
+}
+
+.back-button:hover {
+    background: var(--background-muted);
+    color: var(--text-color);
+    transform: translateX(-2px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.back-icon {
+    transition: transform 0.2s ease;
+}
+
+.back-button:hover .back-icon {
+    transform: translateX(-1px);
 }
 
 .agent-header {
     display: flex;
-    gap: var(--space-md);
+    gap: var(--space-lg);
     align-items: center;
+    flex: 1;
 }
 
 .agent-avatar {
     position: relative;
     cursor: pointer;
-    width: 80px;
-    height: 80px;
+    width: 96px;
+    height: 96px;
     border-radius: 50%;
     overflow: hidden;
+    border: 3px solid white;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+.agent-avatar:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
 }
 
 .hidden {
@@ -512,18 +873,23 @@ onMounted(async () => {
     left: 0;
     right: 0;
     bottom: 0;
-    background: rgba(0, 0, 0, 0.5);
+    background: rgba(0, 0, 0, 0.6);
     display: flex;
     align-items: center;
     justify-content: center;
     color: white;
     opacity: 0;
-    transition: opacity 0.2s;
+    transition: all 0.3s ease;
     border-radius: 50%;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-align: center;
+    backdrop-filter: blur(2px);
 }
 
 .agent-avatar:hover .upload-overlay {
     opacity: 1;
+    transform: scale(1.02);
 }
 
 .agent-avatar img {
@@ -533,46 +899,305 @@ onMounted(async () => {
     border-radius: 50%;
 }
 
+.agent-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.agent-info h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-color);
+    margin: 0;
+    line-height: 1.3;
+}
+
 .name-section {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+}
+
+.name-display {
     display: flex;
     align-items: center;
     gap: var(--space-sm);
 }
 
-.edit-button {
-    padding: var(--space-xs) var(--space-sm);
-    background: var(--primary-soft);
-    color: var(--primary-color);
-    border: none;
-    border-radius: var(--radius-full);
-    cursor: pointer;
+.name-edit {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    flex: 1;
 }
 
-.customize-button {
-    padding: var(--space-xs) var(--space-sm);
-    background: var(--background-soft);
+.name-input {
+    flex: 1;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: 1.2rem;
+    font-weight: 600;
+    background: white;
     color: var(--text-color);
+}
+
+.name-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px var(--primary-soft);
+}
+
+.edit-actions {
+    display: flex;
+    gap: var(--space-xs);
+}
+
+.edit-icon-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
     border: none;
-    border-radius: var(--radius-full);
+    background: var(--background-soft);
+    border-radius: var(--radius-md);
+    color: var(--text-muted);
     cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.edit-icon-button:hover {
+    background: var(--background-muted);
+    color: var(--text-color);
+    transform: translateY(-1px);
+}
+
+.save-icon-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: var(--success-color);
+    border-radius: var(--radius-sm);
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.save-icon-button:hover {
+    background: var(--success-dark);
+    transform: translateY(-1px);
+}
+
+.cancel-icon-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: var(--background-muted);
+    border-radius: var(--radius-sm);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cancel-icon-button:hover {
+    background: var(--error-color);
+    color: white;
+    transform: translateY(-1px);
+}
+
+.status-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+
+.status-switch {
+    position: relative;
+    display: inline-block;
+    width: 44px;
+    height: 22px;
+}
+
+.status-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.status-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: .4s;
+    border-radius: 22px;
+}
+
+.status-slider:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: .4s;
+    border-radius: 50%;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.status-switch input:checked + .status-slider {
+    background-color: var(--success-color);
+}
+
+.status-switch input:checked + .status-slider:before {
+    transform: translateX(22px);
+}
+
+.status-switch input:disabled + .status-slider {
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.status-switch.editing input:disabled + .status-slider {
+    cursor: pointer;
+    opacity: 1;
+}
+
+.status-switch:not(.editing) .status-slider:hover {
+    opacity: 0.8;
+}
+
+
+
+.status-and-mode {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
 }
 
 .status {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
-    margin-top: var(--space-xs);
+    gap: var(--space-sm);
 }
 
 .status-indicator {
-    width: 8px;
-    height: 8px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
     background: var(--error-color, #ef4444);
+    position: relative;
+    animation: pulse-offline 2s infinite;
 }
 
 .status-indicator.online {
     background: var(--success-color, #22c55e);
+    animation: pulse-online 2s infinite;
+}
+
+.status-text {
+    font-weight: 500;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+}
+
+/* Mode Selection Styles */
+.mode-selection {
+    margin-top: var(--space-xs);
+}
+
+.mode-toggle {
+    display: inline-flex;
+    background: var(--background-soft);
+    border-radius: var(--radius-full);
+    padding: 2px;
+    border: 1px solid var(--border-color);
+}
+
+.mode-button {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    white-space: nowrap;
+    position: relative;
+}
+
+.mode-button:hover {
+    background: var(--background-muted);
+    color: var(--text-color);
+}
+
+.mode-button.active {
+    background: var(--primary-color);
+    color: white;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.mode-button:first-child.active {
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+}
+
+.mode-button:last-child.active {
+    background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+}
+
+.mode-icon {
+    width: 14px;
+    height: 14px;
+    stroke-width: 2;
+    flex-shrink: 0;
+}
+
+.mode-label {
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+@keyframes pulse-online {
+    0% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(34, 197, 94, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(34, 197, 94, 0);
+    }
+}
+
+@keyframes pulse-offline {
+    0% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+    }
 }
 
 .detail-section {
@@ -608,11 +1233,6 @@ onMounted(async () => {
     outline: none;
     border-color: var(--primary-color);
     box-shadow: 0 0 0 2px var(--primary-soft);
-}
-
-.action-buttons {
-    display: flex;
-    gap: var(--space-sm);
 }
 
 .cropper-modal {
@@ -920,10 +1540,49 @@ input:checked + .slider:before {
 }
 
 .widget-preview {
-    width: 400px;
+    width: 100%;
     height: 600px;
     border: none;
     background: none;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+}
+
+.preview-container {
+    display: flex;
+    flex-direction: row;
+    gap: var(--space-xl);
+    padding: var(--space-xl);
+    height: 100%;
+}
+
+.preview-header {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-start;
+    min-width: 300px;
+}
+
+.preview-title {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: var(--space-sm);
+}
+
+.preview-wrapper {
+    background: var(--background-alt, #f0f0f0);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    height: 600px;
+    width: 400px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    border: 1px solid var(--border-color);
 }
 
 .loading-preview {
@@ -932,7 +1591,29 @@ input:checked + .slider:before {
     padding: var(--space-xl);
     background: var(--background-alt);
     border-radius: var(--radius-lg);
-    margin: var(--space-lg);
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+}
+
+.loading-preview::before {
+    content: "";
+    width: 40px;
+    height: 40px;
+    margin-bottom: var(--space-md);
+    border: 3px solid var(--border-color);
+    border-radius: 50%;
+    border-top-color: var(--primary-color);
+    animation: loading-spinner 1s linear infinite;
+}
+
+@keyframes loading-spinner {
+    to {
+        transform: rotate(360deg);
+    }
 }
 
 .rating-toggle {
@@ -1055,48 +1736,107 @@ input:checked + .slider:before {
     filter: grayscale(0.5);
 }
 
-.tabs-navigation {
+.agent-workflow-badge {
+    margin-top: var(--space-sm);
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--primary-soft);
+    color: var(--primary-color);
+    border-radius: var(--radius-full);
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+.workflow-icon {
+    font-size: 0.875rem;
+}
+
+.tab-content {
+    animation: fadeIn 0.4s ease;
+    flex: 1;
+    overflow: visible;
     display: flex;
-    gap: var(--space-sm);
-    margin-bottom: var(--space-lg);
-    border-bottom: 1px solid var(--border-color);
-    padding-bottom: var(--space-sm);
+    flex-direction: column;
+    background: white;
+    border-radius: var(--radius-lg);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    margin-top: var(--space-md);
+    min-height: calc(100vh - 300px);
+}
+
+.content-layout {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    flex: 1;
+}
+
+.panel-content {
+    flex: 1;
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.tab-content-container {
+    flex: 1;
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    background: var(--background-base);
+    padding: var(--space-xl);
+    min-height: calc(100vh - 200px);
 }
 
 .tab-button {
-    padding: var(--space-sm) var(--space-md);
+    padding: var(--space-md) var(--space-lg);
     background: transparent;
     border: none;
-    border-radius: var(--radius-md) var(--radius-md) 0 0;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: all 0.3s ease;
     font-weight: 500;
+    font-size: var(--text-sm);
     color: var(--text-muted);
     position: relative;
+    text-align: center;
+    white-space: nowrap;
+    border-bottom: 3px solid transparent;
+}
+
+.tabs-navigation {
+    flex-shrink: 0;
+}
+
+.tabs-navigation.horizontal {
+    display: flex;
+    gap: var(--space-sm);
+    border-bottom: 1px solid var(--border-color);
+    padding: 0 var(--space-xl);
+    margin: 0;
+    overflow-x: auto;
+    background: white;
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
 }
 
 .tab-button:hover {
     color: var(--text-color);
+    background: var(--background-soft);
+    transform: translateY(-1px);
 }
 
 .tab-button.active {
     color: var(--primary-color);
     font-weight: 600;
+    background: var(--primary-soft);
+    border-bottom-color: var(--primary-color);
 }
 
-.tab-button.active::after {
-    content: '';
-    position: absolute;
-    bottom: -1px;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background-color: var(--primary-color);
-    border-radius: 2px 2px 0 0;
-}
-
-.tab-content {
-    animation: fadeIn 0.3s ease;
+.tabs-navigation.horizontal .tab-button.active::after {
+    display: none;
 }
 
 .integration-section {
@@ -1116,4 +1856,174 @@ input:checked + .slider:before {
         transform: translateY(0);
     }
 }
+
+.knowledge-tab-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 0 var(--space-lg);
+}
+
+.section-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-color);
+    margin-bottom: var(--space-lg);
+    line-height: 1.3;
+}
+
+.section-description {
+    color: var(--text-muted);
+    font-size: 1rem;
+    line-height: 1.6;
+    margin-bottom: var(--space-xl);
+    max-width: 600px;
+}
+
+.knowledge-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-md);
+}
+
+.knowledge-actions {
+    display: flex;
+    gap: var(--space-sm);
+}
+
+.knowledge-action-button {
+    background: transparent;
+    border: none;
+    padding: var(--space-xs) var(--space-sm);
+    cursor: pointer;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    transition: all 0.2s ease;
+}
+
+.knowledge-action-button:hover {
+    color: var(--text-color);
+    background-color: var(--background-soft);
+}
+
+.icon {
+    font-size: 1.25rem;
+}
+
+.tips-dialog-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.tips-dialog {
+    background: #ffffff;
+    padding: 2rem;
+    border-radius: 12px;
+    width: 90%;
+    max-width: 600px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+}
+
+.tips-dialog-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: var(--space-md);
+}
+
+.tips-dialog-header h3 {
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.close-button {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.25rem;
+    color: var(--text-muted);
+}
+
+.tips-dialog-content {
+    margin-bottom: var(--space-md);
+}
+
+.tip-item {
+    display: flex;
+    gap: var(--space-md);
+    margin-bottom: var(--space-md);
+}
+
+.tip-icon {
+    font-size: 1.25rem;
+    color: var(--text-muted);
+}
+
+.tip-content {
+    flex: 1;
+}
+
+.tip-content h4 {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: var(--space-xs);
+}
+
+.tip-content p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+.tips-dialog-footer {
+    text-align: right;
+}
+
+.close-tips-button {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: var(--radius-full);
+    cursor: pointer;
+}
+
+.customization-tab-layout {
+    display: flex;
+    gap: var(--space-xl);
+    height: 100%;
+    padding: var(--space-lg);
+    min-height: calc(100vh - 400px);
+}
+
+.customization-panel {
+    flex: 1;
+    max-width: 480px;
+    overflow-y: auto;
+}
+
+.customization-preview {
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    padding-top: 0;
+}
+
+
 </style>

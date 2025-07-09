@@ -372,11 +372,12 @@ const closeKnowledgeModal = () => {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     overflow: hidden;
+    width: 100%;
 }
 
 .knowledge-grid-header {
     display: grid;
-    grid-template-columns: 2fr 1fr 3fr 1fr 80px;
+    grid-template-columns: 2fr 1fr 2fr 1fr 80px;
     background: var(--background-soft);
     border-bottom: 1px solid var(--border-color);
 }
@@ -389,7 +390,7 @@ const closeKnowledgeModal = () => {
 
 .knowledge-grid-row {
     display: grid;
-    grid-template-columns: 2fr 1fr 3fr 1fr 80px;
+    grid-template-columns: 2fr 1fr 2fr 1fr 80px;
     border-bottom: 1px solid var(--border-color);
 }
 
@@ -514,7 +515,8 @@ const closeKnowledgeModal = () => {
     max-width: 600px;
     max-height: 90vh;
     overflow-y: auto;
-    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    border: 1px solid var(--border-color);
 }
 
 .modal-header {
@@ -655,6 +657,7 @@ const closeKnowledgeModal = () => {
     border-radius: var(--radius-lg);
     overflow: hidden;
     margin-top: var(--space-md);
+    width: 100%;
 }
 
 .org-knowledge-grid .knowledge-grid-header,

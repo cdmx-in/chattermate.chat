@@ -18,6 +18,7 @@ uploads/
 *.csr.pem
 *.csr.key
 *.csr.crt
+/shopify/
 
 # Firebase service account key (contains sensitive credentials)
 chattermate-13e0a-firebase-adminsdk-7dqo6-57f3de88cb.json

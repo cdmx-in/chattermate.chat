@@ -1,5 +1,5 @@
 """
-ChatterMate - Agent
+ChatterMate - Agent Schema
 Copyright (C) 2024 ChatterMate
 
 This program is free software: you can redistribute it and/or modify
@@ -16,6 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
+from datetime import datetime
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from enum import Enum
@@ -52,10 +53,13 @@ class AgentBase(BaseModel):
     enable_rate_limiting: bool = False
     overall_limit_per_ip: int = Field(default=100, description="Maximum number of requests allowed per IP address")
     requests_per_sec: float = Field(default=1.0, description="Number of requests allowed per second")
+    use_workflow: bool = False
+    active_workflow_id: Optional[UUID] = None
+    display_name: Optional[str] = None
 
 
 class AgentCreate(AgentBase):
-    organization_id: UUID
+    organization_id: Optional[UUID] = None
 
 
 class AgentUpdate(BaseModel):
@@ -67,6 +71,8 @@ class AgentUpdate(BaseModel):
     enable_rate_limiting: Optional[bool] = None
     overall_limit_per_ip: Optional[int] = None
     requests_per_sec: Optional[float] = None
+    use_workflow: Optional[bool] = None
+    active_workflow_id: Optional[UUID] = None
 
 
 
@@ -91,6 +97,10 @@ class AgentResponse(BaseModel):
     enable_rate_limiting: Optional[bool] = None
     overall_limit_per_ip: Optional[int] = None
     requests_per_sec: Optional[float] = None
+    use_workflow: Optional[bool] = False
+    active_workflow_id: Optional[UUID] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
 
     class Config:
