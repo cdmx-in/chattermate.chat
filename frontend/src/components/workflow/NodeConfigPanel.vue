@@ -66,8 +66,7 @@ interface FieldConfig {
 const nodeConfigs: Record<string, { fields: FieldConfig[] }> = {
   message: {
     fields: [
-      { key: 'message', label: 'Message Text', type: 'textarea', required: true },
-      { key: 'showTyping', label: 'Show Typing Indicator', type: 'checkbox' }
+      { key: 'message', label: 'Message Text', type: 'textarea', required: true }
     ]
   },
   llm: {

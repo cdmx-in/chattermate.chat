@@ -63,6 +63,32 @@ export const workflowNodeService = {
   },
 
   /**
+   * Update a single workflow node with its properties and variables
+   */
+  async updateSingleNodeWithVariables(workflowId: string, nodeId: string, data: {
+    node_data: any
+    variables_data?: any[]
+  }): Promise<{
+    node: WorkflowNode
+    variables: any[]
+    updated_variables_count?: number
+  }> {
+    const response = await api.put(`/workflow/${workflowId}/nodes/${nodeId}`, data)
+    return response.data
+  },
+
+  /**
+   * Get a single workflow node with its variables
+   */
+  async getNodeWithVariables(workflowId: string, nodeId: string): Promise<{
+    node: WorkflowNode
+    variables: any[]
+  }> {
+    const response = await api.get(`/workflow/${workflowId}/nodes/${nodeId}`)
+    return response.data
+  },
+
+  /**
    * Create a workflow connection
    */
   async createWorkflowConnection(workflowId: string, connectionData: Partial<WorkflowConnection>): Promise<WorkflowConnection> {

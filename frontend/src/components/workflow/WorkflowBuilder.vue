@@ -23,8 +23,9 @@ import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { toast } from 'vue-sonner'
-import { workflowNodeService } from '@/services/workflowNode'
+import { workflowNodeService } from '../../services/workflowNode'
 import type { WorkflowResponse } from '@/types/workflow'
+import PropertiesPanel from './PropertiesPanel.vue'
 
 // Import Vue Flow styles
 import '@vue-flow/core/dist/style.css'
@@ -117,10 +118,27 @@ const availableNodeTypes = [
 const loading = ref(false)
 const draggedType = ref<string | null>(null)
 const nodeIdCounter = ref(1)
+const showPropertiesPanel = ref(false)
+const selectedNode = ref<Node | null>(null)
 
 // Helper function to generate UUID-like IDs
 const generateNodeId = (type: string) => {
   return `${type}-${nodeIdCounter.value++}`
+}
+
+// Get node type display name
+const getNodeTypeName = (type: string) => {
+  const names = {
+    message: 'Message',
+    llm: 'LLM',
+    condition: 'Condition',
+    form: 'Form',
+    action: 'Action',
+    humanTransfer: 'Human Transfer',
+    wait: 'Wait',
+    end: 'End'
+  }
+  return names[type as keyof typeof names] || type
 }
 
 // Computed properties
@@ -147,6 +165,19 @@ const loadWorkflowData = async () => {
           nodeType: node.node_type, // Store the original type
           icon: nodeType?.icon || '📄',
           color: nodeType?.color || '#6B7280',
+          // Store all backend properties directly in data for easy access
+          message_text: node.message_text,
+          system_prompt: node.system_prompt,
+          temperature: node.temperature,
+          model_id: node.model_id,
+          form_fields: node.form_fields,
+          condition_expression: node.condition_expression,
+          action_type: node.action_type,
+          action_config: node.action_config,
+          transfer_rules: node.transfer_rules,
+          wait_duration: node.wait_duration,
+          wait_until_condition: node.wait_until_condition,
+          // Also spread config for backward compatibility
           ...node.config
         },
         style: {
@@ -275,10 +306,103 @@ const autoConnectToLastNode = (newNode: Node) => {
   }
 }
 
-// Handle node click for editing (currently disabled)
+// Handle node click for editing
 const handleNodeClick = (event: NodeMouseEvent) => {
-  // Node configuration panel is currently disabled
+  selectedNode.value = event.node
+  showPropertiesPanel.value = true
   console.log('Node clicked:', event.node.id)
+}
+
+// Handle properties panel close
+const closePropertiesPanel = () => {
+  showPropertiesPanel.value = false
+  selectedNode.value = null
+}
+
+// Handle node property save
+const saveNodeProperties = (properties: any) => {
+  if (selectedNode.value) {
+    // If we have an updated node from the API, use that data
+    if (properties.updatedNode) {
+      const updatedNode = properties.updatedNode
+      const nodeType = availableNodeTypes.find(t => t.type === updatedNode.node_type)
+      
+      // Update the node with the backend response
+      selectedNode.value.data = {
+        ...selectedNode.value.data,
+        label: `${nodeType?.icon || '📄'} ${updatedNode.name}`,
+        cleanName: updatedNode.name,
+        description: updatedNode.description,
+        config: updatedNode.config || {},
+        // Store backend data in the config
+        message_text: updatedNode.message_text,
+        system_prompt: updatedNode.system_prompt,
+        temperature: updatedNode.temperature,
+        condition_expression: updatedNode.condition_expression,
+        action_type: updatedNode.action_type,
+        action_config: updatedNode.action_config,
+        transfer_rules: updatedNode.transfer_rules,
+        wait_duration: updatedNode.wait_duration,
+        wait_until_condition: updatedNode.wait_until_condition
+      }
+      
+      // Update position if it changed
+      if (updatedNode.position_x !== undefined && updatedNode.position_y !== undefined) {
+        selectedNode.value.position.x = updatedNode.position_x
+        selectedNode.value.position.y = updatedNode.position_y
+      }
+    } else {
+      // Fallback to the old method if no updated node is provided
+      selectedNode.value.data = {
+        ...selectedNode.value.data,
+        description: properties.description,
+        cleanName: properties.name,
+        config: {
+          ...selectedNode.value.data.config,
+          // Filter out only the relevant properties based on node type
+          ...(selectedNode.value.data.nodeType === 'message' && {
+            message_text: properties.message_text
+          }),
+          ...(selectedNode.value.data.nodeType === 'llm' && {
+            system_prompt: properties.system_prompt,
+            temperature: properties.temperature
+          }),
+          ...(selectedNode.value.data.nodeType === 'condition' && {
+            condition_expression: properties.condition_expression
+          }),
+          ...(selectedNode.value.data.nodeType === 'action' && {
+            action_type: properties.action_type,
+            action_url: properties.action_url
+          }),
+          ...(selectedNode.value.data.nodeType === 'humanTransfer' && {
+            transfer_department: properties.transfer_department,
+            transfer_message: properties.transfer_message
+          }),
+          ...(selectedNode.value.data.nodeType === 'wait' && {
+            wait_duration: properties.wait_duration,
+            wait_unit: properties.wait_unit
+          }),
+          ...(selectedNode.value.data.nodeType === 'end' && {
+            final_message: properties.final_message
+          })
+        }
+      }
+      
+      // Update the label to include the new name with icon
+      const nodeType = availableNodeTypes.find(t => t.type === selectedNode.value?.data.nodeType)
+      selectedNode.value.data.label = `${nodeType?.icon || '📄'} ${properties.name}`
+    }
+  }
+  closePropertiesPanel()
+}
+
+// Handle node deletion
+const deleteSelectedNode = () => {
+  if (selectedNode.value) {
+    removeNodes([selectedNode.value.id])
+    toast.success('Node deleted')
+    closePropertiesPanel()
+  }
 }
 
 // Save workflow
@@ -372,6 +496,19 @@ const saveWorkflow = async () => {
           nodeType: node.node_type,
           icon: nodeType?.icon || '📄',
           color: nodeType?.color || '#6B7280',
+          // Store all backend properties directly in data for easy access
+          message_text: node.message_text,
+          system_prompt: node.system_prompt,
+          temperature: node.temperature,
+          model_id: node.model_id,
+          form_fields: node.form_fields,
+          condition_expression: node.condition_expression,
+          action_type: node.action_type,
+          action_config: node.action_config,
+          transfer_rules: node.transfer_rules,
+          wait_duration: node.wait_duration,
+          wait_until_condition: node.wait_until_condition,
+          // Also spread config for backward compatibility
           ...node.config
         },
         style: {
@@ -526,6 +663,17 @@ onMounted(() => {
           </div>
         </VueFlow>
       </div>
+
+      <!-- Properties Panel -->
+      <PropertiesPanel
+        v-if="showPropertiesPanel && selectedNode"
+        :selected-node="selectedNode"
+        :available-node-types="availableNodeTypes"
+        :workflow-id="workflow.id"
+        @save="saveNodeProperties"
+        @close="closePropertiesPanel"
+        @delete="deleteSelectedNode"
+      />
     </div>
 
 
@@ -863,4 +1011,6 @@ onMounted(() => {
   bottom: var(--space-md);
   right: var(--space-md);
 }
+
+
 </style> 
