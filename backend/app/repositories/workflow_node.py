@@ -59,8 +59,10 @@ class WorkflowNodeRepository:
             if not node:
                 return None
 
+            # Filter out None values to avoid overwriting existing data with None
+            # Only update fields that have actual values
             for key, value in kwargs.items():
-                if hasattr(node, key):
+                if hasattr(node, key) and value is not None:
                     setattr(node, key, value)
 
             self.db.flush()  # Flush to update without committing

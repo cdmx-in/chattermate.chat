@@ -70,7 +70,7 @@ class SessionToAgent(Base):
     # Workflow-related fields
     workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)
     current_node_id = Column(UUID(as_uuid=True), ForeignKey("workflow_nodes.id", ondelete="SET NULL"), nullable=True)
-    workflow_variables = Column(JSON, default={})  # Store conversation variables
+
     workflow_state = Column(JSON, default={})  # Store workflow execution state
 
     # Relationships

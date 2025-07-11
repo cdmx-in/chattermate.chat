@@ -22,7 +22,7 @@ from uuid import UUID
 from datetime import datetime
 from app.models.workflow import WorkflowStatus
 from app.models.workflow_node import NodeType, ActionType
-from app.models.workflow_variable import VariableScope, VariableType
+
 
 # ==============================
 # Workflow schemas
@@ -139,8 +139,7 @@ class WorkflowNodeBase(BaseModel):
     temperature: Optional[float] = 0.7
     model_id: Optional[int] = None
     
-    # Form node fields
-    form_fields: Optional[List[Dict[str, Any]]] = None
+
     
     # Condition node fields
     condition_expression: Optional[str] = None
@@ -239,53 +238,12 @@ class WorkflowConnectionResponse(WorkflowConnectionBase):
 
 
 # ==============================
-# WorkflowVariable schemas
-# ==============================
-
-class WorkflowVariableBase(BaseModel):
-    name: str
-    description: Optional[str] = None
-    scope: VariableScope
-    variable_type: VariableType
-    default_value: Optional[Union[str, int, float, bool, Dict[str, Any], List[Any]]] = None
-    is_required: bool = False
-    is_system: bool = False
-    validation_rules: Optional[Dict[str, Any]] = None
-    workflow_id: Optional[UUID] = None  # If None, it's a global variable
-
-
-class WorkflowVariableCreate(WorkflowVariableBase):
-    pass
-
-
-class WorkflowVariableUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    scope: Optional[VariableScope] = None
-    variable_type: Optional[VariableType] = None
-    default_value: Optional[Union[str, int, float, bool, Dict[str, Any], List[Any]]] = None
-    is_required: Optional[bool] = None
-    validation_rules: Optional[Dict[str, Any]] = None
-
-
-class WorkflowVariableResponse(WorkflowVariableBase):
-    id: UUID
-    organization_id: UUID
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        orm_mode = True
-
-
-# ==============================
 # Additional composite schemas
 # ==============================
 
 class WorkflowDetailResponse(WorkflowResponse):
     nodes: List[WorkflowNodeResponse]
     connections: List[WorkflowConnectionResponse]
-    variables: List[WorkflowVariableResponse]
 
     class Config:
         orm_mode = True 

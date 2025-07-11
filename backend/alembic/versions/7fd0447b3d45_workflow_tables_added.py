@@ -42,24 +42,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
   
-    op.create_table('workflow_variables',
-    sa.Column('id', sa.UUID(), nullable=False),
-    sa.Column('workflow_id', sa.UUID(), nullable=True),
-    sa.Column('organization_id', sa.UUID(), nullable=True),
-    sa.Column('name', sa.String(length=100), nullable=False),
-    sa.Column('description', sa.Text(), nullable=True),
-    sa.Column('scope', sa.Enum('GLOBAL', 'WORKFLOW', 'CONVERSATION', name='variablescope'), nullable=True),
-    sa.Column('variable_type', sa.Enum('STRING', 'NUMBER', 'BOOLEAN', 'ARRAY', 'OBJECT', name='variabletype'), nullable=True),
-    sa.Column('default_value', sa.Text(), nullable=True),
-    sa.Column('is_required', sa.Boolean(), nullable=True),
-    sa.Column('is_system', sa.Boolean(), nullable=True),
-    sa.Column('validation_rules', sa.JSON(), nullable=True),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=True),
-    sa.ForeignKeyConstraint(['organization_id'], ['organizations.id'], ),
-    sa.ForeignKeyConstraint(['workflow_id'], ['workflows.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
-    )
+
    
     op.create_table('workflow_nodes',
     sa.Column('id', sa.UUID(), nullable=False),
@@ -108,7 +91,6 @@ def upgrade() -> None:
     op.create_foreign_key(None, 'agents', 'workflows', ['active_workflow_id'], ['id'])
     op.add_column('session_to_agents', sa.Column('workflow_id', sa.UUID(), nullable=True))
     op.add_column('session_to_agents', sa.Column('current_node_id', sa.UUID(), nullable=True))
-    op.add_column('session_to_agents', sa.Column('workflow_variables', sa.JSON(), nullable=True))
     op.add_column('session_to_agents', sa.Column('workflow_state', sa.JSON(), nullable=True))
     op.create_foreign_key(None, 'session_to_agents', 'workflow_nodes', ['current_node_id'], ['id'], ondelete='SET NULL')
     op.create_foreign_key(None, 'session_to_agents', 'workflows', ['workflow_id'], ['id'], ondelete='SET NULL')
@@ -120,7 +102,6 @@ def downgrade() -> None:
     op.drop_constraint(None, 'session_to_agents', type_='foreignkey')
     op.drop_constraint(None, 'session_to_agents', type_='foreignkey')
     op.drop_column('session_to_agents', 'workflow_state')
-    op.drop_column('session_to_agents', 'workflow_variables')
     op.drop_column('session_to_agents', 'current_node_id')
     op.drop_column('session_to_agents', 'workflow_id')
     op.drop_constraint(None, 'agents', type_='foreignkey')
@@ -128,7 +109,7 @@ def downgrade() -> None:
     op.drop_column('agents', 'use_workflow')
     op.drop_table('workflow_connections')
     op.drop_table('workflow_nodes')
-    op.drop_table('workflow_variables')
+
     op.drop_table('workflows')
 
     # ### end Alembic commands ###

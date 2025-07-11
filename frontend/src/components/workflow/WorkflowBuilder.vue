@@ -171,6 +171,9 @@ const loadWorkflowData = async () => {
           temperature: node.temperature,
           model_id: node.model_id,
           form_fields: node.form_fields,
+          form_title: node.form_title,
+          form_description: node.form_description,
+          submit_button_text: node.submit_button_text,
           condition_expression: node.condition_expression,
           action_type: node.action_type,
           action_config: node.action_config,
@@ -343,7 +346,11 @@ const saveNodeProperties = (properties: any) => {
         action_config: updatedNode.action_config,
         transfer_rules: updatedNode.transfer_rules,
         wait_duration: updatedNode.wait_duration,
-        wait_until_condition: updatedNode.wait_until_condition
+        wait_until_condition: updatedNode.wait_until_condition,
+        form_fields: updatedNode.form_fields,
+        form_title: updatedNode.form_title,
+        form_description: updatedNode.form_description,
+        submit_button_text: updatedNode.submit_button_text
       }
       
       // Update position if it changed
@@ -351,6 +358,55 @@ const saveNodeProperties = (properties: any) => {
         selectedNode.value.position.x = updatedNode.position_x
         selectedNode.value.position.y = updatedNode.position_y
       }
+    } else if (properties.needsWorkflowSave) {
+      // Node hasn't been saved yet, update local data and trigger workflow save
+      selectedNode.value.data = {
+        ...selectedNode.value.data,
+        description: properties.description,
+        cleanName: properties.name,
+        config: {
+          ...selectedNode.value.data.config,
+          // Filter out only the relevant properties based on node type
+          ...(selectedNode.value.data.nodeType === 'message' && {
+            message_text: properties.message_text
+          }),
+          ...(selectedNode.value.data.nodeType === 'llm' && {
+            system_prompt: properties.system_prompt,
+            temperature: properties.temperature
+          }),
+          ...(selectedNode.value.data.nodeType === 'condition' && {
+            condition_expression: properties.condition_expression
+          }),
+          ...(selectedNode.value.data.nodeType === 'form' && {
+            form_fields: properties.form_fields,
+            form_title: properties.form_title,
+            form_description: properties.form_description,
+            submit_button_text: properties.submit_button_text
+          }),
+          ...(selectedNode.value.data.nodeType === 'action' && {
+            action_type: properties.action_type,
+            action_url: properties.action_url
+          }),
+          ...(selectedNode.value.data.nodeType === 'humanTransfer' && {
+            transfer_department: properties.transfer_department,
+            transfer_message: properties.transfer_message
+          }),
+          ...(selectedNode.value.data.nodeType === 'wait' && {
+            wait_duration: properties.wait_duration,
+            wait_unit: properties.wait_unit
+          }),
+          ...(selectedNode.value.data.nodeType === 'end' && {
+            final_message: properties.final_message
+          })
+        }
+      }
+      
+      // Update the label to include the new name with icon
+      const nodeType = availableNodeTypes.find(t => t.type === selectedNode.value?.data.nodeType)
+      selectedNode.value.data.label = `${nodeType?.icon || '📄'} ${properties.name}`
+      
+      // Auto-save the workflow to persist the changes
+      saveWorkflow()
     } else {
       // Fallback to the old method if no updated node is provided
       selectedNode.value.data = {
@@ -369,6 +425,12 @@ const saveNodeProperties = (properties: any) => {
           }),
           ...(selectedNode.value.data.nodeType === 'condition' && {
             condition_expression: properties.condition_expression
+          }),
+          ...(selectedNode.value.data.nodeType === 'form' && {
+            form_fields: properties.form_fields,
+            form_title: properties.form_title,
+            form_description: properties.form_description,
+            submit_button_text: properties.submit_button_text
           }),
           ...(selectedNode.value.data.nodeType === 'action' && {
             action_type: properties.action_type,
@@ -502,6 +564,9 @@ const saveWorkflow = async () => {
           temperature: node.temperature,
           model_id: node.model_id,
           form_fields: node.form_fields,
+          form_title: node.form_title,
+          form_description: node.form_description,
+          submit_button_text: node.submit_button_text,
           condition_expression: node.condition_expression,
           action_type: node.action_type,
           action_config: node.action_config,

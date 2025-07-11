@@ -23,7 +23,7 @@ import re
 from sqlalchemy.orm import Session
 from app.repositories.workflow_node import WorkflowNodeRepository
 from app.repositories.workflow import WorkflowRepository
-from app.repositories.workflow_variable import WorkflowVariableRepository
+
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -54,7 +54,6 @@ class WorkflowNodeService:
         self.db = db
         self.node_repo = WorkflowNodeRepository(db)
         self.workflow_repo = WorkflowRepository(db)
-        self.variable_repo = WorkflowVariableRepository(db)
 
     def update_workflow_nodes_and_connections(
         self, 
@@ -286,15 +285,14 @@ class WorkflowNodeService:
             "connections": connections
         }
 
-    def update_single_node_with_variables(
+    def update_single_node(
         self, 
         workflow_id: UUID, 
         node_id: UUID, 
         node_data: Dict[str, Any], 
-        variables_data: Optional[List[Dict[str, Any]]] = None,
         organization_id: UUID = None
     ) -> Dict[str, Any]:
-        """Update a single workflow node with its properties and variables"""
+        """Update a single workflow node with its properties"""
         
         # Validate workflow exists and belongs to organization
         workflow = self.workflow_repo.get_by_id(workflow_id)
@@ -313,6 +311,7 @@ class WorkflowNodeService:
             raise ValueError("Node does not belong to this workflow")
         
         try:
+            logger.debug(f"Node data: {node_data}")
             # Sanitize text fields to prevent UTF-8 encoding errors
             node_data_copy = node_data.copy()
             text_fields = ['name', 'description', 'message_text', 'system_prompt', 
@@ -320,58 +319,26 @@ class WorkflowNodeService:
             for field in text_fields:
                 if field in node_data_copy and isinstance(node_data_copy[field], str):
                     node_data_copy[field] = sanitize_utf8_text(node_data_copy[field])
-            
+            logger.debug(f"Node data copy: {node_data_copy}")
             # Update node properties
             updated_node = self.node_repo.update_node(node_id, **node_data_copy)
             if not updated_node:
                 raise ValueError("Failed to update node")
             
-            # Handle variables if provided
-            updated_variables = []
-            if variables_data:
-                for var_data in variables_data:
-                    var_data_copy = var_data.copy()
-                    var_data_copy['workflow_id'] = workflow_id
-                    var_data_copy['organization_id'] = workflow.organization_id
-                    
-                    # Sanitize text fields for variables
-                    var_text_fields = ['name', 'description', 'default_value']
-                    for field in var_text_fields:
-                        if field in var_data_copy and isinstance(var_data_copy[field], str):
-                            var_data_copy[field] = sanitize_utf8_text(var_data_copy[field])
-                    
-                    if 'id' in var_data_copy and var_data_copy['id']:
-                        # Update existing variable
-                        variable_id = UUID(str(var_data_copy.pop('id')))
-                        updated_var = self.variable_repo.update_variable(variable_id, **var_data_copy)
-                        if updated_var:
-                            updated_variables.append(updated_var)
-                    else:
-                        # Create new variable
-                        new_var = self.variable_repo.create_variable(**var_data_copy)
-                        updated_variables.append(new_var)
-            
-            # Commit all changes
+            # Commit changes
             self.db.commit()
             
-            # Get all variables for this workflow
-            all_variables = self.variable_repo.get_variables_by_workflow(workflow_id)
+            logger.info(f"Updated node {node_id}")
             
-            logger.info(f"Updated node {node_id} with {len(updated_variables)} variables")
-            
-            return {
-                "node": updated_node,
-                "variables": all_variables,
-                "updated_variables_count": len(updated_variables)
-            }
+            return updated_node
             
         except Exception as e:
-            logger.error(f"Error updating node {node_id} with variables: {str(e)}")
+            logger.error(f"Error updating node {node_id}: {str(e)}")
             self.db.rollback()
             raise
 
-    def get_node_with_variables(self, workflow_id: UUID, node_id: UUID, organization_id: UUID = None) -> Dict[str, Any]:
-        """Get a single node with its associated variables"""
+    def get_single_node(self, workflow_id: UUID, node_id: UUID, organization_id: UUID = None):
+        """Get a single node"""
         
         # Validate workflow exists and belongs to organization
         workflow = self.workflow_repo.get_by_id(workflow_id)
@@ -389,10 +356,4 @@ class WorkflowNodeService:
         if node.workflow_id != workflow_id:
             raise ValueError("Node does not belong to this workflow")
         
-        # Get all variables for this workflow
-        variables = self.variable_repo.get_variables_by_workflow(workflow_id)
-        
-        return {
-            "node": node,
-            "variables": variables
-        } 
+        return node 

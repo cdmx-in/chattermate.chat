@@ -34,7 +34,7 @@ from app.models.shopify import ShopifyShop
 from app.models.workflow import Workflow
 from app.models.workflow_node import WorkflowNode
 from app.models.workflow_connection import WorkflowConnection
-from app.models.workflow_variable import WorkflowVariable
+
 
 
 # This ensures all models are imported in the correct order
@@ -58,6 +58,5 @@ __all__ = [
     "Workflow",
     "WorkflowNode",
     "WorkflowConnection",
-    "WorkflowVariable",
 
 ]

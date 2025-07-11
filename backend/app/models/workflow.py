@@ -55,7 +55,7 @@ class Workflow(Base):
     user = relationship("User")
     nodes = relationship("WorkflowNode", back_populates="workflow", cascade="all, delete-orphan")
     connections = relationship("WorkflowConnection", back_populates="workflow", cascade="all, delete-orphan")
-    variables = relationship("WorkflowVariable", back_populates="workflow", cascade="all, delete-orphan")
+
     sessions = relationship("SessionToAgent", back_populates="workflow")
 
     class Config:

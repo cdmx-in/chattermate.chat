@@ -24,10 +24,10 @@ from pydantic import BaseModel
 from app.core.logger import get_logger
 from app.database import get_db
 from app.models.user import User
-from app.core.auth import require_permissions
+from app.core.auth import require_permissions, get_current_user
 from app.services.workflow_node import WorkflowNodeService
-from app.models.schemas.workflow import WorkflowNodeResponse, WorkflowConnectionResponse
-from app.models.schemas.workflow_variable import WorkflowVariableResponse
+from app.models.schemas.workflow import WorkflowNodeResponse, WorkflowConnectionResponse, WorkflowNodeUpdate
+
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -41,17 +41,6 @@ class WorkflowNodesUpdateRequest(BaseModel):
 class WorkflowNodesResponse(BaseModel):
     nodes: List[WorkflowNodeResponse]
     connections: List[WorkflowConnectionResponse]
-
-
-class NodeUpdateRequest(BaseModel):
-    node_data: Dict[str, Any]
-    variables_data: Optional[List[Dict[str, Any]]] = None
-
-
-class NodeWithVariablesResponse(BaseModel):
-    node: WorkflowNodeResponse
-    variables: List[WorkflowVariableResponse]
-    updated_variables_count: Optional[int] = None
 
 
 @router.put("/{workflow_id}/nodes", response_model=WorkflowNodesResponse)
@@ -204,156 +193,61 @@ async def get_workflow_nodes(
         raise HTTPException(status_code=500, detail="Failed to get workflow nodes")
 
 
-@router.put("/{workflow_id}/nodes/{node_id}", response_model=NodeWithVariablesResponse)
-async def update_workflow_node_with_variables(
+@router.put("/{workflow_id}/nodes/{node_id}", response_model=WorkflowNodeResponse)
+async def update_workflow_node(
     workflow_id: UUID,
     node_id: UUID,
-    request_data: NodeUpdateRequest,
-    current_user: User = Depends(require_permissions("manage_agents")),
+    node_data: WorkflowNodeUpdate,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Update a single workflow node with its properties and variables"""
+    """Update a single workflow node with its properties"""
     try:
+        # Get the workflow node service
         workflow_node_service = WorkflowNodeService(db)
-        
-        # Update node with variables
-        result = workflow_node_service.update_single_node_with_variables(
+        logger.debug(f"Node data: {node_data}")
+        # Update the node
+        updated_node = workflow_node_service.update_single_node(
             workflow_id=workflow_id,
             node_id=node_id,
-            node_data=request_data.node_data,
-            variables_data=request_data.variables_data,
+            node_data=node_data.model_dump(),
             organization_id=current_user.organization_id
         )
         
-        # Convert to response format
-        node_response = WorkflowNodeResponse(
-            id=result["node"].id,
-            workflow_id=result["node"].workflow_id,
-            node_type=result["node"].node_type,
-            name=result["node"].name,
-            description=result["node"].description,
-            position_x=result["node"].position_x,
-            position_y=result["node"].position_y,
-            config=result["node"].config,
-            message_text=result["node"].message_text,
-            system_prompt=result["node"].system_prompt,
-            temperature=result["node"].temperature,
-            model_id=result["node"].model_id,
-            form_fields=result["node"].form_fields,
-            condition_expression=result["node"].condition_expression,
-            action_type=result["node"].action_type,
-            action_config=result["node"].action_config,
-            transfer_rules=result["node"].transfer_rules,
-            wait_duration=result["node"].wait_duration,
-            wait_until_condition=result["node"].wait_until_condition,
-            created_at=result["node"].created_at,
-            updated_at=result["node"].updated_at
-        )
+        if not updated_node:
+            raise HTTPException(status_code=400, detail="Node not found or could not be updated")
         
-        variables_response = [
-            WorkflowVariableResponse(
-                id=var.id,
-                workflow_id=var.workflow_id,
-                organization_id=var.organization_id,
-                name=var.name,
-                description=var.description,
-                scope=var.scope,
-                variable_type=var.variable_type,
-                default_value=var.default_value,
-                is_required=var.is_required,
-                is_system=var.is_system,
-                validation_rules=var.validation_rules,
-                created_at=var.created_at,
-                updated_at=var.updated_at
-            )
-            for var in result["variables"]
-        ]
+        return updated_node
         
-        return NodeWithVariablesResponse(
-            node=node_response,
-            variables=variables_response,
-            updated_variables_count=result["updated_variables_count"]
-        )
-        
-    except ValueError as e:
-        logger.error(f"Validation error updating workflow node: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error updating workflow node: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to update workflow node")
+        raise HTTPException(status_code=500, detail=f"Failed to update workflow node: {str(e)}")
 
 
-@router.get("/{workflow_id}/nodes/{node_id}", response_model=NodeWithVariablesResponse)
-async def get_workflow_node_with_variables(
+@router.get("/{workflow_id}/nodes/{node_id}", response_model=WorkflowNodeResponse)
+async def get_workflow_node(
     workflow_id: UUID,
     node_id: UUID,
-    current_user: User = Depends(require_permissions("view_all", "manage_agents")),
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Get a single workflow node with its variables"""
+    """Get a single workflow node"""
     try:
+        # Get the workflow node service
         workflow_node_service = WorkflowNodeService(db)
         
-        # Get node with variables
-        result = workflow_node_service.get_node_with_variables(
+        # Get the node
+        node = workflow_node_service.get_single_node(
             workflow_id=workflow_id,
             node_id=node_id,
             organization_id=current_user.organization_id
         )
         
-        # Convert to response format
-        node_response = WorkflowNodeResponse(
-            id=result["node"].id,
-            workflow_id=result["node"].workflow_id,
-            node_type=result["node"].node_type,
-            name=result["node"].name,
-            description=result["node"].description,
-            position_x=result["node"].position_x,
-            position_y=result["node"].position_y,
-            config=result["node"].config,
-            message_text=result["node"].message_text,
-            system_prompt=result["node"].system_prompt,
-            temperature=result["node"].temperature,
-            model_id=result["node"].model_id,
-            form_fields=result["node"].form_fields,
-            condition_expression=result["node"].condition_expression,
-            action_type=result["node"].action_type,
-            action_config=result["node"].action_config,
-            transfer_rules=result["node"].transfer_rules,
-            wait_duration=result["node"].wait_duration,
-            wait_until_condition=result["node"].wait_until_condition,
-            created_at=result["node"].created_at,
-            updated_at=result["node"].updated_at
-        )
+        if not node:
+            raise HTTPException(status_code=400, detail="Node not found")
         
-        variables_response = [
-            WorkflowVariableResponse(
-                id=var.id,
-                workflow_id=var.workflow_id,
-                organization_id=var.organization_id,
-                name=var.name,
-                description=var.description,
-                scope=var.scope,
-                variable_type=var.variable_type,
-                default_value=var.default_value,
-                is_required=var.is_required,
-                is_system=var.is_system,
-                validation_rules=var.validation_rules,
-                created_at=var.created_at,
-                updated_at=var.updated_at
-            )
-            for var in result["variables"]
-        ]
+        return node
         
-        return NodeWithVariablesResponse(
-            node=node_response,
-            variables=variables_response
-        )
-        
-    except ValueError as e:
-        logger.error(f"Validation error getting workflow node: {str(e)}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"Error getting workflow node: {str(e)}")
-        raise HTTPException(status_code=500, detail="Failed to get workflow node") 
+        raise HTTPException(status_code=500, detail=f"Failed to get workflow node: {str(e)}") 

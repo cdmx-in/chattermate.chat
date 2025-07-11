@@ -16,13 +16,15 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from uuid import UUID
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.models.workflow import Workflow, WorkflowStatus
 from app.models.workflow_node import WorkflowNode
 from app.models.workflow_connection import WorkflowConnection
-from app.models.workflow_variable import WorkflowVariable
+
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -119,8 +121,9 @@ class WorkflowRepository:
             self.db.rollback()
             raise
 
-    def get_workflow_with_details(self, workflow_id: UUID) -> Optional[Workflow]:
-        """Get workflow with all nodes, connections, and variables"""
-        return self.db.query(Workflow).filter(
-            Workflow.id == workflow_id
-        ).first() 
+    def get_workflow_with_nodes_and_connections(self, workflow_id: UUID) -> Optional[Workflow]:
+        """Get workflow with all nodes and connections"""
+        return self.db.query(Workflow).options(
+            selectinload(Workflow.nodes),
+            selectinload(Workflow.connections)
+        ).filter(Workflow.id == workflow_id).first() 

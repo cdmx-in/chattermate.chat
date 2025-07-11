@@ -22,6 +22,18 @@ import type { Node } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
 import { toast } from 'vue-sonner'
 
+// Define form field interface
+interface FormField {
+  name: string
+  label: string
+  type: string
+  required: boolean
+  placeholder: string
+  options: string
+  minLength: number
+  maxLength: number
+}
+
 const props = defineProps<{
   selectedNode: Node
   availableNodeTypes: Array<{
@@ -51,6 +63,11 @@ const nodeForm = ref({
   temperature: 0.7,
   // Condition node
   condition_expression: '',
+  // Form node
+  form_fields: [] as FormField[],
+  form_title: '',
+  form_description: '',
+  submit_button_text: 'Submit',
   // Action node
   action_type: '',
   action_url: '',
@@ -105,6 +122,19 @@ watch(() => props.selectedNode, (newNode) => {
       condition_expression: newNode.data.condition_expression || 
                             newNode.data.config?.condition_expression || 
                             '',
+      // Form node - prioritize config over outer fields
+      form_fields: newNode.data.config?.form_fields || 
+                   newNode.data.form_fields || 
+                   [] as FormField[],
+      form_title: newNode.data.config?.form_title || 
+                  newNode.data.form_title || 
+                  '',
+      form_description: newNode.data.config?.form_description || 
+                        newNode.data.form_description || 
+                        '',
+      submit_button_text: newNode.data.config?.submit_button_text || 
+                          newNode.data.submit_button_text || 
+                          'Submit',
       // Action node
       action_type: newNode.data.action_type || 
                    newNode.data.config?.action_type || 
@@ -149,6 +179,46 @@ const getNodeTypeName = (type: string) => {
   return names[type as keyof typeof names] || type
 }
 
+// Get field type icon
+const getFieldTypeIcon = (type: string) => {
+  const icons = {
+    text: '📝',
+    email: '📧',
+    number: '🔢',
+    tel: '📞',
+    textarea: '📄',
+    select: '📋',
+    checkbox: '☑️',
+    radio: '🔘'
+  }
+  return icons[type as keyof typeof icons] || '📝'
+}
+
+// Add form field
+const addFormField = () => {
+  nodeForm.value.form_fields.push({
+    name: '',
+    label: '',
+    type: 'text',
+    required: false,
+    placeholder: '',
+    options: '',
+    minLength: 0,
+    maxLength: 255
+  })
+}
+
+// Remove form field
+const removeFormField = (index: number) => {
+  nodeForm.value.form_fields.splice(index, 1)
+}
+
+// Helper function to check if node ID is a UUID
+const isUUID = (id: string) => {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  return uuidRegex.test(id)
+}
+
 // Handle form submission
 const handleSave = async () => {
   if (saving.value) return
@@ -171,6 +241,14 @@ const handleSave = async () => {
       ...(props.selectedNode.data.nodeType === 'condition' && {
         condition_expression: nodeForm.value.condition_expression
       }),
+      ...(props.selectedNode.data.nodeType === 'form' && {
+        config: {
+          form_fields: nodeForm.value.form_fields,
+          form_title: nodeForm.value.form_title,
+          form_description: nodeForm.value.form_description,
+          submit_button_text: nodeForm.value.submit_button_text
+        }
+      }),
       ...(props.selectedNode.data.nodeType === 'action' && {
         action_type: nodeForm.value.action_type,
         action_url: nodeForm.value.action_url
@@ -188,24 +266,31 @@ const handleSave = async () => {
       })
     }
 
-    // Call the new single node update API
-    const result = await workflowNodeService.updateSingleNodeWithVariables(
-      props.workflowId,
-      props.selectedNode.id,
-      {
-        node_data: nodeData,
-        variables_data: [] // For now, we'll add variable support later
-      }
-    )
+    // Check if the node has been saved to the backend (has UUID)
+    if (isUUID(props.selectedNode.id)) {
+      // Node exists in backend, use single node update API
+      const result = await workflowNodeService.updateSingleNode(
+        props.workflowId,
+        props.selectedNode.id,
+        nodeData
+      )
 
-    // Emit the result to the parent component
-    emit('save', {
-      ...nodeForm.value,
-      updatedNode: result.node,
-      variables: result.variables
-    })
+      // Emit the result to the parent component
+      emit('save', {
+        ...nodeForm.value,
+        updatedNode: result
+      })
 
-    toast.success('Node properties updated successfully')
+      toast.success('Node properties updated successfully')
+    } else {
+      // Node hasn't been saved yet, emit data to parent to save entire workflow
+      emit('save', {
+        ...nodeForm.value,
+        needsWorkflowSave: true // Flag to indicate parent should save entire workflow
+      })
+
+      toast.success('Node properties updated - save workflow to persist changes')
+    }
   } catch (error: any) {
     console.error('Error updating node:', error)
     toast.error(error.response?.data?.detail || 'Failed to update node properties')
@@ -343,6 +428,183 @@ const handleDelete = () => {
                 rows="4"
                 required
               ></textarea>
+            </div>
+          </template>
+
+          <!-- Form Node -->
+          <template v-if="selectedNode.data.nodeType === 'form'">
+            <div class="form-group">
+              <label for="form-title">Form Title</label>
+              <input
+                id="form-title"
+                v-model="nodeForm.form_title"
+                type="text"
+                class="form-input"
+                placeholder="Enter form title"
+              />
+            </div>
+            
+            <div class="form-group">
+              <label for="form-description">Form Description</label>
+              <textarea
+                id="form-description"
+                v-model="nodeForm.form_description"
+                class="form-textarea"
+                placeholder="Enter form description (optional)"
+                rows="3"
+              ></textarea>
+            </div>
+            
+            <div class="form-group">
+              <label for="submit-button-text">Submit Button Text</label>
+              <input
+                id="submit-button-text"
+                v-model="nodeForm.submit_button_text"
+                type="text"
+                class="form-input"
+                placeholder="Submit"
+              />
+            </div>
+            
+            <div class="form-group">
+              <label>Form Fields</label>
+              <div class="form-fields-container">
+                <div
+                  v-for="(field, index) in nodeForm.form_fields"
+                  :key="index"
+                  class="form-field-item"
+                >
+                  <div class="form-field-header">
+                    <span class="field-type-badge" :class="`field-type-${field.type}`">
+                      {{ getFieldTypeIcon(field.type) }} {{ field.type }}
+                    </span>
+                    <button
+                      type="button"
+                      class="remove-field-btn"
+                      @click="removeFormField(index)"
+                      title="Remove field"
+                    >
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                      </svg>
+                    </button>
+                  </div>
+                  
+                  <div class="form-field-config">
+                    <div class="field-row">
+                      <div class="field-col">
+                        <label class="field-label">Field Name *</label>
+                        <input
+                          v-model="field.name"
+                          type="text"
+                          class="field-input"
+                          placeholder="field_name"
+                          required
+                        />
+                      </div>
+                      <div class="field-col">
+                        <label class="field-label">Display Label *</label>
+                        <input
+                          v-model="field.label"
+                          type="text"
+                          class="field-input"
+                          placeholder="Field Label"
+                          required
+                        />
+                      </div>
+                    </div>
+                    
+                    <div class="field-row">
+                      <div class="field-col">
+                        <label class="field-label">Field Type</label>
+                        <select v-model="field.type" class="field-select">
+                          <option value="text">Text</option>
+                          <option value="email">Email</option>
+                          <option value="number">Number</option>
+                          <option value="tel">Phone</option>
+                          <option value="textarea">Textarea</option>
+                          <option value="select">Select</option>
+                          <option value="checkbox">Checkbox</option>
+                          <option value="radio">Radio</option>
+                        </select>
+                      </div>
+                      <div class="field-col">
+                        <label class="field-label">Required</label>
+                        <label class="checkbox-label">
+                          <input
+                            v-model="field.required"
+                            type="checkbox"
+                            class="form-checkbox"
+                          />
+                          <span>Required field</span>
+                        </label>
+                      </div>
+                    </div>
+                    
+                    <div class="field-row">
+                      <div class="field-col-full">
+                        <label class="field-label">Placeholder</label>
+                        <input
+                          v-model="field.placeholder"
+                          type="text"
+                          class="field-input"
+                          placeholder="Enter placeholder text"
+                        />
+                      </div>
+                    </div>
+                    
+                    <!-- Options for select/radio fields -->
+                    <div v-if="field.type === 'select' || field.type === 'radio'" class="field-row">
+                      <div class="field-col-full">
+                        <label class="field-label">Options (one per line)</label>
+                        <textarea
+                          v-model="field.options"
+                          class="field-textarea"
+                          placeholder="Option 1&#10;Option 2&#10;Option 3"
+                          rows="3"
+                        ></textarea>
+                      </div>
+                    </div>
+                    
+                    <!-- Validation for text fields -->
+                    <div v-if="field.type === 'text' || field.type === 'textarea'" class="field-row">
+                      <div class="field-col">
+                        <label class="field-label">Min Length</label>
+                        <input
+                          v-model.number="field.minLength"
+                          type="number"
+                          class="field-input"
+                          min="0"
+                          placeholder="0"
+                        />
+                      </div>
+                      <div class="field-col">
+                        <label class="field-label">Max Length</label>
+                        <input
+                          v-model.number="field.maxLength"
+                          type="number"
+                          class="field-input"
+                          min="1"
+                          placeholder="255"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <button
+                  type="button"
+                  class="add-field-btn"
+                  @click="addFormField"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                  Add Form Field
+                </button>
+              </div>
             </div>
           </template>
 
@@ -703,6 +965,157 @@ const handleDelete = () => {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Form Fields Styles */
+.form-fields-container {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--background-color);
+  padding: var(--space-sm);
+}
+
+.form-field-item {
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--background-soft);
+  margin-bottom: var(--space-sm);
+  overflow: hidden;
+}
+
+.form-field-item:last-child {
+  margin-bottom: 0;
+}
+
+.form-field-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--background-muted);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.field-type-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 500;
+  text-transform: capitalize;
+  background: var(--primary-soft);
+  color: var(--primary-color);
+}
+
+.remove-field-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.remove-field-btn:hover {
+  background: var(--error-color);
+  color: white;
+}
+
+.remove-field-btn svg {
+  width: 12px;
+  height: 12px;
+}
+
+.form-field-config {
+  padding: var(--space-md);
+}
+
+.field-row {
+  display: flex;
+  gap: var(--space-sm);
+  margin-bottom: var(--space-sm);
+}
+
+.field-row:last-child {
+  margin-bottom: 0;
+}
+
+.field-col {
+  flex: 1;
+}
+
+.field-col-full {
+  flex: 1;
+  width: 100%;
+}
+
+.field-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.field-input,
+.field-textarea,
+.field-select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--background-color);
+  color: var(--text-color);
+  font-size: 0.75rem;
+  transition: border-color 0.2s ease;
+}
+
+.field-input:focus,
+.field-textarea:focus,
+.field-select:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 1px rgba(243, 70, 17, 0.1);
+}
+
+.field-textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.add-field-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-xs);
+  width: 100%;
+  padding: var(--space-sm);
+  background: var(--background-muted);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.8rem;
+  font-weight: 500;
+}
+
+.add-field-btn:hover {
+  background: var(--primary-soft);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.add-field-btn svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* Responsive adjustments */
