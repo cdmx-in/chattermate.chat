@@ -18,6 +18,7 @@
 
 import api from './api'
 import type { WorkflowCreate, WorkflowResponse } from '@/types/workflow'
+import { WorkflowStatus } from '@/types/workflow'
 
 export const workflowService = {
   async createWorkflow(data: WorkflowCreate): Promise<WorkflowResponse> {
@@ -44,5 +45,15 @@ export const workflowService = {
 
   async deleteWorkflow(workflowId: string): Promise<void> {
     await api.delete(`/workflow/${workflowId}`)
+  },
+
+  async publishWorkflow(workflowId: string): Promise<WorkflowResponse> {
+    const response = await api.put(`/workflow/${workflowId}`, { status: WorkflowStatus.PUBLISHED })
+    return response.data
+  },
+
+  async unpublishWorkflow(workflowId: string): Promise<WorkflowResponse> {
+    const response = await api.put(`/workflow/${workflowId}`, { status: WorkflowStatus.DRAFT })
+    return response.data
   }
 } 

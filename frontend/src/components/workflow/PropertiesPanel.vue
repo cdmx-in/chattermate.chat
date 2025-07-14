@@ -22,6 +22,13 @@ import type { Node } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
 import { toast } from 'vue-sonner'
 
+// Collapsible sections state
+const collapsedSections = ref({
+  basic: false,
+  nodeSettings: false,
+  advanced: true // Advanced settings collapsed by default
+})
+
 // Define form field interface
 interface FormField {
   name: string
@@ -82,6 +89,152 @@ const nodeForm = ref({
 })
 
 const saving = ref(false)
+
+// Validation errors state
+const validationErrors = ref<Record<string, string>>({})
+
+// Toggle collapsible section
+const toggleSection = (section: keyof typeof collapsedSections.value) => {
+  collapsedSections.value[section] = !collapsedSections.value[section]
+}
+
+// Validation functions
+const validateField = (field: string, value: any, nodeType: string): string | null => {
+  switch (field) {
+    case 'name':
+      if (!value || value.trim() === '') {
+        return 'Node name is required'
+      }
+      if (value.length > 100) {
+        return 'Node name must be less than 100 characters'
+      }
+      break
+    
+    case 'message_text':
+      if (nodeType === 'message' && (!value || value.trim() === '')) {
+        return 'Message text is required'
+      }
+      break
+    
+    case 'system_prompt':
+      if (nodeType === 'llm' && (!value || value.trim() === '')) {
+        return 'System prompt is required'
+      }
+      break
+    
+    case 'temperature':
+      if (nodeType === 'llm' && (value < 0 || value > 2)) {
+        return 'Temperature must be between 0 and 2'
+      }
+      break
+    
+    case 'condition_expression':
+      if (nodeType === 'condition' && (!value || value.trim() === '')) {
+        return 'Condition expression is required'
+      }
+      break
+    
+    case 'action_type':
+      if (nodeType === 'action' && (!value || value.trim() === '')) {
+        return 'Action type is required'
+      }
+      break
+    
+    case 'action_url':
+      if (nodeType === 'action' && (!value || value.trim() === '')) {
+        return 'Action URL is required'
+      }
+      if (nodeType === 'action' && value && !isValidUrl(value)) {
+        return 'Please enter a valid URL'
+      }
+      break
+    
+    case 'transfer_department':
+      if (nodeType === 'humanTransfer' && (!value || value.trim() === '')) {
+        return 'Department is required'
+      }
+      break
+    
+    case 'wait_duration':
+      if (nodeType === 'wait' && (!value || value < 1)) {
+        return 'Wait duration must be at least 1'
+      }
+      break
+    
+    case 'wait_unit':
+      if (nodeType === 'wait' && (!value || value.trim() === '')) {
+        return 'Time unit is required'
+      }
+      break
+    
+    case 'form_fields':
+      if (nodeType === 'form' && (!value || value.length === 0)) {
+        return 'At least one form field is required'
+      }
+      if (nodeType === 'form' && value && value.length > 0) {
+        for (let i = 0; i < value.length; i++) {
+          const field = value[i]
+          if (!field.name || field.name.trim() === '') {
+            return `Form field ${i + 1}: Field name is required`
+          }
+          if (!field.label || field.label.trim() === '') {
+            return `Form field ${i + 1}: Display label is required`
+          }
+          if (field.name && !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field.name)) {
+            return `Form field ${i + 1}: Field name must start with a letter or underscore and contain only letters, numbers, and underscores`
+          }
+        }
+      }
+      break
+  }
+  return null
+}
+
+// Helper function to validate URLs
+const isValidUrl = (url: string): boolean => {
+  try {
+    new URL(url)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Validate all fields
+const validateForm = (): boolean => {
+  const errors: Record<string, string> = {}
+  const nodeType = props.selectedNode.data.nodeType
+  
+  // Validate each field
+  const fieldsToValidate = [
+    'name', 'message_text', 'system_prompt', 'temperature',
+    'condition_expression', 'action_type', 'action_url',
+    'transfer_department', 'wait_duration', 'wait_unit', 'form_fields'
+  ]
+  
+  fieldsToValidate.forEach(field => {
+    const value = nodeForm.value[field as keyof typeof nodeForm.value]
+    const error = validateField(field, value, nodeType)
+    if (error) {
+      errors[field] = error
+    }
+  })
+  
+  validationErrors.value = errors
+  return Object.keys(errors).length === 0
+}
+
+// Real-time validation on field change
+const validateFieldOnChange = (field: string) => {
+  const value = nodeForm.value[field as keyof typeof nodeForm.value]
+  const error = validateField(field, value, props.selectedNode.data.nodeType)
+  
+  if (error) {
+    validationErrors.value[field] = error
+  } else {
+    delete validationErrors.value[field]
+  }
+}
 
 
 
@@ -159,7 +312,7 @@ watch(() => props.selectedNode, (newNode) => {
       // End node
       final_message: newNode.data.final_message || 
                      newNode.data.config?.final_message || 
-                     ''
+                     '',
     }
   }
 }, { immediate: true })
@@ -206,11 +359,15 @@ const addFormField = () => {
     minLength: 0,
     maxLength: 255
   })
+  // Trigger validation for form fields
+  validateFieldOnChange('form_fields')
 }
 
 // Remove form field
 const removeFormField = (index: number) => {
   nodeForm.value.form_fields.splice(index, 1)
+  // Trigger validation for form fields
+  validateFieldOnChange('form_fields')
 }
 
 // Helper function to check if node ID is a UUID
@@ -222,6 +379,12 @@ const isUUID = (id: string) => {
 // Handle form submission
 const handleSave = async () => {
   if (saving.value) return
+  
+  // Validate form before saving
+  if (!validateForm()) {
+    toast.error('Please fix the validation errors before saving')
+    return
+  }
   
   try {
     saving.value = true
@@ -286,10 +449,14 @@ const handleSave = async () => {
       // Node hasn't been saved yet, emit data to parent to save entire workflow
       emit('save', {
         ...nodeForm.value,
-        needsWorkflowSave: true // Flag to indicate parent should save entire workflow
+        needsWorkflowSave: true, // Flag to indicate parent should save entire workflow
+        hasValidationErrors: Object.keys(validationErrors.value).length > 0,
+        validationErrors: validationErrors.value
       })
 
-      toast.success('Node properties updated - save workflow to persist changes')
+      if (Object.keys(validationErrors.value).length === 0) {
+        toast.success('Node properties updated - save workflow to persist changes')
+      }
     }
   } catch (error: any) {
     console.error('Error updating node:', error)
@@ -342,36 +509,60 @@ const handleDelete = () => {
     <div class="properties-content">
       <form @submit.prevent="handleSave">
         <!-- Basic Properties -->
-        <div class="form-section">
-          <h4>Basic Information</h4>
-          
-          <div class="form-group">
-            <label for="node-name">Node Name *</label>
-            <input
-              id="node-name"
-              v-model="nodeForm.name"
-              type="text"
-              class="form-input"
-              placeholder="Enter node name"
-              required
-            />
+        <div class="collapsible-section">
+          <div class="section-header" @click="toggleSection('basic')">
+            <div class="section-title">
+              <svg class="section-icon" :class="{ 'rotated': collapsedSections.basic }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6,9 12,15 18,9"></polyline>
+              </svg>
+              <span>Basic Information</span>
+            </div>
           </div>
+          
+          <div class="section-content" :class="{ 'collapsed': collapsedSections.basic }">
+            <div class="form-group">
+              <label for="node-name">Node Name *</label>
+              <input
+                id="node-name"
+                v-model="nodeForm.name"
+                type="text"
+                class="form-input"
+                :class="{ 'error': validationErrors.name }"
+                placeholder="Enter node name"
+                required
+                @blur="validateFieldOnChange('name')"
+                @input="validateFieldOnChange('name')"
+              />
+              <div v-if="validationErrors.name" class="error-message">
+                {{ validationErrors.name }}
+              </div>
+            </div>
 
-          <div class="form-group">
-            <label for="node-description">Description</label>
-            <textarea
-              id="node-description"
-              v-model="nodeForm.description"
-              class="form-textarea"
-              placeholder="Enter node description (optional)"
-              rows="3"
-            ></textarea>
+            <div class="form-group">
+              <label for="node-description">Description</label>
+              <textarea
+                id="node-description"
+                v-model="nodeForm.description"
+                class="form-textarea"
+                placeholder="Enter node description (optional)"
+                rows="3"
+              ></textarea>
+            </div>
           </div>
         </div>
 
         <!-- Node-specific Properties -->
-        <div class="form-section">
-          <h4>{{ getNodeTypeName(selectedNode.data.nodeType) }} Settings</h4>
+        <div class="collapsible-section">
+          <div class="section-header" @click="toggleSection('nodeSettings')">
+            <div class="section-title">
+              <svg class="section-icon" :class="{ 'rotated': collapsedSections.nodeSettings }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6,9 12,15 18,9"></polyline>
+              </svg>
+              <span>{{ getNodeTypeName(selectedNode.data.nodeType) }} Settings</span>
+            </div>
+          </div>
+          
+          <div class="section-content" :class="{ 'collapsed': collapsedSections.nodeSettings }">
           
           <!-- Message Node -->
           <template v-if="selectedNode.data.nodeType === 'message'">
@@ -381,10 +572,16 @@ const handleDelete = () => {
                 id="message-text"
                 v-model="nodeForm.message_text"
                 class="form-textarea"
+                :class="{ 'error': validationErrors.message_text }"
                 placeholder="Enter the message to send to users"
                 rows="4"
                 required
+                @blur="validateFieldOnChange('message_text')"
+                @input="validateFieldOnChange('message_text')"
               ></textarea>
+              <div v-if="validationErrors.message_text" class="error-message">
+                {{ validationErrors.message_text }}
+              </div>
             </div>
           </template>
 
@@ -396,10 +593,16 @@ const handleDelete = () => {
                 id="system-prompt"
                 v-model="nodeForm.system_prompt"
                 class="form-textarea"
+                :class="{ 'error': validationErrors.system_prompt }"
                 placeholder="Enter system prompt for the AI"
                 rows="4"
                 required
+                @blur="validateFieldOnChange('system_prompt')"
+                @input="validateFieldOnChange('system_prompt')"
               ></textarea>
+              <div v-if="validationErrors.system_prompt" class="error-message">
+                {{ validationErrors.system_prompt }}
+              </div>
             </div>
             <div class="form-group">
               <label for="temperature">Temperature</label>
@@ -408,11 +611,17 @@ const handleDelete = () => {
                 v-model.number="nodeForm.temperature"
                 type="number"
                 class="form-input"
+                :class="{ 'error': validationErrors.temperature }"
                 min="0"
                 max="2"
                 step="0.1"
                 placeholder="0.7"
+                @blur="validateFieldOnChange('temperature')"
+                @input="validateFieldOnChange('temperature')"
               />
+              <div v-if="validationErrors.temperature" class="error-message">
+                {{ validationErrors.temperature }}
+              </div>
             </div>
           </template>
 
@@ -424,10 +633,16 @@ const handleDelete = () => {
                 id="condition-expression"
                 v-model="nodeForm.condition_expression"
                 class="form-textarea"
+                :class="{ 'error': validationErrors.condition_expression }"
                 placeholder="Enter condition logic (e.g., user_input.includes('yes'))"
                 rows="4"
                 required
+                @blur="validateFieldOnChange('condition_expression')"
+                @input="validateFieldOnChange('condition_expression')"
               ></textarea>
+              <div v-if="validationErrors.condition_expression" class="error-message">
+                {{ validationErrors.condition_expression }}
+              </div>
             </div>
           </template>
 
@@ -468,7 +683,7 @@ const handleDelete = () => {
             
             <div class="form-group">
               <label>Form Fields</label>
-              <div class="form-fields-container">
+              <div class="form-fields-container" :class="{ 'error': validationErrors.form_fields }">
                 <div
                   v-for="(field, index) in nodeForm.form_fields"
                   :key="index"
@@ -501,6 +716,8 @@ const handleDelete = () => {
                           class="field-input"
                           placeholder="field_name"
                           required
+                          @blur="validateFieldOnChange('form_fields')"
+                          @input="validateFieldOnChange('form_fields')"
                         />
                       </div>
                       <div class="field-col">
@@ -511,6 +728,8 @@ const handleDelete = () => {
                           class="field-input"
                           placeholder="Field Label"
                           required
+                          @blur="validateFieldOnChange('form_fields')"
+                          @input="validateFieldOnChange('form_fields')"
                         />
                       </div>
                     </div>
@@ -605,6 +824,9 @@ const handleDelete = () => {
                   Add Form Field
                 </button>
               </div>
+              <div v-if="validationErrors.form_fields" class="error-message">
+                {{ validationErrors.form_fields }}
+              </div>
             </div>
           </template>
 
@@ -616,13 +838,19 @@ const handleDelete = () => {
                 id="action-type"
                 v-model="nodeForm.action_type"
                 class="form-select"
+                :class="{ 'error': validationErrors.action_type }"
                 required
+                @blur="validateFieldOnChange('action_type')"
+                @change="validateFieldOnChange('action_type')"
               >
                 <option value="">Select action type</option>
                 <option value="webhook">Webhook</option>
                 <option value="email">Send Email</option>
                 <option value="api">API Call</option>
               </select>
+              <div v-if="validationErrors.action_type" class="error-message">
+                {{ validationErrors.action_type }}
+              </div>
             </div>
             <div class="form-group">
               <label for="action-url">URL *</label>
@@ -631,9 +859,15 @@ const handleDelete = () => {
                 v-model="nodeForm.action_url"
                 type="url"
                 class="form-input"
+                :class="{ 'error': validationErrors.action_url }"
                 placeholder="https://example.com/webhook"
                 required
+                @blur="validateFieldOnChange('action_url')"
+                @input="validateFieldOnChange('action_url')"
               />
+              <div v-if="validationErrors.action_url" class="error-message">
+                {{ validationErrors.action_url }}
+              </div>
             </div>
           </template>
 
@@ -645,13 +879,19 @@ const handleDelete = () => {
                 id="transfer-department"
                 v-model="nodeForm.transfer_department"
                 class="form-select"
+                :class="{ 'error': validationErrors.transfer_department }"
                 required
+                @blur="validateFieldOnChange('transfer_department')"
+                @change="validateFieldOnChange('transfer_department')"
               >
                 <option value="">Select department</option>
                 <option value="general">General Support</option>
                 <option value="sales">Sales</option>
                 <option value="technical">Technical Support</option>
               </select>
+              <div v-if="validationErrors.transfer_department" class="error-message">
+                {{ validationErrors.transfer_department }}
+              </div>
             </div>
             <div class="form-group">
               <label for="transfer-message">Transfer Message</label>
@@ -674,10 +914,16 @@ const handleDelete = () => {
                 v-model.number="nodeForm.wait_duration"
                 type="number"
                 class="form-input"
+                :class="{ 'error': validationErrors.wait_duration }"
                 min="1"
                 placeholder="5"
                 required
+                @blur="validateFieldOnChange('wait_duration')"
+                @input="validateFieldOnChange('wait_duration')"
               />
+              <div v-if="validationErrors.wait_duration" class="error-message">
+                {{ validationErrors.wait_duration }}
+              </div>
             </div>
             <div class="form-group">
               <label for="wait-unit">Time Unit *</label>
@@ -685,12 +931,18 @@ const handleDelete = () => {
                 id="wait-unit"
                 v-model="nodeForm.wait_unit"
                 class="form-select"
+                :class="{ 'error': validationErrors.wait_unit }"
                 required
+                @blur="validateFieldOnChange('wait_unit')"
+                @change="validateFieldOnChange('wait_unit')"
               >
                 <option value="seconds">Seconds</option>
                 <option value="minutes">Minutes</option>
                 <option value="hours">Hours</option>
               </select>
+              <div v-if="validationErrors.wait_unit" class="error-message">
+                {{ validationErrors.wait_unit }}
+              </div>
             </div>
           </template>
 
@@ -708,6 +960,7 @@ const handleDelete = () => {
             </div>
           </template>
         </div>
+        </div>
       </form>
     </div>
 
@@ -716,7 +969,7 @@ const handleDelete = () => {
         <button type="button" class="btn btn-secondary" @click="handleClose">
           Cancel
         </button>
-        <button type="button" class="btn btn-primary" @click="handleSave" :disabled="saving">
+        <button type="button" class="btn btn-primary" @click="handleSave" :disabled="saving || Object.keys(validationErrors).length > 0">
           <div v-if="saving" class="btn-spinner"></div>
           <span v-else>Save Changes</span>
         </button>
@@ -809,6 +1062,64 @@ const handleDelete = () => {
   padding: var(--space-md);
 }
 
+/* Collapsible Section Styles */
+.collapsible-section {
+  margin-bottom: var(--space-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--background-color);
+  overflow: hidden;
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-sm) var(--space-md);
+  background: var(--background-muted);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.section-header:hover {
+  background: var(--background-alt);
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.section-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  transition: transform 0.2s ease;
+}
+
+.section-icon.rotated {
+  transform: rotate(-90deg);
+}
+
+.section-content {
+  padding: var(--space-md);
+  transition: all 0.3s ease;
+  max-height: 1000px;
+  overflow: hidden;
+}
+
+.section-content.collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+}
+
 .form-section {
   margin-bottom: var(--space-lg);
 }
@@ -853,6 +1164,34 @@ const handleDelete = () => {
   outline: none;
   border-color: var(--primary-color);
   box-shadow: 0 0 0 2px rgba(243, 70, 17, 0.1);
+}
+
+.form-input.error,
+.form-textarea.error,
+.form-select.error {
+  border-color: var(--error-color);
+  background-color: rgba(239, 68, 68, 0.05);
+}
+
+.form-input.error:focus,
+.form-textarea.error:focus,
+.form-select.error:focus {
+  border-color: var(--error-color);
+  box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.1);
+}
+
+.error-message {
+  color: var(--error-color);
+  font-size: 0.75rem;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.error-message::before {
+  content: "⚠";
+  font-size: 0.8rem;
 }
 
 .form-textarea {
@@ -975,6 +1314,11 @@ const handleDelete = () => {
   padding: var(--space-sm);
 }
 
+.form-fields-container.error {
+  border-color: var(--error-color);
+  background-color: rgba(239, 68, 68, 0.05);
+}
+
 .form-field-item {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
@@ -1083,6 +1427,13 @@ const handleDelete = () => {
   outline: none;
   border-color: var(--primary-color);
   box-shadow: 0 0 0 1px rgba(243, 70, 17, 0.1);
+}
+
+.field-input.error,
+.field-textarea.error,
+.field-select.error {
+  border-color: var(--error-color);
+  background-color: rgba(239, 68, 68, 0.05);
 }
 
 .field-textarea {

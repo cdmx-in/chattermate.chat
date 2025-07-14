@@ -24,7 +24,9 @@ import { Controls } from '@vue-flow/controls'
 import { MiniMap } from '@vue-flow/minimap'
 import { toast } from 'vue-sonner'
 import { workflowNodeService } from '../../services/workflowNode'
+import { workflowService } from '../../services/workflow'
 import type { WorkflowResponse } from '@/types/workflow'
+import { WorkflowStatus } from '@/types/workflow'
 import PropertiesPanel from './PropertiesPanel.vue'
 
 // Import Vue Flow styles
@@ -120,6 +122,8 @@ const draggedType = ref<string | null>(null)
 const nodeIdCounter = ref(1)
 const showPropertiesPanel = ref(false)
 const selectedNode = ref<Node | null>(null)
+const workflowStatus = ref<WorkflowStatus>(props.workflow.status)
+const publishLoading = ref(false)
 
 // Helper function to generate UUID-like IDs
 const generateNodeId = (type: string) => {
@@ -143,6 +147,9 @@ const getNodeTypeName = (type: string) => {
 
 // Computed properties
 const hasNodes = computed(() => getNodes.value.length > 0)
+const isPublished = computed(() => workflowStatus.value === WorkflowStatus.PUBLISHED)
+const isDraft = computed(() => workflowStatus.value === WorkflowStatus.DRAFT)
+const canPublish = computed(() => hasNodes.value && isDraft.value)
 
 // Load workflow data
 const loadWorkflowData = async () => {
@@ -314,17 +321,29 @@ const handleNodeClick = (event: NodeMouseEvent) => {
   selectedNode.value = event.node
   showPropertiesPanel.value = true
   console.log('Node clicked:', event.node.id)
+  
+  // Add class to body to adjust toast positioning
+  document.body.classList.add('workflow-properties-panel-open')
 }
 
 // Handle properties panel close
 const closePropertiesPanel = () => {
   showPropertiesPanel.value = false
   selectedNode.value = null
+  
+  // Remove class from body to reset toast positioning
+  document.body.classList.remove('workflow-properties-panel-open')
 }
 
 // Handle node property save
 const saveNodeProperties = (properties: any) => {
   if (selectedNode.value) {
+    // Check for validation errors before processing
+    if (properties.hasValidationErrors) {
+      console.log('Validation errors detected, not saving:', properties.validationErrors)
+      return
+    }
+    
     // If we have an updated node from the API, use that data
     if (properties.updatedNode) {
       const updatedNode = properties.updatedNode
@@ -467,6 +486,182 @@ const deleteSelectedNode = () => {
   }
 }
 
+// Validate all nodes before saving
+const validateAllNodes = (): { isValid: boolean; errors: string[] } => {
+  const nodes = getNodes.value
+  const errors: string[] = []
+  
+  for (const node of nodes) {
+    const nodeType = node.data.nodeType
+    const nodeData = node.data
+    
+    // Check required fields for each node type
+    switch (nodeType) {
+      case 'message':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        if (!nodeData.message_text || nodeData.message_text.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Message text is required`)
+        }
+        break
+      
+      case 'llm':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        if (!nodeData.system_prompt || nodeData.system_prompt.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": System prompt is required`)
+        }
+        break
+      
+      case 'condition':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        if (!nodeData.condition_expression || nodeData.condition_expression.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Condition expression is required`)
+        }
+        break
+      
+      case 'form':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        const formFields = nodeData.form_fields || nodeData.config?.form_fields || []
+        if (!formFields || formFields.length === 0) {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": At least one form field is required`)
+        } else {
+          for (let i = 0; i < formFields.length; i++) {
+            const field = formFields[i]
+            if (!field.name || field.name.trim() === '') {
+              errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}" field ${i + 1}: Field name is required`)
+            }
+            if (!field.label || field.label.trim() === '') {
+              errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}" field ${i + 1}: Display label is required`)
+            }
+          }
+        }
+        break
+      
+      case 'action':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        if (!nodeData.action_type || nodeData.action_type.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Action type is required`)
+        }
+        if (!nodeData.action_url || nodeData.action_url.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Action URL is required`)
+        }
+        break
+      
+      case 'humanTransfer':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        if (!nodeData.transfer_department || nodeData.transfer_department.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Department is required`)
+        }
+        break
+      
+      case 'wait':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        if (!nodeData.wait_duration || nodeData.wait_duration < 1) {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Wait duration must be at least 1`)
+        }
+        if (!nodeData.wait_unit || nodeData.wait_unit.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Time unit is required`)
+        }
+        break
+      
+      default:
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        break
+    }
+  }
+  
+  return { isValid: errors.length === 0, errors }
+}
+
+// Add visual indicators for nodes with validation errors
+const highlightNodesWithErrors = () => {
+  const nodes = getNodes.value
+  const validation = validateAllNodes()
+  
+  if (!validation.isValid) {
+    // Update node styles to show validation errors
+    nodes.forEach(node => {
+      const nodeType = node.data.nodeType
+      const nodeData = node.data
+      let hasError = false
+      
+      // Check if this node has validation errors
+      switch (nodeType) {
+        case 'message':
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                    !nodeData.message_text || nodeData.message_text.trim() === ''
+          break
+        case 'llm':
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                    !nodeData.system_prompt || nodeData.system_prompt.trim() === ''
+          break
+        case 'condition':
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                    !nodeData.condition_expression || nodeData.condition_expression.trim() === ''
+          break
+        case 'form':
+          const formFields = nodeData.form_fields || nodeData.config?.form_fields || []
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                    !formFields || formFields.length === 0 ||
+                    formFields.some((field: any) => !field.name || field.name.trim() === '' || 
+                                                   !field.label || field.label.trim() === '')
+          break
+        case 'action':
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                    !nodeData.action_type || nodeData.action_type.trim() === '' ||
+                    !nodeData.action_url || nodeData.action_url.trim() === ''
+          break
+        case 'humanTransfer':
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                    !nodeData.transfer_department || nodeData.transfer_department.trim() === ''
+          break
+        case 'wait':
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                    !nodeData.wait_duration || nodeData.wait_duration < 1 ||
+                    !nodeData.wait_unit || nodeData.wait_unit.trim() === ''
+          break
+        default:
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === ''
+          break
+      }
+      
+      // Update node style based on validation
+      if (hasError) {
+        node.style = {
+          ...node.style,
+          borderColor: '#EF4444',
+          borderWidth: '2px',
+          borderStyle: 'solid',
+          boxShadow: '0 0 0 2px rgba(239, 68, 68, 0.2)'
+        }
+      } else {
+        // Reset to original style
+        const nodeType = availableNodeTypes.find(t => t.type === node.data.nodeType)
+        node.style = {
+          backgroundColor: nodeType?.color || '#6B7280',
+          color: 'white',
+          borderColor: nodeType?.color || '#6B7280'
+        }
+      }
+    })
+  }
+}
+
 // Save workflow
 const saveWorkflow = async () => {
   const nodes = getNodes.value
@@ -476,6 +671,17 @@ const saveWorkflow = async () => {
   if (nodes.length === 0) {
     toast.info('Nothing to save - add some nodes first', {
       duration: 3000,
+      closeButton: true
+    })
+    return
+  }
+  
+  // Validate all nodes before saving
+  const validation = validateAllNodes()
+  if (!validation.isValid) {
+    highlightNodesWithErrors()
+    toast.error('Please fix the following validation errors:\n' + validation.errors.join('\n'), {
+      duration: 8000,
       closeButton: true
     })
     return
@@ -634,8 +840,58 @@ onConnect((params) => {
   addEdges([newEdge])
 })
 
+// Publish/Unpublish workflow
+const publishWorkflow = async () => {
+  try {
+    publishLoading.value = true
+    
+    // Validate before publishing
+    const validation = validateAllNodes()
+    if (!validation.isValid) {
+      highlightNodesWithErrors()
+      toast.error('Please fix validation errors before publishing:\n' + validation.errors.join('\n'), {
+        duration: 8000,
+        closeButton: true
+      })
+      return
+    }
+    
+    // First save the workflow to ensure all changes are persisted
+    await saveWorkflow()
+    
+    // Then publish it
+    const updatedWorkflow = await workflowService.publishWorkflow(props.workflow.id)
+    workflowStatus.value = updatedWorkflow.status
+    
+    toast.success('Workflow published successfully! It\'s now live and ready to handle conversations.')
+  } catch (error) {
+    console.error('Error publishing workflow:', error)
+    toast.error('Failed to publish workflow')
+  } finally {
+    publishLoading.value = false
+  }
+}
+
+const unpublishWorkflow = async () => {
+  try {
+    publishLoading.value = true
+    
+    const updatedWorkflow = await workflowService.unpublishWorkflow(props.workflow.id)
+    workflowStatus.value = updatedWorkflow.status
+    
+    toast.success('Workflow unpublished successfully! It\'s now in draft mode.')
+  } catch (error) {
+    console.error('Error unpublishing workflow:', error)
+    toast.error('Failed to unpublish workflow')
+  } finally {
+    publishLoading.value = false
+  }
+}
+
 // Close workflow builder
 const closeBuilder = () => {
+  // Clean up body class when closing
+  document.body.classList.remove('workflow-properties-panel-open')
   emit('close')
 }
 
@@ -646,12 +902,17 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="workflow-builder" @dragover.prevent @drop="handleDrop">
+  <div class="workflow-builder" :class="{ 'properties-panel-open': showPropertiesPanel }" @dragover.prevent @drop="handleDrop">
     <!-- Header -->
     <div class="builder-header">
       <div class="header-left">
         <h2 class="header-title">{{ workflow.name }}</h2>
-        <span class="header-status">Workflow Builder</span>
+        <span class="header-status" :class="{ 
+          'status-published': isPublished, 
+          'status-draft': isDraft 
+        }">
+          {{ isPublished ? 'Published' : 'Draft' }}
+        </span>
       </div>
       <div class="header-actions">
         <button class="action-btn secondary" @click="closeBuilder">
@@ -661,6 +922,37 @@ onMounted(() => {
           </svg>
           Close
         </button>
+        
+        <!-- Publish/Unpublish button -->
+        <button 
+          v-if="isPublished" 
+          class="action-btn warning" 
+          @click="unpublishWorkflow" 
+          :disabled="publishLoading"
+        >
+          <div v-if="publishLoading" class="btn-spinner"></div>
+          <svg v-else class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="15" y1="9" x2="9" y2="15"></line>
+            <line x1="9" y1="9" x2="15" y2="15"></line>
+          </svg>
+          Unpublish
+        </button>
+        
+        <button 
+          v-else 
+          class="action-btn success" 
+          @click="publishWorkflow" 
+          :disabled="!canPublish || publishLoading"
+          :title="!hasNodes ? 'Add nodes to the workflow before publishing' : 'Publish workflow to make it live'"
+        >
+          <div v-if="publishLoading" class="btn-spinner"></div>
+          <svg v-else class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
+          </svg>
+          Publish
+        </button>
+        
         <button class="action-btn primary" @click="saveWorkflow" :disabled="loading">
           <div v-if="loading" class="btn-spinner"></div>
           <svg v-else class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -725,6 +1017,14 @@ onMounted(() => {
             <div class="empty-icon">🎯</div>
             <h3>Start Building Your Workflow</h3>
             <p>Drag nodes from the sidebar to create your conversation flow</p>
+            <div v-if="isPublished" class="empty-state-warning">
+              <svg class="warning-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path>
+                <line x1="12" y1="9" x2="12" y2="13"></line>
+                <line x1="12" y1="17" x2="12.01" y2="17"></line>
+              </svg>
+              <p>This workflow is published but has no nodes. Add nodes to make it functional.</p>
+            </div>
           </div>
         </VueFlow>
       </div>
@@ -758,6 +1058,22 @@ onMounted(() => {
   flex-direction: column;
 }
 
+/* Ensure toast positioning is adjusted when Properties Panel is open */
+.workflow-builder.properties-panel-open :deep([data-sonner-toaster]) {
+  right: 370px !important;
+  bottom: 20px !important;
+}
+
+.workflow-builder.properties-panel-open :deep([data-sonner-toaster][data-theme]) {
+  right: 370px !important;
+  bottom: 20px !important;
+}
+
+.workflow-builder.properties-panel-open :deep(.sonner-toaster) {
+  right: 370px !important;
+  bottom: 20px !important;
+}
+
 .builder-header {
   display: flex;
   justify-content: space-between;
@@ -787,6 +1103,14 @@ onMounted(() => {
   border-radius: var(--radius-full);
   font-size: 0.75rem;
   font-weight: 500;
+}
+
+.header-status.status-published {
+  background: var(--success-color, #10B981);
+}
+
+.header-status.status-draft {
+  background: var(--warning-color, #F59E0B);
 }
 
 .header-actions {
@@ -825,6 +1149,24 @@ onMounted(() => {
 .action-btn.secondary:hover {
   background: var(--background-alt);
   color: var(--text-color);
+}
+
+.action-btn.success {
+  background: var(--success-color, #10B981);
+  color: white;
+}
+
+.action-btn.success:hover:not(:disabled) {
+  background: var(--success-dark, #059669);
+}
+
+.action-btn.warning {
+  background: var(--warning-color, #F59E0B);
+  color: white;
+}
+
+.action-btn.warning:hover:not(:disabled) {
+  background: var(--warning-dark, #D97706);
 }
 
 .action-btn:disabled {
@@ -996,6 +1338,31 @@ onMounted(() => {
   margin: 0;
 }
 
+.empty-state-warning {
+  margin-top: var(--space-lg);
+  padding: var(--space-md);
+  background: var(--warning-soft, #FEF3C7);
+  border: 1px solid var(--warning-color, #F59E0B);
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  max-width: 400px;
+}
+
+.warning-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--warning-color, #F59E0B);
+  flex-shrink: 0;
+}
+
+.empty-state-warning p {
+  color: var(--warning-dark, #92400E);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -1075,6 +1442,34 @@ onMounted(() => {
 :deep(.vue-flow__minimap) {
   bottom: var(--space-md);
   right: var(--space-md);
+}
+
+/* Toast positioning adjustments to avoid overlap with Properties Panel */
+:global(body.workflow-properties-panel-open [data-sonner-toaster]),
+:global(body.workflow-properties-panel-open .sonner-toaster),
+:global(body.workflow-properties-panel-open [data-sonner-toaster][data-theme]),
+:global(body.workflow-properties-panel-open [data-sonner-toaster][data-rich-colors]) {
+  right: 370px !important; /* Adjust for Properties Panel width (350px) + margin */
+  bottom: 20px !important;
+}
+
+@media (max-width: 1024px) {
+  :global(body.workflow-properties-panel-open [data-sonner-toaster]),
+  :global(body.workflow-properties-panel-open .sonner-toaster),
+  :global(body.workflow-properties-panel-open [data-sonner-toaster][data-theme]),
+  :global(body.workflow-properties-panel-open [data-sonner-toaster][data-rich-colors]) {
+    right: 340px !important; /* Adjust for smaller Properties Panel width (320px) + margin */
+  }
+}
+
+@media (max-width: 768px) {
+  :global(body.workflow-properties-panel-open [data-sonner-toaster]),
+  :global(body.workflow-properties-panel-open .sonner-toaster),
+  :global(body.workflow-properties-panel-open [data-sonner-toaster][data-theme]),
+  :global(body.workflow-properties-panel-open [data-sonner-toaster][data-rich-colors]) {
+    right: 20px !important; /* Reset to normal position on mobile when panel is full width */
+    bottom: 80px !important; /* Add bottom margin to avoid footer buttons */
+  }
 }
 
 

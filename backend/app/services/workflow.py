@@ -124,6 +124,30 @@ class WorkflowService:
             if existing_workflows:
                 raise ValueError("Agent already has a workflow. Only one workflow per agent is allowed.")
         
+        # Check if status is being updated to published
+        if 'status' in workflow_data and workflow_data['status'] == 'published':
+            # When publishing, update the agent's active_workflow_id and use_workflow
+            agent = self.agent_repo.get_by_id(workflow.agent_id)
+            if agent:
+                self.agent_repo.update_agent(
+                    workflow.agent_id, 
+                    active_workflow_id=workflow_id,
+                    use_workflow=True
+                )
+                logger.info(f"Updated agent {workflow.agent_id} active_workflow_id to {workflow_id}")
+        
+        # Check if status is being updated to draft (unpublished)
+        if 'status' in workflow_data and workflow_data['status'] == 'draft':
+            # When unpublishing, clear the agent's active_workflow_id and disable workflow
+            agent = self.agent_repo.get_by_id(workflow.agent_id)
+            if agent and agent.active_workflow_id == workflow_id:
+                self.agent_repo.update_agent(
+                    workflow.agent_id, 
+                    active_workflow_id=None,
+                    use_workflow=False
+                )
+                logger.info(f"Cleared agent {workflow.agent_id} active_workflow_id")
+        
         # Update workflow
         updated_workflow = self.workflow_repo.update_workflow(workflow_id, **workflow_data)
         
@@ -141,6 +165,16 @@ class WorkflowService:
         # Verify organization access
         if workflow.organization_id != organization_id:
             raise ValueError("Workflow does not belong to your organization")
+        
+        # Clear agent's active_workflow_id if this workflow is active
+        agent = self.agent_repo.get_by_id(workflow.agent_id)
+        if agent and agent.active_workflow_id == workflow_id:
+            self.agent_repo.update_agent(
+                workflow.agent_id, 
+                active_workflow_id=None,
+                use_workflow=False
+            )
+            logger.info(f"Cleared agent {workflow.agent_id} active_workflow_id before deleting workflow")
         
         # Delete workflow
         success = self.workflow_repo.delete_workflow(workflow_id)

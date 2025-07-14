@@ -16,6 +16,12 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>
  */
 
+export enum WorkflowStatus {
+  DRAFT = 'draft',
+  PUBLISHED = 'published',
+  ARCHIVED = 'archived'
+}
+
 export interface WorkflowCreate {
   name: string
   description?: string
@@ -28,7 +34,7 @@ export interface WorkflowResponse {
   description?: string
   agent_id: string
   organization_id: string
-  status: string
+  status: WorkflowStatus
   created_at: string
   updated_at: string
 }
