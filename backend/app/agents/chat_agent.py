@@ -52,7 +52,7 @@ def remove_urls_from_message(message: str) -> str:
     return re.sub(url_pattern, '[link removed]', message)
 
 class ChatAgent:
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None):
         # Initialize knowledge search tool if org_id and agent_id provided
         tools = []
         if org_id and agent_id:
@@ -138,7 +138,10 @@ class ChatAgent:
             
             # Build system message
             system_message = ""
-            if self.agent_data.instructions:
+            if custom_system_prompt:
+                # Use custom system prompt from workflow
+                system_message = custom_system_prompt
+            elif self.agent_data.instructions:
                 system_message = "\n".join(self.agent_data.instructions) + "Use the knowledge search tool to provide accurate company information. Only use the tool if required, dont use it for general greeting or general queries"
 
             
@@ -261,7 +264,7 @@ class ChatAgent:
             api_key=api_key,
             model_name=model_name,
             max_tokens=2000 if self.shopify_instructions_added else 1000,
-            response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
+            # response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
         )
 
         storage = PostgresAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)

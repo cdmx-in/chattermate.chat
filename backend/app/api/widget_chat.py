@@ -39,6 +39,7 @@ from app.repositories.agent import AgentRepository
 from app.repositories.rating import RatingRepository
 from app.repositories.jira import JiraRepository
 from app.models.ai_config import AIModelType
+from app.services.workflow_execution import WorkflowExecutionService
 
 
 # Try to import enterprise modules
@@ -137,7 +138,9 @@ async def widget_connect(sid, environ, auth):
             'enable_rate_limiting': enable_rate_limiting,
             'overall_limit_per_ip': overall_limit_per_ip,
             'requests_per_sec': requests_per_sec,
-            'message_limit_reached': message_limit_reached
+            'message_limit_reached': message_limit_reached,
+            'use_workflow': agent.use_workflow if agent else False,
+            'active_workflow_id': agent.active_workflow_id if agent else None
         }
 
         # Log rate limiting settings
@@ -229,7 +232,113 @@ async def handle_widget_chat(sid, data):
         if str(active_session.session_id) != session_id:
             raise ValueError("Session mismatch")
         
-        if active_session.status == SessionStatus.OPEN and active_session.user_id is None: # open and user has not taken over
+        # Check if agent uses workflow
+        if active_session.workflow_id:
+            # Store user message in chat history
+            chat_repo = ChatRepository(db)
+            chat_repo.create_message({
+                "message": message,
+                "message_type": "user",
+                "session_id": session_id,
+                "organization_id": org_id,
+                "agent_id": session['agent_id'],
+                "customer_id": customer_id,
+            })
+            
+            # Execute workflow
+            workflow_service = WorkflowExecutionService(db)
+            workflow_result = await workflow_service.execute_workflow(
+                session_id=session_id,
+                user_message=message,
+                workflow_id=active_session.workflow_id,
+                current_node_id=active_session.current_node_id,
+                workflow_state=active_session.workflow_state,
+                api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
+                model_name=session['ai_config'].model_name,
+                model_type=session['ai_config'].model_type,
+                org_id=org_id,
+                agent_id=session['agent_id'],
+                customer_id=customer_id
+            )
+            
+            if workflow_result.success:
+                logger.info(f"Workflow result form_data: {workflow_result.form_data}")
+                logger.info(f"Workflow result success: {workflow_result.success}")
+                logger.info(f"Workflow result should_continue: {workflow_result.should_continue}")
+                
+                # Check if this is a form node that needs to display a form
+                if workflow_result.form_data:
+                    logger.info(f"Form data detected: {workflow_result.form_data}")
+                    logger.info("Emitting display_form event")
+                    # Emit form display to client
+                    await sio.emit('display_form', {
+                        'form_data': workflow_result.form_data,
+                        'session_id': session_id
+                    }, room=session_id, namespace='/widget')
+                    logger.info("Form display event emitted successfully")
+                    return  # Don't send a regular chat response for form display
+                
+                # Create ChatResponse object from workflow result
+                response = ChatResponse(
+                    message=workflow_result.message,
+                    transfer_to_human=workflow_result.transfer_to_human,
+                    transfer_reason=None,
+                    transfer_description=None,
+                    end_chat=workflow_result.end_chat,
+                    request_rating=workflow_result.request_rating,
+                    create_ticket=False
+                )
+                
+                # Only store message if there's actual content
+                if workflow_result.message:
+                    # Store workflow response in chat history
+                    chat_repo.create_message({
+                        "message": response.message,
+                        "message_type": "bot",
+                        "session_id": session_id,
+                        "organization_id": org_id,
+                        "agent_id": session['agent_id'],
+                        "customer_id": customer_id,
+                        "attributes": {
+                            "workflow_execution": True,
+                            "workflow_id": str(active_session.workflow_id),
+                            "current_node_id": str(workflow_result.next_node_id) if workflow_result.next_node_id else None,
+                            "transfer_to_human": response.transfer_to_human,
+                            "end_chat": response.end_chat,
+                            "request_rating": response.request_rating,
+                        }
+                    })
+            else:
+                # Fallback to regular chat agent if workflow fails
+                logger.error(f"Workflow execution failed: {workflow_result.error}")
+                response = ChatResponse(
+                    message=workflow_result.message or "I apologize, but I'm having trouble processing your request right now.",
+                    transfer_to_human=False,
+                    transfer_reason=None,
+                    transfer_description=None,
+                    end_chat=False,
+                    request_rating=False,
+                    create_ticket=False
+                )
+                
+                # Store error response in chat history
+                chat_repo.create_message({
+                    "message": response.message,
+                    "message_type": "bot",
+                    "session_id": session_id,
+                    "organization_id": org_id,
+                    "agent_id": session['agent_id'],
+                    "customer_id": customer_id,
+                    "attributes": {
+                        "workflow_execution": True,
+                        "workflow_error": workflow_result.error,
+                        "transfer_to_human": response.transfer_to_human,
+                        "end_chat": response.end_chat,
+                        "request_rating": response.request_rating,
+                    }
+                })
+        elif active_session.status == SessionStatus.OPEN and active_session.user_id is None: # open and user has not taken over
+            logger.debug(f"Initializing chat agent for model {session['ai_config'].model_type}")
             # Initialize chat agent
             chat_agent = ChatAgent(
                 api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
@@ -345,35 +454,37 @@ async def handle_widget_chat(sid, data):
 
             return # don't do anything if the session is closed or the user has already taken over
         
-        # Emit response to the specific room
-        response_payload = {
-            'message': response.message,
-            'type': 'chat_response',
-            'transfer_to_human': response.transfer_to_human,
-            'end_chat': response.end_chat,
-            'end_chat_reason': response.end_chat_reason.value if response.end_chat_reason else None,
-            'end_chat_description': response.end_chat_description,
-            'request_rating': response.request_rating,
-            # Initialize shopify_output to None. It will be populated if data exists.
-            'shopify_output': None 
-        }
-        
-        # Check if the response object has the structured shopify_output field
-        # and assign it directly if it's valid (should be a Pydantic model or dict)
-        if hasattr(response, 'shopify_output') and response.shopify_output:
-            # Assuming response.shopify_output is already the correct 
-            # ShopifyOutputData model instance from ChatResponse
-            # We need to convert it to a dict for JSON serialization
-            try:
-                response_payload['shopify_output'] = response.shopify_output.model_dump(exclude_unset=True)
-            except AttributeError:
-                 # Handle cases where it might be a plain dict already (less likely but safe)
-                 if isinstance(response.shopify_output, dict):
-                     response_payload['shopify_output'] = response.shopify_output
-                 else:
-                     logger.warning(f"Unexpected type for shopify_output: {type(response.shopify_output)}")
+        # Only emit response if we have a response object and message
+        if 'response' in locals() and response.message:
+            # Emit response to the specific room
+            response_payload = {
+                'message': response.message,
+                'type': 'chat_response',
+                'transfer_to_human': response.transfer_to_human,
+                'end_chat': response.end_chat,
+                'end_chat_reason': response.end_chat_reason.value if response.end_chat_reason else None,
+                'end_chat_description': response.end_chat_description,
+                'request_rating': response.request_rating,
+                # Initialize shopify_output to None. It will be populated if data exists.
+                'shopify_output': None 
+            }
+            
+            # Check if the response object has the structured shopify_output field
+            # and assign it directly if it's valid (should be a Pydantic model or dict)
+            if hasattr(response, 'shopify_output') and response.shopify_output:
+                # Assuming response.shopify_output is already the correct 
+                # ShopifyOutputData model instance from ChatResponse
+                # We need to convert it to a dict for JSON serialization
+                try:
+                    response_payload['shopify_output'] = response.shopify_output.model_dump(exclude_unset=True)
+                except AttributeError:
+                     # Handle cases where it might be a plain dict already (less likely but safe)
+                     if isinstance(response.shopify_output, dict):
+                         response_payload['shopify_output'] = response.shopify_output
+                     else:
+                         logger.warning(f"Unexpected type for shopify_output: {type(response.shopify_output)}")
 
-        await sio.emit('chat_response', response_payload, room=session_id, namespace='/widget')
+            await sio.emit('chat_response', response_payload, room=session_id, namespace='/widget')
 
     except Exception as e:
         logger.error(f"Widget chat error for sid {sid}: {str(e)}")
@@ -730,4 +841,131 @@ async def handle_rating_submission(sid, data):
         await sio.emit('error', {
             'error': 'Failed to submit rating',
             'type': 'rating_error'
+        }, to=sid, namespace='/widget')
+
+
+@sio.on('submit_form', namespace='/widget')
+@socket_rate_limit(namespace='/widget')
+async def handle_form_submission(sid, data):
+    """Handle form submission from widget"""
+    try:
+        # Get session data and authenticate
+        session = await sio.get_session(sid, namespace='/widget')
+        widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, session)
+        
+        if not widget_id or not org_id:
+            logger.error(f"Widget authentication failed for sid {sid}")
+            await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
+            return
+
+        session_id = session['session_id']
+        # Verify session matches authenticated data
+        if (session['widget_id'] != widget_id or 
+            session['org_id'] != org_id or 
+            session['customer_id'] != customer_id):
+            raise ValueError("Session mismatch")
+
+        # Validate form data
+        form_data = data.get('form_data', {})
+        if not form_data:
+            raise ValueError("No form data provided")
+
+        db = next(get_db())
+        session_repo = SessionToAgentRepository(db)
+        
+        # Get active session
+        active_session = session_repo.get_active_customer_session(
+            customer_id=customer_id
+        )
+
+        if not active_session or not active_session.workflow_id:
+            raise ValueError("No active workflow session found")
+
+        # Submit form through workflow service
+        workflow_service = WorkflowExecutionService(db)
+        workflow_result = await workflow_service.submit_form(
+            session_id=session_id,
+            form_data=form_data,
+            workflow_id=active_session.workflow_id,
+            org_id=org_id,
+            agent_id=session['agent_id'],
+            customer_id=customer_id,
+            api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
+            model_name=session['ai_config'].model_name,
+            model_type=session['ai_config'].model_type
+        )
+
+        if workflow_result.success:
+            # Store form submission in chat history
+            chat_repo = ChatRepository(db)
+            
+            # Store user form submission
+            chat_repo.create_message({
+                "message": f"Form submitted: {', '.join([f'{k}: {v}' for k, v in form_data.items()])}",
+                "message_type": "user",
+                "session_id": session_id,
+                "organization_id": org_id,
+                "agent_id": session['agent_id'],
+                "customer_id": customer_id,
+                "attributes": {
+                    "form_submission": True,
+                    "form_data": form_data
+                }
+            })
+
+            # Check if there's a response message to send
+            if workflow_result.message:
+                # Store workflow response
+                chat_repo.create_message({
+                    "message": workflow_result.message,
+                    "message_type": "bot",
+                    "session_id": session_id,
+                    "organization_id": org_id,
+                    "agent_id": session['agent_id'],
+                    "customer_id": customer_id,
+                    "attributes": {
+                        "workflow_execution": True,
+                        "workflow_id": str(active_session.workflow_id),
+                        "current_node_id": str(workflow_result.next_node_id) if workflow_result.next_node_id else None,
+                        "transfer_to_human": workflow_result.transfer_to_human,
+                        "end_chat": workflow_result.end_chat,
+                        "request_rating": workflow_result.request_rating,
+                    }
+                })
+
+                # Emit chat response
+                await sio.emit('chat_response', {
+                    'message': workflow_result.message,
+                    'type': 'chat_response',
+                    'transfer_to_human': workflow_result.transfer_to_human,
+                    'end_chat': workflow_result.end_chat,
+                    'request_rating': workflow_result.request_rating,
+                    'shopify_output': None
+                }, room=session_id, namespace='/widget')
+
+            # Emit form submission success
+            await sio.emit('form_submitted', {
+                'success': True,
+                'message': 'Form submitted successfully'
+            }, room=sid, namespace='/widget')
+
+        else:
+            # Handle form submission error
+            await sio.emit('error', {
+                'error': workflow_result.error or 'Form submission failed',
+                'type': 'form_error'
+            }, to=sid, namespace='/widget')
+
+    except ValueError as e:
+        logger.error(f"Form submission error for sid {sid}: {str(e)}")
+        await sio.emit('error', {
+            'error': str(e),
+            'type': 'form_error'
+        }, to=sid, namespace='/widget')
+    except Exception as e:
+        logger.error(f"Form submission error for sid {sid}: {str(e)}")
+        logger.error(traceback.format_exc())
+        await sio.emit('error', {
+            'error': 'Failed to submit form',
+            'type': 'form_error'
         }, to=sid, namespace='/widget')

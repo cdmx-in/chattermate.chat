@@ -18,6 +18,7 @@ export function useWidgetSocket() {
     const retryCount = ref(0)
     const MAX_RETRIES = 5
     const humanAgent = ref<HumanAgent>({})
+    const currentForm = ref<any>(null)
 
     let socket: Socket | null = null
     let onTakeoverCallback: ((data: { session_id: string, user_name: string }) => void) | null = null
@@ -134,6 +135,8 @@ export function useWidgetSocket() {
         socket.on('error', handleError)
         socket.on('chat_history', handleChatHistory)
         socket.on('rating_submitted', handleRatingSubmitted)
+        socket.on('display_form', handleDisplayForm)
+        socket.on('form_submitted', handleFormSubmitted)
 
         return socket
     }
@@ -249,6 +252,32 @@ export function useWidgetSocket() {
         }
     }
 
+    // Form display handler
+    const handleDisplayForm = (data: { form_data: any, session_id: string }) => {
+        loading.value = false
+        currentForm.value = data.form_data
+        
+        // Add form message to chat
+        messages.value.push({
+            message: '',
+            message_type: 'form',
+            created_at: new Date().toISOString(),
+            session_id: data.session_id,
+            attributes: {
+                form_data: data.form_data
+            }
+        })
+    }
+
+    // Form submission confirmation handler
+    const handleFormSubmitted = (data: { success: boolean, message: string }) => {
+        currentForm.value = null
+        if (data.success) {
+            // Success message will come through regular chat_response
+            console.log('Form submitted successfully')
+        }
+    }
+
     // Add rating submission function
     const submitRating = async (rating: number, feedback?: string) => {
         if (!socket || !rating) return
@@ -257,6 +286,18 @@ export function useWidgetSocket() {
             rating,
             feedback
         })
+    }
+
+    // Form submission function
+    const submitForm = async (formData: Record<string, any>) => {
+        if (!socket || !currentForm.value) return
+        
+        socket.emit('submit_form', {
+            form_data: formData
+        })
+        
+        // Clear current form after submission
+        currentForm.value = null
     }
 
     // Send message function
@@ -318,6 +359,8 @@ export function useWidgetSocket() {
         cleanup,
         humanAgent,
         onTakeover,
-        submitRating
+        submitRating,
+        currentForm,
+        submitForm
     }
 } 
