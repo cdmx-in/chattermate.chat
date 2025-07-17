@@ -1314,6 +1314,8 @@ const handleDeleteEvent = (event: any) => {
         :selected-node="selectedNode"
         :available-node-types="availableNodeTypes"
         :workflow-id="workflow.id"
+        :agent-id="workflow.agent_id"
+        :organization-id="workflow.organization_id"
         :current-edges="getEdges"
         :current-nodes="getNodes"
         @save="saveNodeProperties"

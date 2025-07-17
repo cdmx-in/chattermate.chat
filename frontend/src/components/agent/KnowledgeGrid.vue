@@ -499,7 +499,7 @@ const closeKnowledgeModal = () => {
     left: 0;
     right: 0;
     bottom: 0;
-    background: var(--background-color);
+    background: rgba(0, 0, 0, 0.5);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -508,14 +508,14 @@ const closeKnowledgeModal = () => {
 }
 
 .modal-content {
-    background: var(--background);
+    background: white;
     border-radius: var(--radius-lg);
     padding: var(--space-lg);
-    width: 90%;
-    max-width: 600px;
-    max-height: 90vh;
+    width: 85%;
+    max-width: 500px;
+    max-height: 80vh;
     overflow-y: auto;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
     border: 1px solid var(--border-color);
 }
 
@@ -649,7 +649,8 @@ const closeKnowledgeModal = () => {
 }
 
 .link-modal {
-    max-width: 800px;
+    max-width: 600px;
+    width: 80%;
 }
 
 .org-knowledge-grid {
@@ -746,7 +747,53 @@ const closeKnowledgeModal = () => {
 }
 
 .confirm-modal {
-    max-width: 400px;
+    max-width: 420px;
+    width: 90%;
+    margin: 0 auto;
+}
+
+.confirm-content {
+    text-align: center;
+}
+
+.confirm-content p {
+    margin-bottom: var(--space-lg);
+    line-height: 1.5;
+    color: var(--text-color);
+}
+
+.confirm-actions {
+    display: flex;
+    gap: var(--space-md);
+    justify-content: center;
+}
+
+.confirm-actions .cancel-button,
+.confirm-actions .delete-button {
+    padding: var(--space-sm) var(--space-lg);
+    border: none;
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    font-weight: 500;
+    min-width: 80px;
+}
+
+.confirm-actions .cancel-button {
+    background: var(--background-soft);
+    color: var(--text-color);
+}
+
+.confirm-actions .delete-button {
+    background: var(--error-color);
+    color: white;
+}
+
+.confirm-actions .cancel-button:hover {
+    background: var(--border-color);
+}
+
+.confirm-actions .delete-button:hover {
+    background: var(--error-color-dark, #dc2626);
 }
 
 .confirm-content {
@@ -813,5 +860,120 @@ const closeKnowledgeModal = () => {
     background: var(--error-color-soft);
     border-radius: var(--radius-lg);
     font-size: 0.875rem;
+}
+
+/* Responsive design for knowledge grid */
+@media (max-width: 1024px) {
+    .knowledge-grid-header,
+    .knowledge-grid-row {
+        grid-template-columns: 2fr 1fr 1fr 80px;
+    }
+    
+    .header-cell:nth-child(3),
+    .grid-cell:nth-child(3) {
+        display: none; /* Hide subpages column on medium screens */
+    }
+}
+
+@media (max-width: 768px) {
+    .knowledge-grid-container {
+        padding: var(--space-sm);
+    }
+    
+    .knowledge-header {
+        flex-direction: column;
+        gap: var(--space-sm);
+        align-items: stretch;
+    }
+    
+    .header-left {
+        flex-direction: column;
+        gap: var(--space-sm);
+        align-items: stretch;
+    }
+    
+    .header-actions {
+        justify-content: center;
+    }
+    
+    .knowledge-grid-header,
+    .knowledge-grid-row {
+        grid-template-columns: 1fr 80px;
+    }
+    
+    .header-cell:nth-child(2),
+    .header-cell:nth-child(3),
+    .header-cell:nth-child(4),
+    .grid-cell:nth-child(2),
+    .grid-cell:nth-child(3),
+    .grid-cell:nth-child(4) {
+        display: none; /* Hide type, subpages, and created columns on mobile */
+    }
+    
+    .grid-cell:first-child {
+        white-space: normal;
+        word-break: break-word;
+    }
+    
+    .pagination {
+        flex-direction: column;
+        gap: var(--space-xs);
+    }
+    
+    .pagination-button {
+        width: 100%;
+    }
+}
+
+@media (max-width: 480px) {
+    .modal-content {
+        width: 95%;
+        padding: var(--space-md);
+        max-height: 95vh;
+    }
+    
+    .knowledge-tabs {
+        flex-direction: column;
+    }
+    
+    .url-input-group {
+        flex-direction: column;
+    }
+    
+    .url-input-group input {
+        margin-bottom: var(--space-sm);
+    }
+    
+    .confirm-actions {
+        flex-direction: column;
+        gap: var(--space-sm);
+    }
+    
+    .cancel-button,
+    .confirm-modal .delete-button {
+        width: 100%;
+    }
+}
+
+/* Responsive design for org knowledge grid */
+@media (max-width: 768px) {
+    .org-knowledge-grid .knowledge-grid-header,
+    .org-knowledge-grid .knowledge-grid-row {
+        grid-template-columns: 1fr 120px;
+    }
+    
+    .type-cell {
+        display: none; /* Hide type column on mobile */
+    }
+    
+    .source-cell {
+        padding-left: var(--space-sm);
+        white-space: normal;
+        word-break: break-word;
+    }
+    
+    .action-cell {
+        padding-right: var(--space-sm);
+    }
 }
 </style>

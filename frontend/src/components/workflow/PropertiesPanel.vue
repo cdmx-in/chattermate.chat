@@ -22,12 +22,14 @@ import type { Node, Edge } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
 import { toast } from 'vue-sonner'
 import { useAgentEdit } from '@/composables/useAgentEdit'
+import KnowledgeGrid from '@/components/agent/KnowledgeGrid.vue'
 
 // Collapsible sections state
 const collapsedSections = ref({
   basic: false,
   nodeSettings: false,
-  advanced: true // Advanced settings collapsed by default
+  advanced: true, // Advanced settings collapsed by default
+  knowledge: true // Knowledge sources collapsed by default
 })
 
 // Define form field interface
@@ -52,6 +54,8 @@ const props = defineProps<{
     color: string
   }>
   workflowId: string
+  agentId: string
+  organizationId: string
   currentEdges: Edge[]
   currentNodes: Node[]
 }>()
@@ -464,6 +468,13 @@ const handleGenerateWithAI = async () => {
 const handleSave = async () => {
   if (saving.value) return
   
+  // Check if any knowledge modals are currently open
+  const hasOpenModal = document.querySelector('.modal-overlay')
+  if (hasOpenModal) {
+    console.log('Knowledge modal is open, preventing save')
+    return
+  }
+  
   // Validate form before saving
   if (!validateForm()) {
     toast.error('Please fix the validation errors before saving', {
@@ -572,6 +583,18 @@ const handleDelete = () => {
     emit('delete')
   }
 }
+
+// Add global event listeners when component mounts (removed for now)
+// onMounted(() => {
+//   document.addEventListener('click', handleGlobalModalClick, true)
+//   document.addEventListener('keydown', handleGlobalModalClick, true)
+// })
+
+// Clean up event listeners when component unmounts (removed for now)
+// onUnmounted(() => {
+//   document.removeEventListener('click', handleGlobalModalClick, true)
+//   document.removeEventListener('keydown', handleGlobalModalClick, true)
+// })
 </script>
 
 <template>
@@ -727,6 +750,30 @@ const handleDelete = () => {
               />
               <div v-if="validationErrors.temperature" class="error-message">
                 {{ validationErrors.temperature }}
+              </div>
+            </div>
+
+            <!-- Knowledge Section -->
+            <div class="form-group">
+              <div class="knowledge-section">
+                <div class="section-header knowledge-header" @click="toggleSection('knowledge')">
+                  <div class="section-title">
+                    <svg class="section-icon" :class="{ 'rotated': collapsedSections.knowledge }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <polyline points="6,9 12,15 18,9"></polyline>
+                    </svg>
+                    <span>Knowledge Sources</span>
+                  </div>
+                </div>
+                
+                <div class="section-content knowledge-content" :class="{ 'collapsed': collapsedSections.knowledge }">
+                  <div class="knowledge-wrapper">
+                    <KnowledgeGrid 
+                      v-if="!collapsedSections.knowledge"
+                      :agent-id="agentId" 
+                      :organization-id="organizationId"
+                    />
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1795,6 +1842,255 @@ const handleDelete = () => {
 .generate-ai-button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* Knowledge Section Styles */
+.knowledge-section {
+  margin-top: var(--space-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--background-color);
+  overflow: hidden;
+}
+
+.knowledge-header .section-header {
+  background: var(--background-muted);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.knowledge-header .section-title {
+  color: var(--text-color);
+}
+
+.knowledge-content {
+  padding: 0; /* Remove default padding since KnowledgeGrid has its own */
+  max-height: 1000px;
+  overflow: hidden;
+  transition: all 0.3s ease;
+}
+
+.knowledge-content.collapsed {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+}
+
+.knowledge-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* Override KnowledgeGrid styles within PropertiesPanel */
+.knowledge-content :deep(.knowledge-grid-container) {
+  padding: var(--space-sm);
+  background: transparent;
+  border-top: none;
+}
+
+.knowledge-content :deep(.knowledge-header) {
+  margin-bottom: var(--space-sm);
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: stretch;
+}
+
+.knowledge-content :deep(.header-left) {
+  flex-direction: column;
+  gap: var(--space-xs);
+  align-items: stretch;
+}
+
+.knowledge-content :deep(.header-left h3) {
+  font-size: 1rem;
+  margin-bottom: 0;
+}
+
+.knowledge-content :deep(.header-actions) {
+  display: flex;
+  gap: var(--space-xs);
+  justify-content: center;
+}
+
+.knowledge-content :deep(.action-button) {
+  font-size: 0.7rem;
+  padding: 4px 8px;
+  flex: 1;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.knowledge-content :deep(.knowledge-grid) {
+  font-size: 0.8rem;
+}
+
+.knowledge-content :deep(.knowledge-grid-header),
+.knowledge-content :deep(.knowledge-grid-row) {
+  grid-template-columns: 1fr 60px;
+  min-height: auto;
+}
+
+.knowledge-content :deep(.header-cell),
+.knowledge-content :deep(.grid-cell) {
+  padding: var(--space-xs) var(--space-sm);
+  font-size: 0.75rem;
+}
+
+.knowledge-content :deep(.header-cell:nth-child(2)),
+.knowledge-content :deep(.header-cell:nth-child(3)),
+.knowledge-content :deep(.header-cell:nth-child(4)),
+.knowledge-content :deep(.grid-cell:nth-child(2)),
+.knowledge-content :deep(.grid-cell:nth-child(3)),
+.knowledge-content :deep(.grid-cell:nth-child(4)) {
+  display: none;
+}
+
+.knowledge-content :deep(.actions-cell) {
+  width: 60px;
+  text-align: center;
+}
+
+.knowledge-content :deep(.delete-button) {
+  padding: 2px;
+}
+
+.knowledge-content :deep(.delete-icon) {
+  width: 16px;
+  height: 16px;
+}
+
+.knowledge-content :deep(.knowledge-empty) {
+  padding: var(--space-md);
+  text-align: center;
+}
+
+.knowledge-content :deep(.warning-message) {
+  font-size: 0.8rem;
+  margin-bottom: var(--space-xs);
+}
+
+.knowledge-content :deep(.warning-description) {
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.knowledge-content :deep(.modal-content) {
+  max-width: 30vw;
+  max-height: 75vh;
+  width: 65%;
+}
+
+/* Ensure knowledge modals have proper z-index and don't interfere */
+.knowledge-content :deep(.modal-overlay) {
+  z-index: 1001 !important; /* Higher than properties panel */
+  position: fixed !important;
+  isolation: isolate;
+  background: rgba(0, 0, 0, 0.4) !important; /* Slightly more transparent for workflow context */
+}
+
+/* Prevent modal interactions from bubbling to properties panel */
+.knowledge-content :deep(.modal-overlay),
+.knowledge-content :deep(.modal-content) {
+  pointer-events: auto;
+}
+
+.knowledge-content :deep(.modal-overlay) {
+  backdrop-filter: blur(4px);
+}
+
+.knowledge-content :deep(.pagination) {
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-sm);
+}
+
+.knowledge-content :deep(.pagination-button) {
+  width: 100%;
+  font-size: 0.7rem;
+  padding: var(--space-xs);
+}
+
+.knowledge-content :deep(.page-info) {
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+/* Link modal overrides for PropertiesPanel */
+.knowledge-content :deep(.link-modal) {
+  max-width: 65vw;
+  width: 60%;
+}
+
+.knowledge-content :deep(.org-knowledge-grid .knowledge-grid-header),
+.knowledge-content :deep(.org-knowledge-grid .knowledge-grid-row) {
+  grid-template-columns: 2fr 0fr 100px; /* Keep 3 columns but make type column 0 width */
+  align-items: center;
+}
+
+.knowledge-content :deep(.org-knowledge-grid .type-cell) {
+  display: none; /* Hide type column */
+}
+
+.knowledge-content :deep(.source-cell) {
+  padding-left: var(--space-sm);
+  white-space: normal;
+  word-break: break-word;
+  font-size: 0.75rem;
+}
+
+.knowledge-content :deep(.action-cell) {
+  padding-right: var(--space-sm);
+  text-align: right;
+  width: 100px;
+}
+
+.knowledge-content :deep(.link-button),
+.knowledge-content :deep(.unlink-button) {
+  min-width: 70px;
+  padding: 4px 8px;
+  font-size: 0.7rem;
+  display: inline-block;
+}
+
+/* Force proper button display regardless of responsive breakpoints */
+.knowledge-content :deep(.org-knowledge-grid) .action-cell {
+  display: block !important;
+  visibility: visible !important;
+}
+
+.knowledge-content :deep(.org-knowledge-grid) .link-button,
+.knowledge-content :deep(.org-knowledge-grid) .unlink-button {
+  display: inline-block !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}
+
+/* Override any responsive hiding that might affect buttons */
+@media (max-width: 768px) {
+  .knowledge-content :deep(.knowledge-grid-container) {
+    padding: 4px;
+  }
+  
+  .knowledge-content :deep(.header-actions) {
+    flex-direction: column;
+    gap: 4px;
+  }
+  
+  .knowledge-content :deep(.action-button) {
+    font-size: 0.65rem;
+    padding: 3px 6px;
+  }
+
+  .knowledge-content :deep(.org-knowledge-grid .knowledge-grid-header),
+  .knowledge-content :deep(.org-knowledge-grid .knowledge-grid-row) {
+    grid-template-columns: 2fr 0fr 100px !important; /* Force 3-column layout */
+  }
+  
+  .knowledge-content :deep(.org-knowledge-grid) .action-cell {
+    display: block !important;
+    grid-column: 3 !important; /* Ensure it's in the third column */
+  }
 }
 
 /* Responsive adjustments */
