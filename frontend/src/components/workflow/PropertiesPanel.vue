@@ -17,10 +17,11 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
-import type { Node } from '@vue-flow/core'
+import { ref, watch, computed } from 'vue'
+import type { Node, Edge } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
 import { toast } from 'vue-sonner'
+import { useAgentEdit } from '@/composables/useAgentEdit'
 
 // Collapsible sections state
 const collapsedSections = ref({
@@ -51,6 +52,8 @@ const props = defineProps<{
     color: string
   }>
   workflowId: string
+  currentEdges: Edge[]
+  currentNodes: Node[]
 }>()
 
 const emit = defineEmits<{
@@ -58,6 +61,20 @@ const emit = defineEmits<{
   (e: 'close'): void
   (e: 'delete'): void
 }>()
+
+// Computed property to detect if condition node is connected to an LLM node from above
+const isConnectedToLLM = computed(() => {
+  if (props.selectedNode.data.nodeType !== 'condition') return false
+  
+  // Find edges where this condition node is the target
+  const incomingEdges = props.currentEdges.filter(edge => edge.target === props.selectedNode.id)
+  
+  // Check if any source node is an LLM
+  return incomingEdges.some(edge => {
+    const sourceNode = props.currentNodes.find(node => node.id === edge.source)
+    return sourceNode?.data.nodeType === 'llm'
+  })
+})
 
 const nodeForm = ref({
   name: '',
@@ -70,6 +87,12 @@ const nodeForm = ref({
   temperature: 0.7,
   // Condition node
   condition_expression: '',
+  // LLM-based condition checkboxes
+  llm_conditions: {
+    user_frustrated: false,
+    request_human_agent: false,
+    no_knowledge: false
+  },
   // Form node
   form_fields: [] as FormField[],
   form_title: '',
@@ -92,6 +115,34 @@ const saving = ref(false)
 
 // Validation errors state
 const validationErrors = ref<Record<string, string>>({})
+
+// AI generation state
+const showAIPrompt = ref(false)
+const aiPrompt = ref('')
+
+// Initialize agent edit composable (using a mock agent object for AI generation)
+const mockAgent = {
+  id: 'temp-agent',
+  name: 'Workflow Node Agent',
+  display_name: 'Workflow Node Agent',
+  description: 'Temporary agent for AI generation',
+  agent_type: 'general',
+  instructions: '',
+  transfer_to_human: false,
+  ask_for_rating: false,
+  organization_id: 'temp',
+  created_by: 'temp',
+  created_at: new Date(),
+  updated_at: new Date(),
+  is_active: true,
+  enable_rate_limiting: false,
+  overall_limit_per_ip: 0,
+  requests_per_sec: 0,
+  conversation_starters: [],
+  knowledge_base_ids: [],
+  canvas_data: {}
+} as any
+const { generateInstructions, isLoading: aiLoading, error: aiError } = useAgentEdit(mockAgent)
 
 // Toggle collapsible section
 const toggleSection = (section: keyof typeof collapsedSections.value) => {
@@ -129,8 +180,18 @@ const validateField = (field: string, value: any, nodeType: string): string | nu
       break
     
     case 'condition_expression':
-      if (nodeType === 'condition' && (!value || value.trim() === '')) {
+      // Only validate condition_expression if not connected to LLM (using traditional mode)
+      if (nodeType === 'condition' && !isConnectedToLLM.value && (!value || value.trim() === '')) {
         return 'Condition expression is required'
+      }
+      break
+    
+    case 'llm_conditions':
+      // Only validate LLM conditions if connected to LLM
+      if (nodeType === 'condition' && isConnectedToLLM.value) {
+        if (!value || (!value.user_frustrated && !value.request_human_agent && !value.no_knowledge)) {
+          return 'At least one LLM condition must be selected'
+        }
       }
       break
     
@@ -208,7 +269,7 @@ const validateForm = (): boolean => {
   // Validate each field
   const fieldsToValidate = [
     'name', 'message_text', 'system_prompt', 'temperature',
-    'condition_expression', 'action_type', 'action_url',
+    'condition_expression', 'llm_conditions', 'action_type', 'action_url',
     'transfer_department', 'wait_duration', 'wait_unit', 'form_fields'
   ]
   
@@ -275,6 +336,10 @@ watch(() => props.selectedNode, (newNode) => {
       condition_expression: newNode.data.condition_expression || 
                             newNode.data.config?.condition_expression || 
                             '',
+      // LLM-based condition checkboxes
+      llm_conditions: newNode.data.llm_conditions || 
+                      newNode.data.config?.llm_conditions || 
+                      { user_frustrated: false, request_human_agent: false, no_knowledge: false },
       // Form node - prioritize config over outer fields
       form_fields: newNode.data.config?.form_fields || 
                    newNode.data.form_fields || 
@@ -376,13 +441,34 @@ const isUUID = (id: string) => {
   return uuidRegex.test(id)
 }
 
+// Handle AI generation for system prompt
+const handleGenerateWithAI = async () => {
+  if (!aiPrompt.value.trim()) return
+  
+  try {
+    const generatedInstructions = await generateInstructions(aiPrompt.value)
+    if (generatedInstructions.length > 0) {
+      // Join the generated instructions with newlines
+      nodeForm.value.system_prompt = generatedInstructions.join('\n')
+      showAIPrompt.value = false
+      aiPrompt.value = ''
+      // Trigger validation for the updated field
+      validateFieldOnChange('system_prompt')
+    }
+  } catch (err) {
+    console.error('Failed to generate instructions:', err)
+  }
+}
+
 // Handle form submission
 const handleSave = async () => {
   if (saving.value) return
   
   // Validate form before saving
   if (!validateForm()) {
-    toast.error('Please fix the validation errors before saving')
+    toast.error('Please fix the validation errors before saving', {
+      position: 'top-center'
+    })
     return
   }
   
@@ -402,7 +488,10 @@ const handleSave = async () => {
         temperature: nodeForm.value.temperature
       }),
       ...(props.selectedNode.data.nodeType === 'condition' && {
-        condition_expression: nodeForm.value.condition_expression
+        condition_expression: nodeForm.value.condition_expression,
+        config: {
+          llm_conditions: nodeForm.value.llm_conditions
+        }
       }),
       ...(props.selectedNode.data.nodeType === 'form' && {
         config: {
@@ -444,7 +533,9 @@ const handleSave = async () => {
         updatedNode: result
       })
 
-      toast.success('Node properties updated successfully')
+      toast.success('Node properties updated successfully', {
+        position: 'top-center'
+      })
     } else {
       // Node hasn't been saved yet, emit data to parent to save entire workflow
       emit('save', {
@@ -455,12 +546,16 @@ const handleSave = async () => {
       })
 
       if (Object.keys(validationErrors.value).length === 0) {
-        toast.success('Node properties updated - save workflow to persist changes')
+        toast.success('Node properties updated - save workflow to persist changes', {
+          position: 'top-center'
+        })
       }
     }
   } catch (error: any) {
     console.error('Error updating node:', error)
-    toast.error(error.response?.data?.detail || 'Failed to update node properties')
+    toast.error(error.response?.data?.detail || 'Failed to update node properties', {
+      position: 'top-center'
+    })
   } finally {
     saving.value = false
   }
@@ -588,7 +683,18 @@ const handleDelete = () => {
           <!-- LLM Node -->
           <template v-if="selectedNode.data.nodeType === 'llm'">
             <div class="form-group">
-              <label for="system-prompt">System Prompt *</label>
+              <div class="instructions-header">
+                <label for="system-prompt">Instructions *</label>
+                <button 
+                  class="ai-generate-button" 
+                  @click="showAIPrompt = true"
+                  :disabled="aiLoading"
+                  type="button"
+                >
+                  <span class="ai-icon">✨</span>
+                  Generate with AI
+                </button>
+              </div>
               <textarea
                 id="system-prompt"
                 v-model="nodeForm.system_prompt"
@@ -623,27 +729,102 @@ const handleDelete = () => {
                 {{ validationErrors.temperature }}
               </div>
             </div>
+
+            <!-- AI Prompt Modal -->
+            <div v-if="showAIPrompt" class="ai-prompt-modal">
+              <div class="ai-prompt-content">
+                <h5>Generate Instructions with AI</h5>
+                <textarea 
+                  v-model="aiPrompt"
+                  placeholder="Describe what you want this AI node to do. For example: 'Create instructions for a customer support assistant that helps with order tracking'"
+                  rows="4"
+                  class="ai-prompt-textarea"
+                ></textarea>
+                <div v-if="aiError" class="error-message">{{ aiError }}</div>
+                <div class="ai-prompt-actions">
+                  <button 
+                    class="cancel-ai-button" 
+                    @click="showAIPrompt = false"
+                    :disabled="aiLoading"
+                    type="button"
+                  >
+                    Cancel
+                  </button>
+                  <button 
+                    class="generate-ai-button" 
+                    @click="handleGenerateWithAI"
+                    :disabled="aiLoading || !aiPrompt.trim()"
+                    type="button"
+                  >
+                    {{ aiLoading ? 'Generating...' : 'Generate' }}
+                  </button>
+                </div>
+              </div>
+            </div>
           </template>
 
           <!-- Condition Node -->
           <template v-if="selectedNode.data.nodeType === 'condition'">
-            <div class="form-group">
-              <label for="condition-expression">Condition Expression *</label>
-              <textarea
-                id="condition-expression"
-                v-model="nodeForm.condition_expression"
-                class="form-textarea"
-                :class="{ 'error': validationErrors.condition_expression }"
-                placeholder="Enter condition logic (e.g., user_input.includes('yes'))"
-                rows="4"
-                required
-                @blur="validateFieldOnChange('condition_expression')"
-                @input="validateFieldOnChange('condition_expression')"
-              ></textarea>
-              <div v-if="validationErrors.condition_expression" class="error-message">
-                {{ validationErrors.condition_expression }}
+            <!-- Show smart checkboxes if connected to LLM from above -->
+            <template v-if="isConnectedToLLM">
+              <div class="form-group">
+                <label>LLM-Based Conditions</label>
+                <p class="field-help">Select conditions to trigger based on LLM responses</p>
+                <div class="checkbox-group">
+                  <label class="checkbox-label">
+                    <input
+                      v-model="nodeForm.llm_conditions.user_frustrated"
+                      type="checkbox"
+                      class="form-checkbox"
+                      @change="validateFieldOnChange('llm_conditions')"
+                    />
+                    <span>🔥 Transfer chat if user frustrated</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input
+                      v-model="nodeForm.llm_conditions.request_human_agent"
+                      type="checkbox"
+                      class="form-checkbox"
+                      @change="validateFieldOnChange('llm_conditions')"
+                    />
+                    <span>👤 Request human agent</span>
+                  </label>
+                  <label class="checkbox-label">
+                    <input
+                      v-model="nodeForm.llm_conditions.no_knowledge"
+                      type="checkbox"
+                      class="form-checkbox"
+                      @change="validateFieldOnChange('llm_conditions')"
+                    />
+                    <span>❓ Not having knowledge to answer</span>
+                  </label>
+                </div>
+                <div v-if="validationErrors.llm_conditions" class="error-message">
+                  {{ validationErrors.llm_conditions }}
+                </div>
               </div>
-            </div>
+            </template>
+            
+            <!-- Show generic condition expression if not connected to LLM -->
+            <template v-else>
+              <div class="form-group">
+                <label for="condition-expression">Condition Expression *</label>
+                <textarea
+                  id="condition-expression"
+                  v-model="nodeForm.condition_expression"
+                  class="form-textarea"
+                  :class="{ 'error': validationErrors.condition_expression }"
+                  placeholder="Enter condition logic (e.g., user_input.includes('yes'))"
+                  rows="4"
+                  required
+                  @blur="validateFieldOnChange('condition_expression')"
+                  @input="validateFieldOnChange('condition_expression')"
+                ></textarea>
+                <div v-if="validationErrors.condition_expression" class="error-message">
+                  {{ validationErrors.condition_expression }}
+                </div>
+              </div>
+            </template>
           </template>
 
           <!-- Form Node -->
@@ -979,6 +1160,18 @@ const handleDelete = () => {
 </template>
 
 <style scoped>
+/* Ensure toast positioning is centered and doesn't cover buttons */
+.properties-panel :deep([data-sonner-toaster]) {
+  top: 80px !important;
+}
+
+.properties-panel :deep([data-sonner-toaster][data-theme]) {
+  top: 80px !important;
+}
+
+.properties-panel :deep(.sonner-toaster) {
+  top: 80px !important;
+}
 /* Properties Panel Styles */
 .properties-panel {
   width: 350px;
@@ -1408,6 +1601,13 @@ const handleDelete = () => {
   margin-bottom: 4px;
 }
 
+.field-help {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+  line-height: 1.3;
+}
+
 .field-input,
 .field-textarea,
 .field-select {
@@ -1467,6 +1667,134 @@ const handleDelete = () => {
 .add-field-btn svg {
   width: 14px;
   height: 14px;
+}
+
+/* Instructions Header Styles */
+.instructions-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.ai-generate-button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 0.7rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.ai-generate-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.ai-generate-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.ai-icon {
+  font-size: 0.8rem;
+}
+
+/* AI Prompt Modal Styles */
+.ai-prompt-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.ai-prompt-content {
+  background: var(--background-color);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  width: 90%;
+  max-width: 500px;
+  box-shadow: var(--shadow-xl);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.ai-prompt-content h5 {
+  margin: 0 0 var(--space-sm) 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.ai-prompt-textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--background-soft);
+  color: var(--text-color);
+  font-size: 0.85rem;
+  resize: vertical;
+  min-height: 100px;
+  box-sizing: border-box;
+}
+
+.ai-prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-sm);
+}
+
+.cancel-ai-button,
+.generate-ai-button {
+  padding: 8px 16px;
+  border: none;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 0.85rem;
+  min-width: 80px;
+  white-space: nowrap;
+}
+
+.cancel-ai-button {
+  background: var(--background-muted);
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+}
+
+.cancel-ai-button:hover {
+  background: var(--background-alt);
+  color: var(--text-color);
+}
+
+.generate-ai-button {
+  background: var(--primary-color);
+  color: white;
+}
+
+.generate-ai-button:hover {
+  background: var(--primary-dark);
+}
+
+.generate-ai-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 /* Responsive adjustments */

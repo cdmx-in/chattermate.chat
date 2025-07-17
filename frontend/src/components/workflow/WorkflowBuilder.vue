@@ -86,27 +86,27 @@ const availableNodeTypes = [
     description: 'Collect structured data from users',
     color: '#10B981'
   },
-  {
-    type: 'action',
-    label: 'Action',
-    icon: '⚡',
-    description: 'Trigger external actions or API calls',
-    color: '#EF4444'
-  },
+  // {
+  //   type: 'action',
+  //   label: 'Action',
+  //   icon: '⚡',
+  //   description: 'Trigger external actions or API calls',
+  //   color: '#EF4444'
+  // },
   {
     type: 'humanTransfer',
-    label: 'Human Transfer',
+    label: 'Human Agent',
     icon: '👤',
-    description: 'Transfer conversation to human agent',
+    description: 'Let a human agent handle the conversation',
     color: '#F97316'
   },
-  {
-    type: 'wait',
-    label: 'Wait',
-    icon: '⏱️',
-    description: 'Pause execution for time-based triggers',
-    color: '#6B7280'
-  },
+  // {
+  //   type: 'wait',
+  //   label: 'Wait',
+  //   icon: '⏱️',
+  //   description: 'Pause execution for time-based triggers',
+  //   color: '#6B7280'
+  // },
   {
     type: 'end',
     label: 'End',
@@ -149,7 +149,27 @@ const getNodeTypeName = (type: string) => {
 const hasNodes = computed(() => getNodes.value.length > 0)
 const isPublished = computed(() => workflowStatus.value === WorkflowStatus.PUBLISHED)
 const isDraft = computed(() => workflowStatus.value === WorkflowStatus.DRAFT)
-const canPublish = computed(() => hasNodes.value && isDraft.value)
+const hasValidConnections = computed(() => {
+  const nodes = getNodes.value
+  const edges = getEdges.value
+  
+  // Single node is always valid
+  if (nodes.length <= 1) return true
+  
+  // Multiple nodes must have connections
+  if (edges.length === 0) return false
+  
+  // Check for isolated nodes
+  const connectedNodeIds = new Set<string>()
+  edges.forEach(edge => {
+    connectedNodeIds.add(edge.source)
+    connectedNodeIds.add(edge.target)
+  })
+  
+  // All nodes must be connected
+  return nodes.every(node => connectedNodeIds.has(node.id))
+})
+const canPublish = computed(() => hasNodes.value && isDraft.value && hasValidConnections.value)
 
 // Load workflow data
 const loadWorkflowData = async () => {
@@ -230,7 +250,9 @@ const loadWorkflowData = async () => {
     
     // Don't show error toast for 404 - it means workflow exists but has no nodes yet (normal state)
     if (error.response?.status !== 404) {
-      toast.error('Failed to load workflow data')
+      toast.error('Failed to load workflow data', {
+        position: 'top-center'
+      })
     }
     
     // For 404, just log and continue with empty workflow
@@ -377,6 +399,9 @@ const saveNodeProperties = (properties: any) => {
         selectedNode.value.position.x = updatedNode.position_x
         selectedNode.value.position.y = updatedNode.position_y
       }
+      
+      // Clear any validation error styling for this node
+      resetNodeValidationStyle(selectedNode.value)
     } else if (properties.needsWorkflowSave) {
       // Node hasn't been saved yet, update local data and trigger workflow save
       selectedNode.value.data = {
@@ -420,9 +445,32 @@ const saveNodeProperties = (properties: any) => {
         }
       }
       
+      // Update the node data directly for immediate validation access
+      Object.assign(selectedNode.value.data, {
+        message_text: properties.message_text,
+        system_prompt: properties.system_prompt,
+        temperature: properties.temperature,
+        condition_expression: properties.condition_expression,
+        llm_conditions: properties.llm_conditions,
+        action_type: properties.action_type,
+        action_url: properties.action_url,
+        transfer_department: properties.transfer_department,
+        transfer_message: properties.transfer_message,
+        wait_duration: properties.wait_duration,
+        wait_unit: properties.wait_unit,
+        final_message: properties.final_message,
+        form_fields: properties.form_fields,
+        form_title: properties.form_title,
+        form_description: properties.form_description,
+        submit_button_text: properties.submit_button_text
+      })
+      
       // Update the label to include the new name with icon
       const nodeType = availableNodeTypes.find(t => t.type === selectedNode.value?.data.nodeType)
       selectedNode.value.data.label = `${nodeType?.icon || '📄'} ${properties.name}`
+      
+      // Clear any validation error styling for this node
+      resetNodeValidationStyle(selectedNode.value)
       
       // Auto-save the workflow to persist the changes
       saveWorkflow()
@@ -469,11 +517,38 @@ const saveNodeProperties = (properties: any) => {
         }
       }
       
+      // Update the node data directly for immediate validation access
+      Object.assign(selectedNode.value.data, {
+        message_text: properties.message_text,
+        system_prompt: properties.system_prompt,
+        temperature: properties.temperature,
+        condition_expression: properties.condition_expression,
+        llm_conditions: properties.llm_conditions,
+        action_type: properties.action_type,
+        action_url: properties.action_url,
+        transfer_department: properties.transfer_department,
+        transfer_message: properties.transfer_message,
+        wait_duration: properties.wait_duration,
+        wait_unit: properties.wait_unit,
+        final_message: properties.final_message,
+        form_fields: properties.form_fields,
+        form_title: properties.form_title,
+        form_description: properties.form_description,
+        submit_button_text: properties.submit_button_text
+      })
+      
       // Update the label to include the new name with icon
       const nodeType = availableNodeTypes.find(t => t.type === selectedNode.value?.data.nodeType)
       selectedNode.value.data.label = `${nodeType?.icon || '📄'} ${properties.name}`
+      
+      // Clear any validation error styling for this node
+      resetNodeValidationStyle(selectedNode.value)
     }
   }
+  
+  // Reset all validation styling to refresh the validation state
+  resetAllNodesValidationStyle()
+  
   closePropertiesPanel()
 }
 
@@ -481,7 +556,9 @@ const saveNodeProperties = (properties: any) => {
 const deleteSelectedNode = () => {
   if (selectedNode.value) {
     removeNodes([selectedNode.value.id])
-    toast.success('Node deleted')
+    toast.success('Node deleted', {
+      position: 'top-center'
+    })
     closePropertiesPanel()
   }
 }
@@ -519,8 +596,26 @@ const validateAllNodes = (): { isValid: boolean; errors: string[] } => {
         if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
           errors.push(`${nodeType} node: Name is required`)
         }
-        if (!nodeData.condition_expression || nodeData.condition_expression.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Condition expression is required`)
+        
+        // Check if condition node is connected to an LLM node from above
+        const edges = getEdges.value
+        const incomingEdges = edges.filter(edge => edge.target === node.id)
+        const isConnectedToLLM = incomingEdges.some(edge => {
+          const sourceNode = nodes.find(n => n.id === edge.source)
+          return sourceNode?.data.nodeType === 'llm'
+        })
+        
+        if (isConnectedToLLM) {
+          // If connected to LLM, check that at least one LLM condition is selected
+          const llmConditions = nodeData.llm_conditions || nodeData.config?.llm_conditions
+          if (!llmConditions || (!llmConditions.user_frustrated && !llmConditions.request_human_agent && !llmConditions.no_knowledge)) {
+            errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": At least one LLM condition must be selected`)
+          }
+        } else {
+          // If not connected to LLM, check for condition expression
+          if (!nodeData.condition_expression || nodeData.condition_expression.trim() === '') {
+            errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Condition expression is required`)
+          }
         }
         break
       
@@ -611,8 +706,24 @@ const highlightNodesWithErrors = () => {
                     !nodeData.system_prompt || nodeData.system_prompt.trim() === ''
           break
         case 'condition':
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                    !nodeData.condition_expression || nodeData.condition_expression.trim() === ''
+          // Check if condition node is connected to an LLM node from above
+          const edges = getEdges.value
+          const incomingEdges = edges.filter(edge => edge.target === node.id)
+          const isConnectedToLLM = incomingEdges.some(edge => {
+            const sourceNode = nodes.find(n => n.id === edge.source)
+            return sourceNode?.data.nodeType === 'llm'
+          })
+          
+          if (isConnectedToLLM) {
+            // If connected to LLM, check that at least one LLM condition is selected
+            const llmConditions = nodeData.llm_conditions || nodeData.config?.llm_conditions
+            hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                      !llmConditions || (!llmConditions.user_frustrated && !llmConditions.request_human_agent && !llmConditions.no_knowledge)
+          } else {
+            // If not connected to LLM, check for condition expression
+            hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                      !nodeData.condition_expression || nodeData.condition_expression.trim() === ''
+          }
           break
         case 'form':
           const formFields = nodeData.form_fields || nodeData.config?.form_fields || []
@@ -662,6 +773,24 @@ const highlightNodesWithErrors = () => {
   }
 }
 
+// Reset a specific node's validation styling
+const resetNodeValidationStyle = (node: Node) => {
+  const nodeType = availableNodeTypes.find(t => t.type === node.data.nodeType)
+  node.style = {
+    backgroundColor: nodeType?.color || '#6B7280',
+    color: 'white',
+    borderColor: nodeType?.color || '#6B7280'
+  }
+}
+
+// Reset all nodes validation styling
+const resetAllNodesValidationStyle = () => {
+  const nodes = getNodes.value
+  nodes.forEach(node => {
+    resetNodeValidationStyle(node)
+  })
+}
+
 // Save workflow
 const saveWorkflow = async () => {
   const nodes = getNodes.value
@@ -671,9 +800,47 @@ const saveWorkflow = async () => {
   if (nodes.length === 0) {
     toast.info('Nothing to save - add some nodes first', {
       duration: 3000,
-      closeButton: true
+      closeButton: true,
+      position: 'top-center'
     })
     return
+  }
+  
+  // Validate connections between nodes
+  if (nodes.length > 1 && edges.length === 0) {
+    toast.error('Workflow must have connections between nodes. Please connect your nodes before saving.', {
+      duration: 5000,
+      closeButton: true,
+      position: 'top-center'
+    })
+    return
+  }
+  
+  // Advanced connection validation: Check for isolated nodes
+  if (nodes.length > 1) {
+    const connectedNodeIds = new Set<string>()
+    
+    // Collect all nodes that are connected (either as source or target)
+    edges.forEach(edge => {
+      connectedNodeIds.add(edge.source)
+      connectedNodeIds.add(edge.target)
+    })
+    
+    // Find isolated nodes (nodes that are not connected to anything)
+    const isolatedNodes = nodes.filter(node => !connectedNodeIds.has(node.id))
+    
+    if (isolatedNodes.length > 0) {
+      const isolatedNodeNames = isolatedNodes.map(node => 
+        node.data.cleanName || node.data.label || 'Unnamed node'
+      ).join(', ')
+      
+      toast.error(`The following nodes are not connected to the workflow: ${isolatedNodeNames}. Please connect all nodes before saving.`, {
+        duration: 6000,
+        closeButton: true,
+        position: 'top-center'
+      })
+      return
+    }
   }
   
   // Validate all nodes before saving
@@ -682,7 +849,8 @@ const saveWorkflow = async () => {
     highlightNodesWithErrors()
     toast.error('Please fix the following validation errors:\n' + validation.errors.join('\n'), {
       duration: 8000,
-      closeButton: true
+      closeButton: true,
+      position: 'top-center'
     })
     return
   }
@@ -821,10 +989,14 @@ const saveWorkflow = async () => {
     })
     addEdges(updatedEdges)
 
-    toast.success('Workflow saved successfully')
+    toast.success('Workflow saved successfully', {
+      position: 'top-center'
+    })
   } catch (error) {
     console.error('Error saving workflow:', error)
-    toast.error('Failed to save workflow')
+    toast.error('Failed to save workflow', {
+      position: 'top-center'
+    })
   } finally {
     loading.value = false
   }
@@ -845,13 +1017,54 @@ const publishWorkflow = async () => {
   try {
     publishLoading.value = true
     
+    const nodes = getNodes.value
+    const edges = getEdges.value
+    
+    // Validate connections before publishing
+    if (nodes.length > 1 && edges.length === 0) {
+      toast.error('Cannot publish workflow without connections between nodes. Please connect your nodes before publishing.', {
+        duration: 5000,
+        closeButton: true,
+        position: 'top-center'
+      })
+      return
+    }
+    
+    // Advanced connection validation: Check for isolated nodes
+    if (nodes.length > 1) {
+      const connectedNodeIds = new Set<string>()
+      
+      // Collect all nodes that are connected (either as source or target)
+      edges.forEach(edge => {
+        connectedNodeIds.add(edge.source)
+        connectedNodeIds.add(edge.target)
+      })
+      
+      // Find isolated nodes (nodes that are not connected to anything)
+      const isolatedNodes = nodes.filter(node => !connectedNodeIds.has(node.id))
+      
+      if (isolatedNodes.length > 0) {
+        const isolatedNodeNames = isolatedNodes.map(node => 
+          node.data.cleanName || node.data.label || 'Unnamed node'
+        ).join(', ')
+        
+        toast.error(`Cannot publish workflow with isolated nodes: ${isolatedNodeNames}. Please connect all nodes before publishing.`, {
+          duration: 6000,
+          closeButton: true,
+          position: 'top-center'
+        })
+        return
+      }
+    }
+    
     // Validate before publishing
     const validation = validateAllNodes()
     if (!validation.isValid) {
       highlightNodesWithErrors()
       toast.error('Please fix validation errors before publishing:\n' + validation.errors.join('\n'), {
         duration: 8000,
-        closeButton: true
+        closeButton: true,
+        position: 'top-center'
       })
       return
     }
@@ -863,10 +1076,14 @@ const publishWorkflow = async () => {
     const updatedWorkflow = await workflowService.publishWorkflow(props.workflow.id)
     workflowStatus.value = updatedWorkflow.status
     
-    toast.success('Workflow published successfully! It\'s now live and ready to handle conversations.')
+    toast.success('Workflow published successfully! It\'s now live and ready to handle conversations.', {
+      position: 'top-center'
+    })
   } catch (error) {
     console.error('Error publishing workflow:', error)
-    toast.error('Failed to publish workflow')
+    toast.error('Failed to publish workflow', {
+      position: 'top-center'
+    })
   } finally {
     publishLoading.value = false
   }
@@ -879,10 +1096,14 @@ const unpublishWorkflow = async () => {
     const updatedWorkflow = await workflowService.unpublishWorkflow(props.workflow.id)
     workflowStatus.value = updatedWorkflow.status
     
-    toast.success('Workflow unpublished successfully! It\'s now in draft mode.')
+    toast.success('Workflow unpublished successfully! It\'s now in draft mode.', {
+      position: 'top-center'
+    })
   } catch (error) {
     console.error('Error unpublishing workflow:', error)
-    toast.error('Failed to unpublish workflow')
+    toast.error('Failed to unpublish workflow', {
+      position: 'top-center'
+    })
   } finally {
     publishLoading.value = false
   }
@@ -899,6 +1120,57 @@ const closeBuilder = () => {
 onMounted(() => {
   loadWorkflowData()
 })
+
+// Handle nodes deletion - close properties panel if selected node is deleted
+const handleNodesDelete = (deletedNodes: Node[]) => {
+  console.log('handleNodesDelete called with:', deletedNodes)
+  console.log('Current selectedNode:', selectedNode.value)
+  
+  // Check if the currently selected node was deleted
+  if (selectedNode.value && deletedNodes.some(node => node.id === selectedNode.value?.id)) {
+    console.log('Selected node was deleted, closing properties panel')
+    closePropertiesPanel()
+    toast.success('Node deleted', {
+      position: 'top-center'
+    })
+  } else if (selectedNode.value) {
+    console.log('Selected node was NOT in deleted list')
+  } else {
+    console.log('No selected node')
+  }
+}
+
+// Handle nodes change (e.g., node added, moved, deleted)
+const handleNodesChange = (changes: any) => {
+  console.log('Nodes changed:', changes)
+  // Check if any nodes were deleted
+  const deletedChanges = changes.filter((change: any) => change.type === 'remove')
+  if (deletedChanges.length > 0) {
+    console.log('Node removal detected:', deletedChanges)
+    // Extract node info from the changes
+    const deletedNodes = deletedChanges.map((change: any) => ({ id: change.id }))
+    handleNodesDelete(deletedNodes)
+  }
+}
+
+// Handle delete event from Vue Flow
+const handleDeleteEvent = (event: any) => {
+  console.log('Vue Flow delete event:', event)
+  // This might be triggered when nodes or edges are removed from the canvas.
+  if (Array.isArray(event)) {
+    // If event is an array of deleted items
+    const deletedNodes = event.filter((item: any) => item.type === 'node' || !item.type)
+    if (deletedNodes.length > 0) {
+      handleNodesDelete(deletedNodes)
+    }
+  } else if (event.nodes) {
+    // If event contains nodes property
+    handleNodesDelete(event.nodes)
+  } else if (event.id) {
+    // If it's a single node deletion
+    handleNodesDelete([event])
+  }
+}
 </script>
 
 <template>
@@ -944,7 +1216,9 @@ onMounted(() => {
           class="action-btn success" 
           @click="publishWorkflow" 
           :disabled="!canPublish || publishLoading"
-          :title="!hasNodes ? 'Add nodes to the workflow before publishing' : 'Publish workflow to make it live'"
+          :title="!hasNodes ? 'Add nodes to the workflow before publishing' : 
+                  !hasValidConnections ? 'Connect all nodes before publishing' : 
+                  'Publish workflow to make it live'"
         >
           <div v-if="publishLoading" class="btn-spinner"></div>
           <svg v-else class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1007,6 +1281,11 @@ onMounted(() => {
           :min-zoom="0.2"
           :max-zoom="4"
           @node-click="handleNodeClick"
+          @nodes-delete="handleNodesDelete"
+          @nodes-change="handleNodesChange"
+          @delete="handleDeleteEvent"
+          @nodes-remove="handleNodesDelete"
+          @elements-remove="handleDeleteEvent"
         >
           <Background pattern-color="#aaa" :gap="16" />
           <Controls />
@@ -1035,6 +1314,8 @@ onMounted(() => {
         :selected-node="selectedNode"
         :available-node-types="availableNodeTypes"
         :workflow-id="workflow.id"
+        :current-edges="getEdges"
+        :current-nodes="getNodes"
         @save="saveNodeProperties"
         @close="closePropertiesPanel"
         @delete="deleteSelectedNode"
@@ -1058,20 +1339,17 @@ onMounted(() => {
   flex-direction: column;
 }
 
-/* Ensure toast positioning is adjusted when Properties Panel is open */
-.workflow-builder.properties-panel-open :deep([data-sonner-toaster]) {
-  right: 370px !important;
-  bottom: 20px !important;
+/* Ensure toast positioning is centered and doesn't cover buttons */
+.workflow-builder :deep([data-sonner-toaster]) {
+  top: 80px !important;
 }
 
-.workflow-builder.properties-panel-open :deep([data-sonner-toaster][data-theme]) {
-  right: 370px !important;
-  bottom: 20px !important;
+.workflow-builder :deep([data-sonner-toaster][data-theme]) {
+  top: 80px !important;
 }
 
-.workflow-builder.properties-panel-open :deep(.sonner-toaster) {
-  right: 370px !important;
-  bottom: 20px !important;
+.workflow-builder :deep(.sonner-toaster) {
+  top: 80px !important;
 }
 
 .builder-header {
@@ -1443,34 +1721,5 @@ onMounted(() => {
   bottom: var(--space-md);
   right: var(--space-md);
 }
-
-/* Toast positioning adjustments to avoid overlap with Properties Panel */
-:global(body.workflow-properties-panel-open [data-sonner-toaster]),
-:global(body.workflow-properties-panel-open .sonner-toaster),
-:global(body.workflow-properties-panel-open [data-sonner-toaster][data-theme]),
-:global(body.workflow-properties-panel-open [data-sonner-toaster][data-rich-colors]) {
-  right: 370px !important; /* Adjust for Properties Panel width (350px) + margin */
-  bottom: 20px !important;
-}
-
-@media (max-width: 1024px) {
-  :global(body.workflow-properties-panel-open [data-sonner-toaster]),
-  :global(body.workflow-properties-panel-open .sonner-toaster),
-  :global(body.workflow-properties-panel-open [data-sonner-toaster][data-theme]),
-  :global(body.workflow-properties-panel-open [data-sonner-toaster][data-rich-colors]) {
-    right: 340px !important; /* Adjust for smaller Properties Panel width (320px) + margin */
-  }
-}
-
-@media (max-width: 768px) {
-  :global(body.workflow-properties-panel-open [data-sonner-toaster]),
-  :global(body.workflow-properties-panel-open .sonner-toaster),
-  :global(body.workflow-properties-panel-open [data-sonner-toaster][data-theme]),
-  :global(body.workflow-properties-panel-open [data-sonner-toaster][data-rich-colors]) {
-    right: 20px !important; /* Reset to normal position on mobile when panel is full width */
-    bottom: 80px !important; /* Add bottom margin to avoid footer buttons */
-  }
-}
-
 
 </style> 
