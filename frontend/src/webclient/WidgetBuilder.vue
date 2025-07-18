@@ -123,9 +123,19 @@ const {
     shadowStyle
 } = useWidgetStyles(customization)
 
+// Check if there's an active form being displayed
+const hasActiveForm = computed(() => {
+    return messages.value.some(message => 
+        message.message_type === 'form' && 
+        (!message.isSubmitted || message.isSubmitted === false)
+    )
+})
+
 // Update the computed property for message input enabled state
 const isMessageInputEnabled = computed(() => {
-    return (hasToken.value || isValidEmail(emailInput.value.trim())) && 
+    // If workflow is enabled, don't require email
+    const workflowEnabled = window.__INITIAL_DATA__?.workflow
+    return (hasToken.value || isValidEmail(emailInput.value.trim()) || workflowEnabled) && 
            connectionStatus.value === 'connected' && !loading.value
 })
 
@@ -133,8 +143,8 @@ const isMessageInputEnabled = computed(() => {
 const sendMessage = async () => {
     if (!newMessage.value.trim()) return
 
-    // If first message, fetch customization with email first
-    if (!hasStartedChat.value && emailInput.value) {
+    // If first message, fetch customization with email first (or without email for workflow)
+    if (!hasStartedChat.value) {
         await checkAuthorization()
     }
 
@@ -159,6 +169,7 @@ const checkAuthorization = async () => {
         }
 
         const url = new URL(`${widgetEnv.API_URL}/widgets/${widgetId.value}`)
+        // Only add email parameter if email is provided and valid
         if (emailInput.value.trim() && isValidEmail(emailInput.value.trim())) {
             url.searchParams.append('email', emailInput.value.trim())
         }
@@ -210,6 +221,12 @@ const checkAuthorization = async () => {
         }
         if (data?.human_agent) {
             humanAgent.value = data.human_agent
+        }
+        
+        // Update workflow status in initial data if received from backend
+        if (data.agent?.workflow !== undefined) {
+            window.__INITIAL_DATA__ = window.__INITIAL_DATA__ || {}
+            window.__INITIAL_DATA__.workflow = data.agent.workflow
         }
         return true
     } catch (error) {
@@ -430,6 +447,15 @@ const handleFormSubmit = async (formConfig: any) => {
     try {
         isSubmittingForm.value = true
         await submitForm(formData.value)
+        
+        // Remove the form message from messages array
+        const formIndex = messages.value.findIndex(msg => 
+            msg.message_type === 'form' && 
+            (!msg.isSubmitted || msg.isSubmitted === false)
+        )
+        if (formIndex !== -1) {
+            messages.value.splice(formIndex, 1)
+        }
         
         // Clear form data after successful submission
         formData.value = {}
@@ -653,7 +679,6 @@ onUnmounted(() => {
                                             {{ message.attributes.form_data.description }}
                                         </p>
                                     </div>
-                                    
                                     <div class="form-fields">
                                         <div 
                                             v-for="field in message.attributes?.form_data?.fields" 
@@ -854,7 +879,7 @@ onUnmounted(() => {
             </div>
 
             <div class="chat-input" :style="agentBubbleStyles">
-                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken">
+                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken && !window.__INITIAL_DATA__?.workflow">
                     <input 
                         v-model="emailInput"
                         type="email" 
@@ -866,7 +891,7 @@ onUnmounted(() => {
                         }"
                     >
                 </div>
-                <div class="message-input">
+                <div class="message-input" v-if="!hasActiveForm">
                     <input 
                         v-model="newMessage" 
                         type="text" 
@@ -2413,6 +2438,8 @@ onUnmounted(() => {
     display: none;
 }
 
+
+
 /* Responsive form styles */
 @media (max-width: 768px) {
     .message.form-message {
@@ -2468,5 +2495,7 @@ onUnmounted(() => {
         width: 18px;
         height: 18px;
     }
+    
+
 }
 </style>

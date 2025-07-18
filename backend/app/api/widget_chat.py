@@ -30,6 +30,7 @@ from app.repositories.widget import WidgetRepository
 from app.core.security import decrypt_api_key
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.repositories.chat import ChatRepository
+from app.repositories.customer import CustomerRepository
 import uuid
 from app.services.socket_rate_limit import socket_rate_limit
 
@@ -896,6 +897,30 @@ async def handle_form_submission(sid, data):
         )
 
         if workflow_result.success:
+            # Check if form contains email and update customer if they have @noemail.com email
+            if 'email' in form_data and form_data['email']:
+                submitted_email = form_data['email'].strip()
+                if submitted_email:  # Only process if email is not empty
+                    customer_repo = CustomerRepository(db)
+                    customer = customer_repo.get_by_id(customer_id)
+                    
+                    if customer and customer.email and '@noemail.com' in customer.email:
+                        # Customer has a generated @noemail.com email, update it with the real email
+                        try:
+                            # Check if the new email already exists for another customer in the same organization
+                            existing_customer = customer_repo.get_customer_by_email(submitted_email, org_id)
+                            if not existing_customer:
+                                # Update customer email
+                                old_email = customer.email
+                                customer.email = submitted_email
+                                db.commit()
+                                logger.info(f"Updated customer {customer_id} email from {old_email} to {submitted_email}")
+                            else:
+                                logger.warning(f"Email {submitted_email} already exists for another customer, skipping update")
+                        except Exception as e:
+                            logger.error(f"Failed to update customer email: {str(e)}")
+                            db.rollback()
+            
             # Store form submission in chat history
             chat_repo = ChatRepository(db)
             

@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session, class_mapper
 from typing import List, Optional
 from jose import JWTError
 import json
+import time
 
 from app.models.widget import Widget
 from app.models.user import User
@@ -86,7 +87,8 @@ async def get_widget_ui(
                     widget_id=widget_id,
                     agent_name=agent.display_name or agent.name,
                     agent_customization=agent.customization,
-                    customer_id=customer_id
+                    customer_id=customer_id,
+                    agent_workflow=bool(agent.use_workflow and agent.active_workflow_id)
                 ))
         except (JWTError, ValueError) as e:
             # Invalid token, create new one
@@ -101,9 +103,10 @@ async def get_widget_ui(
         agent_customization=agent.customization,
         customer_id=customer_id,
         initial_token=token,
+        agent_workflow=bool(agent.use_workflow and agent.active_workflow_id)
     ))
 
-async def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None) -> str:
+async def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None,agent_workflow: bool = False) -> str:
     """Generate widget HTML with embedded data"""
     import html
     widget_url = settings.VITE_WIDGET_URL
@@ -141,7 +144,8 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
                     customization: {json.dumps(customization_dict)},
                     customerId: "{html.escape(customer_id or '')}",
                     initialToken: "{html.escape(initial_token or '')}",
-                    customer: {{}}
+                    customer: {{}},
+                    workflow: {str(agent_workflow).lower()}
                 }};
             </script>
         </head>
@@ -212,20 +216,37 @@ async def get_widget_data(
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        # Fix the condition check
-        should_create_customer = (customer_id == "None" or customer_id is None) and email
+        # Check if agent has workflow enabled
+        agent_has_workflow = bool(agent.use_workflow and agent.active_workflow_id)
+        
+        # For workflow agents, create customer with blank email if no customer exists
+        # For non-workflow agents, require email
+        should_create_customer = (customer_id == "None" or customer_id is None) and (email or agent_has_workflow)
 
         
         customer_repo = CustomerRepository(db)
         human_agent_info = {}
         
         if should_create_customer:
-            # Try to get existing customer first
-            customer = customer_repo.get_customer_by_email(email, widget.organization_id)
+            # For workflow agents, generate unique email if no email provided
+            # For non-workflow agents, use the provided email
+            if email:
+                customer_email = email
+            elif agent_has_workflow:
+                # Generate unique email with timestamp for workflow agents
+                timestamp = int(time.time() * 1000)  # milliseconds for better uniqueness
+                customer_email = f"{timestamp}@noemail.com"
+            else:
+                customer_email = ""
+            
+            # Try to get existing customer first (only if email is provided and not generated)
+            customer = None
+            if email:
+                customer = customer_repo.get_customer_by_email(email, widget.organization_id)
             
             if not customer:
                 # Create new customer if doesn't exist
-                customer = customer_repo.create_customer(email, widget.organization_id)
+                customer = customer_repo.create_customer(customer_email, widget.organization_id)
             
             # Get session info for existing customer
             if customer:
@@ -253,12 +274,49 @@ async def get_widget_data(
                     "id": agent.id,
                     "name": agent.name,
                     "display_name": agent.display_name,
-                    "customization": customization
+                    "customization": customization,
+                    "workflow": bool(agent.use_workflow and agent.active_workflow_id)
                 },
                 "token": new_token
             }
         else:
-            if customer_id == "None" or customer_id is None:
+            # If workflow is enabled and no customer_id, create anonymous customer
+            if (customer_id == "None" or customer_id is None) and agent_has_workflow:
+                # Generate unique email with timestamp for workflow agents
+                timestamp = int(time.time() * 1000)  # milliseconds for better uniqueness
+                workflow_email = f"{timestamp}@noemail.com"
+                
+                # Create anonymous customer for workflow
+                customer = customer_repo.create_customer(workflow_email, widget.organization_id)
+                
+                # Generate new token with customer_id
+                new_token = create_conversation_token(
+                    customer_id=customer.id,
+                    widget_id=widget_id
+                )
+                
+                # Create a copy of customization to modify photo_url
+                customization = agent.customization
+              
+                if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+                    # Get signed URL for the photo
+                    customization.photo_url = await get_s3_signed_url(customization.photo_url)
+
+                return {
+                    "id": widget.id,
+                    "organization_id": widget.organization_id,
+                    "customer_id": customer.id,
+                    "human_agent": {},
+                    "agent": {
+                        "id": agent.id,
+                        "name": agent.name,
+                        "display_name": agent.display_name,
+                        "customization": customization,
+                        "workflow": bool(agent.use_workflow and agent.active_workflow_id)
+                    },
+                    "token": new_token
+                }
+            elif customer_id == "None" or customer_id is None:
                 raise HTTPException(
                     status_code=401,
                     detail="Unauthorized"
@@ -290,7 +348,8 @@ async def get_widget_data(
             "id": agent.id,
             "name": agent.name,
             "display_name": agent.display_name,
-            "customization": customization
+            "customization": customization,
+            "workflow": bool(agent.use_workflow and agent.active_workflow_id)
         }
     }
 
@@ -353,6 +412,7 @@ async def get_widget_details(
             "id": agent.id,
             "name": agent.name,
             "display_name": agent.display_name,
-            "customization": customization
+            "customization": customization,
+            "workflow": bool(agent.use_workflow and agent.active_workflow_id)
         }
     }
