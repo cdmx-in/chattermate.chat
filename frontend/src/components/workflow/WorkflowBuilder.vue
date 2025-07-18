@@ -171,15 +171,46 @@ const hasValidConnections = computed(() => {
 })
 const canPublish = computed(() => hasNodes.value && isDraft.value && hasValidConnections.value)
 
+// Map backend node types to frontend enum values
+const mapNodeTypeToFrontend = (backendType: string) => {
+  const mapping = {
+    'message': 'message',
+    'llm': 'llm',
+    'condition': 'condition',
+    'form': 'form',
+    'action': 'action',
+    'human_transfer': 'humanTransfer', // Backend snake_case to frontend camelCase
+    'wait': 'wait',
+    'end': 'end'
+  }
+  return mapping[backendType as keyof typeof mapping] || 'message'
+}
+
+// Map frontend node types to backend enum values
+const mapNodeTypeToBackend = (frontendType: string) => {
+  const mapping = {
+    'message': 'message',
+    'llm': 'llm',
+    'condition': 'condition',
+    'form': 'form',
+    'action': 'action',
+    'humanTransfer': 'human_transfer', // Frontend camelCase to backend snake_case
+    'wait': 'wait',
+    'end': 'end'
+  }
+  return mapping[frontendType as keyof typeof mapping] || 'message'
+}
+
 // Load workflow data
 const loadWorkflowData = async () => {
   try {
     loading.value = true
     const data = await workflowNodeService.getWorkflowNodes(props.workflow.id)
-    
+
     // Convert backend nodes to Vue Flow nodes
     const nodes: Node[] = data.nodes.map((node: any) => {
-      const nodeType = availableNodeTypes.find(t => t.type === node.node_type)
+      const frontendNodeType = mapNodeTypeToFrontend(node.node_type)
+      const nodeType = availableNodeTypes.find(t => t.type === frontendNodeType)
       return {
         id: node.id,
         type: 'default', // Use default Vue Flow node type
@@ -189,7 +220,7 @@ const loadWorkflowData = async () => {
           cleanName: node.name, // Store clean name from backend
           description: node.description,
           config: node.config,
-          nodeType: node.node_type, // Store the original type
+          nodeType: frontendNodeType, // Store the mapped frontend type
           icon: nodeType?.icon || '📄',
           color: nodeType?.color || '#6B7280',
           // Store all backend properties directly in data for easy access
@@ -369,7 +400,8 @@ const saveNodeProperties = (properties: any) => {
     // If we have an updated node from the API, use that data
     if (properties.updatedNode) {
       const updatedNode = properties.updatedNode
-      const nodeType = availableNodeTypes.find(t => t.type === updatedNode.node_type)
+      const frontendNodeType = mapNodeTypeToFrontend(updatedNode.node_type)
+      const nodeType = availableNodeTypes.find(t => t.type === frontendNodeType)
       
       // Update the node with the backend response
       selectedNode.value.data = {
@@ -890,7 +922,7 @@ const saveWorkflow = async () => {
     // Convert Vue Flow nodes to backend format
     const backendNodes = nodes.map(node => ({
       id: node.id,
-      node_type: node.data.nodeType || 'message', // Use the stored original type
+      node_type: mapNodeTypeToBackend(node.data.nodeType || 'message'), // Map to backend enum value
       name: node.data.cleanName || cleanNodeName(node.data.label, node.data.nodeType || 'message'),
       description: node.data.description || '',
       position_x: node.position.x,
@@ -919,7 +951,8 @@ const saveWorkflow = async () => {
     // Update the Vue Flow with the response data (which contains UUIDs)
     // This ensures the frontend is in sync with the backend
     const updatedNodes: Node[] = result.nodes.map((node: any) => {
-      const nodeType = availableNodeTypes.find(t => t.type === node.node_type)
+      const frontendNodeType = mapNodeTypeToFrontend(node.node_type)
+      const nodeType = availableNodeTypes.find(t => t.type === frontendNodeType)
       return {
         id: node.id,
         type: 'default',
@@ -929,7 +962,7 @@ const saveWorkflow = async () => {
           cleanName: node.name, // Store clean name from backend
           description: node.description,
           config: node.config,
-          nodeType: node.node_type,
+          nodeType: frontendNodeType,
           icon: nodeType?.icon || '📄',
           color: nodeType?.color || '#6B7280',
           // Store all backend properties directly in data for easy access

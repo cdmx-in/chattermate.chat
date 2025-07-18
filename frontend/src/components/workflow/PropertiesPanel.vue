@@ -495,8 +495,10 @@ const handleSave = async () => {
         message_text: nodeForm.value.message_text
       }),
       ...(props.selectedNode.data.nodeType === 'llm' && {
-        system_prompt: nodeForm.value.system_prompt,
-        temperature: nodeForm.value.temperature
+        config: {
+          system_prompt: nodeForm.value.system_prompt,
+          temperature: nodeForm.value.temperature
+        }
       }),
       ...(props.selectedNode.data.nodeType === 'condition' && {
         condition_expression: nodeForm.value.condition_expression,
@@ -1349,8 +1351,8 @@ const handleDelete = () => {
 .section-content {
   padding: var(--space-md);
   transition: all 0.3s ease;
-  max-height: 1000px;
-  overflow: hidden;
+  max-height: none;
+  overflow: visible;
 }
 
 .section-content.collapsed {
@@ -1358,6 +1360,7 @@ const handleDelete = () => {
   padding-top: 0;
   padding-bottom: 0;
   opacity: 0;
+  overflow: hidden;
 }
 
 .form-section {
@@ -1552,6 +1555,8 @@ const handleDelete = () => {
   border-radius: var(--radius-md);
   background: var(--background-color);
   padding: var(--space-sm);
+  max-height: none;
+  overflow: visible;
 }
 
 .form-fields-container.error {
@@ -1864,8 +1869,8 @@ const handleDelete = () => {
 
 .knowledge-content {
   padding: 0; /* Remove default padding since KnowledgeGrid has its own */
-  max-height: 1000px;
-  overflow: hidden;
+  max-height: none;
+  overflow: visible;
   transition: all 0.3s ease;
 }
 
@@ -1874,6 +1879,7 @@ const handleDelete = () => {
   padding-top: 0;
   padding-bottom: 0;
   opacity: 0;
+  overflow: hidden;
 }
 
 .knowledge-wrapper {
