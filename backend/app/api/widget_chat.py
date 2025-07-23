@@ -315,8 +315,8 @@ async def handle_widget_chat(sid, data):
         if str(active_session.session_id) != session_id:
             raise ValueError("Session mismatch")
         
-        # Check if agent uses workflow
-        if active_session.workflow_id:
+        # Check if agent uses workflow and no human agent has taken over
+        if active_session.workflow_id and active_session.user_id is None:
             # Store user message in chat history
             chat_repo = ChatRepository(db)
             chat_repo.create_message({
@@ -371,6 +371,12 @@ async def handle_widget_chat(sid, data):
                     request_rating=workflow_result.request_rating,
                     create_ticket=False
                 )
+                
+                # Handle transfer to human if requested by workflow LLM
+                if workflow_result.transfer_to_human:
+                    logger.info(f"Workflow LLM requested transfer to human for session {session_id}")
+                    # Update session status to TRANSFERRED
+                    session_repo.update_session_status(session_id, "TRANSFERRED")
                 
                 # Only store message if there's actual content
                 if workflow_result.message:
@@ -494,9 +500,47 @@ async def handle_widget_chat(sid, data):
                     "end_chat_description": response_content.end_chat_description,
                     "request_rating": response_content.request_rating,
                     "shopify_output": response_content.shopify_output
-                }
-            })
+                                    }
+                })
             response = response_content
+        elif active_session.workflow_id and active_session.user_id is not None:
+            # Workflow session but human agent has taken over - handle like regular human takeover
+            chat_repo = ChatRepository(db)
+            chat_repo.create_message({
+                "message": message,
+                "message_type": "user",
+                "session_id": session_id,
+                "organization_id": org_id,  
+                "agent_id": session['agent_id'],
+                "customer_id": customer_id,
+                "user_id": active_session.user_id,
+            })
+            # Get session data to find assigned user
+            session_data = session_repo.get_session(session_id)
+            user_id = str(session_data.user_id) if session_data and session_data.user_id else None
+            timestamp = format_datetime(datetime.datetime.now())
+
+            if user_id:
+                # Also emit to user-specific room
+                user_room = f"user_{user_id}"
+                await sio.emit('chat_reply', {
+                    'message': message,
+                    'type': 'user_message',
+                    'transfer_to_human': False,
+                    'session_id': session_id,
+                    'created_at': timestamp
+                }, room=user_room, namespace='/agent')
+
+            # Emit to both session room and user's personal room
+            await sio.emit('chat_reply', {
+                'message': message,
+                'type': 'user_message',
+                'transfer_to_human': False,
+                'session_id': session_id,
+                'timestamp': timestamp
+            }, room=session_id, namespace='/agent')    
+
+            return # don't do anything further - human agent handles the conversation
         else:
             chat_repo = ChatRepository(db)
             chat_repo.create_message({

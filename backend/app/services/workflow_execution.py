@@ -169,13 +169,37 @@ class WorkflowExecutionService:
             # Only store form data in workflow state for form nodes
             # Remove unnecessary history and variables tracking
             
-            # For landing pages and forms, set current_node_id to the current node (not next)
-            # so the system knows which node we're currently on
-            if result.landing_page_data or result.form_data:
-                # We're displaying a landing page or form - stay on current node
+            # For landing pages, forms, and LLM nodes that don't meet advancement conditions
+            # set current_node_id to the current node (not next) so the system knows which node we're currently on
+            if result.landing_page_data or result.form_data or (current_node.node_type == NodeType.LLM and not result.should_continue and not result.transfer_to_human and not result.end_chat):
+                # We're displaying a landing page, form, or staying on LLM node - stay on current node
                 self._update_session_workflow_state(session_id, current_node.id, workflow_state)
+            elif result.transfer_to_human:
+                # If transfer is requested and next node is a Condition, execute it immediately to get final target
+                if result.next_node_id:
+                    next_node = self._find_node_by_id(workflow, result.next_node_id)
+                    if next_node and next_node.node_type == NodeType.CONDITION:
+                        logger.info(f"Transfer requested, next node is Condition {next_node.id}, executing immediately")
+                        # Execute condition node to get final target
+                        condition_result = self._execute_condition_node(next_node, workflow, workflow_state)
+                        if condition_result.success and condition_result.next_node_id:
+                            # Move to the final target node (e.g., Human Agent)
+                            self._update_session_workflow_state(session_id, condition_result.next_node_id, workflow_state)
+                            logger.info(f"Condition executed, moved to final target node {condition_result.next_node_id}")
+                        else:
+                            # Fallback to condition node if execution failed
+                            self._update_session_workflow_state(session_id, result.next_node_id, workflow_state)
+                            logger.info(f"Condition execution failed, moved to condition node {result.next_node_id}")
+                    else:
+                        # Next node is not a condition, move there directly
+                        self._update_session_workflow_state(session_id, result.next_node_id, workflow_state)
+                        logger.info(f"Transfer requested, moved to node {result.next_node_id}")
+                else:
+                    # Stay on current node if no next node
+                    self._update_session_workflow_state(session_id, current_node.id, workflow_state)
+                    logger.info(f"Transfer requested, staying on current node {current_node.id}")
             else:
-                # Normal flow - move to next node
+                # Normal flow - move to next node (or end workflow if transfer/end_chat)
                 self._update_session_workflow_state(session_id, result.next_node_id, workflow_state)
             
             return WorkflowExecutionResult(
@@ -330,7 +354,7 @@ class WorkflowExecutionService:
             
             elif node.node_type == NodeType.LLM:
                 return await self._execute_llm_node(
-                    node, workflow_state, user_message, api_key, model_name, 
+                    node, workflow, workflow_state, user_message, api_key, model_name, 
                     model_type, org_id, agent_id, customer_id, session_id
                 )
             
@@ -391,6 +415,7 @@ class WorkflowExecutionService:
     async def _execute_llm_node(
         self,
         node: WorkflowNode,
+        workflow: Workflow,
         workflow_state: Dict[str, Any],
         user_message: str,
         api_key: str,
@@ -420,8 +445,8 @@ class WorkflowExecutionService:
                 custom_system_prompt=system_prompt
             )
             
-            # Get response from LLM
-            response = await chat_agent.get_response(
+            # Get response from LLM using the agent's internal method to avoid double message storage
+            response = await chat_agent._get_llm_response_only(
                 message=user_message,
                 session_id=session_id,
                 org_id=org_id,
@@ -429,16 +454,31 @@ class WorkflowExecutionService:
                 customer_id=customer_id
             )
             
-            # Don't store LLM response in workflow state to keep it minimal
+            # Check LLM-based conditions to determine next node
+            next_node_id = self._find_llm_conditional_next_node(node, workflow, response)
             
-            # Find next node
-            next_node_id = self._find_next_node(node)
+            # Only continue to next node if conditions are met
+            should_continue = next_node_id is not None
+            
+            # If LLM requests transfer and there's a configured path, continue to next node
+            # If no configured path, then stay on current node
+            if response.transfer_to_human and next_node_id is None:
+                # No transfer condition configured, stay on current node
+                should_continue = False
+                next_node_id = None
+            
+            # If LLM requests end chat and there's a configured path, continue to next node
+            # If no configured path, then stay on current node
+            if response.end_chat and next_node_id is None:
+                # No end chat condition configured, stay on current node
+                should_continue = False
+                next_node_id = None
             
             return WorkflowExecutionResult(
                 success=True,
                 message=response.message,
                 next_node_id=next_node_id,
-                should_continue=next_node_id is not None,
+                should_continue=should_continue,
                 transfer_to_human=response.transfer_to_human,
                 end_chat=response.end_chat,
                 request_rating=response.request_rating
@@ -462,12 +502,41 @@ class WorkflowExecutionService:
         try:
             config = node.config or {}
             condition_expression = config.get("condition_expression")
+            
+            # Check if this is a transfer scenario (no condition expression but has transfer-related connections)
             if not condition_expression:
-                return WorkflowExecutionResult(
-                    success=False,
-                    message="No condition expression configured",
-                    error="No condition expression"
-                )
+                # Look for transfer-related connections (like "transfer", "true", etc.)
+                transfer_connection = None
+                for connection in node.outgoing_connections:
+                    if connection.label and connection.label.lower() in ["transfer", "true", "yes"]:
+                        transfer_connection = connection
+                        break
+                
+                if transfer_connection:
+                    logger.info(f"No condition expression but found transfer connection, routing to {transfer_connection.target_node_id}")
+                    return WorkflowExecutionResult(
+                        success=True,
+                        message="",  # Condition nodes don't produce user-facing messages
+                        next_node_id=transfer_connection.target_node_id,
+                        should_continue=transfer_connection.target_node_id is not None
+                    )
+                else:
+                    # No condition expression and no transfer connections, use first connection
+                    if node.outgoing_connections:
+                        first_connection = node.outgoing_connections[0]
+                        logger.info(f"No condition expression, using first connection to {first_connection.target_node_id}")
+                        return WorkflowExecutionResult(
+                            success=True,
+                            message="",
+                            next_node_id=first_connection.target_node_id,
+                            should_continue=first_connection.target_node_id is not None
+                        )
+                    else:
+                        return WorkflowExecutionResult(
+                            success=False,
+                            message="No condition expression and no connections configured",
+                            error="No condition expression and no connections"
+                        )
             
             # Evaluate condition
             condition_result = self._evaluate_condition(condition_expression, workflow_state)
@@ -632,7 +701,7 @@ class WorkflowExecutionService:
         """Execute a human transfer node"""
         config = node.config or {}
         transfer_rules = config.get("transfer_rules", {})
-        message = transfer_rules.get("message", "Transferring you to a human agent...")
+        message = transfer_rules.get("message", "Transferring you to a human agent. Please wait...")
         
         return WorkflowExecutionResult(
             success=True,
@@ -684,6 +753,8 @@ class WorkflowExecutionService:
         # In a more complex implementation, you'd handle multiple connections
         return node.outgoing_connections[0].target_node_id
     
+
+    
     def _find_conditional_next_node(self, node: WorkflowNode, condition_result: bool) -> Optional[UUID]:
         """Find next node based on condition result"""
         if not node.outgoing_connections:
@@ -698,6 +769,66 @@ class WorkflowExecutionService:
         
         # If no specific condition found, return first connection
         return node.outgoing_connections[0].target_node_id
+    
+    def _find_llm_conditional_next_node(self, node: WorkflowNode, workflow: Workflow, response) -> Optional[UUID]:
+        """Find next node based on LLM response conditions"""
+        if not node.outgoing_connections:
+            return None
+        
+        # Get LLM conditions from node config
+        config = node.config or {}
+        llm_conditions = config.get("llm_conditions", [])
+        
+        logger.debug(f"LLM conditions for node {node.id}: {llm_conditions}")
+        logger.debug(f"LLM response - transfer: {response.transfer_to_human}, end_chat: {response.end_chat}")
+        
+        # Check each condition against the LLM response
+        for condition in llm_conditions:
+            condition_type = condition.get("type")
+            is_enabled = condition.get("enabled", False)
+            
+            if not is_enabled:
+                continue
+                
+            # Check condition based on type
+            condition_met = False
+            if condition_type == "transfer_to_human" and response.transfer_to_human:
+                condition_met = True
+            elif condition_type == "request_rating" and response.request_rating:
+                condition_met = True
+            elif condition_type == "end_chat" and response.end_chat:
+                condition_met = True
+            elif condition_type == "no_knowledge" and hasattr(response, 'no_knowledge') and response.no_knowledge:
+                condition_met = True
+            
+            if condition_met:
+                # Find connection that matches this condition
+                target_connection_id = condition.get("connection_id")
+                if target_connection_id:
+                    for connection in node.outgoing_connections:
+                        if str(connection.id) == str(target_connection_id):
+                            logger.info(f"LLM condition '{condition_type}' met, moving to node {connection.target_node_id}")
+                            return connection.target_node_id
+        
+        # If no LLM conditions are configured but transfer is requested,
+        # move to the next node (e.g., LLM → Condition)
+        if response.transfer_to_human:
+            next_node_id = self._find_next_node(node)
+            if next_node_id:
+                logger.info(f"No LLM transfer condition configured, moving to next node: {next_node_id}")
+                return next_node_id
+        
+        # If no LLM conditions are configured but end_chat is requested,
+        # move to the next node
+        if response.end_chat:
+            next_node_id = self._find_next_node(node)
+            if next_node_id:
+                logger.info(f"No LLM end_chat condition configured, moving to next node: {next_node_id}")
+                return next_node_id
+        
+        # If no conditions are met and no transfer/end_chat, stay on current node (don't advance)
+        logger.debug(f"No LLM conditions met for node {node.id}, staying on current node")
+        return None
     
     def _process_variables(self, text: str, variables: Dict[str, Any]) -> str:
         """Process variables in text using {{variable}} syntax"""
