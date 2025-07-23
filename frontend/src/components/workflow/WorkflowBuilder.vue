@@ -364,11 +364,24 @@ const handleDrop = (event: DragEvent) => {
 // Auto-connect functionality
 const autoConnectToLastNode = (newNode: Node) => {
   const nodes = getNodes.value
+  const edges = getEdges.value
+  
   if (nodes.length <= 1) return
 
-  // Find the last node (excluding the new one)
+  // Find the last node (excluding the new one) by looking for nodes that don't have outgoing connections
+  // This indicates they are "leaf" nodes and likely the most recently added
   const otherNodes = nodes.filter(n => n.id !== newNode.id)
-  const lastNode = otherNodes[otherNodes.length - 1]
+  
+  // Find nodes that don't have any outgoing edges (no edges where they are the source)
+  const nodesWithoutOutgoing = otherNodes.filter(node => {
+    return !edges.some(edge => edge.source === node.id)
+  })
+  
+  // If we have nodes without outgoing connections, use the first one found
+  // If all nodes have outgoing connections, fall back to the last node in the array
+  const lastNode = nodesWithoutOutgoing.length > 0 
+    ? nodesWithoutOutgoing[0] 
+    : otherNodes[otherNodes.length - 1]
 
   if (lastNode) {
     const newEdge: Edge = {
