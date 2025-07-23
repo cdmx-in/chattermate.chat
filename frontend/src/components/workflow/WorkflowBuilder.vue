@@ -400,6 +400,16 @@ const autoConnectToLastNode = (newNode: Node) => {
     : otherNodes[otherNodes.length - 1]
 
   if (lastNode) {
+    // Check if the new node is a condition node and the last node is not an LLM
+    if (newNode.data.nodeType === 'condition' && lastNode.data.nodeType !== 'llm') {
+      // Don't auto-connect if it would violate the rule
+      toast.info('Condition nodes can only be connected from LLM nodes.', {
+        position: 'top-center',
+        duration: 4000
+      })
+      return
+    }
+    
     const newEdge: Edge = {
       id: `${lastNode.id}-${newNode.id}`,
       source: lastNode.id,
@@ -894,6 +904,23 @@ const saveWorkflow = async () => {
 
 // Handle connection creation
 onConnect((params) => {
+  // Get the source and target nodes
+  const nodes = getNodes.value
+  const sourceNode = nodes.find(n => n.id === params.source)
+  const targetNode = nodes.find(n => n.id === params.target)
+  
+  // Check if target is a condition node
+  if (targetNode?.data.nodeType === 'condition') {
+    // Only allow LLM nodes as source for condition nodes
+    if (sourceNode?.data.nodeType !== 'llm') {
+      toast.error('Condition nodes can only be connected from LLM nodes', {
+        position: 'top-center',
+        duration: 4000
+      })
+      return
+    }
+  }
+  
   const newEdge: Edge = {
     ...params,
     id: `${params.source}-${params.target}`,
