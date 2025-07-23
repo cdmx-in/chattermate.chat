@@ -102,6 +102,7 @@ const nodeForm = ref({
   form_title: '',
   form_description: '',
   submit_button_text: 'Submit',
+  form_full_screen: false,
   // Action node
   action_type: '',
   action_url: '',
@@ -112,7 +113,10 @@ const nodeForm = ref({
   wait_duration: 5,
   wait_unit: 'seconds',
   // End node
-  final_message: ''
+  final_message: '',
+  // Landing Page node
+  landing_page_heading: '',
+  landing_page_content: ''
 })
 
 const saving = ref(false)
@@ -251,6 +255,18 @@ const validateField = (field: string, value: any, nodeType: string): string | nu
         }
       }
       break
+    
+    case 'landing_page_heading':
+      if (nodeType === 'landingPage' && (!value || value.trim() === '')) {
+        return 'Heading is required'
+      }
+      break
+    
+    case 'landing_page_content':
+      if (nodeType === 'landingPage' && (!value || value.trim() === '')) {
+        return 'Content is required'
+      }
+      break
   }
   return null
 }
@@ -274,7 +290,8 @@ const validateForm = (): boolean => {
   const fieldsToValidate = [
     'name', 'message_text', 'system_prompt', 'temperature',
     'condition_expression', 'llm_conditions', 'action_type', 'action_url',
-    'transfer_department', 'wait_duration', 'wait_unit', 'form_fields'
+    'transfer_department', 'wait_duration', 'wait_unit', 'form_fields',
+    'landing_page_heading', 'landing_page_content'
   ]
   
   fieldsToValidate.forEach(field => {
@@ -357,6 +374,9 @@ watch(() => props.selectedNode, (newNode) => {
       submit_button_text: newNode.data.config?.submit_button_text || 
                           newNode.data.submit_button_text || 
                           'Submit',
+      form_full_screen: newNode.data.config?.form_full_screen || 
+                        newNode.data.form_full_screen || 
+                        false,
       // Action node
       action_type: newNode.data.action_type || 
                    newNode.data.config?.action_type || 
@@ -382,6 +402,13 @@ watch(() => props.selectedNode, (newNode) => {
       final_message: newNode.data.final_message || 
                      newNode.data.config?.final_message || 
                      '',
+      // Landing Page node
+      landing_page_heading: newNode.data.landing_page_heading || 
+                            newNode.data.config?.landing_page_heading || 
+                            '',
+      landing_page_content: newNode.data.landing_page_content || 
+                            newNode.data.config?.landing_page_content || 
+                            '',
     }
   }
 }, { immediate: true })
@@ -389,6 +416,7 @@ watch(() => props.selectedNode, (newNode) => {
 // Get node type display name
 const getNodeTypeName = (type: string) => {
   const names = {
+    landingPage: 'Landing Page',
     message: 'Message',
     llm: 'LLM',
     condition: 'Condition',
@@ -511,7 +539,8 @@ const handleSave = async () => {
           form_fields: nodeForm.value.form_fields,
           form_title: nodeForm.value.form_title,
           form_description: nodeForm.value.form_description,
-          submit_button_text: nodeForm.value.submit_button_text
+          submit_button_text: nodeForm.value.submit_button_text,
+          form_full_screen: nodeForm.value.form_full_screen
         }
       }),
       ...(props.selectedNode.data.nodeType === 'action' && {
@@ -528,6 +557,10 @@ const handleSave = async () => {
       }),
       ...(props.selectedNode.data.nodeType === 'end' && {
         final_message: nodeForm.value.final_message
+      }),
+      ...(props.selectedNode.data.nodeType === 'landingPage' && {
+        landing_page_heading: nodeForm.value.landing_page_heading,
+        landing_page_content: nodeForm.value.landing_page_content
       })
     }
 
@@ -912,6 +945,18 @@ const handleDelete = () => {
             </div>
             
             <div class="form-group">
+              <label class="checkbox-group">
+                <input
+                  v-model="nodeForm.form_full_screen"
+                  type="checkbox"
+                  class="form-checkbox"
+                />
+                <span class="checkbox-label">Display form in full screen mode</span>
+              </label>
+              <p class="help-text">When enabled, the form will be displayed as a full screen overlay instead of within the chat interface</p>
+            </div>
+            
+            <div class="form-group">
               <label>Form Fields</label>
               <div class="form-fields-container" :class="{ 'error': validationErrors.form_fields }">
                 <div
@@ -1187,6 +1232,44 @@ const handleDelete = () => {
                 placeholder="Final message to show when ending conversation"
                 rows="3"
               ></textarea>
+            </div>
+          </template>
+
+          <!-- Landing Page Node -->
+          <template v-if="selectedNode.data.nodeType === 'landingPage'">
+            <div class="form-group">
+              <label for="landing-page-heading">Heading *</label>
+              <input
+                id="landing-page-heading"
+                v-model="nodeForm.landing_page_heading"
+                class="form-input"
+                :class="{ 'error': validationErrors.landing_page_heading }"
+                placeholder="Enter a welcoming heading for your landing page"
+                required
+                @blur="validateFieldOnChange('landing_page_heading')"
+                @input="validateFieldOnChange('landing_page_heading')"
+              />
+              <div v-if="validationErrors.landing_page_heading" class="error-message">
+                {{ validationErrors.landing_page_heading }}
+              </div>
+            </div>
+            
+            <div class="form-group">
+              <label for="landing-page-content">Content *</label>
+              <textarea
+                id="landing-page-content"
+                v-model="nodeForm.landing_page_content"
+                class="form-textarea"
+                :class="{ 'error': validationErrors.landing_page_content }"
+                placeholder="Enter the content text for your landing page. This will be displayed below the heading."
+                rows="4"
+                required
+                @blur="validateFieldOnChange('landing_page_content')"
+                @input="validateFieldOnChange('landing_page_content')"
+              ></textarea>
+              <div v-if="validationErrors.landing_page_content" class="error-message">
+                {{ validationErrors.landing_page_content }}
+              </div>
             </div>
           </template>
         </div>
@@ -2070,6 +2153,32 @@ const handleDelete = () => {
   display: inline-block !important;
   visibility: visible !important;
   opacity: 1 !important;
+}
+
+/* Additional form styles */
+.checkbox-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.checkbox-group input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.checkbox-label {
+  font-size: 0.85rem;
+  color: var(--text-color);
+  line-height: 1.4;
+}
+
+.help-text {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+  line-height: 1.3;
 }
 
 /* Override any responsive hiding that might affect buttons */

@@ -50,6 +50,7 @@ class WorkflowExecutionResult:
     request_rating: bool = False
     error: Optional[str] = None
     form_data: Optional[Dict[str, Any]] = None
+    landing_page_data: Optional[Dict[str, Any]] = None
 
 
 class WorkflowExecutionService:
@@ -63,7 +64,7 @@ class WorkflowExecutionService:
     async def execute_workflow(
         self,
         session_id: str,
-        user_message: str,
+        user_message: Optional[str],
         workflow_id: UUID,
         current_node_id: Optional[UUID] = None,
         workflow_state: Optional[Dict[str, Any]] = None,
@@ -72,7 +73,8 @@ class WorkflowExecutionService:
         model_type: str = None,
         org_id: str = None,
         agent_id: str = None,
-        customer_id: str = None
+        customer_id: str = None,
+        is_initial_execution: bool = False
     ) -> WorkflowExecutionResult:
         """
         Execute workflow for a chat session
@@ -94,8 +96,21 @@ class WorkflowExecutionService:
             WorkflowExecutionResult with execution details
         """
         try:
+            logger.info(f"Executing workflow {workflow_id} for session {session_id}")
+            logger.debug(f"Current node ID: {current_node_id}")
+            logger.debug(f"Workflow state: {workflow_state}")
+            logger.debug(f"User message: {user_message}")
+            logger.debug(f"Is initial execution: {is_initial_execution}")
+
             # Get workflow with nodes and connections
             workflow = self.workflow_repo.get_workflow_with_nodes_and_connections(workflow_id)
+            logger.debug(f"Workflow ID: {workflow.id}, Name: {workflow.name}, Status: {workflow.status}")
+            logger.debug(f"Nodes count: {len(workflow.nodes)}")
+            for i, node in enumerate(workflow.nodes):
+                logger.debug(f"Node {i+1}: ID={node.id}, Type={node.node_type}, Name={node.name}")
+            logger.debug(f"Connections count: {len(workflow.connections)}")
+            for i, conn in enumerate(workflow.connections):
+                logger.debug(f"Connection {i+1}: {conn.source_node_id} -> {conn.target_node_id}")
             if not workflow:
                 return WorkflowExecutionResult(
                     success=False,
@@ -111,31 +126,14 @@ class WorkflowExecutionService:
                     error="Workflow is not published"
                 )
             
-            # Initialize workflow state if not provided
+            # Initialize workflow state if not provided - keep it minimal
             if workflow_state is None:
-                workflow_state = {
-                    "variables": {},
-                    "history": [],
-                    "started_at": datetime.utcnow().isoformat()
-                }
-            
-            # Ensure workflow_state has required keys
-            if "variables" not in workflow_state:
-                workflow_state["variables"] = {}
-            if "history" not in workflow_state:
-                workflow_state["history"] = []
-            
-            # Store user message in workflow state
-            workflow_state["variables"]["last_user_message"] = user_message
-            workflow_state["history"].append({
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": "user_message",
-                "content": user_message
-            })
+                workflow_state = {}
             
             # Determine starting node
             if current_node_id is None:
                 current_node = self._find_start_node(workflow)
+                logger.debug(f"Found starting node: {current_node.id}")
                 if not current_node:
                     return WorkflowExecutionResult(
                         success=False,
@@ -144,6 +142,7 @@ class WorkflowExecutionService:
                     )
             else:
                 current_node = self._find_node_by_id(workflow, current_node_id)
+                logger.debug(f"Current node: {current_node}")
                 if not current_node:
                     return WorkflowExecutionResult(
                         success=False,
@@ -151,6 +150,7 @@ class WorkflowExecutionService:
                         error="Current node not found"
                     )
             
+            logger.debug(f"Executing node: {current_node}")
             # Execute current node
             result = await self._execute_node(
                 current_node,
@@ -166,17 +166,17 @@ class WorkflowExecutionService:
                 session_id
             )
             
-            # Update workflow state with execution result
-            workflow_state["history"].append({
-                "timestamp": datetime.utcnow().isoformat(),
-                "type": "node_execution",
-                "node_id": str(current_node.id),
-                "node_type": current_node.node_type.value,
-                "result": result.message
-            })
+            # Only store form data in workflow state for form nodes
+            # Remove unnecessary history and variables tracking
             
-            # Update session with new state
-            self._update_session_workflow_state(session_id, result.next_node_id, workflow_state)
+            # For landing pages and forms, set current_node_id to the current node (not next)
+            # so the system knows which node we're currently on
+            if result.landing_page_data or result.form_data:
+                # We're displaying a landing page or form - stay on current node
+                self._update_session_workflow_state(session_id, current_node.id, workflow_state)
+            else:
+                # Normal flow - move to next node
+                self._update_session_workflow_state(session_id, result.next_node_id, workflow_state)
             
             return WorkflowExecutionResult(
                 success=result.success,
@@ -188,7 +188,8 @@ class WorkflowExecutionService:
                 end_chat=result.end_chat,
                 request_rating=result.request_rating,
                 error=result.error,
-                form_data=result.form_data  # Pass through form_data
+                form_data=result.form_data,  # Pass through form_data
+                landing_page_data=result.landing_page_data  # Pass through landing_page_data
             )
             
         except Exception as e:
@@ -243,7 +244,7 @@ class WorkflowExecutionService:
             current_node_id = session.current_node_id
             
             # Validate that we're in a form waiting state
-            if workflow_state.get("variables", {}).get("form_state") != "waiting":
+            if workflow_state.get("form_state") != "waiting":
                 return WorkflowExecutionResult(
                     success=False,
                     message="No form submission expected",
@@ -251,8 +252,8 @@ class WorkflowExecutionService:
                 )
             
             # Store form submission in workflow state
-            workflow_state["variables"]["form_submission"] = form_data
-            workflow_state["variables"]["form_state"] = "submitted"
+            workflow_state["form_data"] = form_data
+            workflow_state["form_state"] = "submitted"
             
             logger.info(f"Form submission received for session {session_id}")
             logger.info(f"Form data: {form_data}")
@@ -332,6 +333,9 @@ class WorkflowExecutionService:
             elif node.node_type == NodeType.FORM:
                 return self._execute_form_node(node, workflow_state, user_message)
             
+            elif node.node_type == NodeType.LANDING_PAGE:
+                return self._execute_landing_page_node(node, workflow_state)
+            
             elif node.node_type == NodeType.ACTION:
                 return self._execute_action_node(node, workflow_state)
             
@@ -361,10 +365,11 @@ class WorkflowExecutionService:
     
     def _execute_message_node(self, node: WorkflowNode, workflow_state: Dict[str, Any]) -> WorkflowExecutionResult:
         """Execute a message node"""
-        message = node.message_text or "No message configured"
+        config = node.config or {}
+        message = config.get("message_text", "No message configured")
         
         # Process variables in message
-        message = self._process_variables(message, workflow_state["variables"])
+        message = self._process_variables(message, workflow_state)
         
         # Find next node
         next_node_id = self._find_next_node(node)
@@ -391,9 +396,10 @@ class WorkflowExecutionService:
     ) -> WorkflowExecutionResult:
         """Execute an LLM node"""
         try:
-            # Get system prompt and process variables
-            system_prompt = node.system_prompt or "You are a helpful assistant."
-            system_prompt = self._process_variables(system_prompt, workflow_state["variables"])
+            # Get system prompt from config and process variables
+            config = node.config or {}
+            system_prompt = config.get("system_prompt", "You are a helpful assistant.")
+            system_prompt = self._process_variables(system_prompt, workflow_state)
             
             # Create chat agent with custom system prompt
             chat_agent = ChatAgent(
@@ -416,8 +422,7 @@ class WorkflowExecutionService:
                 customer_id=customer_id
             )
             
-            # Store LLM response in workflow state
-            workflow_state["variables"]["last_llm_response"] = response.message
+            # Don't store LLM response in workflow state to keep it minimal
             
             # Find next node
             next_node_id = self._find_next_node(node)
@@ -448,7 +453,8 @@ class WorkflowExecutionService:
     ) -> WorkflowExecutionResult:
         """Execute a condition node"""
         try:
-            condition_expression = node.condition_expression
+            config = node.config or {}
+            condition_expression = config.get("condition_expression")
             if not condition_expression:
                 return WorkflowExecutionResult(
                     success=False,
@@ -457,7 +463,7 @@ class WorkflowExecutionService:
                 )
             
             # Evaluate condition
-            condition_result = self._evaluate_condition(condition_expression, workflow_state["variables"])
+            condition_result = self._evaluate_condition(condition_expression, workflow_state)
             
             # Find next node based on condition result
             next_node_id = self._find_conditional_next_node(node, condition_result)
@@ -484,16 +490,11 @@ class WorkflowExecutionService:
         user_message: str
     ) -> WorkflowExecutionResult:
         """Execute a form node"""
-        form_fields = node.form_fields or []
+        logger.info(f"Executing form node: {node.id}")
         config = node.config or {}
         
-        # Check for form fields in config as well (frontend stores them there)
-        if not form_fields and config.get("form_fields"):
-            form_fields = config.get("form_fields", [])
-        
-        logger.info(f"Form fields from node: {node.form_fields}")
-        logger.info(f"Form fields from config: {config.get('form_fields')}")
-        logger.info(f"Final form fields: {form_fields}")
+        # Get form fields from config (frontend stores them there)
+        form_fields = config.get("form_fields", [])
         
         if not form_fields:
             return WorkflowExecutionResult(
@@ -503,7 +504,7 @@ class WorkflowExecutionService:
             )
         
         # Check if we're waiting for form submission
-        current_state = workflow_state["variables"].get("form_state", "display")
+        current_state = workflow_state.get("form_state", "display")
         
         if current_state == "display":
             # First time hitting form node - display the form
@@ -511,15 +512,12 @@ class WorkflowExecutionService:
                 "title": config.get("form_title", "Please fill out this form"),
                 "description": config.get("form_description", ""),
                 "submit_button_text": config.get("submit_button_text", "Submit"),
-                "fields": form_fields
+                "fields": form_fields,
+                "form_full_screen": config.get("form_full_screen", False)
             }
-            
-            logger.info(f"Creating form_data: {form_data}")
-            logger.info(f"Form state: {current_state}")
-            
+            logger.debug(f"Form data: {form_data}")
             # Mark that we're waiting for form submission
-            workflow_state["variables"]["form_state"] = "waiting"
-            workflow_state["variables"]["form_node_id"] = str(node.id)
+            workflow_state["form_state"] = "waiting"
             
             result = WorkflowExecutionResult(
                 success=True,
@@ -528,54 +526,73 @@ class WorkflowExecutionService:
                 should_continue=False,  # Wait for form submission
                 form_data=form_data  # Include form data for display
             )
-            
-            logger.info(f"Returning result with form_data: {result.form_data}")
+            logger.debug(f"Form result: {result}")
             return result
         elif current_state == "submitted":
             # Form has been submitted, process and continue
-            form_submission = workflow_state["variables"].get("form_submission", {})
-            
-            logger.info(f"Processing submitted form. Form submission: {form_submission}")
-            
-            # Store form data in workflow state
-            workflow_state["variables"]["form_data"] = form_submission
-            workflow_state["variables"]["form_state"] = "completed"
+            form_submission = workflow_state.get("form_data", {})
+            logger.debug(f"Form submission: {form_submission}")
+            # Clear form state after processing
+            workflow_state.pop("form_state", None)
+            workflow_state.pop("form_data", None)
             
             # Find next node
             next_node_id = self._find_next_node(node)
-            
-            logger.info(f"Form processed. Next node: {next_node_id}")
-            
+            logger.debug(f"Next node ID: {next_node_id}")
             return WorkflowExecutionResult(
                 success=True,
-                message="Thank you for your submission!",
+                message="",
                 next_node_id=next_node_id,
                 should_continue=next_node_id is not None
             )
         else:
             # Invalid state
+            logger.debug(f"Invalid form state")
             return WorkflowExecutionResult(
                 success=False,
                 message="Invalid form state",
                 error="Invalid form state"
             )
     
+    def _execute_landing_page_node(self, node: WorkflowNode, workflow_state: Dict[str, Any]) -> WorkflowExecutionResult:
+        """Execute a landing page node"""
+        logger.info(f"Executing landing page node: {node.id}")
+        heading = node.config.get("landing_page_heading", "Welcome")
+        content = node.config.get("landing_page_content", "Thank you for visiting!")
+        
+        # Process variables in heading and content
+        heading = self._process_variables(heading, workflow_state)
+        content = self._process_variables(content, workflow_state)
+        
+        # Create landing page data
+        landing_page_data = {
+            "heading": heading,
+            "content": content
+        }
+        
+        # Don't find next node immediately - wait for user to proceed
+        result = WorkflowExecutionResult(
+            success=True,
+            message="",  # No text message for landing page display
+            next_node_id=None,  # Don't proceed yet
+            should_continue=False,  # Wait for user to proceed
+            landing_page_data=landing_page_data  # Include landing page data for display
+        )
+        logger.debug(f"Landing page result: {result}")
+        return result
+    
     def _execute_action_node(self, node: WorkflowNode, workflow_state: Dict[str, Any]) -> WorkflowExecutionResult:
         """Execute an action node"""
         # This is a simplified implementation
         # In a full implementation, you'd handle webhooks, database operations, etc.
         
-        action_type = node.action_type
-        action_config = node.action_config or {}
+        config = node.config or {}
+        action_type = config.get("action_type")
+        action_config = config.get("action_config", {})
         
         logger.info(f"Executing action: {action_type}")
         
-        # Store action execution in workflow state
-        workflow_state["variables"]["last_action"] = {
-            "type": action_type,
-            "config": action_config,
-            "executed_at": datetime.utcnow().isoformat()
-        }
+        # Don't store action execution in workflow state to keep it minimal
         
         # Find next node
         next_node_id = self._find_next_node(node)
@@ -593,7 +610,8 @@ class WorkflowExecutionService:
         workflow_state: Dict[str, Any]
     ) -> WorkflowExecutionResult:
         """Execute a human transfer node"""
-        transfer_rules = node.transfer_rules or {}
+        config = node.config or {}
+        transfer_rules = config.get("transfer_rules", {})
         message = transfer_rules.get("message", "Transferring you to a human agent...")
         
         return WorkflowExecutionResult(
@@ -623,10 +641,10 @@ class WorkflowExecutionService:
     
     def _execute_end_node(self, node: WorkflowNode, workflow_state: Dict[str, Any]) -> WorkflowExecutionResult:
         """Execute an end node"""
-        message = node.message_text or "Thank you for using our service!"
+        config = node.config or {}
+        message = config.get("message_text", "Thank you for using our service!")
         
         # Check if we should request rating
-        config = node.config or {}
         request_rating = config.get("request_rating", False)
         
         return WorkflowExecutionResult(
@@ -718,4 +736,6 @@ class WorkflowExecutionService:
                 logger.error(f"Failed to update session {session_id} workflow state")
             
         except Exception as e:
-            logger.error(f"Error updating session workflow state: {str(e)}") 
+            logger.error(f"Error updating session workflow state: {str(e)}")
+
+ 

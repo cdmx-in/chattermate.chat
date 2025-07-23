@@ -46,7 +46,7 @@ class WorkflowNodeRepository:
         """Get all nodes for a workflow"""
         return self.db.query(WorkflowNode).filter(
             WorkflowNode.workflow_id == workflow_id
-        ).all()
+        ).join(WorkflowConnection, WorkflowNode.id == WorkflowConnection.source_node_id).all()
 
     def get_node_by_id(self, node_id: UUID) -> Optional[WorkflowNode]:
         """Get node by ID"""

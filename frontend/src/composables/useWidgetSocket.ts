@@ -22,6 +22,8 @@ export function useWidgetSocket() {
 
     let socket: Socket | null = null
     let onTakeoverCallback: ((data: { session_id: string, user_name: string }) => void) | null = null
+    let onWorkflowStateCallback: ((data: any) => void) | null = null
+    let onWorkflowProceededCallback: ((data: any) => void) | null = null
 
     const initializeSocket = (sessionId: string) => {
         const token = localStorage.getItem('ctid');
@@ -137,6 +139,8 @@ export function useWidgetSocket() {
         socket.on('rating_submitted', handleRatingSubmitted)
         socket.on('display_form', handleDisplayForm)
         socket.on('form_submitted', handleFormSubmitted)
+        socket.on('workflow_state', handleWorkflowState)
+        socket.on('workflow_proceeded', handleWorkflowProceeded)
 
         return socket
     }
@@ -184,6 +188,16 @@ export function useWidgetSocket() {
     // Register takeover callback
     const onTakeover = (callback: (data: { session_id: string, user_name: string }) => void) => {
         onTakeoverCallback = callback
+    }
+
+    // Register workflow state callback
+    const onWorkflowState = (callback: (data: any) => void) => {
+        onWorkflowStateCallback = callback
+    }
+
+    // Register workflow proceeded callback
+    const onWorkflowProceeded = (callback: (data: any) => void) => {
+        onWorkflowProceededCallback = callback
     }
 
     // Socket event handlers
@@ -254,19 +268,33 @@ export function useWidgetSocket() {
 
     // Form display handler
     const handleDisplayForm = (data: { form_data: any, session_id: string }) => {
+        console.log('Form display handler in composable:', data)
         loading.value = false
         currentForm.value = data.form_data
         
-        // Add form message to chat
-        messages.value.push({
-            message: '',
-            message_type: 'form',
-            created_at: new Date().toISOString(),
-            session_id: data.session_id,
-            attributes: {
-                form_data: data.form_data
+        // Check if this is a full screen form
+        if (data.form_data?.form_full_screen === true) {
+            console.log('Full screen form detected, triggering workflow state callback')
+            // Trigger workflow state callback for full screen forms
+            if (onWorkflowStateCallback) {
+                onWorkflowStateCallback({
+                    type: 'form',
+                    form_data: data.form_data,
+                    session_id: data.session_id
+                })
             }
-        })
+        } else {
+            // Add form message to chat for regular forms
+            messages.value.push({
+                message: '',
+                message_type: 'form',
+                created_at: new Date().toISOString(),
+                session_id: data.session_id,
+                attributes: {
+                    form_data: data.form_data
+                }
+            })
+        }
     }
 
     // Form submission confirmation handler
@@ -275,6 +303,22 @@ export function useWidgetSocket() {
         if (data.success) {
             // Success message will come through regular chat_response
             console.log('Form submitted successfully')
+        }
+    }
+
+    // Workflow state handler
+    const handleWorkflowState = (data: any) => {
+        console.log('Workflow state received in composable:', data)
+        if (onWorkflowStateCallback) {
+            onWorkflowStateCallback(data)
+        }
+    }
+
+    // Workflow proceeded handler
+    const handleWorkflowProceeded = (data: { success: boolean }) => {
+        console.log('Workflow proceeded in composable:', data)
+        if (onWorkflowProceededCallback) {
+            onWorkflowProceededCallback(data)
         }
     }
 
@@ -298,6 +342,20 @@ export function useWidgetSocket() {
         
         // Clear current form after submission
         currentForm.value = null
+    }
+
+    // Get workflow state function
+    const getWorkflowState = async () => {
+        if (!socket) return
+        console.log('Getting workflow state 12')
+        socket.emit('get_workflow_state')
+    }
+
+    // Proceed workflow function
+    const proceedWorkflow = async () => {
+        if (!socket) return
+        
+        socket.emit('proceed_workflow', {})
     }
 
     // Send message function
@@ -342,6 +400,8 @@ export function useWidgetSocket() {
             socket = null
         }
         onTakeoverCallback = null
+        onWorkflowStateCallback = null
+        onWorkflowProceededCallback = null
     }
 
     return {
@@ -361,6 +421,10 @@ export function useWidgetSocket() {
         onTakeover,
         submitRating,
         currentForm,
-        submitForm
+        submitForm,
+        getWorkflowState,
+        proceedWorkflow,
+        onWorkflowState,
+        onWorkflowProceeded
     }
 } 

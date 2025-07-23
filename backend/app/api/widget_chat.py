@@ -17,7 +17,9 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import datetime
+import json
 import os
+import re
 from fastapi import APIRouter
 from app.core.socketio import sio
 from app.core.logger import get_logger
@@ -56,6 +58,86 @@ logger = get_logger(__name__)
 def format_datetime(dt):
     """Convert datetime to ISO format string"""
     return dt.isoformat() if dt else None
+
+def validate_email(email: str) -> bool:
+    """Validate email format"""
+    if not email:
+        return False
+    email_pattern = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    return re.match(email_pattern, email) is not None
+
+def validate_phone_number(phone: str) -> bool:
+    """Validate phone number format"""
+    if not phone:
+        return False
+    # Remove all non-digit characters
+    clean_phone = re.sub(r'\D', '', phone)
+    # Check if it's between 7 and 15 digits (international standard)
+    return 7 <= len(clean_phone) <= 15
+
+def validate_form_field(field_config: dict, value: any) -> str:
+    """Validate a single form field based on its configuration"""
+    field_name = field_config.get('name', 'Field')
+    field_label = field_config.get('label', field_name)
+    field_type = field_config.get('type', 'text')
+    required = field_config.get('required', False)
+    min_length = field_config.get('minLength', 0)
+    max_length = field_config.get('maxLength', None)
+    
+    # Required field validation
+    if required and (value is None or str(value).strip() == ''):
+        return f"{field_label} is required"
+    
+    # Skip further validation if field is empty and not required
+    if value is None or str(value).strip() == '':
+        return None
+    
+    value_str = str(value).strip()
+    
+    # Email validation
+    if field_type == 'email' and not validate_email(value_str):
+        return f"Please enter a valid email address for {field_label}"
+    
+    # Phone number validation
+    if field_type == 'tel' and not validate_phone_number(value_str):
+        return f"Please enter a valid phone number for {field_label}"
+    
+    # Length validation for text fields
+    if field_type in ['text', 'textarea']:
+        if min_length and len(value_str) < min_length:
+            return f"{field_label} must be at least {min_length} characters"
+        if max_length and len(value_str) > max_length:
+            return f"{field_label} must not exceed {max_length} characters"
+    
+    # Number validation
+    if field_type == 'number':
+        try:
+            num_value = float(value_str)
+            if min_length is not None and num_value < min_length:
+                return f"{field_label} must be at least {min_length}"
+            if max_length is not None and num_value > max_length:
+                return f"{field_label} must not exceed {max_length}"
+        except ValueError:
+            return f"{field_label} must be a valid number"
+    
+    return None
+
+def validate_form_data(form_fields: list, form_data: dict) -> list:
+    """Validate form data against field configurations"""
+    errors = []
+    
+    for field_config in form_fields:
+        field_name = field_config.get('name')
+        if not field_name:
+            continue
+            
+        value = form_data.get(field_name)
+        error = validate_form_field(field_config, value)
+        
+        if error:
+            errors.append(error)
+    
+    return errors
 
 @sio.on('connect', namespace='/widget')
 async def widget_connect(sid, environ, auth):
@@ -845,6 +927,297 @@ async def handle_rating_submission(sid, data):
         }, to=sid, namespace='/widget')
 
 
+@sio.on('get_workflow_state', namespace='/widget')
+@socket_rate_limit(namespace='/widget') 
+async def handle_get_workflow_state(sid):
+    """Get current workflow state and execute next node if no chat history"""
+    try:
+        logger.info(f"Getting workflow state for sid {sid}")
+        # Get session data and authenticate
+        session = await sio.get_session(sid, namespace='/widget')
+        widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, session)
+        
+        if not widget_id or not org_id:
+            logger.error(f"Widget authentication failed for sid {sid}")
+            await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
+            return
+
+        session_id = session['session_id']
+        # Verify session matches authenticated data
+        if (session['widget_id'] != widget_id or 
+            session['org_id'] != org_id or 
+            session['customer_id'] != customer_id):
+            raise ValueError("Session mismatch")
+
+        db = next(get_db())
+        session_repo = SessionToAgentRepository(db)
+        chat_repo = ChatRepository(db)
+        
+        # Get active session
+        active_session = session_repo.get_active_customer_session(
+            customer_id=customer_id
+        )
+        
+        if not active_session:
+            raise ValueError("No active session found")
+
+        # Check if there's any chat history
+        chat_history = chat_repo.get_session_history(session_id)
+        has_history = len(chat_history) > 0
+
+        # If agent uses workflow, execute workflow node
+        if active_session.workflow_id:
+            workflow_service = WorkflowExecutionService(db)
+            
+            # Set current_node_id to None if empty to start from first node
+            current_node_id = active_session.current_node_id
+            if not current_node_id and not has_history:
+                # No current node and no history - start from beginning
+                current_node_id = None
+            
+            # Execute workflow without user message to get the current node
+            workflow_result = await workflow_service.execute_workflow(
+                session_id=session_id,
+                user_message=None,  # No user message for initial execution
+                workflow_id=active_session.workflow_id,
+                current_node_id=current_node_id,
+                workflow_state=active_session.workflow_state or {},
+                api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
+                model_name=session['ai_config'].model_name,
+                model_type=session['ai_config'].model_type,
+                org_id=org_id,
+                agent_id=session['agent_id'],
+                customer_id=customer_id,
+                is_initial_execution=True  # Flag to indicate this is initial execution
+            )
+            
+            if workflow_result.success:
+                logger.debug(f"Workflow result: {workflow_result}")
+                # Handle different node types
+                if workflow_result.form_data:
+                    # It's a form node - emit form display
+                    await sio.emit('workflow_state', {
+                        'type': 'form',
+                        'form_data': workflow_result.form_data,
+                        'session_id': session_id,
+                        'has_history': has_history,
+                        'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
+                    }, room=sid, namespace='/widget')
+                    
+                elif workflow_result.landing_page_data:
+                    # It's a landing page node - emit landing page display
+                    await sio.emit('workflow_state', {
+                        'type': 'landing_page',
+                        'landing_page_data': workflow_result.landing_page_data,
+                        'session_id': session_id,
+                        'has_history': has_history,
+                        'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
+                    }, room=sid, namespace='/widget')
+                    
+                elif workflow_result.message:
+                    # Regular message node - store and emit
+                    chat_repo.create_message({
+                        "message": workflow_result.message,
+                        "message_type": "bot",
+                        "session_id": session_id,
+                        "organization_id": org_id,
+                        "agent_id": session['agent_id'],
+                        "customer_id": customer_id,
+                        "attributes": {
+                            "workflow_execution": True,
+                            "workflow_id": str(active_session.workflow_id),
+                            "current_node_id": str(workflow_result.next_node_id) if workflow_result.next_node_id else None,
+                            "initial_message": True
+                        }
+                    })
+                    
+                    await sio.emit('workflow_state', {
+                        'type': 'message',
+                        'message': workflow_result.message,
+                        'session_id': session_id,
+                        'has_history': has_history,
+                        'button_text': 'Continue Conversation'
+                    }, room=sid, namespace='/widget')
+                else:
+                    # No initial content - just return state
+                    await sio.emit('workflow_state', {
+                        'type': 'ready',
+                        'session_id': session_id,
+                        'has_history': has_history,
+                        'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
+                    }, room=sid, namespace='/widget')
+            else:
+                # Workflow execution failed
+                await sio.emit('workflow_state', {
+                    'type': 'error',
+                    'error': workflow_result.error,
+                    'session_id': session_id,
+                    'has_history': has_history,
+                    'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
+                }, room=sid, namespace='/widget')
+        else:
+            # No workflow or has history - just return current state
+            await sio.emit('workflow_state', {
+                'type': 'ready',
+                'session_id': session_id,
+                'has_history': has_history,
+                'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
+            }, room=sid, namespace='/widget')
+
+    except Exception as e:
+        logger.error(f"Error getting workflow state for sid {sid}: {str(e)}")
+        logger.error(traceback.format_exc())
+        await sio.emit('error', {
+            'error': 'Failed to get workflow state',
+            'type': 'workflow_error'
+        }, to=sid, namespace='/widget')
+
+
+@sio.on('proceed_workflow', namespace='/widget')
+@socket_rate_limit(namespace='/widget')
+async def handle_proceed_workflow(sid, data):
+    """Proceed to next workflow node after landing page interaction"""
+    try:
+        logger.info(f"Proceeding workflow for sid {sid}")
+        # Get session data and authenticate
+        session = await sio.get_session(sid, namespace='/widget')
+        widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, session)
+        
+        if not widget_id or not org_id:
+            logger.error(f"Widget authentication failed for sid {sid}")
+            await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
+            return
+
+        session_id = session['session_id']
+        # Verify session matches authenticated data
+        if (session['widget_id'] != widget_id or 
+            session['org_id'] != org_id or 
+            session['customer_id'] != customer_id):
+            raise ValueError("Session mismatch")
+
+        db = next(get_db())
+        session_repo = SessionToAgentRepository(db)
+        chat_repo = ChatRepository(db)
+        
+        # Get active session
+        active_session = session_repo.get_active_customer_session(
+            customer_id=customer_id
+        )
+
+        if not active_session or not active_session.workflow_id:
+            raise ValueError("No active workflow session found")
+
+        # Simply update to next node and execute it
+        workflow_service = WorkflowExecutionService(db)
+        
+        # Get current node and find next node
+        from app.repositories.workflow import WorkflowRepository
+        workflow_repo = WorkflowRepository(db)
+        workflow = workflow_repo.get_workflow_with_nodes_and_connections(active_session.workflow_id)
+        
+        if not workflow:
+            raise ValueError("Workflow not found")
+        
+        # Find current node
+        current_node = None
+        for node in workflow.nodes:
+            if node.id == active_session.current_node_id:
+                current_node = node
+                break
+        
+        if not current_node:
+            raise ValueError("Current node not found")
+        
+        # Find next node
+        next_node_id = None
+        for connection in current_node.outgoing_connections:
+            next_node_id = connection.target_node_id
+            break
+        
+        if not next_node_id:
+            await sio.emit('workflow_proceeded', {'success': True, 'message': 'End of workflow'}, room=sid, namespace='/widget')
+            return
+        
+        logger.debug(f"Next node ID: {next_node_id}")
+        logger.debug(f"Active session: {active_session}")
+        logger.debug(f"Workflow state: {active_session.workflow_state}")
+        # Update session with next node
+        session_repo.update_workflow_state(session_id, next_node_id, active_session.workflow_state or {})
+        
+        # Execute the next workflow node
+        workflow_result = await workflow_service.execute_workflow(
+            session_id=session_id,
+            user_message=None,
+            workflow_id=active_session.workflow_id,
+            current_node_id=next_node_id,
+            workflow_state=active_session.workflow_state or {},
+            org_id=org_id,
+            agent_id=session['agent_id'],
+            customer_id=customer_id,
+            api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
+            model_name=session['ai_config'].model_name,
+            model_type=session['ai_config'].model_type
+        )
+        
+        if workflow_result.success:
+            logger.debug(f"Workflow result: {workflow_result}")
+            # Handle the next node type
+            if workflow_result.form_data:
+                # It's a form node - emit form display
+                await sio.emit('display_form', {
+                    'form_data': workflow_result.form_data,
+                    'session_id': session_id
+                }, room=session_id, namespace='/widget')
+                
+            elif workflow_result.message:
+                # Regular message node - store and emit
+                chat_repo.create_message({
+                    "message": workflow_result.message,
+                    "message_type": "bot",
+                    "session_id": session_id,
+                    "organization_id": org_id,
+                    "agent_id": session['agent_id'],
+                    "customer_id": customer_id,
+                    "attributes": {
+                        "workflow_execution": True,
+                        "workflow_id": str(active_session.workflow_id),
+                        "current_node_id": str(workflow_result.next_node_id) if workflow_result.next_node_id else None,
+                        "transfer_to_human": workflow_result.transfer_to_human,
+                        "end_chat": workflow_result.end_chat,
+                        "request_rating": workflow_result.request_rating,
+                    }
+                })
+                
+                # Emit chat response
+                await sio.emit('chat_response', {
+                    'message': workflow_result.message,
+                    'type': 'chat_response',
+                    'transfer_to_human': workflow_result.transfer_to_human,
+                    'end_chat': workflow_result.end_chat,
+                    'request_rating': workflow_result.request_rating,
+                    'shopify_output': None
+                }, room=session_id, namespace='/widget')
+            
+            # Emit success
+            await sio.emit('workflow_proceeded', {
+                'success': True
+            }, room=sid, namespace='/widget')
+        else:
+            # Handle error
+            await sio.emit('error', {
+                'error': workflow_result.error or 'Failed to proceed workflow',
+                'type': 'workflow_error'
+            }, to=sid, namespace='/widget')
+
+    except Exception as e:
+        logger.error(f"Error proceeding workflow for sid {sid}: {str(e)}")
+        logger.error(traceback.format_exc())
+        await sio.emit('error', {
+            'error': 'Failed to proceed workflow',
+            'type': 'workflow_error'
+        }, to=sid, namespace='/widget')
+
+
 @sio.on('submit_form', namespace='/widget')
 @socket_rate_limit(namespace='/widget')
 async def handle_form_submission(sid, data):
@@ -881,6 +1254,38 @@ async def handle_form_submission(sid, data):
 
         if not active_session or not active_session.workflow_id:
             raise ValueError("No active workflow session found")
+
+        # Get the current form configuration for validation
+        from app.repositories.workflow import WorkflowRepository
+        workflow_repo = WorkflowRepository(db)
+        workflow = workflow_repo.get_workflow_with_nodes_and_connections(active_session.workflow_id)
+        
+        if not workflow:
+            raise ValueError("Workflow not found")
+        
+        # Find the current form node to get field configurations
+        current_node = None
+        for node in workflow.nodes:
+            if node.id == active_session.current_node_id:
+                current_node = node
+                break
+        
+        if current_node and current_node.node_type.value == 'form':
+            # Get form fields configuration from config JSON
+            config = current_node.config or {}
+            form_fields = config.get("form_fields", [])
+            
+            # Validate form data against field configurations
+            validation_errors = validate_form_data(form_fields, form_data)
+            
+            if validation_errors:
+                error_message = "; ".join(validation_errors)
+                logger.error(f"Form validation failed: {error_message}")
+                await sio.emit('error', {
+                    'error': error_message,
+                    'type': 'validation_error'
+                }, to=sid, namespace='/widget')
+                return
 
         # Submit form through workflow service
         workflow_service = WorkflowExecutionService(db)

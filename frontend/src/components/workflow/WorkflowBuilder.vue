@@ -59,6 +59,13 @@ const nodeTypes = {}
 // Available node types for sidebar
 const availableNodeTypes = [
   {
+    type: 'landingPage',
+    label: 'Landing Page',
+    icon: '🏠',
+    description: 'Display a welcome screen with customizable heading and content',
+    color: '#6366F1'
+  },
+  {
     type: 'message',
     label: 'Message',
     icon: '💬',
@@ -133,6 +140,7 @@ const generateNodeId = (type: string) => {
 // Get node type display name
 const getNodeTypeName = (type: string) => {
   const names = {
+    landingPage: 'Landing Page',
     message: 'Message',
     llm: 'LLM',
     condition: 'Condition',
@@ -174,6 +182,7 @@ const canPublish = computed(() => hasNodes.value && isDraft.value && hasValidCon
 // Map backend node types to frontend enum values
 const mapNodeTypeToFrontend = (backendType: string) => {
   const mapping = {
+    'landing_page': 'landingPage', // Backend snake_case to frontend camelCase
     'message': 'message',
     'llm': 'llm',
     'condition': 'condition',
@@ -189,6 +198,7 @@ const mapNodeTypeToFrontend = (backendType: string) => {
 // Map frontend node types to backend enum values
 const mapNodeTypeToBackend = (frontendType: string) => {
   const mapping = {
+    'landingPage': 'landing_page', // Frontend camelCase to backend snake_case
     'message': 'message',
     'llm': 'llm',
     'condition': 'condition',
@@ -224,7 +234,7 @@ const loadWorkflowData = async () => {
           icon: nodeType?.icon || '📄',
           color: nodeType?.color || '#6B7280',
           // Store all backend properties directly in data for easy access
-          message_text: node.message_text,
+          message_text: node.config?.message_text,
           system_prompt: node.system_prompt,
           temperature: node.temperature,
           model_id: node.model_id,
@@ -232,12 +242,15 @@ const loadWorkflowData = async () => {
           form_title: node.form_title,
           form_description: node.form_description,
           submit_button_text: node.submit_button_text,
+          form_full_screen: node.form_full_screen,
           condition_expression: node.condition_expression,
           action_type: node.action_type,
           action_config: node.action_config,
           transfer_rules: node.transfer_rules,
           wait_duration: node.wait_duration,
           wait_until_condition: node.wait_until_condition,
+          landing_page_heading: node.landing_page_heading,
+          landing_page_content: node.landing_page_content,
           // Also spread config for backward compatibility
           ...node.config
         },
@@ -423,7 +436,9 @@ const saveNodeProperties = (properties: any) => {
         form_fields: updatedNode.form_fields,
         form_title: updatedNode.form_title,
         form_description: updatedNode.form_description,
-        submit_button_text: updatedNode.submit_button_text
+        submit_button_text: updatedNode.submit_button_text,
+        landing_page_heading: updatedNode.landing_page_heading,
+        landing_page_content: updatedNode.landing_page_content
       }
       
       // Update position if it changed
@@ -457,7 +472,8 @@ const saveNodeProperties = (properties: any) => {
             form_fields: properties.form_fields,
             form_title: properties.form_title,
             form_description: properties.form_description,
-            submit_button_text: properties.submit_button_text
+            submit_button_text: properties.submit_button_text,
+            form_full_screen: properties.form_full_screen
           }),
           ...(selectedNode.value.data.nodeType === 'action' && {
             action_type: properties.action_type,
@@ -473,6 +489,10 @@ const saveNodeProperties = (properties: any) => {
           }),
           ...(selectedNode.value.data.nodeType === 'end' && {
             final_message: properties.final_message
+          }),
+          ...(selectedNode.value.data.nodeType === 'landingPage' && {
+            landing_page_heading: properties.landing_page_heading,
+            landing_page_content: properties.landing_page_content
           })
         }
       }
@@ -494,7 +514,9 @@ const saveNodeProperties = (properties: any) => {
         form_fields: properties.form_fields,
         form_title: properties.form_title,
         form_description: properties.form_description,
-        submit_button_text: properties.submit_button_text
+        submit_button_text: properties.submit_button_text,
+        landing_page_heading: properties.landing_page_heading,
+        landing_page_content: properties.landing_page_content
       })
       
       // Update the label to include the new name with icon
@@ -503,6 +525,11 @@ const saveNodeProperties = (properties: any) => {
       
       // Clear any validation error styling for this node
       resetNodeValidationStyle(selectedNode.value)
+      
+      // Update form_full_screen property specifically
+      if (selectedNode.value.data.nodeType === 'form') {
+        selectedNode.value.data.form_full_screen = properties.form_full_screen
+      }
       
       // Auto-save the workflow to persist the changes
       saveWorkflow()
@@ -529,7 +556,8 @@ const saveNodeProperties = (properties: any) => {
             form_fields: properties.form_fields,
             form_title: properties.form_title,
             form_description: properties.form_description,
-            submit_button_text: properties.submit_button_text
+            submit_button_text: properties.submit_button_text,
+            form_full_screen: properties.form_full_screen
           }),
           ...(selectedNode.value.data.nodeType === 'action' && {
             action_type: properties.action_type,
@@ -545,6 +573,10 @@ const saveNodeProperties = (properties: any) => {
           }),
           ...(selectedNode.value.data.nodeType === 'end' && {
             final_message: properties.final_message
+          }),
+          ...(selectedNode.value.data.nodeType === 'landingPage' && {
+            landing_page_heading: properties.landing_page_heading,
+            landing_page_content: properties.landing_page_content
           })
         }
       }
@@ -566,8 +598,15 @@ const saveNodeProperties = (properties: any) => {
         form_fields: properties.form_fields,
         form_title: properties.form_title,
         form_description: properties.form_description,
-        submit_button_text: properties.submit_button_text
+        submit_button_text: properties.submit_button_text,
+        landing_page_heading: properties.landing_page_heading,
+        landing_page_content: properties.landing_page_content
       })
+      
+      // Update form_full_screen property specifically for form nodes
+      if (selectedNode.value.data.nodeType === 'form') {
+        selectedNode.value.data.form_full_screen = properties.form_full_screen
+      }
       
       // Update the label to include the new name with icon
       const nodeType = availableNodeTypes.find(t => t.type === selectedNode.value?.data.nodeType)
@@ -704,6 +743,18 @@ const validateAllNodes = (): { isValid: boolean; errors: string[] } => {
         }
         break
       
+      case 'landingPage':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        if (!nodeData.landing_page_heading || nodeData.landing_page_heading.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Heading is required`)
+        }
+        if (!nodeData.landing_page_content || nodeData.landing_page_content.trim() === '') {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Content is required`)
+        }
+        break
+      
       default:
         if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
           errors.push(`${nodeType} node: Name is required`)
@@ -777,6 +828,11 @@ const highlightNodesWithErrors = () => {
           hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
                     !nodeData.wait_duration || nodeData.wait_duration < 1 ||
                     !nodeData.wait_unit || nodeData.wait_unit.trim() === ''
+          break
+        case 'landingPage':
+          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
+                    !nodeData.landing_page_heading || nodeData.landing_page_heading.trim() === '' ||
+                    !nodeData.landing_page_content || nodeData.landing_page_content.trim() === ''
           break
         default:
           hasError = !nodeData.cleanName || nodeData.cleanName.trim() === ''
@@ -907,6 +963,7 @@ const saveWorkflow = async () => {
     // Get clean node type name without icons
     const getCleanNodeTypeName = (nodeType: string) => {
       const typeNames = {
+        landingPage: 'Landing Page',
         message: 'Message',
         llm: 'LLM',
         condition: 'Condition',
@@ -966,7 +1023,7 @@ const saveWorkflow = async () => {
           icon: nodeType?.icon || '📄',
           color: nodeType?.color || '#6B7280',
           // Store all backend properties directly in data for easy access
-          message_text: node.message_text,
+          message_text: node.config?.message_text,
           system_prompt: node.system_prompt,
           temperature: node.temperature,
           model_id: node.model_id,
@@ -974,6 +1031,7 @@ const saveWorkflow = async () => {
           form_title: node.form_title,
           form_description: node.form_description,
           submit_button_text: node.submit_button_text,
+          form_full_screen: node.form_full_screen,
           condition_expression: node.condition_expression,
           action_type: node.action_type,
           action_config: node.action_config,

@@ -56,30 +56,9 @@ class WorkflowNodeOperation(BaseModel):
     position_y: Optional[float] = None
     config: Optional[Dict[str, Any]] = None
     
-    # Message node fields
-    message_text: Optional[str] = None
-    
-    # LLM node fields
-    system_prompt: Optional[str] = None
-    temperature: Optional[float] = None
-    model_id: Optional[int] = None
-    
-    # Form node fields
-    form_fields: Optional[List[Dict[str, Any]]] = None
-    
-    # Condition node fields
-    condition_expression: Optional[str] = None
-    
-    # Action node fields
-    action_type: Optional[ActionType] = None
-    action_config: Optional[Dict[str, Any]] = None
-    
-    # Transfer node fields
-    transfer_rules: Optional[Dict[str, Any]] = None
-    
-    # Wait node fields
-    wait_duration: Optional[int] = None
-    wait_until_condition: Optional[str] = None
+    # Landing Page node fields
+    landing_page_heading: Optional[str] = None
+    landing_page_content: Optional[str] = None
 
 
 class WorkflowConnectionOperation(BaseModel):
@@ -134,13 +113,6 @@ class WorkflowNodeBase(BaseModel):
     # Message node fields
     message_text: Optional[str] = None
     
-    # LLM node fields
-    system_prompt: Optional[str] = None
-    temperature: Optional[float] = 0.7
-    model_id: Optional[int] = None
-    
-
-    
     # Condition node fields
     condition_expression: Optional[str] = None
     
@@ -154,6 +126,10 @@ class WorkflowNodeBase(BaseModel):
     # Wait node fields
     wait_duration: Optional[int] = None  # Duration in seconds
     wait_until_condition: Optional[str] = None
+    
+    # Landing Page node fields
+    landing_page_heading: Optional[str] = None
+    landing_page_content: Optional[str] = None
 
 
 class WorkflowNodeCreate(WorkflowNodeBase):
@@ -168,30 +144,9 @@ class WorkflowNodeUpdate(BaseModel):
     position_y: Optional[float] = None
     config: Optional[Dict[str, Any]] = None
     
-    # Message node fields
-    message_text: Optional[str] = None
-    
-    # LLM node fields
-    system_prompt: Optional[str] = None
-    temperature: Optional[float] = None
-    model_id: Optional[int] = None
-    
-    # Form node fields
-    form_fields: Optional[List[Dict[str, Any]]] = None
-    
-    # Condition node fields
-    condition_expression: Optional[str] = None
-    
-    # Action node fields
-    action_type: Optional[ActionType] = None
-    action_config: Optional[Dict[str, Any]] = None
-    
-    # Transfer node fields
-    transfer_rules: Optional[Dict[str, Any]] = None
-    
-    # Wait node fields
-    wait_duration: Optional[int] = None
-    wait_until_condition: Optional[str] = None
+    # Landing Page node fields
+    landing_page_heading: Optional[str] = None
+    landing_page_content: Optional[str] = None
 
 
 class WorkflowNodeResponse(WorkflowNodeBase):

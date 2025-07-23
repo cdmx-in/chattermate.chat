@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from sqlalchemy import Column, Integer, String, Text, ForeignKey, JSON, Float, DateTime, Enum
+from sqlalchemy import Column, String, Text, ForeignKey, JSON, Float, DateTime, Enum
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
@@ -34,6 +34,7 @@ class NodeType(str, enum.Enum):
     HUMAN_TRANSFER = "human_transfer"
     WAIT = "wait"
     END = "end"
+    LANDING_PAGE = "landing_page"
 
 
 class ActionType(str, enum.Enum):
@@ -58,30 +59,7 @@ class WorkflowNode(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
-    # For Message nodes
-    message_text = Column(Text)
-    
-    # For LLM nodes
-    system_prompt = Column(Text)
-    temperature = Column(Float, default=0.7)
-    model_id = Column(Integer, ForeignKey("ai_configs.id"))
-    
-    # For Form nodes
-    form_fields = Column(JSON, default=[])  # Array of field definitions
-    
-    # For Condition nodes
-    condition_expression = Column(Text)
-    
-    # For Action nodes
-    action_type = Column(String)  # webhook, database, email, etc.
-    action_config = Column(JSON, default={})
-    
-    # For Human Transfer nodes
-    transfer_rules = Column(JSON, default={})
-    
-    # For Wait nodes
-    wait_duration = Column(Integer)  # in seconds
-    wait_until_condition = Column(Text)  # optional condition to end wait early
+
 
     # Relationships
     workflow = relationship("Workflow", back_populates="nodes")
@@ -97,7 +75,6 @@ class WorkflowNode(Base):
         back_populates="target_node",
         cascade="all, delete-orphan"
     )
-    model = relationship("AIConfig")
 
     class Config:
         orm_mode = True 
