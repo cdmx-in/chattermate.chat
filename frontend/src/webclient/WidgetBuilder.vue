@@ -235,7 +235,7 @@ const checkAuthorization = async () => {
 
         // Get workflow state after successful connection
         if (data.agent?.workflow) {
-            console.log('Getting workflow state')
+            console.log('Getting workflow state after authorization')
             await getWorkflowState()
         }
         
@@ -430,15 +430,30 @@ const validateForm = (formConfig: any): boolean => {
 
 // Handle form submission
 const handleFormSubmit = async (formConfig: any) => {
-    if (isSubmittingForm.value) return
+    console.log('handleFormSubmit called with config:', formConfig)
+    console.log('Current form data:', formData.value)
+    console.log('isSubmittingForm:', isSubmittingForm.value)
     
-    if (!validateForm(formConfig)) {
+    if (isSubmittingForm.value) {
+        console.log('Form submission already in progress, returning')
+        return
+    }
+    
+    console.log('Validating form...')
+    const isValid = validateForm(formConfig)
+    console.log('Form validation result:', isValid)
+    console.log('Form errors:', formErrors.value)
+    
+    if (!isValid) {
+        console.log('Form validation failed, not submitting')
         return
     }
     
     try {
+        console.log('Starting form submission...')
         isSubmittingForm.value = true
         await submitForm(formData.value)
+        console.log('Form submitted successfully')
         
         // Remove the form message from messages array
         const formIndex = messages.value.findIndex(msg => 
@@ -447,21 +462,26 @@ const handleFormSubmit = async (formConfig: any) => {
         )
         if (formIndex !== -1) {
             messages.value.splice(formIndex, 1)
+            console.log('Removed form message from chat')
         }
         
         // Clear form data after successful submission
         formData.value = {}
         formErrors.value = {}
+        console.log('Cleared form data and errors')
     } catch (error) {
         console.error('Failed to submit form:', error)
     } finally {
         isSubmittingForm.value = false
+        console.log('Form submission completed')
     }
 }
 
 // Handle form field change
 const handleFieldChange = (fieldName: string, value: any) => {
+    console.log(`Field change: ${fieldName} = `, value)
     formData.value[fieldName] = value
+    console.log('Updated formData:', formData.value)
     
     // Real-time validation: validate the current field if it has a value
     if (value && value.toString().trim() !== '') {
@@ -482,13 +502,16 @@ const handleFieldChange = (fieldName: string, value: any) => {
             const error = validateFormField(fieldConfig, value)
             if (error) {
                 formErrors.value[fieldName] = error
+                console.log(`Validation error for ${fieldName}:`, error)
             } else {
                 delete formErrors.value[fieldName]
+                console.log(`Validation passed for ${fieldName}`)
             }
         }
     } else {
         // Clear error when field is cleared
         delete formErrors.value[fieldName]
+        console.log(`Cleared error for ${fieldName}`)
     }
 }
 
@@ -556,9 +579,18 @@ const validateFormField = (field: any, value: any): string | null => {
 
 // Handle full screen form submission
 const submitFullScreenForm = async () => {
-    if (isSubmittingForm.value || !fullScreenFormData.value) return
+    console.log('submitFullScreenForm called')
+    console.log('Current form data:', formData.value)
+    console.log('Full screen form data:', fullScreenFormData.value)
+    console.log('isSubmittingForm:', isSubmittingForm.value)
+    
+    if (isSubmittingForm.value || !fullScreenFormData.value) {
+        console.log('Already submitting or no form data, returning')
+        return
+    }
     
     try {
+        console.log('Starting full screen form submission...')
         isSubmittingForm.value = true
         formErrors.value = {}
         
@@ -571,26 +603,35 @@ const submitFullScreenForm = async () => {
             if (error) {
                 formErrors.value[field.name] = error
                 hasErrors = true
+                console.log(`Validation error for field ${field.name}:`, error)
             }
         }
         
+        console.log('Validation completed. Has errors:', hasErrors)
+        console.log('Form errors:', formErrors.value)
+        
         if (hasErrors) {
             isSubmittingForm.value = false
+            console.log('Validation failed, not submitting')
             return
         }
         
         // Submit form data through the workflow
+        console.log('Submitting form data:', formData.value)
         await submitForm(formData.value)
+        console.log('Full screen form submitted successfully')
         
         // Hide full screen form after successful submission
         showFullScreenForm.value = false
         fullScreenFormData.value = null
         formData.value = {}
+        console.log('Full screen form hidden and data cleared')
         
     } catch (error) {
         console.error('Failed to submit full screen form:', error)
     } finally {
         isSubmittingForm.value = false
+        console.log('Full screen form submission completed')
     }
 }
 
@@ -629,6 +670,12 @@ onMounted(async () => {
         return
     }
 
+    // For refresh cases, also check if we need to get workflow state
+    if (window.__INITIAL_DATA__?.workflow && hasConversationToken.value) {
+        console.log('Getting workflow state on refresh/reload')
+        await getWorkflowState()
+    }
+
     // Register takeover callback
     onTakeover(async () => {
         await checkAuthorization()
@@ -656,6 +703,7 @@ onMounted(async () => {
             console.log('Setting landing page data:', data.landing_page_data)
             landingPageData.value = data.landing_page_data
             showLandingPage.value = true
+            showFullScreenForm.value = false
             console.log('Landing page state - show:', showLandingPage.value, 'data:', landingPageData.value)
         } else if (data.type === 'form' || data.type === 'display_form') {
             // Check if form should be displayed in full screen mode
@@ -667,12 +715,32 @@ onMounted(async () => {
                 showLandingPage.value = false
                 console.log('Full screen form state - show:', showFullScreenForm.value)
             } else {
-                console.log('Regular form mode or full screen disabled')
-                // Regular form will be handled by existing form display logic
+                console.log('Regular form mode - adding form message to chat')
+                // For non-fullscreen forms, add a form message to the chat
+                const formMessage = {
+                    message: '',
+                    message_type: 'form',
+                    attributes: {
+                        form_data: data.form_data
+                    },
+                    created_at: new Date().toISOString(),
+                    isSubmitted: false
+                }
+                
+                // Check if form message already exists to avoid duplicates
+                const existingFormIndex = messages.value.findIndex(msg => 
+                    msg.message_type === 'form' && !msg.isSubmitted
+                )
+                
+                if (existingFormIndex === -1) {
+                    messages.value.push(formMessage)
+                }
+                
                 showLandingPage.value = false
                 showFullScreenForm.value = false
             }
         } else {
+            console.log('No special workflow state, hiding overlay forms')
             showLandingPage.value = false
             showFullScreenForm.value = false
         }
@@ -753,8 +821,8 @@ onUnmounted(() => {
         <!-- Full Screen Form Display -->
         <div v-else-if="showFullScreenForm && fullScreenFormData" class="form-fullscreen" :style="chatStyles">
             <div class="form-fullscreen-content">
-                <div class="form-header">
-                    <h2 class="form-title">{{ fullScreenFormData.title || 'Please fill out this form' }}</h2>
+                <div v-if="fullScreenFormData.title || fullScreenFormData.description" class="form-header">
+                    <h2 v-if="fullScreenFormData.title" class="form-title">{{ fullScreenFormData.title }}</h2>
                     <p v-if="fullScreenFormData.description" class="form-description">
                         {{ fullScreenFormData.description }}
                     </p>
@@ -887,7 +955,7 @@ onUnmounted(() => {
                 
                 <div class="form-actions">
                     <button 
-                        @click="submitFullScreenForm"
+                        @click="() => { console.log('Submit button clicked!'); submitFullScreenForm(); }"
                         :disabled="isSubmittingForm"
                         class="submit-form-button"
                         :style="userBubbleStyles"
@@ -1013,12 +1081,12 @@ onUnmounted(() => {
                             </template>
                             <template v-else-if="message.message_type === 'form'">
                                 <div class="form-content">
-                                    <div class="form-header">
-                                        <h3 class="form-title">{{ message.attributes?.form_data?.title || 'Please fill out this form' }}</h3>
-                                        <p v-if="message.attributes?.form_data?.description" class="form-description">
-                                            {{ message.attributes.form_data.description }}
-                                        </p>
-                                    </div>
+                                                                    <div v-if="message.attributes?.form_data?.title || message.attributes?.form_data?.description" class="form-header">
+                                    <h3 v-if="message.attributes?.form_data?.title" class="form-title">{{ message.attributes.form_data.title }}</h3>
+                                    <p v-if="message.attributes?.form_data?.description" class="form-description">
+                                        {{ message.attributes.form_data.description }}
+                                    </p>
+                                </div>
                                     <div class="form-fields">
                                         <div 
                                             v-for="field in message.attributes?.form_data?.fields" 
@@ -1149,7 +1217,7 @@ onUnmounted(() => {
                                     
                                     <div class="form-actions">
                                         <button
-                                            @click="handleFormSubmit(message.attributes?.form_data)"
+                                            @click="() => { console.log('Regular form submit button clicked!'); handleFormSubmit(message.attributes?.form_data); }"
                                             :disabled="isSubmittingForm"
                                             class="form-submit-button"
                                             :style="userBubbleStyles"

@@ -44,18 +44,18 @@ class WorkflowNodesResponse(BaseModel):
 
 
 @router.put("/{workflow_id}/nodes", response_model=WorkflowNodesResponse)
-async def update_workflow_nodes(
+async def replace_workflow_nodes(
     workflow_id: UUID,
     request_data: WorkflowNodesUpdateRequest,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
 ):
-    """Update complete workflow nodes and connections"""
+    """Replace all workflow nodes and connections with cached data"""
     try:
         workflow_node_service = WorkflowNodeService(db)
         
-        # Update nodes and connections
-        result = workflow_node_service.update_workflow_nodes_and_connections(
+        # Replace all nodes and connections (delete existing, save new ones)
+        result = workflow_node_service.replace_workflow_nodes_and_connections(
             workflow_id=workflow_id,
             nodes_data=request_data.nodes,
             connections_data=request_data.connections,
@@ -104,9 +104,9 @@ async def update_workflow_nodes(
         logger.error(f"Validation error updating workflow nodes: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        logger.error(f"Error updating workflow nodes: {str(e)}")
+        logger.error(f"Error replacing workflow nodes: {str(e)}")
         db.rollback()
-        raise HTTPException(status_code=500, detail="Failed to update workflow nodes")
+        raise HTTPException(status_code=500, detail="Failed to replace workflow nodes")
 
 
 @router.get("/{workflow_id}/nodes", response_model=WorkflowNodesResponse)

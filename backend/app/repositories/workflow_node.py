@@ -46,7 +46,7 @@ class WorkflowNodeRepository:
         """Get all nodes for a workflow"""
         return self.db.query(WorkflowNode).filter(
             WorkflowNode.workflow_id == workflow_id
-        ).join(WorkflowConnection, WorkflowNode.id == WorkflowConnection.source_node_id).all()
+        ).all()
 
     def get_node_by_id(self, node_id: UUID) -> Optional[WorkflowNode]:
         """Get node by ID"""
@@ -90,12 +90,13 @@ class WorkflowNodeRepository:
     def delete_nodes_by_workflow(self, workflow_id: UUID) -> bool:
         """Delete all nodes for a workflow"""
         try:
-            nodes = self.get_nodes_by_workflow(workflow_id)
-            for node in nodes:
-                self.db.delete(node)
+            # Delete all nodes directly without calling get_nodes_by_workflow to avoid the JOIN issue
+            deleted_count = self.db.query(WorkflowNode).filter(
+                WorkflowNode.workflow_id == workflow_id
+            ).delete()
             
             self.db.flush()  # Flush to delete without committing
-            logger.info(f"Deleted all nodes for workflow: {workflow_id}")
+            logger.info(f"Deleted {deleted_count} nodes for workflow: {workflow_id}")
             return True
         except Exception as e:
             logger.error(f"Error deleting nodes for workflow {workflow_id}: {str(e)}")

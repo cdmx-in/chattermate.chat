@@ -231,6 +231,13 @@ class WorkflowExecutionService:
             WorkflowExecutionResult with next step
         """
         try:
+            logger.info(f"Submitting form for session {session_id}")
+            logger.debug(f"Form data: {form_data}")
+            logger.debug(f"Workflow ID: {workflow_id}")
+            logger.debug(f"Org ID: {org_id}")
+            logger.debug(f"Agent ID: {agent_id}")
+            logger.debug(f"Customer ID: {customer_id}")
+            logger.debug(f"API key: {api_key}")
             # Get current session state
             session = self.session_repo.get_session(session_id)
             if not session:
@@ -255,9 +262,9 @@ class WorkflowExecutionService:
             workflow_state["form_data"] = form_data
             workflow_state["form_state"] = "submitted"
             
-            logger.info(f"Form submission received for session {session_id}")
-            logger.info(f"Form data: {form_data}")
-            logger.info(f"Updated workflow state: {workflow_state}")
+            logger.debug(f"Form submission received for session {session_id}")
+            logger.debug(f"Form data: {form_data}")
+            logger.debug(f"Updated workflow state: {workflow_state}")
             
             # Continue workflow execution with form submission
             return await self.execute_workflow(
@@ -506,10 +513,10 @@ class WorkflowExecutionService:
         # Check if we're waiting for form submission
         current_state = workflow_state.get("form_state", "display")
         
-        if current_state == "display":
-            # First time hitting form node - display the form
+        if current_state == "display" or current_state == "waiting":
+            # First time hitting form node OR user refreshed while waiting - display the form
             form_data = {
-                "title": config.get("form_title", "Please fill out this form"),
+                "title": config.get("form_title", ""),
                 "description": config.get("form_description", ""),
                 "submit_button_text": config.get("submit_button_text", "Submit"),
                 "fields": form_fields,
@@ -546,19 +553,32 @@ class WorkflowExecutionService:
                 should_continue=next_node_id is not None
             )
         else:
-            # Invalid state
-            logger.debug(f"Invalid form state")
+            # Invalid state - but still try to display the form rather than error
+            logger.warning(f"Unknown form state '{current_state}', defaulting to display form")
+            form_data = {
+                "title": config.get("form_title", ""),
+                "description": config.get("form_description", ""),
+                "submit_button_text": config.get("submit_button_text", "Submit"),
+                "fields": form_fields,
+                "form_full_screen": config.get("form_full_screen", False)
+            }
+            # Reset to waiting state
+            workflow_state["form_state"] = "waiting"
+            
             return WorkflowExecutionResult(
-                success=False,
-                message="Invalid form state",
-                error="Invalid form state"
+                success=True,
+                message="",
+                next_node_id=None,
+                should_continue=False,
+                form_data=form_data
             )
     
     def _execute_landing_page_node(self, node: WorkflowNode, workflow_state: Dict[str, Any]) -> WorkflowExecutionResult:
         """Execute a landing page node"""
         logger.info(f"Executing landing page node: {node.id}")
-        heading = node.config.get("landing_page_heading", "Welcome")
-        content = node.config.get("landing_page_content", "Thank you for visiting!")
+        config = node.config or {}
+        heading = config.get("landing_page_heading", "Welcome")
+        content = config.get("landing_page_content", "Thank you for visiting!")
         
         # Process variables in heading and content
         heading = self._process_variables(heading, workflow_state)

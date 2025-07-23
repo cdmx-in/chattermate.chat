@@ -1223,6 +1223,7 @@ async def handle_proceed_workflow(sid, data):
 async def handle_form_submission(sid, data):
     """Handle form submission from widget"""
     try:
+        logger.info(f"Submitting form for sid {sid}")
         # Get session data and authenticate
         session = await sio.get_session(sid, namespace='/widget')
         widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, session)
@@ -1289,6 +1290,7 @@ async def handle_form_submission(sid, data):
 
         # Submit form through workflow service
         workflow_service = WorkflowExecutionService(db)
+        logger.info(f"Submitting form for sid {sid}")
         workflow_result = await workflow_service.submit_form(
             session_id=session_id,
             form_data=form_data,

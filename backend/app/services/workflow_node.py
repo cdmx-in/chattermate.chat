@@ -55,14 +55,14 @@ class WorkflowNodeService:
         self.node_repo = WorkflowNodeRepository(db)
         self.workflow_repo = WorkflowRepository(db)
 
-    def update_workflow_nodes_and_connections(
+    def replace_workflow_nodes_and_connections(
         self, 
         workflow_id: UUID, 
         nodes_data: List[Dict[str, Any]], 
         connections_data: List[Dict[str, Any]], 
         organization_id: UUID
     ) -> Dict[str, List]:
-        """Update complete workflow nodes and connections"""
+        """Replace all workflow nodes and connections with cached data (delete existing, create new)"""
         
         # Validate workflow exists and belongs to organization
         workflow = self.workflow_repo.get_by_id(workflow_id)
@@ -73,13 +73,20 @@ class WorkflowNodeService:
             raise ValueError("Workflow does not belong to your organization")
         
         try:
-            # Get existing nodes and connections
-            existing_nodes = self.node_repo.get_nodes_by_workflow(workflow_id)
+            # Delete all existing connections first (due to foreign key constraints)
             existing_connections = self.node_repo.get_connections_by_workflow(workflow_id)
+            for connection in existing_connections:
+                self.db.delete(connection)
             
-            # Create maps for easier lookup
-            existing_nodes_map = {str(node.id): node for node in existing_nodes}
-            existing_connections_map = {str(conn.id): conn for conn in existing_connections}
+            # Delete all existing nodes
+            existing_nodes = self.node_repo.get_nodes_by_workflow(workflow_id)
+            for node in existing_nodes:
+                self.db.delete(node)
+            
+            # Commit deletions
+            self.db.commit()
+            
+            logger.info(f"Deleted {len(existing_nodes)} existing nodes and {len(existing_connections)} existing connections for workflow {workflow_id}")
             
             # Create ID mapping for text IDs to UUIDs
             id_mapping = {}
@@ -108,11 +115,8 @@ class WorkflowNodeService:
                         id_mapping[conn_id] = str(uuid.uuid4())
                         logger.info(f"Mapped connection text ID '{conn_id}' to UUID '{id_mapping[conn_id]}'")
             
-            # Process nodes
-            processed_node_ids = set()
+            # Create all new nodes
             created_nodes = []
-            updated_nodes = []
-            
             for node_data in nodes_data:
                 node_data_copy = node_data.copy()
                 node_data_copy['workflow_id'] = workflow_id
@@ -121,57 +125,71 @@ class WorkflowNodeService:
                 if isinstance(node_data_copy['workflow_id'], str):
                     node_data_copy['workflow_id'] = UUID(node_data_copy['workflow_id'])
                 
+                # Extract and clean node-specific fields into config
+                config_fields = [
+                    'message_text', 'system_prompt', 'temperature', 'model_id',
+                    'condition_expression', 'llm_conditions', 'action_type', 'action_url', 'action_config',
+                    'transfer_department', 'transfer_message', 'transfer_rules',
+                    'wait_duration', 'wait_unit', 'wait_until_condition',
+                    'final_message', 'form_fields', 'form_title', 'form_description', 
+                    'submit_button_text', 'form_full_screen',
+                    'landing_page_heading', 'landing_page_content'
+                ]
+                
+                # Initialize config if not present
+                if 'config' not in node_data_copy:
+                    node_data_copy['config'] = {}
+                
+                # Move config fields from root to config object and filter out blank values
+                for field in config_fields:
+                    if field in node_data_copy:
+                        value = node_data_copy[field]
+                        # Only add non-blank values to config
+                        if value is not None and value != "" and value != []:
+                            node_data_copy['config'][field] = value
+                        # Remove from root level
+                        del node_data_copy[field]
+                
                 # Sanitize text fields to prevent UTF-8 encoding errors
-                text_fields = ['name', 'description', 'message_text', 'system_prompt', 
-                              'condition_expression', 'action_type']
-                for field in text_fields:
+                base_text_fields = ['name', 'description']
+                for field in base_text_fields:
                     if field in node_data_copy and isinstance(node_data_copy[field], str):
                         node_data_copy[field] = sanitize_utf8_text(node_data_copy[field])
+                
+                # Sanitize config text fields
+                config_text_fields = ['message_text', 'system_prompt', 'condition_expression', 
+                                     'action_type', 'action_url', 'transfer_department', 'transfer_message',
+                                     'final_message', 'form_title', 'form_description', 'submit_button_text',
+                                     'landing_page_heading', 'landing_page_content']
+                for field in config_text_fields:
+                    if field in node_data_copy['config'] and isinstance(node_data_copy['config'][field], str):
+                        node_data_copy['config'][field] = sanitize_utf8_text(node_data_copy['config'][field])
                 
                 # Replace text ID with UUID if mapped
                 original_id = str(node_data_copy.get('id', ''))
                 if original_id in id_mapping:
                     node_data_copy['id'] = id_mapping[original_id]
-                
-                if 'id' in node_data_copy and node_data_copy['id'] and str(node_data_copy['id']) in existing_nodes_map:
-                    # Update existing node
-                    node_id = UUID(str(node_data_copy['id']))
-                    processed_node_ids.add(str(node_id))
-                    
-                    # Remove id from update data
-                    update_data = {k: v for k, v in node_data_copy.items() if k != 'id'}
-                    
-                    updated_node = self.node_repo.update_node(node_id, **update_data)
-                    if updated_node:
-                        updated_nodes.append(updated_node)
+                elif 'id' not in node_data_copy or not node_data_copy['id']:
+                    # Generate new ID if not provided
+                    node_data_copy['id'] = uuid.uuid4()
                 else:
-                    # Create new node
-                    if 'id' not in node_data_copy or not node_data_copy['id']:
-                        # Generate new ID if not provided
-                        node_data_copy['id'] = uuid.uuid4()
-                    else:
-                        # Convert string ID to UUID
-                        node_data_copy['id'] = UUID(str(node_data_copy['id']))
-                    
-                    new_node = self.node_repo.create_node(**node_data_copy)
-                    created_nodes.append(new_node)
-                    processed_node_ids.add(str(new_node.id))
+                    # Convert string ID to UUID
+                    node_data_copy['id'] = UUID(str(node_data_copy['id']))
+                
+                # Filter out any remaining None or empty values from base fields
+                filtered_data = {}
+                for key, value in node_data_copy.items():
+                    if value is not None and value != "":
+                        filtered_data[key] = value
+                
+                new_node = self.node_repo.create_node(**filtered_data)
+                created_nodes.append(new_node)
             
-            # Delete nodes that weren't in the request
-            deleted_nodes = []
-            for existing_node_id, existing_node in existing_nodes_map.items():
-                if existing_node_id not in processed_node_ids:
-                    self.node_repo.delete_node(UUID(existing_node_id))
-                    deleted_nodes.append(existing_node)
-            
-            # Commit node changes before processing connections
+            # Commit node creations before processing connections
             self.db.commit()
             
-            # Process connections
-            processed_connection_ids = set()
+            # Create all new connections
             created_connections = []
-            updated_connections = []
-            
             for conn_data in connections_data:
                 conn_data_copy = conn_data.copy()
                 conn_data_copy['workflow_id'] = workflow_id
@@ -190,6 +208,12 @@ class WorkflowNodeService:
                 original_id = str(conn_data_copy.get('id', ''))
                 if original_id in id_mapping:
                     conn_data_copy['id'] = id_mapping[original_id]
+                elif 'id' not in conn_data_copy or not conn_data_copy['id']:
+                    # Generate new ID if not provided
+                    conn_data_copy['id'] = uuid.uuid4()
+                else:
+                    # Convert string ID to UUID
+                    conn_data_copy['id'] = UUID(str(conn_data_copy['id']))
                 
                 # Map source and target node IDs if they are text IDs
                 source_node_id = str(conn_data_copy.get('source_node_id', ''))
@@ -200,57 +224,19 @@ class WorkflowNodeService:
                 if target_node_id in id_mapping:
                     conn_data_copy['target_node_id'] = id_mapping[target_node_id]
                 
-                if 'id' in conn_data_copy and conn_data_copy['id'] and str(conn_data_copy['id']) in existing_connections_map:
-                    # Update existing connection
-                    conn_id = UUID(str(conn_data_copy['id']))
-                    processed_connection_ids.add(str(conn_id))
-                    
-                    # Remove id from update data
-                    update_data = {k: v for k, v in conn_data_copy.items() if k != 'id'}
-                    
-                    # Convert source and target node IDs to UUIDs
-                    if 'source_node_id' in update_data:
-                        update_data['source_node_id'] = UUID(str(update_data['source_node_id']))
-                    if 'target_node_id' in update_data:
-                        update_data['target_node_id'] = UUID(str(update_data['target_node_id']))
-                    
-                    # Note: WorkflowConnection doesn't have update method in repo, so we'll recreate
-                    # Delete and recreate for simplicity
-                    existing_conn = existing_connections_map[str(conn_id)]
-                    self.db.delete(existing_conn)
-                    new_conn = self.node_repo.create_connection(**update_data)
-                    updated_connections.append(new_conn)
-                else:
-                    # Create new connection
-                    if 'id' not in conn_data_copy or not conn_data_copy['id']:
-                        # Generate new ID if not provided
-                        conn_data_copy['id'] = uuid.uuid4()
-                    else:
-                        # Convert string ID to UUID
-                        conn_data_copy['id'] = UUID(str(conn_data_copy['id']))
-                    
-                    # Convert source and target node IDs to UUIDs
-                    if 'source_node_id' in conn_data_copy:
-                        conn_data_copy['source_node_id'] = UUID(str(conn_data_copy['source_node_id']))
-                    if 'target_node_id' in conn_data_copy:
-                        conn_data_copy['target_node_id'] = UUID(str(conn_data_copy['target_node_id']))
-                    
-                    new_conn = self.node_repo.create_connection(**conn_data_copy)
-                    created_connections.append(new_conn)
-                    processed_connection_ids.add(str(new_conn.id))
-            
-            # Delete connections that weren't in the request
-            deleted_connections = []
-            for existing_conn_id, existing_conn in existing_connections_map.items():
-                if existing_conn_id not in processed_connection_ids:
-                    self.db.delete(existing_conn)
-                    deleted_connections.append(existing_conn)
+                # Convert source and target node IDs to UUIDs
+                if 'source_node_id' in conn_data_copy:
+                    conn_data_copy['source_node_id'] = UUID(str(conn_data_copy['source_node_id']))
+                if 'target_node_id' in conn_data_copy:
+                    conn_data_copy['target_node_id'] = UUID(str(conn_data_copy['target_node_id']))
+                
+                new_conn = self.node_repo.create_connection(**conn_data_copy)
+                created_connections.append(new_conn)
             
             # Final commit for connections
             self.db.commit()
             
-            logger.info(f"Updated workflow {workflow_id}: {len(created_nodes)} nodes created, {len(updated_nodes)} nodes updated, {len(deleted_nodes)} nodes deleted")
-            logger.info(f"Updated workflow {workflow_id}: {len(created_connections)} connections created, {len(updated_connections)} connections updated, {len(deleted_connections)} connections deleted")
+            logger.info(f"Created {len(created_nodes)} new nodes and {len(created_connections)} new connections for workflow {workflow_id}")
             
             # Return all current nodes and connections
             final_nodes = self.node_repo.get_nodes_by_workflow(workflow_id)
@@ -262,7 +248,7 @@ class WorkflowNodeService:
             }
             
         except Exception as e:
-            logger.error(f"Error updating workflow nodes and connections: {str(e)}")
+            logger.error(f"Error replacing workflow nodes and connections: {str(e)}")
             self.db.rollback()
             raise
 

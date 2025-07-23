@@ -21,6 +21,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useAgentWorkflow } from '@/composables/useAgentWorkflow'
 import type { AgentWithCustomization } from '@/types/agent'
 import WorkflowBuilder from '../workflow/WorkflowBuilder.vue'
+import { workflowCacheStorage } from '@/utils/storage'
 
 const props = defineProps<{
   agent: AgentWithCustomization
@@ -158,6 +159,10 @@ const toggleFullscreen = () => {
 }
 
 const openWorkflowBuilder = () => {
+  // Clear existing cache and reload fresh data when opening workflow builder
+  if (workflow.value) {
+    workflowCacheStorage.clearWorkflowCache(workflow.value.id)
+  }
   showWorkflowBuilder.value = true
 }
 

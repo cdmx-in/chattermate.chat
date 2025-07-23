@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { ref, watch, computed } from 'vue'
 import type { Node, Edge } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
+import { workflowCacheStorage } from '@/utils/storage'
 import { toast } from 'vue-sonner'
 import { useAgentEdit } from '@/composables/useAgentEdit'
 import KnowledgeGrid from '@/components/agent/KnowledgeGrid.vue'
@@ -123,6 +124,19 @@ const saving = ref(false)
 
 // Validation errors state
 const validationErrors = ref<Record<string, string>>({})
+
+// Auto-save functionality
+const autoSaveTimeout = ref<number | null>(null)
+
+// Simple debounce implementation
+const debounce = (func: Function, delay: number) => {
+  return (...args: any[]) => {
+    if (autoSaveTimeout.value) {
+      clearTimeout(autoSaveTimeout.value)
+    }
+    autoSaveTimeout.value = setTimeout(() => func(...args), delay)
+  }
+}
 
 // AI generation state
 const showAIPrompt = ref(false)
@@ -316,13 +330,54 @@ const validateFieldOnChange = (field: string) => {
   } else {
     delete validationErrors.value[field]
   }
+  
+  // Trigger auto-save after validation
+  autoSaveToCache()
 }
 
 
 
+// Get node data with latest cache values for PropertiesPanel
+const getNodeDataForForm = (node: Node) => {
+  // Get cached workflow data
+  const workflowCache = workflowCacheStorage.getWorkflowCache(props.workflowId)
+  
+  // Start with node data
+  let nodeData = { ...node.data }
+  
+  if (workflowCache && workflowCache.nodes) {
+    // Find this node in the cache
+    const cachedNode = workflowCache.nodes.find((n: any) => n.id === node.id)
+    if (cachedNode) {
+      console.log('Found cached node:', cachedNode)
+      // Update name from cache
+      if (cachedNode.name) nodeData.cleanName = cachedNode.name
+      if (cachedNode.description) nodeData.description = cachedNode.description
+      
+      // Update config values from cache
+      if (cachedNode.config) {
+        Object.assign(nodeData, cachedNode.config)
+        nodeData.config = cachedNode.config
+      }
+    } else {
+      console.log('No cached node found for:', node.id)
+    }
+  } else {
+    console.log('No workflow cache found')
+  }
+  
+  return nodeData
+}
+
 // Watch for node selection changes
 watch(() => props.selectedNode, (newNode) => {
   if (newNode) {
+    console.log('Node changed, loading form data for:', newNode.id)
+    
+    // Get node data with cache values
+    const nodeData = getNodeDataForForm(newNode)
+    console.log('Node data for form:', nodeData)
+    
     // Helper function to extract clean name from label by removing emoji icons
     const extractCleanName = (label: string) => {
       if (!label) return ''
@@ -335,81 +390,83 @@ watch(() => props.selectedNode, (newNode) => {
     }
 
     nodeForm.value = {
-      name: newNode.data.cleanName || 
-            extractCleanName(newNode.data.label) || 
+      name: nodeData.cleanName || 
+            extractCleanName(nodeData.label) || 
             '',
-      description: newNode.data.description || '',
-      // Message node - check multiple possible locations for message_text
-      message_text: newNode.data.message_text || 
-                    newNode.data.config?.message_text || 
+      description: nodeData.description || '',
+      // Message node - check cache config first, then fallback
+      message_text: nodeData.config?.message_text || 
+                    nodeData.message_text || 
                     '',
-      show_typing: newNode.data.show_typing || 
-                   newNode.data.config?.show_typing || 
-                   false,
+      show_typing: nodeData.config?.show_typing !== undefined ? 
+                   nodeData.config?.show_typing : 
+                   (nodeData.show_typing || false),
       // LLM node
-      system_prompt: newNode.data.system_prompt || 
-                     newNode.data.config?.system_prompt || 
+      system_prompt: nodeData.config?.system_prompt || 
+                     nodeData.system_prompt || 
                      '',
-      temperature: newNode.data.temperature || 
-                   newNode.data.config?.temperature || 
-                   0.7,
+      temperature: nodeData.config?.temperature !== undefined ? 
+                   nodeData.config?.temperature : 
+                   (nodeData.temperature || 0.7),
       // Condition node
-      condition_expression: newNode.data.condition_expression || 
-                            newNode.data.config?.condition_expression || 
+      condition_expression: nodeData.config?.condition_expression || 
+                            nodeData.condition_expression || 
                             '',
       // LLM-based condition checkboxes
-      llm_conditions: newNode.data.llm_conditions || 
-                      newNode.data.config?.llm_conditions || 
+      llm_conditions: nodeData.config?.llm_conditions || 
+                      nodeData.llm_conditions || 
                       { user_frustrated: false, request_human_agent: false, no_knowledge: false },
       // Form node - prioritize config over outer fields
-      form_fields: newNode.data.config?.form_fields || 
-                   newNode.data.form_fields || 
+      form_fields: nodeData.config?.form_fields || 
+                   nodeData.form_fields || 
                    [] as FormField[],
-      form_title: newNode.data.config?.form_title || 
-                  newNode.data.form_title || 
+      form_title: nodeData.config?.form_title || 
+                  nodeData.form_title || 
                   '',
-      form_description: newNode.data.config?.form_description || 
-                        newNode.data.form_description || 
+      form_description: nodeData.config?.form_description || 
+                        nodeData.form_description || 
                         '',
-      submit_button_text: newNode.data.config?.submit_button_text || 
-                          newNode.data.submit_button_text || 
+      submit_button_text: nodeData.config?.submit_button_text || 
+                          nodeData.submit_button_text || 
                           'Submit',
-      form_full_screen: newNode.data.config?.form_full_screen || 
-                        newNode.data.form_full_screen || 
-                        false,
+      form_full_screen: nodeData.config?.form_full_screen !== undefined ? 
+                        nodeData.config?.form_full_screen : 
+                        (nodeData.form_full_screen || false),
       // Action node
-      action_type: newNode.data.action_type || 
-                   newNode.data.config?.action_type || 
+      action_type: nodeData.config?.action_type || 
+                   nodeData.action_type || 
                    '',
-      action_url: newNode.data.action_url || 
-                  newNode.data.config?.action_url || 
+      action_url: nodeData.config?.action_url || 
+                  nodeData.action_url || 
                   '',
       // Human transfer node
-      transfer_department: newNode.data.transfer_department || 
-                           newNode.data.config?.transfer_department || 
+      transfer_department: nodeData.config?.transfer_department || 
+                           nodeData.transfer_department || 
                            '',
-      transfer_message: newNode.data.transfer_message || 
-                        newNode.data.config?.transfer_message || 
+      transfer_message: nodeData.config?.transfer_message || 
+                        nodeData.transfer_message || 
                         '',
       // Wait node
-      wait_duration: newNode.data.wait_duration || 
-                     newNode.data.config?.wait_duration || 
-                     5,
-      wait_unit: newNode.data.wait_unit || 
-                 newNode.data.config?.wait_unit || 
+      wait_duration: nodeData.config?.wait_duration !== undefined ? 
+                     nodeData.config?.wait_duration : 
+                     (nodeData.wait_duration || 5),
+      wait_unit: nodeData.config?.wait_unit || 
+                 nodeData.wait_unit || 
                  'seconds',
       // End node
-      final_message: newNode.data.final_message || 
-                     newNode.data.config?.final_message || 
+      final_message: nodeData.config?.final_message || 
+                     nodeData.final_message || 
                      '',
       // Landing Page node
-      landing_page_heading: newNode.data.landing_page_heading || 
-                            newNode.data.config?.landing_page_heading || 
+      landing_page_heading: nodeData.config?.landing_page_heading || 
+                            nodeData.landing_page_heading || 
                             '',
-      landing_page_content: newNode.data.landing_page_content || 
-                            newNode.data.config?.landing_page_content || 
+      landing_page_content: nodeData.config?.landing_page_content || 
+                            nodeData.landing_page_content || 
                             '',
     }
+    
+    console.log('Form loaded with values:', nodeForm.value)
   }
 }, { immediate: true })
 
@@ -467,10 +524,171 @@ const removeFormField = (index: number) => {
   validateFieldOnChange('form_fields')
 }
 
-// Helper function to check if node ID is a UUID
-const isUUID = (id: string) => {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
-  return uuidRegex.test(id)
+
+
+// Filter out blank/empty values from config
+const filterBlankValues = (obj: any): any => {
+  const filtered: any = {}
+  
+  for (const [key, value] of Object.entries(obj)) {
+    // Skip null, undefined, empty strings, and empty arrays
+    if (value !== null && value !== undefined && value !== '' && 
+        !(Array.isArray(value) && value.length === 0)) {
+      
+      // For objects, recursively filter
+      if (typeof value === 'object' && !Array.isArray(value)) {
+        const filteredObj = filterBlankValues(value)
+        // Only include if the filtered object has properties
+        if (Object.keys(filteredObj).length > 0) {
+          filtered[key] = filteredObj
+        }
+      } else {
+        filtered[key] = value
+      }
+    }
+  }
+  
+  return filtered
+}
+
+// Get node-specific config based on node type
+const getNodeSpecificConfig = (nodeType: string) => {
+  const config: any = {}
+  
+  switch (nodeType) {
+    case 'message':
+      if (nodeForm.value.message_text) config.message_text = nodeForm.value.message_text
+      if (nodeForm.value.show_typing !== undefined) config.show_typing = nodeForm.value.show_typing
+      break
+    
+    case 'llm':
+      if (nodeForm.value.system_prompt) config.system_prompt = nodeForm.value.system_prompt
+      if (nodeForm.value.temperature !== undefined) config.temperature = nodeForm.value.temperature
+      break
+    
+    case 'condition':
+      if (nodeForm.value.condition_expression) config.condition_expression = nodeForm.value.condition_expression
+      if (nodeForm.value.llm_conditions) config.llm_conditions = nodeForm.value.llm_conditions
+      break
+    
+    case 'form':
+      if (nodeForm.value.form_fields && nodeForm.value.form_fields.length > 0) {
+        // Ensure all form field properties are saved, including required, placeholder, etc.
+        config.form_fields = nodeForm.value.form_fields.map(field => ({
+          name: field.name || '',
+          label: field.label || '',
+          type: field.type || 'text',
+          required: field.required || false,
+          placeholder: field.placeholder || '',
+          options: field.options || '',
+          minLength: field.minLength || 0,
+          maxLength: field.maxLength || 255
+        }))
+      }
+      if (nodeForm.value.form_title) config.form_title = nodeForm.value.form_title
+      if (nodeForm.value.form_description) config.form_description = nodeForm.value.form_description
+      if (nodeForm.value.submit_button_text) config.submit_button_text = nodeForm.value.submit_button_text
+      if (nodeForm.value.form_full_screen !== undefined) config.form_full_screen = nodeForm.value.form_full_screen
+      break
+    
+    case 'action':
+      if (nodeForm.value.action_type) config.action_type = nodeForm.value.action_type
+      if (nodeForm.value.action_url) config.action_url = nodeForm.value.action_url
+      break
+    
+    case 'humanTransfer':
+      if (nodeForm.value.transfer_department) config.transfer_department = nodeForm.value.transfer_department
+      if (nodeForm.value.transfer_message) config.transfer_message = nodeForm.value.transfer_message
+      break
+    
+    case 'wait':
+      if (nodeForm.value.wait_duration) config.wait_duration = nodeForm.value.wait_duration
+      if (nodeForm.value.wait_unit) config.wait_unit = nodeForm.value.wait_unit
+      break
+    
+    case 'end':
+      if (nodeForm.value.final_message) config.final_message = nodeForm.value.final_message
+      break
+    
+    case 'landingPage':
+      if (nodeForm.value.landing_page_heading) config.landing_page_heading = nodeForm.value.landing_page_heading
+      if (nodeForm.value.landing_page_content) config.landing_page_content = nodeForm.value.landing_page_content
+      break
+  }
+  
+  // Apply additional filtering to remove any blank values
+  return filterBlankValues(config)
+}
+
+// Auto-save node data to cache
+const autoSaveToCache = debounce(async () => {
+  console.log('autoSaveToCache called')
+  // For form fields, we want to save even if there are validation errors on other fields
+  // as long as the form field structure is valid
+  const nodeType = props.selectedNode.data.nodeType || 'message'
+ 
+  
+  // If it's a form node, validate form fields separately
+  if (nodeType === 'form') {
+    
+    // Check if form fields have basic structure (name and label)
+    const hasValidFormFields = nodeForm.value.form_fields.every(field => 
+      field.name && field.name.trim() !== '' && 
+      field.label && field.label.trim() !== ''
+    )
+    
+    if (!hasValidFormFields) {
+      console.log('Form fields missing required name/label, skipping auto-save')
+      return
+    }
+    
+  } else {
+    // For other node types, use full validation
+    if (!validateForm()) {
+      console.log('Form validation failed, skipping auto-save')
+      return
+    }
+  }
+  
+  // Update node in cache with current form data
+  const config = getNodeSpecificConfig(nodeType)
+  
+  
+  const nodeData = {
+    id: props.selectedNode.id,
+    node_type: mapNodeTypeToBackend(nodeType),
+    name: nodeForm.value.name,
+    description: nodeForm.value.description,
+    position_x: props.selectedNode.position.x,
+    position_y: props.selectedNode.position.y,
+    config: config
+  }
+  
+  
+  workflowNodeService.updateNodeInCache(props.workflowId, nodeData)
+  
+  // Emit the updated data to parent
+  emit('save', {
+    ...nodeForm.value,
+    needsWorkflowSave: false, // Don't trigger full workflow save
+    cacheUpdated: true
+  })
+}, 500) // Auto-save after 500ms of inactivity
+
+// Map frontend node types to backend enum values
+const mapNodeTypeToBackend = (frontendType: string) => {
+  const mapping = {
+    'landingPage': 'landing_page',
+    'message': 'message',
+    'llm': 'llm',
+    'condition': 'condition',
+    'form': 'form',
+    'action': 'action',
+    'humanTransfer': 'human_transfer',
+    'wait': 'wait',
+    'end': 'end'
+  }
+  return mapping[frontendType as keyof typeof mapping] || 'message'
 }
 
 // Handle AI generation for system prompt
@@ -486,124 +704,11 @@ const handleGenerateWithAI = async () => {
       aiPrompt.value = ''
       // Trigger validation for the updated field
       validateFieldOnChange('system_prompt')
+      // Trigger auto-save
+      autoSaveToCache()
     }
   } catch (err) {
     console.error('Failed to generate instructions:', err)
-  }
-}
-
-// Handle form submission
-const handleSave = async () => {
-  if (saving.value) return
-  
-  // Check if any knowledge modals are currently open
-  const hasOpenModal = document.querySelector('.modal-overlay')
-  if (hasOpenModal) {
-    console.log('Knowledge modal is open, preventing save')
-    return
-  }
-  
-  // Validate form before saving
-  if (!validateForm()) {
-    toast.error('Please fix the validation errors before saving', {
-      position: 'top-center'
-    })
-    return
-  }
-  
-  try {
-    saving.value = true
-    
-    // Prepare node data for API
-    const nodeData = {
-      name: nodeForm.value.name,
-      description: nodeForm.value.description,
-      // Node type-specific properties
-      ...(props.selectedNode.data.nodeType === 'message' && {
-        message_text: nodeForm.value.message_text
-      }),
-      ...(props.selectedNode.data.nodeType === 'llm' && {
-        config: {
-          system_prompt: nodeForm.value.system_prompt,
-          temperature: nodeForm.value.temperature
-        }
-      }),
-      ...(props.selectedNode.data.nodeType === 'condition' && {
-        condition_expression: nodeForm.value.condition_expression,
-        config: {
-          llm_conditions: nodeForm.value.llm_conditions
-        }
-      }),
-      ...(props.selectedNode.data.nodeType === 'form' && {
-        config: {
-          form_fields: nodeForm.value.form_fields,
-          form_title: nodeForm.value.form_title,
-          form_description: nodeForm.value.form_description,
-          submit_button_text: nodeForm.value.submit_button_text,
-          form_full_screen: nodeForm.value.form_full_screen
-        }
-      }),
-      ...(props.selectedNode.data.nodeType === 'action' && {
-        action_type: nodeForm.value.action_type,
-        action_url: nodeForm.value.action_url
-      }),
-      ...(props.selectedNode.data.nodeType === 'humanTransfer' && {
-        transfer_department: nodeForm.value.transfer_department,
-        transfer_message: nodeForm.value.transfer_message
-      }),
-      ...(props.selectedNode.data.nodeType === 'wait' && {
-        wait_duration: nodeForm.value.wait_duration,
-        wait_unit: nodeForm.value.wait_unit
-      }),
-      ...(props.selectedNode.data.nodeType === 'end' && {
-        final_message: nodeForm.value.final_message
-      }),
-      ...(props.selectedNode.data.nodeType === 'landingPage' && {
-        landing_page_heading: nodeForm.value.landing_page_heading,
-        landing_page_content: nodeForm.value.landing_page_content
-      })
-    }
-
-    // Check if the node has been saved to the backend (has UUID)
-    if (isUUID(props.selectedNode.id)) {
-      // Node exists in backend, use single node update API
-      const result = await workflowNodeService.updateSingleNode(
-        props.workflowId,
-        props.selectedNode.id,
-        nodeData
-      )
-
-      // Emit the result to the parent component
-      emit('save', {
-        ...nodeForm.value,
-        updatedNode: result
-      })
-
-      toast.success('Node properties updated successfully', {
-        position: 'top-center'
-      })
-    } else {
-      // Node hasn't been saved yet, emit data to parent to save entire workflow
-      emit('save', {
-        ...nodeForm.value,
-        needsWorkflowSave: true, // Flag to indicate parent should save entire workflow
-        hasValidationErrors: Object.keys(validationErrors.value).length > 0,
-        validationErrors: validationErrors.value
-      })
-
-      if (Object.keys(validationErrors.value).length === 0) {
-        toast.success('Node properties updated - save workflow to persist changes', {
-          position: 'top-center'
-        })
-      }
-    }
-  } catch (error: any) {
-    console.error('Error updating node:', error)
-    toast.error(error.response?.data?.detail || 'Failed to update node properties', {
-      position: 'top-center'
-    })
-  } finally {
-    saving.value = false
   }
 }
 
@@ -660,7 +765,7 @@ const handleDelete = () => {
     </div>
 
     <div class="properties-content">
-      <form @submit.prevent="handleSave">
+      <form @submit.prevent>
         <!-- Basic Properties -->
         <div class="collapsible-section">
           <div class="section-header" @click="toggleSection('basic')">
@@ -699,6 +804,8 @@ const handleDelete = () => {
                 class="form-textarea"
                 placeholder="Enter node description (optional)"
                 rows="3"
+                @blur="autoSaveToCache"
+                @input="autoSaveToCache"
               ></textarea>
             </div>
           </div>
@@ -1012,7 +1119,7 @@ const handleDelete = () => {
                     <div class="field-row">
                       <div class="field-col">
                         <label class="field-label">Field Type</label>
-                        <select v-model="field.type" class="field-select">
+                        <select v-model="field.type" class="field-select" @change="validateFieldOnChange('form_fields')">
                           <option value="text">Text</option>
                           <option value="email">Email</option>
                           <option value="number">Number</option>
@@ -1030,6 +1137,7 @@ const handleDelete = () => {
                             v-model="field.required"
                             type="checkbox"
                             class="form-checkbox"
+                            @change="validateFieldOnChange('form_fields')"
                           />
                           <span>Required field</span>
                         </label>
@@ -1044,6 +1152,8 @@ const handleDelete = () => {
                           type="text"
                           class="field-input"
                           placeholder="Enter placeholder text"
+                          @blur="() => {  validateFieldOnChange('form_fields'); }"
+                          @input="() => {  validateFieldOnChange('form_fields'); }"
                         />
                       </div>
                     </div>
@@ -1057,6 +1167,8 @@ const handleDelete = () => {
                           class="field-textarea"
                           placeholder="Option 1&#10;Option 2&#10;Option 3"
                           rows="3"
+                          @blur="validateFieldOnChange('form_fields')"
+                          @input="validateFieldOnChange('form_fields')"
                         ></textarea>
                       </div>
                     </div>
@@ -1071,6 +1183,8 @@ const handleDelete = () => {
                           class="field-input"
                           min="0"
                           placeholder="0"
+                          @blur="validateFieldOnChange('form_fields')"
+                          @input="validateFieldOnChange('form_fields')"
                         />
                       </div>
                       <div class="field-col">
@@ -1081,6 +1195,8 @@ const handleDelete = () => {
                           class="field-input"
                           min="1"
                           placeholder="255"
+                          @blur="validateFieldOnChange('form_fields')"
+                          @input="validateFieldOnChange('form_fields')"
                         />
                       </div>
                     </div>
@@ -1278,14 +1394,15 @@ const handleDelete = () => {
     </div>
 
     <div class="properties-footer">
-      <div class="footer-actions">
-        <button type="button" class="btn btn-secondary" @click="handleClose">
-          Cancel
-        </button>
-        <button type="button" class="btn btn-primary" @click="handleSave" :disabled="saving || Object.keys(validationErrors).length > 0">
-          <div v-if="saving" class="btn-spinner"></div>
-          <span v-else>Save Changes</span>
-        </button>
+      <div class="footer-info">
+        <span class="auto-save-indicator">
+          <svg class="auto-save-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+            <polyline points="17,21 17,13 7,13 7,21"></polyline>
+            <polyline points="7,3 7,8 15,8"></polyline>
+          </svg>
+          Auto-saves changes
+        </span>
       </div>
     </div>
   </div>
@@ -1556,19 +1673,34 @@ const handleDelete = () => {
 
 .properties-footer {
   display: flex;
-  justify-content: flex-end;
+  justify-content: center;
   align-items: center;
-  padding: var(--space-md);
+  padding: var(--space-sm) var(--space-md);
   border-top: 1px solid var(--border-color);
-  background: var(--background-color);
+  background: var(--background-soft);
   flex-shrink: 0;
 }
 
-.footer-actions {
+.footer-info {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  justify-content: center;
   width: 100%;
-  justify-content: flex-end;
+}
+
+.auto-save-indicator {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.auto-save-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--success-color);
 }
 
 .btn {

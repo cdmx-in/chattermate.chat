@@ -271,6 +271,7 @@ export function useWidgetSocket() {
         console.log('Form display handler in composable:', data)
         loading.value = false
         currentForm.value = data.form_data
+        console.log('Set currentForm in handleDisplayForm:', currentForm.value)
         
         // Check if this is a full screen form
         if (data.form_data?.form_full_screen === true) {
@@ -299,6 +300,7 @@ export function useWidgetSocket() {
 
     // Form submission confirmation handler
     const handleFormSubmitted = (data: { success: boolean, message: string }) => {
+        console.log('Form submitted confirmation received, clearing currentForm')
         currentForm.value = null
         if (data.success) {
             // Success message will come through regular chat_response
@@ -309,6 +311,13 @@ export function useWidgetSocket() {
     // Workflow state handler
     const handleWorkflowState = (data: any) => {
         console.log('Workflow state received in composable:', data)
+        
+        // Set currentForm for form states to ensure submission works
+        if (data.type === 'form' || data.type === 'display_form') {
+            console.log('Setting currentForm from workflow state:', data.form_data)
+            currentForm.value = data.form_data
+        }
+        
         if (onWorkflowStateCallback) {
             onWorkflowStateCallback(data)
         }
@@ -334,8 +343,22 @@ export function useWidgetSocket() {
 
     // Form submission function
     const submitForm = async (formData: Record<string, any>) => {
-        if (!socket || !currentForm.value) return
+        console.log('Submitting form in socket:', formData)
+        console.log('Current form in socket:', currentForm.value)
+        console.log('Socket in socket:', socket)
         
+        if (!socket) {
+            console.error('No socket available for form submission')
+            return
+        }
+        
+        // Allow submission even if currentForm.value is null, as long as we have form data
+        if (!formData || Object.keys(formData).length === 0) {
+            console.error('No form data to submit')
+            return
+        }
+        
+        console.log('Emitting submit_form event with data:', formData)
         socket.emit('submit_form', {
             form_data: formData
         })
