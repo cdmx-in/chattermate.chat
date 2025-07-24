@@ -357,3 +357,55 @@ class SessionToAgentRepository:
             logger.error(f"Error updating session status: {str(e)}")
             self.db.rollback()
             return None
+
+    def add_workflow_history_entry(self, session_id: UUID | str, node_id: UUID | str, entry_type: str, data: dict) -> bool:
+        """Add an entry to the workflow history"""
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            
+            session = self.get_session(session_id)
+            if not session:
+                logger.error(f"Session {session_id} not found for workflow history update")
+                return False
+            
+            # Initialize workflow_history if None
+            if session.workflow_history is None:
+                session.workflow_history = []
+            
+            # Create history entry
+            history_entry = {
+                "node_id": str(node_id),
+                "type": entry_type,
+                "timestamp": datetime.utcnow().isoformat(),
+                "data": data
+            }
+            
+            # Add to history
+            session.workflow_history.append(history_entry)
+            
+            # Mark as modified for SQLAlchemy
+            flag_modified(session, 'workflow_history')
+            
+            # Commit changes
+            self.db.commit()
+            self.db.refresh(session)
+            
+            logger.info(f"Added workflow history entry for session {session_id}: {entry_type}")
+            return True
+        except Exception as e:
+            logger.error(f"Error adding workflow history entry: {str(e)}")
+            self.db.rollback()
+            return False
+    
+    def get_workflow_history(self, session_id: UUID | str) -> list:
+        """Get the workflow history for a session"""
+        try:
+            session = self.get_session(session_id)
+            if not session:
+                logger.error(f"Session {session_id} not found")
+                return []
+            
+            return session.workflow_history or []
+        except Exception as e:
+            logger.error(f"Error getting workflow history: {str(e)}")
+            return []

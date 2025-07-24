@@ -27,7 +27,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-    (e: 'save', agent: AgentWithCustomization): void
     (e: 'cancel'): void
     (e: 'preview', customization: AgentCustomization & { showBubblePreview?: boolean }): void
 }>()
@@ -47,16 +46,13 @@ const customization = ref<AgentCustomization>({
 
 const handleSave = async () => {
     try {
-        const updatedCustomization = await agentService.updateCustomization(
+        await agentService.updateCustomization(
             props.agent.id,
             customization.value,
-
         )
-
-        emit('save', {
-            ...props.agent,
-            customization: updatedCustomization,
-        })
+        
+        // Show success message or handle success state
+        console.log('Customization saved successfully')
     } catch (error) {
         console.error('Failed to update customization:', error)
     }

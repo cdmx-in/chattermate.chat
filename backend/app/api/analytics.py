@@ -414,7 +414,7 @@ async def get_customer_analytics(
         ).group_by(
             Customer.id
         ).order_by(
-            func.count(func.distinct(SessionToAgent.session_id)).desc()
+            Customer.created_at.desc()
         )
 
         # Get total count for pagination

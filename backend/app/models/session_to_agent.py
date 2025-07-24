@@ -72,6 +72,7 @@ class SessionToAgent(Base):
     current_node_id = Column(UUID(as_uuid=True), ForeignKey("workflow_nodes.id", ondelete="SET NULL"), nullable=True)
 
     workflow_state = Column(JSON, default={})  # Store workflow execution state
+    workflow_history = Column(JSON, default=[])  # Store form submissions and workflow interactions
 
     # Relationships
     user = relationship("User", back_populates="session_assignments")

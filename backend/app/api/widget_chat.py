@@ -1010,96 +1010,178 @@ async def handle_get_workflow_state(sid):
         chat_history = chat_repo.get_session_history(session_id)
         has_history = len(chat_history) > 0
 
-        # If agent uses workflow, execute workflow node
+        # If agent uses workflow, handle workflow state
         if active_session.workflow_id:
-            workflow_service = WorkflowExecutionService(db)
-            
-            # Set current_node_id to None if empty to start from first node
             current_node_id = active_session.current_node_id
+            
+            # If no current node and no history - start from beginning by executing workflow
             if not current_node_id and not has_history:
-                # No current node and no history - start from beginning
-                current_node_id = None
-            
-            # Execute workflow without user message to get the current node
-            workflow_result = await workflow_service.execute_workflow(
-                session_id=session_id,
-                user_message=None,  # No user message for initial execution
-                workflow_id=active_session.workflow_id,
-                current_node_id=current_node_id,
-                workflow_state=active_session.workflow_state or {},
-                api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
-                model_name=session['ai_config'].model_name,
-                model_type=session['ai_config'].model_type,
-                org_id=org_id,
-                agent_id=session['agent_id'],
-                customer_id=customer_id,
-                is_initial_execution=True  # Flag to indicate this is initial execution
-            )
-            
-            if workflow_result.success:
-                logger.debug(f"Workflow result: {workflow_result}")
-                # Handle different node types
-                if workflow_result.form_data:
-                    # It's a form node - emit form display
+                logger.info(f"Starting workflow from beginning for session {session_id}")
+                workflow_service = WorkflowExecutionService(db)
+                
+                # Execute workflow to get the starting node
+                workflow_result = await workflow_service.execute_workflow(
+                    session_id=session_id,
+                    user_message=None,  # No user message for initial execution
+                    workflow_id=active_session.workflow_id,
+                    current_node_id=None,  # Start from beginning
+                    workflow_state=active_session.workflow_state or {},
+                    api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
+                    model_name=session['ai_config'].model_name,
+                    model_type=session['ai_config'].model_type,
+                    org_id=org_id,
+                    agent_id=session['agent_id'],
+                    customer_id=customer_id,
+                    is_initial_execution=True
+                )
+                
+                if workflow_result.success:
+                    logger.debug(f"Initial workflow result: {workflow_result}")
+                    # Handle different node types
+                    if workflow_result.form_data:
+                        await sio.emit('workflow_state', {
+                            'type': 'form',
+                            'form_data': workflow_result.form_data,
+                            'session_id': session_id,
+                            'has_history': has_history,
+                            'button_text': 'Start Chat'
+                        }, room=sid, namespace='/widget')
+                        
+                    elif workflow_result.landing_page_data:
+                        await sio.emit('workflow_state', {
+                            'type': 'landing_page',
+                            'landing_page_data': workflow_result.landing_page_data,
+                            'session_id': session_id,
+                            'has_history': has_history,
+                            'button_text': 'Start Chat'
+                        }, room=sid, namespace='/widget')
+                        
+                    elif workflow_result.message:
+                        # Store initial message and emit
+                        chat_repo.create_message({
+                            "message": workflow_result.message,
+                            "message_type": "bot",
+                            "session_id": session_id,
+                            "organization_id": org_id,
+                            "agent_id": session['agent_id'],
+                            "customer_id": customer_id,
+                            "attributes": {
+                                "workflow_execution": True,
+                                "workflow_id": str(active_session.workflow_id),
+                                "initial_message": True
+                            }
+                        })
+                        
+                        await sio.emit('workflow_state', {
+                            'type': 'message',
+                            'message': workflow_result.message,
+                            'session_id': session_id,
+                            'has_history': has_history,
+                            'button_text': 'Continue Conversation'
+                        }, room=sid, namespace='/widget')
+                    else:
+                        await sio.emit('workflow_state', {
+                            'type': 'ready',
+                            'session_id': session_id,
+                            'has_history': has_history,
+                            'button_text': 'Start Chat'
+                        }, room=sid, namespace='/widget')
+                else:
                     await sio.emit('workflow_state', {
-                        'type': 'form',
-                        'form_data': workflow_result.form_data,
+                        'type': 'error',
+                        'error': workflow_result.error,
                         'session_id': session_id,
                         'has_history': has_history,
-                        'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
+                        'button_text': 'Start Chat'
                     }, room=sid, namespace='/widget')
+            else:
+                # We have a current node - fetch node details and emit them directly
+                logger.info(f"Fetching details for current node {current_node_id} in session {session_id}")
+                
+                try:
+                    from app.repositories.workflow import WorkflowRepository
+                    workflow_repo = WorkflowRepository(db)
+                    workflow = workflow_repo.get_workflow_with_nodes_and_connections(active_session.workflow_id)
                     
-                elif workflow_result.landing_page_data:
-                    # It's a landing page node - emit landing page display
+                    if workflow:
+                        current_node = None
+                        for node in workflow.nodes:
+                            if node.id == current_node_id:
+                                current_node = node
+                                break
+                        
+                        if current_node:
+                            logger.debug(f"Found current node: {current_node.node_type}")
+                            
+                            if current_node.node_type.value == 'form':
+                                # Emit form node details
+                                config = current_node.config or {}
+                                form_data = {
+                                    "title": config.get("form_title", ""),
+                                    "description": config.get("form_description", ""),
+                                    "submit_button_text": config.get("submit_button_text", "Submit"),
+                                    "fields": config.get("form_fields", []),
+                                    "form_full_screen": config.get("form_full_screen", False)
+                                }
+                                
+                                await sio.emit('workflow_state', {
+                                    'type': 'form',
+                                    'form_data': form_data,
+                                    'session_id': session_id,
+                                    'has_history': has_history,
+                                    'button_text': 'Continue Conversation'
+                                }, room=sid, namespace='/widget')
+                                
+                            elif current_node.node_type.value == 'landing_page':
+                                # Emit landing page node details
+                                config = current_node.config or {}
+                                landing_page_data = {
+                                    "heading": config.get("landing_page_heading", "Welcome"),
+                                    "content": config.get("landing_page_content", "Thank you for visiting!")
+                                }
+                                
+                                await sio.emit('workflow_state', {
+                                    'type': 'landing_page',
+                                    'landing_page_data': landing_page_data,
+                                    'session_id': session_id,
+                                    'has_history': has_history,
+                                    'button_text': 'Continue Conversation'
+                                }, room=sid, namespace='/widget')
+                            else:
+                                # For other node types, just emit ready state
+                                await sio.emit('workflow_state', {
+                                    'type': 'ready',
+                                    'session_id': session_id,
+                                    'has_history': has_history,
+                                    'button_text': 'Continue Conversation'
+                                }, room=sid, namespace='/widget')
+                        else:
+                            logger.warning(f"Current node {current_node_id} not found in workflow")
+                            await sio.emit('workflow_state', {
+                                'type': 'ready',
+                                'session_id': session_id,
+                                'has_history': has_history,
+                                'button_text': 'Continue Conversation'
+                            }, room=sid, namespace='/widget')
+                    else:
+                        logger.error(f"Workflow {active_session.workflow_id} not found")
+                        await sio.emit('workflow_state', {
+                            'type': 'error',
+                            'error': 'Workflow not found',
+                            'session_id': session_id,
+                            'has_history': has_history,
+                            'button_text': 'Continue Conversation'
+                        }, room=sid, namespace='/widget')
+                        
+                except Exception as e:
+                    logger.error(f"Error fetching node details: {str(e)}")
                     await sio.emit('workflow_state', {
-                        'type': 'landing_page',
-                        'landing_page_data': workflow_result.landing_page_data,
-                        'session_id': session_id,
-                        'has_history': has_history,
-                        'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
-                    }, room=sid, namespace='/widget')
-                    
-                elif workflow_result.message:
-                    # Regular message node - store and emit
-                    chat_repo.create_message({
-                        "message": workflow_result.message,
-                        "message_type": "bot",
-                        "session_id": session_id,
-                        "organization_id": org_id,
-                        "agent_id": session['agent_id'],
-                        "customer_id": customer_id,
-                        "attributes": {
-                            "workflow_execution": True,
-                            "workflow_id": str(active_session.workflow_id),
-                            "current_node_id": str(workflow_result.next_node_id) if workflow_result.next_node_id else None,
-                            "initial_message": True
-                        }
-                    })
-                    
-                    await sio.emit('workflow_state', {
-                        'type': 'message',
-                        'message': workflow_result.message,
+                        'type': 'error',
+                        'error': 'Failed to get workflow state',
                         'session_id': session_id,
                         'has_history': has_history,
                         'button_text': 'Continue Conversation'
                     }, room=sid, namespace='/widget')
-                else:
-                    # No initial content - just return state
-                    await sio.emit('workflow_state', {
-                        'type': 'ready',
-                        'session_id': session_id,
-                        'has_history': has_history,
-                        'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
-                    }, room=sid, namespace='/widget')
-            else:
-                # Workflow execution failed
-                await sio.emit('workflow_state', {
-                    'type': 'error',
-                    'error': workflow_result.error,
-                    'session_id': session_id,
-                    'has_history': has_history,
-                    'button_text': 'Start Chat' if not has_history else 'Continue Conversation'
-                }, room=sid, namespace='/widget')
         else:
             # No workflow or has history - just return current state
             await sio.emit('workflow_state', {
@@ -1376,19 +1458,6 @@ async def handle_form_submission(sid, data):
             # Store form submission in chat history
             chat_repo = ChatRepository(db)
             
-            # Store user form submission
-            chat_repo.create_message({
-                "message": f"Form submitted: {', '.join([f'{k}: {v}' for k, v in form_data.items()])}",
-                "message_type": "user",
-                "session_id": session_id,
-                "organization_id": org_id,
-                "agent_id": session['agent_id'],
-                "customer_id": customer_id,
-                "attributes": {
-                    "form_submission": True,
-                    "form_data": form_data
-                }
-            })
 
             # Check if there's a response message to send
             if workflow_result.message:

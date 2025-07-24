@@ -362,7 +362,7 @@ class WorkflowExecutionService:
                 return self._execute_condition_node(node, workflow, workflow_state)
             
             elif node.node_type == NodeType.FORM:
-                return self._execute_form_node(node, workflow_state, user_message)
+                return self._execute_form_node(node, workflow_state, user_message, session_id)
             
             elif node.node_type == NodeType.LANDING_PAGE:
                 return self._execute_landing_page_node(node, workflow_state)
@@ -563,7 +563,8 @@ class WorkflowExecutionService:
         self,
         node: WorkflowNode,
         workflow_state: Dict[str, Any],
-        user_message: str
+        user_message: str,
+        session_id: str = None
     ) -> WorkflowExecutionResult:
         """Execute a form node"""
         logger.info(f"Executing form node: {node.id}")
@@ -611,7 +612,9 @@ class WorkflowExecutionService:
             # Clear form state after processing
             workflow_state.pop("form_state", None)
             workflow_state.pop("form_data", None)
-            
+            # Store form submission in workflow history
+            self.session_repo.add_workflow_history_entry(session_id, node.id, "form_submission", form_submission)
+
             # Find next node
             next_node_id = self._find_next_node(node)
             logger.debug(f"Next node ID: {next_node_id}")
