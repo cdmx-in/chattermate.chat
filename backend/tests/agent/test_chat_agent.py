@@ -68,6 +68,9 @@ class MockAgentStorage(Storage):
     async def get_all_sessions(self, *args, **kwargs):
         return []
 
+    async def get_recent_sessions(self, *args, **kwargs):
+        return []
+
     async def drop(self, *args, **kwargs):
         return None
 
