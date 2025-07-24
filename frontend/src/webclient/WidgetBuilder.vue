@@ -813,6 +813,14 @@ onUnmounted(() => {
                     </button>
                 </div>
             </div>
+            <!-- Powered by footer for landing page -->
+            <div class="powered-by-landing" :style="messageNameStyles">
+                <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M45 15H15C13.3431 15 12 16.3431 12 18V42C12 43.6569 13.3431 45 15 45H25L30 52L35 45H45C46.6569 45 48 43.6569 48 42V18C48 16.3431 46.6569 15 45 15Z" fill="currentColor" opacity="0.8"/>
+                    <path d="M36 27C36 27 32.5 26 30 26C27.5 26 24 27 24 31C24 35 27.5 36 30 36C32.5 36 36 35 36 35V33C36 33 33 34 31.5 34C30 34 27 33 27 31C27 29 30 28 31.5 28C33 28 36 29 36 29V27Z" fill="currentColor"/>
+                </svg>
+                Powered by ChatterMate
+            </div>
         </div>
 
         <!-- Full Screen Form Display -->
@@ -965,6 +973,14 @@ onUnmounted(() => {
                         <span v-else>{{ fullScreenFormData.submit_button_text || 'Submit' }}</span>
                     </button>
                 </div>
+            </div>
+            <!-- Powered by footer for form -->
+            <div class="powered-by-landing" :style="messageNameStyles">
+                <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M45 15H15C13.3431 15 12 16.3431 12 18V42C12 43.6569 13.3431 45 15 45H25L30 52L35 45H45C46.6569 45 48 43.6569 48 42V18C48 16.3431 46.6569 15 45 15Z" fill="currentColor" opacity="0.8"/>
+                    <path d="M36 27C36 27 32.5 26 30 26C27.5 26 24 27 24 31C24 35 27.5 36 30 36C32.5 36 36 35 36 35V33C36 33 33 34 31.5 34C30 34 27 33 27 31C27 29 30 28 31.5 28C33 28 36 29 36 29V27Z" fill="currentColor"/>
+                </svg>
+                Powered by ChatterMate
             </div>
         </div>
 
@@ -1324,6 +1340,10 @@ onUnmounted(() => {
 
             <!-- Powered by footer -->
             <div class="powered-by" :style="messageNameStyles">
+                <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M45 15H15C13.3431 15 12 16.3431 12 18V42C12 43.6569 13.3431 45 15 45H25L30 52L35 45H45C46.6569 45 48 43.6569 48 42V18C48 16.3431 46.6569 15 45 15Z" fill="currentColor" opacity="0.8"/>
+                    <path d="M36 27C36 27 32.5 26 30 26C27.5 26 24 27 24 31C24 35 27.5 36 30 36C32.5 36 36 35 36 35V33C36 33 33 34 31.5 34C30 34 27 33 27 31C27 29 30 28 31.5 28C33 28 36 29 36 29V27Z" fill="currentColor"/>
+                </svg>
                 Powered by ChatterMate
             </div>
         </div>
@@ -1602,6 +1622,10 @@ onUnmounted(() => {
     opacity: 0.7;
     border-top: 1px solid rgba(0, 0, 0, 0.1);
     margin-top: auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
 }
 
 .error-alert {
@@ -2992,10 +3016,35 @@ onUnmounted(() => {
     transform: translateX(2px);
 }
 
+/* Powered by footer for landing page */
+.powered-by-landing {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 0.75rem;
+    opacity: 0.6;
+    color: #9ca3af;
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    backdrop-filter: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.chattermate-logo {
+    flex-shrink: 0;
+    opacity: 0.8;
+}
+
 /* Responsive landing page styles */
 @media (max-width: 768px) {
     .landing-page-fullscreen .landing-page-heading {
-        font-size: 32px;
+        font-size: 28px;
     }
     
     .landing-page-fullscreen .landing-page-text {
@@ -3009,19 +3058,23 @@ onUnmounted(() => {
     .landing-page-fullscreen .landing-page-header {
         gap: 20px;
     }
+    
+    .powered-by-landing {
+        font-size: 0.7rem;
+        padding: 8px 12px;
+    }
 }
 
 /* Full Screen Form Styles */
 .form-fullscreen {
-    position: fixed;
-    top: 0;
-    left: 0;
-    width: 100vw;
-    height: 100vh;
-    background: var(--background-base);
-    z-index: 10001;
+    width: 100%;
+    height: 100%;
+    background: white;
+    border-radius: var(--radius-lg);
+    position: relative;
+    overflow: hidden;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     overflow-y: auto;
 }
@@ -3029,10 +3082,12 @@ onUnmounted(() => {
 .form-fullscreen-content {
     width: 100%;
     max-width: 600px;
-    padding: 48px 32px;
+    padding: 48px 32px 80px;
     display: flex;
     flex-direction: column;
     gap: 32px;
+    min-height: 100%;
+    box-sizing: border-box;
 }
 
 .form-fullscreen .form-header {

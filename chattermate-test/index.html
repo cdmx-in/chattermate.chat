@@ -178,29 +178,98 @@
         }
         
         function clearWidget() {
-            // Remove from localStorage
-            localStorage.removeItem(WIDGET_ID_KEY);
-            localStorage.removeItem(WIDGET_INITIALIZED_KEY);
-            
-            // Clear input field
-            document.getElementById('widgetIdInput').value = '';
-            
-            // Remove widget script and reset states
+            // Remove widget script first to prevent it from recreating storage items
             const existingScript = document.getElementById('chattermate-script');
             if (existingScript) {
                 existingScript.remove();
             }
             
-            // Reset window properties
+            // Reset window properties to disable widget functionality
             if (window.chattermateId) {
                 delete window.chattermateId;
             }
             if (window.ChatterMate) {
+                // Call destroy method if it exists
+                if (typeof window.ChatterMate.destroy === 'function') {
+                    window.ChatterMate.destroy();
+                }
                 delete window.ChatterMate;
             }
             
+            // Function to clear storage items with specific patterns
+            function clearStorageItems(storage, storageType) {
+                const keysToRemove = [];
+                
+                // Collect all keys that match our patterns
+                for (let i = 0; i < storage.length; i++) {
+                    const key = storage.key(i);
+                    if (key && (
+                        key.includes('chattermate') || 
+                        key.includes('widget') || 
+                        key === 'ctid' ||
+                        key.includes('chat') ||
+                        key.startsWith('cm_') ||
+                        key.includes('conversation') ||
+                        key.includes('session')
+                    )) {
+                        keysToRemove.push(key);
+                    }
+                }
+                
+                // Remove all collected keys
+                keysToRemove.forEach(key => {
+                    storage.removeItem(key);
+                    console.log(`Removed ${storageType} key:`, key);
+                });
+                
+                return keysToRemove.length;
+            }
+            
+            // Clear localStorage
+            const localKeysRemoved = clearStorageItems(localStorage, 'localStorage');
+            
+            // Clear sessionStorage  
+            const sessionKeysRemoved = clearStorageItems(sessionStorage, 'sessionStorage');
+            
+            // Also remove our specific keys (backup)
+            localStorage.removeItem(WIDGET_ID_KEY);
+            localStorage.removeItem(WIDGET_INITIALIZED_KEY);
+            localStorage.removeItem('ctid');
+            sessionStorage.removeItem('ctid');
+            
+            // Clear any widget-related cookies
+            let cookiesCleared = 0;
+            document.cookie.split(";").forEach(function(c) { 
+                const cookie = c.trim();
+                if (cookie.includes('chattermate') || 
+                    cookie.includes('widget') || 
+                    cookie.includes('ctid') ||
+                    cookie.includes('chat')) {
+                    const eqPos = cookie.indexOf("=");
+                    const name = eqPos > -1 ? cookie.substr(0, eqPos) : cookie;
+                    document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/";
+                    document.cookie = name + "=;expires=Thu, 01 Jan 1970 00:00:00 GMT;path=/;domain=" + window.location.hostname;
+                    cookiesCleared++;
+                    console.log('Removed cookie:', name);
+                }
+            });
+            
+            // Clear input field
+            document.getElementById('widgetIdInput').value = '';
+            
+            // Force a small delay and check again for any recreated items
+            setTimeout(() => {
+                localStorage.removeItem('ctid');
+                sessionStorage.removeItem('ctid');
+                console.log('Final cleanup: Removed any remaining ctid keys');
+            }, 100);
+            
             updateButtonStates(false);
-            console.log('Widget cleared and localStorage cleaned');
+            console.log(`Widget cleared completely:
+- LocalStorage keys removed: ${localKeysRemoved}
+- SessionStorage keys removed: ${sessionKeysRemoved}  
+- Cookies cleared: ${cookiesCleared}
+- Widget script removed and window properties cleaned`);
         }
         
         function updateButtonStates(isInitialized) {
