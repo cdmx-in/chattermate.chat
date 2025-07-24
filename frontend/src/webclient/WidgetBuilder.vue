@@ -137,9 +137,13 @@ const hasActiveForm = computed(() => {
 
 // Update the computed property for message input enabled state
 const isMessageInputEnabled = computed(() => {
-    // If workflow is enabled, don't require email
-    const workflowEnabled = window.__INITIAL_DATA__?.workflow
-    return (hasToken.value || isValidEmail(emailInput.value.trim()) || workflowEnabled) && 
+    // If we already have a conversation started, allow input
+    if (hasStartedChat.value && hasConversationToken.value) {
+        return connectionStatus.value === 'connected' && !loading.value
+    }
+    
+    // For new conversations, require a valid email
+    return isValidEmail(emailInput.value.trim()) && 
            connectionStatus.value === 'connected' && !loading.value
 })
 
@@ -147,8 +151,8 @@ const isMessageInputEnabled = computed(() => {
 const sendMessage = async () => {
     if (!newMessage.value.trim()) return
 
-    // If first message, fetch customization with email first (or without email for workflow)
-    if (!hasStartedChat.value) {
+    // If first message, fetch customization with email first
+    if (!hasStartedChat.value && emailInput.value) {
         await checkAuthorization()
     }
 
@@ -173,7 +177,6 @@ const checkAuthorization = async () => {
         }
 
         const url = new URL(`${widgetEnv.API_URL}/widgets/${widgetId.value}`)
-        // Only add email parameter if email is provided and valid
         if (emailInput.value.trim() && isValidEmail(emailInput.value.trim())) {
             url.searchParams.append('email', emailInput.value.trim())
         }
@@ -513,12 +516,6 @@ const handleFieldChange = (fieldName: string, value: any) => {
         delete formErrors.value[fieldName]
         console.log(`Cleared error for ${fieldName}`)
     }
-}
-
-// Email validation function
-const isValidEmail = (email: string): boolean => {
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-    return emailRegex.test(email)
 }
 
 // Phone number validation function
@@ -1290,7 +1287,7 @@ onUnmounted(() => {
             </div>
 
             <div class="chat-input" :style="agentBubbleStyles">
-                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken && !window.__INITIAL_DATA__?.workflow">
+                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken">
                     <input 
                         v-model="emailInput"
                         type="email" 
@@ -1302,7 +1299,7 @@ onUnmounted(() => {
                         }"
                     >
                 </div>
-                <div class="message-input" v-if="!hasActiveForm">
+                <div class="message-input">
                     <input 
                         v-model="newMessage" 
                         type="text" 

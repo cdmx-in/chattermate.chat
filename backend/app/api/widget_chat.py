@@ -279,7 +279,8 @@ async def handle_widget_chat(sid, data):
                 
         # Try to get existing active session
         active_session = session_repo.get_active_customer_session(
-            customer_id=customer_id
+            customer_id=customer_id,
+            agent_id=session['agent_id']
         )
 
         # Check message limit from session
