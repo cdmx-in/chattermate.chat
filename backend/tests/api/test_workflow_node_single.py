@@ -99,7 +99,7 @@ def test_update_workflow_node_success(client, db, test_user, test_organization, 
         description="Test node for update",
         position_x=100,
         position_y=200,
-        message_text="Hello World"
+        config={"message_text": "Hello World"}
     )
     db.add(node)
     db.commit()
@@ -108,7 +108,7 @@ def test_update_workflow_node_success(client, db, test_user, test_organization, 
     update_data = {
         "name": "Updated Test Node",
         "description": "Updated description",
-        "message_text": "Updated Hello World"
+        "config": {"message_text": "Updated Hello World"}
     }
     
     response = client.put(
@@ -122,7 +122,7 @@ def test_update_workflow_node_success(client, db, test_user, test_organization, 
     # Verify node was updated
     assert data["name"] == "Updated Test Node"
     assert data["description"] == "Updated description"
-    assert data["message_text"] == "Updated Hello World"
+    assert data["config"]["message_text"] == "Updated Hello World"
 
 
 def test_get_workflow_node_success(client, db, test_user, test_organization, test_agent):
@@ -149,7 +149,7 @@ def test_get_workflow_node_success(client, db, test_user, test_organization, tes
         description="Test node for retrieval",
         position_x=100,
         position_y=200,
-        message_text="Hello World"
+        config={"message_text": "Hello World"}
     )
     db.add(node)
     db.commit()
@@ -164,7 +164,7 @@ def test_get_workflow_node_success(client, db, test_user, test_organization, tes
     # Verify node data
     assert data["id"] == str(node.id)
     assert data["name"] == "Test Node"
-    assert data["message_text"] == "Hello World"
+    assert data["config"]["message_text"] == "Hello World"
 
 
 def test_update_workflow_node_not_found(client, db, test_user, test_organization, test_agent):

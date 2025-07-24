@@ -96,6 +96,12 @@ class ChatRepository:
                                 p.dict() if isinstance(p, BaseModel) else p 
                                 for p in products
                             ]
+            
+            # Convert string UUIDs to UUID objects
+            for field in ['organization_id', 'user_id', 'customer_id', 'agent_id', 'session_id']:
+                if field in message_data and message_data[field] is not None:
+                    if isinstance(message_data[field], str):
+                        message_data[field] = UUID(message_data[field])
 
             message = ChatHistory(**message_data)
             self.db.add(message)

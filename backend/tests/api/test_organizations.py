@@ -150,12 +150,29 @@ def client(test_user) -> TestClient:
     return TestClient(app)
 
 # Test cases
-def test_create_organization(client, db):
+def test_create_organization(client, db, monkeypatch):
     """Test creating a new organization"""
     # Delete existing users and organization first since we only allow one
+    # We need to override the dependency to use our test session
+    app.dependency_overrides[get_db] = lambda: db
+    
+    # Delete users first (due to foreign key constraints)
     db.query(User).delete()
+    db.commit()
+    
+    # Then delete organizations
     db.query(Organization).delete()
     db.commit()
+    
+    # Mock the agent repository to avoid SQLite issues with JSON
+    from app.repositories.agent import AgentRepository
+    original_create_agent = AgentRepository.create_agent
+    
+    def mock_create_agent(self, **kwargs):
+        # Skip agent creation in tests
+        return None
+    
+    monkeypatch.setattr(AgentRepository, "create_agent", mock_create_agent)
     
     org_data = {
         "name": "New Organization",

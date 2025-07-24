@@ -32,18 +32,21 @@ class SessionToAgentRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_session(self, session_id: UUID | str, agent_id: UUID | str, customer_id: UUID | str = None, user_id: UUID | str = None, organization_id: UUID | str = None) -> SessionToAgent:
+    def create_session(self, session_id: UUID | str, agent_id: UUID | str = None, customer_id: UUID | str = None, user_id: UUID | str = None, organization_id: UUID | str = None) -> SessionToAgent:
         """Create a new session assignment"""
         try:
-            # Check if agent has an active workflow
-            from app.models.agent import Agent
-            agent = self.db.query(Agent).filter(Agent.id == agent_id).first()
-            
             workflow_id = None
-            logger.info(f"Agent {agent_id} has use_workflow: {agent.use_workflow} and active_workflow_id: {agent.active_workflow_id}")
-            if agent and agent.use_workflow and agent.active_workflow_id:
-                workflow_id = agent.active_workflow_id
-                logger.info(f"Agent {agent_id} has active workflow {workflow_id}, adding to session")
+            
+            # Check if agent has an active workflow (only if agent_id is provided)
+            if agent_id is not None:
+                from app.models.agent import Agent
+                agent = self.db.query(Agent).filter(Agent.id == agent_id).first()
+                
+                if agent:
+                    logger.info(f"Agent {agent_id} has use_workflow: {agent.use_workflow} and active_workflow_id: {agent.active_workflow_id}")
+                    if agent.use_workflow and agent.active_workflow_id:
+                        workflow_id = agent.active_workflow_id
+                        logger.info(f"Agent {agent_id} has active workflow {workflow_id}, adding to session")
             
             session = SessionToAgent(
                 session_id=session_id,

@@ -33,21 +33,17 @@ class AgentRepository:
     def create_agent(self, **kwargs) -> Agent:
         """Create a new agent"""
         # Handle instructions
-        instructions = kwargs.get('instructions', [])
-        if isinstance(instructions, str):
-            try:
-                parsed = json.loads(instructions)
-                if isinstance(parsed, list):
-                    instructions = parsed
-                else:
-                    instructions = [instructions]
-            except json.JSONDecodeError:
-                instructions = [instructions]
-        kwargs['instructions'] = instructions
+        # We don't need to do any conversion here, as the Agent model will handle it
+        # through its property setter
 
         # Handle tools if present
         if 'tools' in kwargs and kwargs['tools']:
-            kwargs['tools'] = json.dumps(kwargs['tools'])
+            if not isinstance(kwargs['tools'], str):
+                kwargs['tools'] = json.dumps(kwargs['tools'])
+            
+        # Handle org_id to organization_id conversion for backward compatibility
+        if 'org_id' in kwargs:
+            kwargs['organization_id'] = kwargs.pop('org_id')
 
         # Create new agent
         agent = Agent(**kwargs)
