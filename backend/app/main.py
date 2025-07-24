@@ -19,7 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics, jira, shopify
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics, jira, shopify, workflow, workflow_node
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -167,6 +167,18 @@ app.include_router(
     shopify.router,
     prefix=f"{settings.API_V1_STR}/shopify",
     tags=["shopify"]
+)
+
+app.include_router(
+    workflow.router,
+    prefix=f"{settings.API_V1_STR}/workflow",
+    tags=["workflow"]
+)
+
+app.include_router(
+    workflow_node.router,
+    prefix=f"{settings.API_V1_STR}/workflow",
+    tags=["workflow_node"]
 )
 
 @app.get("/")

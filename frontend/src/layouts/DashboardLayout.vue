@@ -31,6 +31,11 @@ import { useRoute, useRouter } from 'vue-router'
 import { updateUserStatus } from '@/services/users'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
+const props = defineProps<{
+    hideSidebar?: boolean
+    hideHeader?: boolean
+}>()
+
 const isSidebarOpen = ref(true)
 const showUserMenu = ref(false)
 const showNotifications = ref(false)
@@ -128,11 +133,19 @@ const navigateToUpgrade = () => {
     router.push('/settings/subscription')
 }
 
+// Computed for layout classes
+const layoutClasses = computed(() => ({
+    'sidebar-collapsed': !isSidebarOpen.value || props.hideSidebar,
+    'header-hidden': props.hideHeader,
+    'fullscreen-workflow': props.hideSidebar && props.hideHeader
+}))
+
 </script>
 
 <template>
-    <div class="dashboard-layout" :class="{ 'sidebar-collapsed': !isSidebarOpen }">
+    <div class="dashboard-layout" :class="layoutClasses">
         <AppSidebar 
+            v-if="!props.hideSidebar"
             :isCollapsed="!isSidebarOpen" 
             @toggle="toggleSidebar" 
         />
@@ -140,7 +153,7 @@ const navigateToUpgrade = () => {
         <!-- Main Content -->
         <div class="main-content">
             <!-- Message Limit Warning Banner -->
-            <div v-if="hasEnterpriseModule && showMessageLimitWarning && messageLimitStatus" 
+            <div v-if="!props.hideHeader && hasEnterpriseModule && showMessageLimitWarning && messageLimitStatus" 
                  class="message-limit-banner"
                  :class="messageLimitStatus.type">
                 <div class="banner-content">
@@ -167,7 +180,7 @@ const navigateToUpgrade = () => {
             </div>
 
             <!-- Header -->
-            <header class="header">
+            <header v-if="!props.hideHeader" class="header">
                 <div class="header-content">
                     <div class="left-section">
                         <!-- Any left section content -->
@@ -761,5 +774,30 @@ const navigateToUpgrade = () => {
 .content {
     flex: 1;
     padding: var(--space-xl);
+}
+
+/* Fullscreen workflow mode */
+.dashboard-layout.fullscreen-workflow {
+    grid-template-columns: 1fr;
+}
+
+.dashboard-layout.fullscreen-workflow .main-content {
+    padding: 0;
+    min-height: 100vh;
+}
+
+.dashboard-layout.fullscreen-workflow .content {
+    padding: 0;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.dashboard-layout.header-hidden .main-content {
+    min-height: 100vh;
+}
+
+.dashboard-layout.header-hidden .content {
+    height: 100vh;
+    overflow: hidden;
 }
 </style>

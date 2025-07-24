@@ -30,52 +30,34 @@ class AgentRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_agent(self,
-                     name: str,
-                     agent_type: AgentType,
-                     instructions: List[str],
-                     org_id: UUID,
-                     description: Optional[str] = None,
-                     tools: Optional[List[dict]] = None,
-                     is_default: bool = False,
-                     is_active: bool = False
-                     ) -> Agent:
-        """Create a new agent template"""
-        # If this is a default template, unset other defaults
-        if is_default:
-            existing_defaults = self.db.query(Agent).filter(
-                Agent.organization_id == org_id,
-                Agent.is_default == True
-            ).all()
-            for template in existing_defaults:
-                template.is_default = False
-
+    def create_agent(self, **kwargs) -> Agent:
+        """Create a new agent"""
         # Handle instructions
-        if isinstance(instructions, str):
-            try:
-                parsed = json.loads(instructions)
-                if isinstance(parsed, list):
-                    instructions = parsed
-                else:
-                    instructions = [instructions]
-            except json.JSONDecodeError:
-                instructions = [instructions]
+        # We don't need to do any conversion here, as the Agent model will handle it
+        # through its property setter
 
-        template = Agent(
-            name=name,
-            description=description,
-            agent_type=agent_type,
-            instructions=instructions,
-            tools=json.dumps(tools) if tools else None,
-            organization_id=org_id,
-            is_default=is_default,
-            is_active=is_active
-        )
+        # Handle tools if present
+        if 'tools' in kwargs and kwargs['tools']:
+            if not isinstance(kwargs['tools'], str):
+                kwargs['tools'] = json.dumps(kwargs['tools'])
+            
+        # Handle org_id to organization_id conversion for backward compatibility
+        if 'org_id' in kwargs:
+            kwargs['organization_id'] = kwargs.pop('org_id')
 
-        self.db.add(template)
-        self.db.flush()
-        self.db.refresh(template)
-        return template
+        # Create new agent
+        agent = Agent(**kwargs)
+        self.db.add(agent)
+        self.db.commit()
+        self.db.refresh(agent)
+        return agent
+
+    def get_by_name(self, name: str, organization_id: UUID) -> Optional[Agent]:
+        """Get agent by name within an organization"""
+        return self.db.query(Agent).filter(
+            Agent.name == name,
+            Agent.organization_id == organization_id
+        ).first()
 
     def get_agent(self, agent_id: UUID) -> Optional[Agent]:
         """Get template by ID"""

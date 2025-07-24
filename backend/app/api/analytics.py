@@ -399,13 +399,18 @@ async def get_customer_analytics(
             func.count(Rating.id).label('rating_count')
         ).outerjoin(
             SessionToAgent, 
-            Customer.id == SessionToAgent.customer_id
+            and_(
+                Customer.id == SessionToAgent.customer_id,
+                SessionToAgent.assigned_at.between(start_date, end_date)
+            )
         ).outerjoin(
             Rating,
-            SessionToAgent.session_id == Rating.session_id
+            and_(
+                Rating.customer_id == Customer.id,
+                Rating.organization_id == Customer.organization_id
+            )
         ).filter(
-            Customer.organization_id == org_id,
-            SessionToAgent.assigned_at.between(start_date, end_date)
+            Customer.organization_id == org_id
         ).group_by(
             Customer.id
         ).order_by(

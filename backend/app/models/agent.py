@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from sqlalchemy import Column, Integer, String, Text, Boolean, Enum as SQLEnum, ForeignKey, JSON, Table, Float
+from sqlalchemy import Column, DateTime, Integer, String, Text, Boolean, Enum as SQLEnum, ForeignKey, JSON, Table, Float, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
@@ -93,10 +93,13 @@ class Agent(Base):
     is_default = Column(Boolean, default=False)
     transfer_to_human = Column(Boolean, default=False, nullable=False)
     ask_for_rating = Column(Boolean, default=True, nullable=True)
-    enable_rate_limiting = Column(Boolean, default=False, nullable=False)
-    overall_limit_per_ip = Column(Integer, default=100, nullable=False)
-    requests_per_sec = Column(Float, default=1, nullable=False)
-
+    enable_rate_limiting = Column(Boolean, default=False, nullable=True)
+    overall_limit_per_ip = Column(Integer, default=100, nullable=True)
+    requests_per_sec = Column(Float, default=1, nullable=True)
+    use_workflow = Column(Boolean, default=False, nullable=True)
+    active_workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     # Relationships
     organization = relationship("Organization", back_populates="agents")
     knowledge_links = relationship(
@@ -112,6 +115,16 @@ class Agent(Base):
         secondary=agent_usergroup,
         backref="agents",
         lazy="joined"
+    )
+    active_workflow = relationship(
+        "Workflow", 
+        foreign_keys=[active_workflow_id],
+        backref="active_agents"
+    )
+    workflows = relationship(
+        "Workflow", 
+        foreign_keys="[Workflow.agent_id]",
+        back_populates="agent"
     )
 
     @property

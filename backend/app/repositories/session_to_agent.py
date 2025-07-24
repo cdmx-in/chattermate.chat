@@ -32,16 +32,30 @@ class SessionToAgentRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_session(self, session_id: UUID | str, agent_id: UUID | str, customer_id: UUID | str = None, user_id: UUID | str = None, organization_id: UUID | str = None) -> SessionToAgent:
+    def create_session(self, session_id: UUID | str, agent_id: UUID | str = None, customer_id: UUID | str = None, user_id: UUID | str = None, organization_id: UUID | str = None) -> SessionToAgent:
         """Create a new session assignment"""
         try:
+            workflow_id = None
+            
+            # Check if agent has an active workflow (only if agent_id is provided)
+            if agent_id is not None:
+                from app.models.agent import Agent
+                agent = self.db.query(Agent).filter(Agent.id == agent_id).first()
+                
+                if agent:
+                    logger.info(f"Agent {agent_id} has use_workflow: {agent.use_workflow} and active_workflow_id: {agent.active_workflow_id}")
+                    if agent.use_workflow and agent.active_workflow_id:
+                        workflow_id = agent.active_workflow_id
+                        logger.info(f"Agent {agent_id} has active workflow {workflow_id}, adding to session")
+            
             session = SessionToAgent(
                 session_id=session_id,
                 agent_id=agent_id,
                 customer_id=customer_id,
                 user_id=user_id,
                 organization_id=organization_id,
-                status=SessionStatus.OPEN
+                status=SessionStatus.OPEN,
+                workflow_id=workflow_id
             )
             self.db.add(session)
             self.db.commit()
@@ -221,10 +235,35 @@ class SessionToAgentRepository:
         try:
             session = self.get_session(session_id)
             if not session:
+                logger.error(f"Session {session_id} not found for update")
                 return False
+            
+            logger.info(f"Updating session {session_id} with data: {data}")
+            
+            # Direct assignment instead of setattr for better SQLAlchemy JSON handling
+            if 'workflow_state' in data:
+                session.workflow_state = data['workflow_state']
+                logger.info(f"Set workflow_state = {data['workflow_state']}")
+                
+            if 'current_node_id' in data:
+                session.current_node_id = data['current_node_id']
+                logger.info(f"Set current_node_id = {data['current_node_id']}")
+                
+            # Handle other fields with setattr
             for key, value in data.items():
-                setattr(session, key, value)
+                if key not in ['workflow_state', 'current_node_id']:
+                    setattr(session, key, value)
+                    logger.info(f"Set {key} = {value}")
+            
+            # Mark the session as dirty to ensure SQLAlchemy tracks the changes
+            self.db.flush()
             self.db.commit()
+            
+            # Verify the update by refreshing from database
+            self.db.refresh(session)
+            logger.info(f"Session after update - workflow_state: {session.workflow_state}")
+            logger.info(f"Session after update - current_node_id: {session.current_node_id}")
+            
             return True
         except Exception as e:
             logger.error(f"Error updating session: {str(e)}")
@@ -252,6 +291,42 @@ class SessionToAgentRepository:
             
         except Exception as e:
             logger.error(f"Error taking over session: {str(e)}")
+            self.db.rollback()
+            return False
+
+    def update_workflow_state(self, session_id: UUID | str, current_node_id: Optional[UUID], workflow_state: dict) -> bool:
+        """Update workflow state and current node for a session"""
+        try:
+            from sqlalchemy.orm.attributes import flag_modified
+            
+            session = self.get_session(session_id)
+            if not session:
+                logger.error(f"Session {session_id} not found for workflow state update")
+                return False
+            
+            logger.info(f"Updating workflow state for session {session_id}")
+            logger.info(f"Setting current_node_id to: {current_node_id}")
+            logger.info(f"Setting workflow_state to: {workflow_state}")
+            
+            # Update fields
+            session.current_node_id = current_node_id
+            session.workflow_state = workflow_state.copy() if workflow_state else {}
+            session.updated_at = datetime.utcnow()
+            
+            # Explicitly mark JSON field as modified for SQLAlchemy
+            flag_modified(session, 'workflow_state')
+            
+            # Commit changes
+            self.db.commit()
+            self.db.refresh(session)
+            
+            # Verify the update
+            logger.info(f"Verified - current_node_id: {session.current_node_id}")
+            logger.info(f"Verified - workflow_state: {session.workflow_state}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error updating workflow state: {str(e)}")
             self.db.rollback()
             return False
 

@@ -52,7 +52,7 @@ def remove_urls_from_message(message: str) -> str:
     return re.sub(url_pattern, '[link removed]', message)
 
 class ChatAgent:
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None):
         # Initialize knowledge search tool if org_id and agent_id provided
         tools = []
         if org_id and agent_id:
@@ -138,7 +138,10 @@ class ChatAgent:
             
             # Build system message
             system_message = ""
-            if self.agent_data.instructions:
+            if custom_system_prompt:
+                # Use custom system prompt from workflow
+                system_message = custom_system_prompt
+            elif self.agent_data.instructions:
                 system_message = "\n".join(self.agent_data.instructions) + "Use the knowledge search tool to provide accurate company information. Only use the tool if required, dont use it for general greeting or general queries"
 
             
@@ -261,7 +264,7 @@ class ChatAgent:
             api_key=api_key,
             model_name=model_name,
             max_tokens=2000 if self.shopify_instructions_added else 1000,
-            response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
+            # response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
         )
 
         storage = PostgresAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
@@ -293,6 +296,67 @@ class ChatAgent:
            user_message_role="user",
            show_tool_calls=settings.ENVIRONMENT == "development"
           )
+
+    async def _get_llm_response_only(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
+        """
+        Get LLM response without storing messages in chat history.
+        Used by workflow execution to avoid duplicate message storage.
+        """
+        try:
+            # Update session and IDs if provided
+            if session_id:
+                self.session_id = session_id
+            if org_id:
+                self.org_id = org_id
+            if agent_id:
+                self.agent_id = agent_id
+            if customer_id:
+                self.customer_id = customer_id
+                
+            self.agent.session_id = session_id
+
+            # Get AI response WITHOUT storing user message
+            response = await self.agent.arun(
+                message=message,
+                session_id=session_id,
+                stream=False
+            )
+
+            # Use the utility function to parse the response
+            response_content = parse_response_content(response)
+
+            logger.debug(f"Response content: {response_content}")
+            
+            # If shopify_output is present, remove URLs from message
+            if response_content.shopify_output:
+                response_content.message = remove_urls_from_message(response_content.message)
+                logger.debug(f"Cleaned message for Shopify output: {response_content.message}")
+            
+            # Don't handle end chat or transfer here - let workflow handle it
+            # Don't store any messages - let workflow handle storage
+            
+            return response_content
+
+        except Exception as e:
+            traceback.print_exc()
+            logger.error(f"Chat agent error: {str(e)}")
+            error_message = f"I apologize, but I encountered an error, please try again later."
+            
+            # Create error response without storing
+            error_response = ChatResponse(
+                message=error_message,
+                transfer_to_human=False,
+                transfer_reason=None,
+                transfer_description=None,
+                end_chat=False,
+                end_chat_reason=None,
+                end_chat_description=None,
+                request_rating=False,
+                create_ticket=False,
+                shopify_output=None
+            )
+            
+            return error_response
 
     async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
         """

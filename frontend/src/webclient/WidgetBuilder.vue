@@ -75,7 +75,13 @@ const {
     cleanup,
     humanAgent,
     onTakeover,
-    submitRating: socketSubmitRating
+    submitRating: socketSubmitRating,
+    submitForm,
+    currentForm,
+    getWorkflowState,
+    proceedWorkflow,
+    onWorkflowState,
+    onWorkflowProceeded
 } = useWidgetSocket()
 
 const newMessage = ref('')
@@ -121,9 +127,23 @@ const {
     shadowStyle
 } = useWidgetStyles(customization)
 
+// Check if there's an active form being displayed
+const hasActiveForm = computed(() => {
+    return messages.value.some(message => 
+        message.message_type === 'form' && 
+        (!message.isSubmitted || message.isSubmitted === false)
+    )
+})
+
 // Update the computed property for message input enabled state
 const isMessageInputEnabled = computed(() => {
-    return (hasToken.value || isValidEmail(emailInput.value.trim())) && 
+    // If we already have a conversation started, allow input
+    if (hasStartedChat.value && hasConversationToken.value) {
+        return connectionStatus.value === 'connected' && !loading.value
+    }
+    
+    // For new conversations, require a valid email
+    return isValidEmail(emailInput.value.trim()) && 
            connectionStatus.value === 'connected' && !loading.value
 })
 
@@ -209,6 +229,19 @@ const checkAuthorization = async () => {
         if (data?.human_agent) {
             humanAgent.value = data.human_agent
         }
+        
+        // Update workflow status in initial data if received from backend
+        if (data.agent?.workflow !== undefined) {
+            window.__INITIAL_DATA__ = window.__INITIAL_DATA__ || {}
+            window.__INITIAL_DATA__.workflow = data.agent.workflow
+        }
+
+        // Get workflow state after successful connection
+        if (data.agent?.workflow) {
+            console.log('Getting workflow state after authorization')
+            await getWorkflowState()
+        }
+        
         return true
     } catch (error) {
         console.error('Error checking authorization:', error)
@@ -268,6 +301,22 @@ const currentSessionId = ref('')
 // Add these refs for star rating
 const hoverRating = ref(0)
 const isSubmittingRating = ref(false)
+
+// Form handling refs
+const formData = ref<Record<string, any>>({})
+const isSubmittingForm = ref(false)
+const formErrors = ref<Record<string, string>>({})
+
+// Landing page handling refs
+const showLandingPage = ref(false)
+const landingPageData = ref<any>(null)
+const workflowButtonText = ref('Start Chat')
+
+// Form full screen handling refs
+const showFullScreenForm = ref(false)
+const fullScreenFormData = ref<any>(null)
+
+
 
 // Add this after other computed properties
 const ratingEnabled = computed(() => {
@@ -365,6 +414,224 @@ const handleAddToCartFromCarousel = (product) => {
     }
 };
 
+// Form validation function
+const validateForm = (formConfig: any): boolean => {
+    const errors: Record<string, string> = {}
+    
+    for (const field of formConfig.fields) {
+        const value = formData.value[field.name]
+        const error = validateFormField(field, value)
+        
+        if (error) {
+            errors[field.name] = error
+        }
+    }
+    
+    formErrors.value = errors
+    return Object.keys(errors).length === 0
+}
+
+// Handle form submission
+const handleFormSubmit = async (formConfig: any) => {
+    console.log('handleFormSubmit called with config:', formConfig)
+    console.log('Current form data:', formData.value)
+    console.log('isSubmittingForm:', isSubmittingForm.value)
+    
+    if (isSubmittingForm.value) {
+        console.log('Form submission already in progress, returning')
+        return
+    }
+    
+    console.log('Validating form...')
+    const isValid = validateForm(formConfig)
+    console.log('Form validation result:', isValid)
+    console.log('Form errors:', formErrors.value)
+    
+    if (!isValid) {
+        console.log('Form validation failed, not submitting')
+        return
+    }
+    
+    try {
+        console.log('Starting form submission...')
+        isSubmittingForm.value = true
+        await submitForm(formData.value)
+        console.log('Form submitted successfully')
+        
+        // Remove the form message from messages array
+        const formIndex = messages.value.findIndex(msg => 
+            msg.message_type === 'form' && 
+            (!msg.isSubmitted || msg.isSubmitted === false)
+        )
+        if (formIndex !== -1) {
+            messages.value.splice(formIndex, 1)
+            console.log('Removed form message from chat')
+        }
+        
+        // Clear form data after successful submission
+        formData.value = {}
+        formErrors.value = {}
+        console.log('Cleared form data and errors')
+    } catch (error) {
+        console.error('Failed to submit form:', error)
+    } finally {
+        isSubmittingForm.value = false
+        console.log('Form submission completed')
+    }
+}
+
+// Handle form field change
+const handleFieldChange = (fieldName: string, value: any) => {
+    console.log(`Field change: ${fieldName} = `, value)
+    formData.value[fieldName] = value
+    console.log('Updated formData:', formData.value)
+    
+    // Real-time validation: validate the current field if it has a value
+    if (value && value.toString().trim() !== '') {
+        // Find the field configuration for real-time validation
+        let fieldConfig = null
+        
+        // Check full screen form first
+        if (fullScreenFormData.value?.fields) {
+            fieldConfig = fullScreenFormData.value.fields.find(f => f.name === fieldName)
+        }
+        
+        // If not found and there's a current form, check regular form
+        if (!fieldConfig && currentForm.value?.fields) {
+            fieldConfig = currentForm.value.fields.find(f => f.name === fieldName)
+        }
+        
+        if (fieldConfig) {
+            const error = validateFormField(fieldConfig, value)
+            if (error) {
+                formErrors.value[fieldName] = error
+                console.log(`Validation error for ${fieldName}:`, error)
+            } else {
+                delete formErrors.value[fieldName]
+                console.log(`Validation passed for ${fieldName}`)
+            }
+        }
+    } else {
+        // Clear error when field is cleared
+        delete formErrors.value[fieldName]
+        console.log(`Cleared error for ${fieldName}`)
+    }
+}
+
+// Phone number validation function
+const isValidPhoneNumber = (phone: string): boolean => {
+    // Remove all non-digit characters
+    const cleanPhone = phone.replace(/\D/g, '')
+    // Check if it's between 7 and 15 digits (international standard)
+    return cleanPhone.length >= 7 && cleanPhone.length <= 15
+}
+
+// Enhanced form validation function
+const validateFormField = (field: any, value: any): string | null => {
+    // Required field validation
+    if (field.required && (!value || value.toString().trim() === '')) {
+        return `${field.label} is required`
+    }
+    
+    // Skip further validation if field is empty and not required
+    if (!value || value.toString().trim() === '') {
+        return null
+    }
+    
+    // Email validation
+    if (field.type === 'email' && !isValidEmail(value)) {
+        return `Please enter a valid email address`
+    }
+    
+    // Phone number validation
+    if (field.type === 'tel' && !isValidPhoneNumber(value)) {
+        return `Please enter a valid phone number`
+    }
+    
+    // Length validation for text fields
+    if ((field.type === 'text' || field.type === 'textarea') && field.minLength && value.length < field.minLength) {
+        return `${field.label} must be at least ${field.minLength} characters`
+    }
+    
+    if ((field.type === 'text' || field.type === 'textarea') && field.maxLength && value.length > field.maxLength) {
+        return `${field.label} must not exceed ${field.maxLength} characters`
+    }
+    
+    // Number validation
+    if (field.type === 'number') {
+        const numValue = parseFloat(value)
+        if (isNaN(numValue)) {
+            return `${field.label} must be a valid number`
+        }
+        if (field.minLength && numValue < field.minLength) {
+            return `${field.label} must be at least ${field.minLength}`
+        }
+        if (field.maxLength && numValue > field.maxLength) {
+            return `${field.label} must not exceed ${field.maxLength}`
+        }
+    }
+    
+    return null
+}
+
+// Handle full screen form submission
+const submitFullScreenForm = async () => {
+    console.log('submitFullScreenForm called')
+    console.log('Current form data:', formData.value)
+    console.log('Full screen form data:', fullScreenFormData.value)
+    console.log('isSubmittingForm:', isSubmittingForm.value)
+    
+    if (isSubmittingForm.value || !fullScreenFormData.value) {
+        console.log('Already submitting or no form data, returning')
+        return
+    }
+    
+    try {
+        console.log('Starting full screen form submission...')
+        isSubmittingForm.value = true
+        formErrors.value = {}
+        
+        // Enhanced validation with field-specific rules
+        let hasErrors = false
+        for (const field of fullScreenFormData.value.fields || []) {
+            const value = formData.value[field.name]
+            const error = validateFormField(field, value)
+            
+            if (error) {
+                formErrors.value[field.name] = error
+                hasErrors = true
+                console.log(`Validation error for field ${field.name}:`, error)
+            }
+        }
+        
+        console.log('Validation completed. Has errors:', hasErrors)
+        console.log('Form errors:', formErrors.value)
+        
+        if (hasErrors) {
+            isSubmittingForm.value = false
+            console.log('Validation failed, not submitting')
+            return
+        }
+        
+        // Submit form data through the workflow
+        console.log('Submitting form data:', formData.value)
+        await submitForm(formData.value)
+        console.log('Full screen form submitted successfully')
+        
+        // Hide full screen form after successful submission
+        showFullScreenForm.value = false
+        fullScreenFormData.value = null
+        formData.value = {}
+        console.log('Full screen form hidden and data cleared')
+        
+    } catch (error) {
+        console.error('Failed to submit full screen form:', error)
+    } finally {
+        isSubmittingForm.value = false
+        console.log('Full screen form submission completed')
+    }
+}
+
 const handleViewDetails = (productId) => {
     if (productId) {
         window.parent.postMessage({
@@ -382,11 +649,28 @@ const removeUrls = (text) => {
     return text.replace(/https?:\/\/[^\s\)]+/g, '[link removed]');
 }
 
+// Handle landing page proceed action
+const handleLandingPageProceed = async () => {
+    try {
+        showLandingPage.value = false
+        landingPageData.value = null
+        await proceedWorkflow()
+    } catch (error) {
+        console.error('Failed to proceed workflow:', error)
+    }
+}
+
 onMounted(async () => {
     const isAuthorized = await checkAuthorization()
     if (!isAuthorized) {
         connectionStatus.value = 'connected'
         return
+    }
+
+    // For refresh cases, also check if we need to get workflow state
+    if (window.__INITIAL_DATA__?.workflow && hasConversationToken.value) {
+        console.log('Getting workflow state on refresh/reload')
+        await getWorkflowState()
     }
 
     // Register takeover callback
@@ -403,6 +687,64 @@ onMounted(async () => {
             // Parent confirmed token storage
             localStorage.setItem(TOKEN_KEY, event.data.token)
         }
+    })
+
+    // Register workflow state callback
+    onWorkflowState((data) => {
+        console.log('Workflow state received in component:', data)
+        console.log('Data type:', data.type)
+        console.log('Form data:', data.form_data)
+        workflowButtonText.value = data.button_text || 'Start Chat'
+        
+        if (data.type === 'landing_page') {
+            console.log('Setting landing page data:', data.landing_page_data)
+            landingPageData.value = data.landing_page_data
+            showLandingPage.value = true
+            showFullScreenForm.value = false
+            console.log('Landing page state - show:', showLandingPage.value, 'data:', landingPageData.value)
+        } else if (data.type === 'form' || data.type === 'display_form') {
+            // Check if form should be displayed in full screen mode
+            console.log('Form full screen flag:', data.form_data?.form_full_screen)
+            if (data.form_data?.form_full_screen === true) {
+                console.log('Setting full screen form data:', data.form_data)
+                fullScreenFormData.value = data.form_data
+                showFullScreenForm.value = true
+                showLandingPage.value = false
+                console.log('Full screen form state - show:', showFullScreenForm.value)
+            } else {
+                console.log('Regular form mode - adding form message to chat')
+                // For non-fullscreen forms, add a form message to the chat
+                const formMessage = {
+                    message: '',
+                    message_type: 'form',
+                    attributes: {
+                        form_data: data.form_data
+                    },
+                    created_at: new Date().toISOString(),
+                    isSubmitted: false
+                }
+                
+                // Check if form message already exists to avoid duplicates
+                const existingFormIndex = messages.value.findIndex(msg => 
+                    msg.message_type === 'form' && !msg.isSubmitted
+                )
+                
+                if (existingFormIndex === -1) {
+                    messages.value.push(formMessage)
+                }
+                
+                showLandingPage.value = false
+                showFullScreenForm.value = false
+            }
+        } else {
+            console.log('No special workflow state, hiding overlay forms')
+            showLandingPage.value = false
+            showFullScreenForm.value = false
+        }
+    })
+
+    onWorkflowProceeded((data) => {
+        console.log('Workflow proceeded:', data)
     })
 })
 
@@ -451,8 +793,183 @@ onUnmounted(() => {
             {{ errorMessage }}
         </div>
 
-        <!-- Chat Panel -->
-        <div class="chat-panel" :style="chatStyles" v-if="isExpanded">
+        <!-- Landing Page Display (Full Screen) -->
+        <div v-if="showLandingPage && landingPageData" class="landing-page-fullscreen" :style="chatStyles">
+            <div class="landing-page-content">
+                <div class="landing-page-header">
+                    <h2 class="landing-page-heading">
+                        {{ landingPageData.heading }}
+                    </h2>
+                    <div class="landing-page-text">
+                        {{ landingPageData.content }}
+                    </div>
+                </div>
+                <div class="landing-page-actions">
+                    <button 
+                        class="landing-page-button"
+                        @click="handleLandingPageProceed"
+                    >
+                        {{ workflowButtonText }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Full Screen Form Display -->
+        <div v-else-if="showFullScreenForm && fullScreenFormData" class="form-fullscreen" :style="chatStyles">
+            <div class="form-fullscreen-content">
+                <div v-if="fullScreenFormData.title || fullScreenFormData.description" class="form-header">
+                    <h2 v-if="fullScreenFormData.title" class="form-title">{{ fullScreenFormData.title }}</h2>
+                    <p v-if="fullScreenFormData.description" class="form-description">
+                        {{ fullScreenFormData.description }}
+                    </p>
+                </div>
+                
+                <div class="form-fields">
+                    <div 
+                        v-for="field in fullScreenFormData.fields" 
+                        :key="field.name"
+                        class="form-field"
+                    >
+                        <label :for="`fullscreen-form-${field.name}`" class="field-label">
+                            {{ field.label }}
+                            <span v-if="field.required" class="required-indicator">*</span>
+                        </label>
+                        
+                        <!-- Text Input -->
+                        <input
+                            v-if="field.type === 'text' || field.type === 'email' || field.type === 'tel'"
+                            :id="`fullscreen-form-${field.name}`"
+                            :type="field.type"
+                            :placeholder="field.placeholder || ''"
+                            :required="field.required"
+                            :minlength="field.minLength"
+                            :maxlength="field.maxLength"
+                            :value="formData[field.name] || ''"
+                            @input="handleFieldChange(field.name, ($event.target as HTMLInputElement).value)"
+                            @blur="handleFieldChange(field.name, ($event.target as HTMLInputElement).value)"
+                            class="form-input"
+                            :class="{ 'error': formErrors[field.name] }"
+                            :autocomplete="field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'off'"
+                            :inputmode="field.type === 'tel' ? 'tel' : field.type === 'email' ? 'email' : 'text'"
+                        />
+                        
+                        <!-- Number Input -->
+                        <input
+                            v-else-if="field.type === 'number'"
+                            :id="`fullscreen-form-${field.name}`"
+                            type="number"
+                            :placeholder="field.placeholder || ''"
+                            :required="field.required"
+                            :min="field.minLength"
+                            :max="field.maxLength"
+                            :value="formData[field.name] || ''"
+                            @input="handleFieldChange(field.name, ($event.target as HTMLInputElement).value)"
+                            class="form-input"
+                            :class="{ 'error': formErrors[field.name] }"
+                        />
+                        
+                        <!-- Textarea -->
+                        <textarea
+                            v-else-if="field.type === 'textarea'"
+                            :id="`fullscreen-form-${field.name}`"
+                            :placeholder="field.placeholder || ''"
+                            :required="field.required"
+                            :minlength="field.minLength"
+                            :maxlength="field.maxLength"
+                            :value="formData[field.name] || ''"
+                            @input="handleFieldChange(field.name, ($event.target as HTMLTextAreaElement).value)"
+                            class="form-textarea"
+                            :class="{ 'error': formErrors[field.name] }"
+                            rows="4"
+                        ></textarea>
+                        
+                        <!-- Select -->
+                        <select
+                            v-else-if="field.type === 'select'"
+                            :id="`fullscreen-form-${field.name}`"
+                            :required="field.required"
+                            :value="formData[field.name] || ''"
+                            @change="handleFieldChange(field.name, ($event.target as HTMLSelectElement).value)"
+                            class="form-select"
+                            :class="{ 'error': formErrors[field.name] }"
+                        >
+                            <option value="">Please select...</option>
+                            <option 
+                                v-for="option in field.options?.split('\n').filter(o => o.trim())" 
+                                :key="option" 
+                                :value="option.trim()"
+                            >
+                                {{ option.trim() }}
+                            </option>
+                        </select>
+                        
+                        <!-- Checkbox -->
+                        <label
+                            v-else-if="field.type === 'checkbox'"
+                            class="checkbox-field"
+                        >
+                            <input
+                                :id="`fullscreen-form-${field.name}`"
+                                type="checkbox"
+                                :required="field.required"
+                                :checked="formData[field.name] || false"
+                                @change="handleFieldChange(field.name, ($event.target as HTMLInputElement).checked)"
+                                class="form-checkbox"
+                            />
+                            <span class="checkbox-label">{{ field.label }}</span>
+                        </label>
+                        
+                        <!-- Radio -->
+                        <div 
+                            v-else-if="field.type === 'radio'"
+                            class="radio-group"
+                        >
+                            <label 
+                                v-for="option in field.options?.split('\n').filter(o => o.trim())" 
+                                :key="option"
+                                class="radio-field"
+                            >
+                                <input
+                                    type="radio"
+                                    :name="`fullscreen-form-${field.name}`"
+                                    :value="option.trim()"
+                                    :required="field.required"
+                                    :checked="formData[field.name] === option.trim()"
+                                    @change="handleFieldChange(field.name, option.trim())"
+                                    class="form-radio"
+                                />
+                                <span class="radio-label">{{ option.trim() }}</span>
+                            </label>
+                        </div>
+                        
+                        <!-- Field error -->
+                        <div v-if="formErrors[field.name]" class="field-error">
+                            {{ formErrors[field.name] }}
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="form-actions">
+                    <button 
+                        @click="() => { console.log('Submit button clicked!'); submitFullScreenForm(); }"
+                        :disabled="isSubmittingForm"
+                        class="submit-form-button"
+                        :style="userBubbleStyles"
+                    >
+                        <span v-if="isSubmittingForm" class="loading-spinner-inline">
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                            <div class="dot"></div>
+                        </span>
+                        <span v-else>{{ fullScreenFormData.submit_button_text || 'Submit' }}</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Chat Panel (Only show when landing page and full screen form are not active) -->
+        <div v-else class="chat-panel" :style="chatStyles" v-if="isExpanded">
             <div class="chat-header" :style="headerBorderStyles">
                 <div class="header-content">
                     <img 
@@ -489,6 +1006,7 @@ onUnmounted(() => {
                             message.message_type === 'agent' ? 'agent-message' : 
                             message.message_type === 'system' ? 'system-message' :
                             message.message_type === 'rating' ? 'rating-message' :
+                            message.message_type === 'form' ? 'form-message' :
                             message.message_type === 'product' || message.shopify_output ? 'product-message' :
                             'user-message'
                         ]"
@@ -555,6 +1073,154 @@ onUnmounted(() => {
                                     <!-- Thank you message if no feedback was provided -->
                                     <div v-else-if="message.isSubmitted" class="submitted-message">
                                         Thank you for your rating!
+                                    </div>
+                                </div>
+                            </template>
+                            <template v-else-if="message.message_type === 'form'">
+                                <div class="form-content">
+                                                                    <div v-if="message.attributes?.form_data?.title || message.attributes?.form_data?.description" class="form-header">
+                                    <h3 v-if="message.attributes?.form_data?.title" class="form-title">{{ message.attributes.form_data.title }}</h3>
+                                    <p v-if="message.attributes?.form_data?.description" class="form-description">
+                                        {{ message.attributes.form_data.description }}
+                                    </p>
+                                </div>
+                                    <div class="form-fields">
+                                        <div 
+                                            v-for="field in message.attributes?.form_data?.fields" 
+                                            :key="field.name"
+                                            class="form-field"
+                                        >
+                                            <label :for="`form-${field.name}`" class="field-label">
+                                                {{ field.label }}
+                                                <span v-if="field.required" class="required-indicator">*</span>
+                                            </label>
+                                            
+                                            <!-- Text Input -->
+                                            <input
+                                                v-if="field.type === 'text' || field.type === 'email' || field.type === 'tel'"
+                                                :id="`form-${field.name}`"
+                                                :type="field.type"
+                                                :placeholder="field.placeholder || ''"
+                                                :required="field.required"
+                                                :minlength="field.minLength"
+                                                :maxlength="field.maxLength"
+                                                :value="formData[field.name] || ''"
+                                                @input="handleFieldChange(field.name, ($event.target as HTMLInputElement).value)"
+                                                @blur="handleFieldChange(field.name, ($event.target as HTMLInputElement).value)"
+                                                class="form-input"
+                                                :class="{ 'error': formErrors[field.name] }"
+                                                :disabled="isSubmittingForm"
+                                                :autocomplete="field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'off'"
+                                                :inputmode="field.type === 'tel' ? 'tel' : field.type === 'email' ? 'email' : 'text'"
+                                            />
+                                            
+                                            <!-- Number Input -->
+                                            <input
+                                                v-else-if="field.type === 'number'"
+                                                :id="`form-${field.name}`"
+                                                type="number"
+                                                :placeholder="field.placeholder || ''"
+                                                :required="field.required"
+                                                :min="field.min"
+                                                :max="field.max"
+                                                :value="formData[field.name] || ''"
+                                                @input="handleFieldChange(field.name, ($event.target as HTMLInputElement).value)"
+                                                class="form-input"
+                                                :class="{ 'error': formErrors[field.name] }"
+                                                :disabled="isSubmittingForm"
+                                            />
+                                            
+                                            <!-- Textarea -->
+                                            <textarea
+                                                v-else-if="field.type === 'textarea'"
+                                                :id="`form-${field.name}`"
+                                                :placeholder="field.placeholder || ''"
+                                                :required="field.required"
+                                                :minlength="field.minLength"
+                                                :maxlength="field.maxLength"
+                                                :value="formData[field.name] || ''"
+                                                @input="handleFieldChange(field.name, ($event.target as HTMLTextAreaElement).value)"
+                                                class="form-textarea"
+                                                :class="{ 'error': formErrors[field.name] }"
+                                                :disabled="isSubmittingForm"
+                                                rows="3"
+                                            ></textarea>
+                                            
+                                            <!-- Select -->
+                                            <select
+                                                v-else-if="field.type === 'select'"
+                                                :id="`form-${field.name}`"
+                                                :required="field.required"
+                                                :value="formData[field.name] || ''"
+                                                @change="handleFieldChange(field.name, ($event.target as HTMLSelectElement).value)"
+                                                class="form-select"
+                                                :class="{ 'error': formErrors[field.name] }"
+                                                :disabled="isSubmittingForm"
+                                            >
+                                                <option value="">Select an option</option>
+                                                <option 
+                                                    v-for="option in field.options?.split(',') || []" 
+                                                    :key="option.trim()" 
+                                                    :value="option.trim()"
+                                                >
+                                                    {{ option.trim() }}
+                                                </option>
+                                            </select>
+                                            
+                                            <!-- Checkbox -->
+                                            <div v-else-if="field.type === 'checkbox'" class="checkbox-field">
+                                                <input
+                                                    :id="`form-${field.name}`"
+                                                    type="checkbox"
+                                                    :checked="formData[field.name] || false"
+                                                    @change="handleFieldChange(field.name, ($event.target as HTMLInputElement).checked)"
+                                                    class="form-checkbox"
+                                                    :disabled="isSubmittingForm"
+                                                />
+                                                <label :for="`form-${field.name}`" class="checkbox-label">
+                                                    {{ field.placeholder || field.label }}
+                                                </label>
+                                            </div>
+                                            
+                                            <!-- Radio buttons -->
+                                            <div v-else-if="field.type === 'radio'" class="radio-field">
+                                                <div 
+                                                    v-for="option in field.options?.split(',') || []" 
+                                                    :key="option.trim()"
+                                                    class="radio-option"
+                                                >
+                                                    <input
+                                                        :id="`form-${field.name}-${option.trim()}`"
+                                                        :name="`form-${field.name}`"
+                                                        type="radio"
+                                                        :value="option.trim()"
+                                                        :checked="formData[field.name] === option.trim()"
+                                                        @change="handleFieldChange(field.name, option.trim())"
+                                                        class="form-radio"
+                                                        :disabled="isSubmittingForm"
+                                                    />
+                                                    <label :for="`form-${field.name}-${option.trim()}`" class="radio-label">
+                                                        {{ option.trim() }}
+                                                    </label>
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- Error message -->
+                                            <div v-if="formErrors[field.name]" class="field-error">
+                                                {{ formErrors[field.name] }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="form-actions">
+                                        <button
+                                            @click="() => { console.log('Regular form submit button clicked!'); handleFormSubmit(message.attributes?.form_data); }"
+                                            :disabled="isSubmittingForm"
+                                            class="form-submit-button"
+                                            :style="userBubbleStyles"
+                                        >
+                                            {{ isSubmittingForm ? 'Submitting...' : (message.attributes?.form_data?.submit_button_text || 'Submit') }}
+                                        </button>
                                     </div>
                                 </div>
                             </template>
@@ -1836,5 +2502,728 @@ onUnmounted(() => {
     text-align: center;
     font-style: italic;
     font-size: var(--text-sm);
+}
+
+/* Modern Form Styles */
+.message.form-message {
+    align-self: center;
+    width: 100%;
+    max-width: 520px;
+    margin: var(--space-md) 0;
+}
+
+.form-message .message-bubble {
+    background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
+    padding: var(--space-xl);
+    border-radius: 24px;
+    box-shadow: 
+        0 20px 25px -5px rgba(0, 0, 0, 0.1),
+        0 10px 10px -5px rgba(0, 0, 0, 0.04),
+        0 0 0 1px rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    width: 100%;
+    max-width: none;
+    backdrop-filter: blur(10px);
+    position: relative;
+    overflow: hidden;
+}
+
+.form-message .message-bubble::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 4px;
+    background: linear-gradient(90deg, var(--primary-color), #ff6b6b, #4ecdc4, var(--primary-color));
+    background-size: 200% 100%;
+    animation: gradientShift 3s ease infinite;
+}
+
+@keyframes gradientShift {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+}
+
+.form-content {
+    width: 100%;
+    position: relative;
+}
+
+.form-header {
+    margin-bottom: var(--space-xl);
+    text-align: center;
+    position: relative;
+}
+
+.form-title {
+    font-size: 28px;
+    font-weight: 700;
+    background: black;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin: 0 0 var(--space-sm) 0;
+    letter-spacing: -0.02em;
+}
+
+.form-description {
+    font-size: var(--text-base);
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.6;
+    opacity: 0.8;
+}
+
+.form-fields {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+.form-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    position: relative;
+}
+
+.field-label {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    margin-bottom: var(--space-xs);
+    letter-spacing: 0.02em;
+}
+
+.required-indicator {
+    color: #ff4757;
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.form-input,
+.form-textarea,
+.form-select {
+    padding: 16px 20px;
+    border: 2px solid transparent;
+    background: rgba(248, 249, 250, 0.8);
+    border-radius: 16px;
+    font-size: var(--text-base);
+    font-weight: 500;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    font-family: inherit;
+    position: relative;
+    box-shadow: 
+        0 1px 3px rgba(0, 0, 0, 0.1),
+        inset 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.form-input::placeholder,
+.form-textarea::placeholder {
+    color: #9ca3af;
+    font-weight: 400;
+    transition: all 0.3s ease;
+}
+
+.form-input:hover,
+.form-textarea:hover,
+.form-select:hover {
+    background: rgba(248, 249, 250, 1);
+    box-shadow: 
+        0 4px 6px -1px rgba(0, 0, 0, 0.1),
+        0 2px 4px -1px rgba(0, 0, 0, 0.06);
+    transform: translateY(-1px);
+}
+
+.form-input:focus,
+.form-textarea:focus,
+.form-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    background: #ffffff;
+    box-shadow: 
+        0 0 0 4px rgba(243, 70, 17, 0.1),
+        0 8px 16px -4px rgba(0, 0, 0, 0.1);
+    transform: translateY(-2px);
+}
+
+.form-input:focus::placeholder,
+.form-textarea:focus::placeholder {
+    color: transparent;
+    transform: translateY(-2px);
+}
+
+.form-input.error,
+.form-textarea.error,
+.form-select.error {
+    border-color: #ff4757;
+    background: rgba(255, 71, 87, 0.05);
+    animation: shake 0.5s ease-in-out;
+}
+
+@keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-5px); }
+    75% { transform: translateX(5px); }
+}
+
+.form-input.error:focus,
+.form-textarea.error:focus,
+.form-select.error:focus {
+    box-shadow: 
+        0 0 0 4px rgba(255, 71, 87, 0.2),
+        0 8px 16px -4px rgba(255, 71, 87, 0.1);
+}
+
+.form-input:disabled,
+.form-textarea:disabled,
+.form-select:disabled {
+    background-color: rgba(0, 0, 0, 0.05);
+    cursor: not-allowed;
+    opacity: 0.6;
+    transform: none;
+}
+
+.form-textarea {
+    resize: vertical;
+    min-height: 100px;
+    line-height: 1.6;
+}
+
+.checkbox-field,
+.radio-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-sm);
+    background: rgba(248, 249, 250, 0.5);
+    border-radius: 12px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.checkbox-field {
+    flex-direction: row;
+    align-items: center;
+    padding: var(--space-md);
+}
+
+.radio-option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: var(--space-sm) var(--space-md);
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.radio-option:hover {
+    background: rgba(243, 70, 17, 0.05);
+}
+
+.form-checkbox,
+.form-radio {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--primary-color);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.form-checkbox:checked,
+.form-radio:checked {
+    transform: scale(1.1);
+}
+
+.checkbox-label,
+.radio-label {
+    font-size: var(--text-base);
+    color: var(--text-primary);
+    cursor: pointer;
+    user-select: none;
+    font-weight: 500;
+    transition: color 0.2s ease;
+}
+
+.radio-option:hover .radio-label {
+    color: var(--primary-color);
+}
+
+.field-error {
+    font-size: var(--text-sm);
+    color: #ff4757;
+    margin-top: var(--space-xs);
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: rgba(255, 71, 87, 0.1);
+    border-radius: 8px;
+    border-left: 3px solid #ff4757;
+    font-weight: 500;
+}
+
+.field-error::before {
+    content: "⚠";
+    font-size: 16px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+.form-actions {
+    margin-top: var(--space-xl);
+    display: flex;
+    justify-content: center;
+    gap: var(--space-md);
+}
+
+.form-submit-button {
+    padding: 16px 32px;
+    background: linear-gradient(135deg, var(--primary-color) 0%, #ff6b47 100%);
+    color: white;
+    border: none;
+    border-radius: 16px;
+    font-size: var(--text-base);
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    min-width: 140px;
+    box-shadow: 
+        0 4px 14px 0 rgba(243, 70, 17, 0.3),
+        0 2px 4px 0 rgba(0, 0, 0, 0.1);
+    position: relative;
+    overflow: hidden;
+    letter-spacing: 0.02em;
+}
+
+.form-submit-button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s ease;
+}
+
+.form-submit-button:hover:not(:disabled) {
+    transform: translateY(-3px);
+    box-shadow: 
+        0 8px 25px 0 rgba(243, 70, 17, 0.4),
+        0 4px 8px 0 rgba(0, 0, 0, 0.15);
+    background: linear-gradient(135deg, #ff6b47 0%, var(--primary-color) 100%);
+}
+
+.form-submit-button:hover:not(:disabled)::before {
+    left: 100%;
+}
+
+.form-submit-button:active:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 
+        0 4px 14px 0 rgba(243, 70, 17, 0.3),
+        0 2px 4px 0 rgba(0, 0, 0, 0.1);
+}
+
+.form-submit-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    background: #9ca3af;
+    box-shadow: none;
+}
+
+.form-submit-button:disabled::before {
+    display: none;
+}
+
+
+
+/* Responsive form styles */
+@media (max-width: 768px) {
+    .message.form-message {
+        max-width: 100%;
+        margin: var(--space-sm) 0;
+    }
+    
+    .form-message .message-bubble {
+        padding: var(--space-lg);
+        border-radius: 20px;
+        margin: 0 var(--space-xs);
+    }
+    
+    .form-title {
+        font-size: 24px;
+        letter-spacing: -0.01em;
+    }
+    
+    .form-description {
+        font-size: var(--text-sm);
+    }
+    
+    .form-fields {
+        gap: var(--space-md);
+    }
+    
+    .form-input,
+    .form-textarea,
+    .form-select {
+        padding: 14px 16px;
+        border-radius: 12px;
+        font-size: var(--text-sm);
+    }
+    
+    .form-submit-button {
+        padding: 14px 28px;
+        font-size: var(--text-sm);
+        min-width: 120px;
+        border-radius: 12px;
+    }
+    
+    .checkbox-field,
+    .radio-field {
+        padding: var(--space-sm);
+    }
+    
+    .radio-option {
+        padding: var(--space-xs) var(--space-sm);
+    }
+    
+    .form-checkbox,
+    .form-radio {
+        width: 18px;
+        height: 18px;
+    }
+/* Landing Page Fullscreen Styles */
+.landing-page-fullscreen {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: white;
+    border-radius: var(--radius-lg);
+    position: relative;
+    overflow: hidden;
+}
+
+.landing-page-fullscreen .landing-page-content {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    width: 100%;
+    height: 100%;
+    padding: 48px;
+    box-sizing: border-box;
+}
+
+.landing-page-fullscreen .landing-page-header {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+    text-align: left;
+    align-items: flex-start;
+}
+
+.landing-page-fullscreen .landing-page-heading {
+    font-size: 40px;
+    font-weight: 700;
+    margin: 0;
+    line-height: 1.2;
+    color: #1f2937;
+    letter-spacing: -0.02em;
+}
+
+.landing-page-fullscreen .landing-page-text {
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+    color: #6b7280;
+    font-weight: 400;
+    max-width: 400px;
+}
+
+.landing-page-fullscreen .landing-page-actions {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-md);
+}
+
+
+
+.landing-page-fullscreen .landing-page-button {
+    background: none;
+    border: none;
+    color: #dc2626;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 0;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-xs);
+    transition: all 0.2s ease;
+}
+
+.landing-page-fullscreen .landing-page-button:hover {
+    color: #b91c1c;
+    text-decoration: underline;
+}
+
+.landing-page-fullscreen .landing-page-button::after {
+    content: '→';
+    font-size: 16px;
+    transition: transform 0.2s ease;
+}
+
+.landing-page-fullscreen .landing-page-button:hover::after {
+    transform: translateX(2px);
+}
+
+/* Responsive landing page styles */
+@media (max-width: 768px) {
+    .landing-page-fullscreen .landing-page-heading {
+        font-size: 32px;
+    }
+    
+    .landing-page-fullscreen .landing-page-text {
+        font-size: 15px;
+    }
+    
+    .landing-page-fullscreen .landing-page-content {
+        padding: 32px;
+    }
+    
+    .landing-page-fullscreen .landing-page-header {
+        gap: 20px;
+    }
+}
+
+/* Full Screen Form Styles */
+.form-fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100vh;
+    background: var(--background-base);
+    z-index: 10001;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow-y: auto;
+}
+
+.form-fullscreen-content {
+    width: 100%;
+    max-width: 600px;
+    padding: 48px 32px;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+}
+
+.form-fullscreen .form-header {
+    text-align: left;
+    margin-bottom: 24px;
+}
+
+.form-fullscreen .form-title {
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin: 0 0 16px 0;
+    line-height: 1.3;
+}
+
+.form-fullscreen .form-description {
+    font-size: 16px;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.5;
+}
+
+.form-fullscreen .form-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.form-fullscreen .form-field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.form-fullscreen .field-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+}
+
+.form-fullscreen .required-indicator {
+    color: #dc2626;
+    margin-left: 4px;
+}
+
+.form-fullscreen .form-input,
+.form-fullscreen .form-textarea,
+.form-fullscreen .form-select {
+    padding: 12px 16px;
+    border: 2px solid var(--border-color);
+    border-radius: 8px;
+    font-size: 16px;
+    color: var(--text-primary);
+    background: var(--background-base);
+    transition: all 0.2s ease;
+}
+
+.form-fullscreen .form-input:focus,
+.form-fullscreen .form-textarea:focus,
+.form-fullscreen .form-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(243, 70, 17, 0.1);
+}
+
+.form-fullscreen .form-input.error,
+.form-fullscreen .form-textarea.error,
+.form-fullscreen .form-select.error {
+    border-color: #dc2626;
+    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
+}
+
+.form-fullscreen .form-textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+.form-fullscreen .checkbox-field,
+.form-fullscreen .radio-field {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+}
+
+.form-fullscreen .form-checkbox,
+.form-fullscreen .form-radio {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+}
+
+.form-fullscreen .checkbox-label,
+.form-fullscreen .radio-label {
+    font-size: 16px;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.form-fullscreen .radio-group {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.form-fullscreen .field-error {
+    color: #dc2626;
+    font-size: 14px;
+    margin-top: 4px;
+}
+
+.form-fullscreen .form-actions {
+    display: flex;
+    justify-content: center;
+    margin-top: 24px;
+}
+
+.form-fullscreen .submit-form-button {
+    padding: 16px 32px;
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.form-fullscreen .submit-form-button:hover:not(:disabled) {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+}
+
+.form-fullscreen .submit-form-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.form-fullscreen .loading-spinner-inline {
+    display: flex;
+    gap: 4px;
+}
+
+.form-fullscreen .loading-spinner-inline .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.form-fullscreen .loading-spinner-inline .dot:nth-child(2) {
+    animation-delay: 0.3s;
+}
+
+.form-fullscreen .loading-spinner-inline .dot:nth-child(3) {
+    animation-delay: 0.6s;
+}
+
+/* Mobile responsive styles for full screen form */
+@media (max-width: 768px) {
+    .form-fullscreen-content {
+        padding: 24px 20px;
+        gap: 24px;
+    }
+    
+    .form-fullscreen .form-title {
+        font-size: 24px;
+    }
+    
+    .form-fullscreen .form-description {
+        font-size: 15px;
+    }
+    
+    .form-fullscreen .form-fields {
+        gap: 20px;
+    }
+    
+    .form-fullscreen .submit-form-button {
+        width: 100%;
+        padding: 14px 24px;
+    }
+}
+
 }
 </style>

@@ -31,6 +31,11 @@ from .session_to_agent import SessionToAgent, SessionStatus
 from .rating import Rating
 from app.models.jira import JiraToken
 from app.models.shopify import ShopifyShop
+from app.models.workflow import Workflow
+from app.models.workflow_node import WorkflowNode
+from app.models.workflow_connection import WorkflowConnection
+
+
 
 # This ensures all models are imported in the correct order
 __all__ = [
@@ -49,5 +54,9 @@ __all__ = [
     "SessionStatus",
     "Rating",
     "JiraToken",
-    "ShopifyShop"
+    "ShopifyShop",
+    "Workflow",
+    "WorkflowNode",
+    "WorkflowConnection",
+
 ]

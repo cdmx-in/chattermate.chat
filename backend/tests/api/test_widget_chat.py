@@ -156,10 +156,10 @@ async def test_widget_connect(db, test_widget, test_ai_config, test_customer, mo
     # Mock create_session to handle UUID conversion
     def mock_create_session(self, session_id, agent_id, customer_id, organization_id, **kwargs):
         session = SessionToAgent(
-            session_id=UUID(session_id),
-            agent_id=UUID(str(agent_id)),
-            customer_id=UUID(str(customer_id)),
-            organization_id=UUID(str(organization_id)),
+            session_id=session_id if isinstance(session_id, UUID) else UUID(session_id),
+            agent_id=agent_id if isinstance(agent_id, UUID) else UUID(str(agent_id)),
+            customer_id=customer_id if isinstance(customer_id, UUID) else UUID(str(customer_id)),
+            organization_id=organization_id if isinstance(organization_id, UUID) else UUID(str(organization_id)),
             status=SessionStatus.OPEN
         )
         self.db.add(session)
@@ -263,7 +263,19 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     ))
     mock_chat_agent.agent.session_id = session_id
     
-    with patch("app.api.widget_chat.ChatAgent", return_value=mock_chat_agent):
+    # Mock workflow execution to avoid database errors
+    mock_workflow_execution = MagicMock()
+    mock_result = MagicMock()
+    mock_result.success = True
+    mock_result.message = "I'm here to help!"
+    mock_result.transfer_to_human = False
+    mock_result.end_chat = False
+    mock_result.form_data = None  # Set form_data to None to avoid display_form event
+    mock_result.should_continue = True
+    mock_workflow_execution.execute_workflow = AsyncMock(return_value=mock_result)
+    
+    with patch("app.api.widget_chat.ChatAgent", return_value=mock_chat_agent), \
+         patch("app.api.widget_chat.WorkflowExecutionService", return_value=mock_workflow_execution):
         await widget_chat.handle_widget_chat(sid, data)
     
     # Get the actual call
@@ -436,18 +448,23 @@ async def test_agent_message(db, test_widget, test_customer, test_user, mock_sio
             namespace='/agent'
         )
     else:
-        # Verify message was emitted to widget clients
-        mock_sio.emit.assert_called_with(
-            'chat_response',
-            {
-                'message': "How can I help you?",
-                'type': 'agent_message',
-                'message_type': 'agent',
-                'end_chat': False,
-                'request_rating': False,
-                'end_chat_reason': None,
-                'end_chat_description': None
-            },
-            room=str(session_id),
-            namespace='/widget'
-        )
+                    # Verify message was emitted to widget clients
+            # Get the actual call arguments
+            call_args = mock_sio.emit.call_args
+            
+            # Check that the event name is 'chat_response'
+            assert call_args[0][0] == 'chat_response'
+            
+            # Check that the message data contains the expected values
+            message_data = call_args[0][1]
+            assert message_data['message'] == "How can I help you?"
+            assert message_data['type'] == 'agent_message'
+            assert message_data['message_type'] == 'agent'
+            assert message_data['end_chat'] == False
+            assert message_data['request_rating'] == False
+            assert message_data['end_chat_reason'] == None
+            assert message_data['end_chat_description'] == None
+            
+            # Check that the room and namespace are correct
+            assert call_args[1]['room'] == str(session_id)
+            assert call_args[1]['namespace'] == '/widget'

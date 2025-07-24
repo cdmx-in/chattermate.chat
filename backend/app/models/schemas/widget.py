@@ -69,6 +69,7 @@ class AgentResponse(BaseModel):
     name: str
     display_name: Optional[str] = None
     customization: Optional[AgentCustomizationResponse] = None
+    workflow: bool = False
 
 
 class HumanAgentResponse(BaseModel):

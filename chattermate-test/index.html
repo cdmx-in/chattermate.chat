@@ -73,11 +73,14 @@
             type="text" 
             id="widgetIdInput" 
             placeholder="Enter Widget ID"
-            value="70b77a6a-f065-475f-b5d4-d938f653ca68"
+            value=""
             style="padding: 10px; margin-right: 10px; border-radius: 4px; border: 1px solid #ccc;"
         >
-        <button class="demo-button" onclick="initializeWidget()">
+        <button class="demo-button" id="widgetButton" onclick="initializeWidget()">
             Initialize Widget
+        </button>
+        <button class="demo-button" id="clearButton" onclick="clearWidget()" style="margin-left: 10px; background: #dc3545;">
+            Clear Widget
         </button>
     </div>
 
@@ -90,12 +93,48 @@
 &lt;script&gt;
     window.chattermateId = 'YOUR_WIDGET_ID';
 &lt;/script&gt;
-&lt;script src="https://chattermate.chat/webclient/chattermate.min.js"&gt;&lt;/script&gt;
+&lt;script src="http://localhost:5173/webclient/chattermate.min.js"&gt;&lt;/script&gt;
         </code></pre>
     </div>
 
     <!-- ChatterMate Widget Integration -->
     <script>
+        // Constants for localStorage keys
+        const WIDGET_ID_KEY = 'chattermate_widget_id';
+        const WIDGET_INITIALIZED_KEY = 'chattermate_initialized';
+        
+        // Load saved widget ID and initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            loadSavedWidgetId();
+            autoInitializeWidget();
+        });
+        
+        function loadSavedWidgetId() {
+            const savedWidgetId = localStorage.getItem(WIDGET_ID_KEY);
+            const widgetInput = document.getElementById('widgetIdInput');
+            const widgetButton = document.getElementById('widgetButton');
+            
+            if (savedWidgetId) {
+                widgetInput.value = savedWidgetId;
+                widgetButton.textContent = 'Re-initialize Widget';
+                updateButtonStates(true);
+            } else {
+                // Set default widget ID if none saved
+                widgetInput.value = 'd63483f1-3954-4a94-a3f7-bb5039dda633';
+                updateButtonStates(false);
+            }
+        }
+        
+        function autoInitializeWidget() {
+            const savedWidgetId = localStorage.getItem(WIDGET_ID_KEY);
+            const wasInitialized = localStorage.getItem(WIDGET_INITIALIZED_KEY) === 'true';
+            
+            if (savedWidgetId && wasInitialized) {
+                console.log('Auto-initializing widget with saved ID:', savedWidgetId);
+                performWidgetInitialization(savedWidgetId);
+            }
+        }
+        
         function initializeWidget() {
             const widgetId = document.getElementById('widgetIdInput').value;
             if (!widgetId) {
@@ -103,6 +142,15 @@
                 return;
             }
             
+            // Save widget ID to localStorage
+            localStorage.setItem(WIDGET_ID_KEY, widgetId);
+            localStorage.setItem(WIDGET_INITIALIZED_KEY, 'true');
+            
+            performWidgetInitialization(widgetId);
+            updateButtonStates(true);
+        }
+        
+        function performWidgetInitialization(widgetId) {
             // Set the widget ID
             window.chattermateId = widgetId;
             
@@ -112,15 +160,77 @@
                 existingScript.remove();
             }
             
-            // Create and add new script
-            const script = document.createElement('script');
-            script.id = 'chattermate-script';
-            script.src = 'http://localhost:5173/webclient/chattermate.min.js';
-            document.body.appendChild(script);
-            
-            // Initialize the widget
-            ChatterMate.init({ id: widgetId });
+            // Wait a moment for cleanup
+            setTimeout(() => {
+                // Create and add new script
+                const script = document.createElement('script');
+                script.id = 'chattermate-script';
+                script.src = 'http://localhost:5173/webclient/chattermate.min.js';
+                script.onload = function() {
+                    // Initialize the widget once script loads
+                    if (window.ChatterMate) {
+                        window.ChatterMate.init({ id: widgetId });
+                        console.log('Widget initialized with ID:', widgetId);
+                    }
+                };
+                document.body.appendChild(script);
+            }, 100);
         }
+        
+        function clearWidget() {
+            // Remove from localStorage
+            localStorage.removeItem(WIDGET_ID_KEY);
+            localStorage.removeItem(WIDGET_INITIALIZED_KEY);
+            
+            // Clear input field
+            document.getElementById('widgetIdInput').value = '';
+            
+            // Remove widget script and reset states
+            const existingScript = document.getElementById('chattermate-script');
+            if (existingScript) {
+                existingScript.remove();
+            }
+            
+            // Reset window properties
+            if (window.chattermateId) {
+                delete window.chattermateId;
+            }
+            if (window.ChatterMate) {
+                delete window.ChatterMate;
+            }
+            
+            updateButtonStates(false);
+            console.log('Widget cleared and localStorage cleaned');
+        }
+        
+        function updateButtonStates(isInitialized) {
+            const widgetButton = document.getElementById('widgetButton');
+            const clearButton = document.getElementById('clearButton');
+            
+            if (isInitialized) {
+                widgetButton.textContent = 'Re-initialize Widget';
+                clearButton.style.display = 'inline-block';
+            } else {
+                widgetButton.textContent = 'Initialize Widget';
+                clearButton.style.display = 'none';
+            }
+        }
+        
+        // Update button state when input changes
+        document.addEventListener('DOMContentLoaded', function() {
+            const widgetInput = document.getElementById('widgetIdInput');
+            widgetInput.addEventListener('input', function() {
+                const savedWidgetId = localStorage.getItem(WIDGET_ID_KEY);
+                const currentValue = this.value;
+                const widgetButton = document.getElementById('widgetButton');
+                
+                if (savedWidgetId && currentValue === savedWidgetId) {
+                    widgetButton.textContent = 'Re-initialize Widget';
+                } else {
+                    widgetButton.textContent = 'Initialize Widget';
+                }
+            });
+        });
     </script>
 </body>
 

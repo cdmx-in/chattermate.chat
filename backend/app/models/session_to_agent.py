@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SQLEnum
+from sqlalchemy import Column, String, DateTime, ForeignKey, Enum as SQLEnum, JSON
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 from app.database import Base
@@ -67,12 +67,20 @@ class SessionToAgent(Base):
     integration_type = Column(String, nullable=True)
     ticket_priority = Column(String, nullable=True)
 
+    # Workflow-related fields
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("workflows.id", ondelete="SET NULL"), nullable=True)
+    current_node_id = Column(UUID(as_uuid=True), ForeignKey("workflow_nodes.id", ondelete="SET NULL"), nullable=True)
+
+    workflow_state = Column(JSON, default={})  # Store workflow execution state
+
     # Relationships
     user = relationship("User", back_populates="session_assignments")
     agent = relationship("Agent", back_populates="session_assignments")
     customer = relationship("Customer", back_populates="session_assignments")
     group = relationship("UserGroup", back_populates="session_assignments")
     ratings = relationship("Rating", back_populates="session_assignments")
+    workflow = relationship("Workflow", back_populates="sessions")
+    current_node = relationship("WorkflowNode")
 
 
 # Add back-reference in UserGroup model if not already present

@@ -367,7 +367,6 @@ const isMessageInputEnabled = computed(() => {
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
     margin-left: auto;
     position: relative;
-    margin-top: 50px;
 }
 
 .chat-container.collapsed {

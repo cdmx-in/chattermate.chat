@@ -17,16 +17,18 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import pytest
+import os
+from unittest.mock import patch, MagicMock
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 from app.models.user import User
-from app.models.ai_config import AIConfig
+from app.models.ai_config import AIConfig, AIModelType
 from app.models.role import Role
 from app.models.permission import Permission, role_permissions
 from uuid import uuid4
 from app.api import ai_setup as ai_setup_router
 from app.core.auth import get_current_user, require_permissions
-from app.models.schemas.ai_config import AIConfigCreate
+from app.models.schemas.ai_config import AIConfigCreate, AIConfigUpdate
 from pydantic import SecretStr
 from app.database import get_db
 
@@ -136,6 +138,8 @@ async def mock_test_api_key(api_key: str, model_type: str, model_name: str) -> b
     """Mock implementation of test_api_key"""
     if api_key == "invalid_key":
         raise Exception("Invalid API key")
+    elif api_key == "failed_validation":
+        return False
     return True
 
 # Patch ChatAgent.test_api_key for tests
@@ -194,6 +198,23 @@ def test_setup_ai_invalid_key(client, db, test_user):
     assert "error" in data["detail"]
     assert data["detail"]["type"] == "api_key_validation_error"
 
+def test_setup_ai_failed_validation(client, db, test_user):
+    """Test AI setup with failed API key validation"""
+    config_data = {
+        "model_type": "OPENAI",
+        "model_name": "gpt-4o-mini",
+        "api_key": "failed_validation"
+    }
+    
+    response = client.post(
+        "/api/ai/setup",
+        json=config_data
+    )
+    assert response.status_code == 400
+    data = response.json()
+    assert "error" in data["detail"]
+    assert data["detail"]["type"] == "invalid_api_key"
+
 def test_setup_ai_invalid_model(client, db, test_user):
     """Test AI setup with invalid model type"""
     config_data = {
@@ -232,8 +253,8 @@ def test_setup_ai_invalid_provider(client, db, test_user):
 def test_setup_ai_groq(client, db, test_user):
     """Test AI setup with Groq"""
     config_data = {
-        "model_type": "OPENAI",
-        "model_name": "gpt-4o-mini",
+        "model_type": "GROQ",
+        "model_name": "llama-3.3-70b-versatile",
         "api_key": "test_valid_key"
     }
     
@@ -243,8 +264,67 @@ def test_setup_ai_groq(client, db, test_user):
     )
     assert response.status_code == 200
     data = response.json()
-    assert data["config"]["model_type"] == "OPENAI"
+    assert data["config"]["model_type"] == "GROQ"
+    assert data["config"]["model_name"] == "llama-3.3-70b-versatile"
+
+@patch.dict(os.environ, {
+    'CHATTERMATE_API_KEY': 'test_chattermate_key',
+    'CHATTERMATE_MODEL_NAME': 'gpt-4o-mini'
+})
+@patch('app.api.ai_setup.HAS_ENTERPRISE', True)
+def test_setup_ai_chattermate_success(client, db, test_user):
+    """Test successful ChatterMate AI setup"""
+    config_data = {
+        "model_type": "CHATTERMATE",
+        "model_name": "chattermate",
+        "api_key": "any_key"  # This will be ignored for ChatterMate
+    }
+    
+    response = client.post(
+        "/api/ai/setup",
+        json=config_data
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == "AI configuration completed successfully"
+    assert data["config"]["model_type"] == "CHATTERMATE"
     assert data["config"]["model_name"] == "gpt-4o-mini"
+
+@patch.dict(os.environ, {}, clear=True)  # Clear environment variables
+@patch('app.api.ai_setup.HAS_ENTERPRISE', True)
+def test_setup_ai_chattermate_missing_key(client, db, test_user):
+    """Test ChatterMate AI setup with missing API key"""
+    config_data = {
+        "model_type": "CHATTERMATE",
+        "model_name": "chattermate",
+        "api_key": "any_key"
+    }
+    
+    response = client.post(
+        "/api/ai/setup",
+        json=config_data
+    )
+    assert response.status_code == 500
+    assert "ChatterMate API configuration missing" in response.json()["detail"]
+
+def test_setup_ai_general_exception(client, db, test_user):
+    """Test setup AI with general exception"""
+    config_data = {
+        "model_type": "OPENAI",
+        "model_name": "gpt-4o-mini",
+        "api_key": "test_valid_key"
+    }
+    
+    # Mock the repository to raise an exception
+    with patch('app.repositories.ai_config.AIConfigRepository.create_config') as mock_create:
+        mock_create.side_effect = Exception("Database error")
+        
+        response = client.post(
+            "/api/ai/setup",
+            json=config_data
+        )
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to setup AI configuration"
 
 def test_get_ai_config_success(client, db, test_user, test_ai_config):
     """Test getting AI configuration"""
@@ -258,4 +338,219 @@ def test_get_ai_config_not_found(client, db, test_user):
     """Test getting AI configuration when none exists"""
     response = client.get("/api/ai/config")
     assert response.status_code == 404
-    assert response.json()["detail"] == "No active AI configuration found" 
+    assert response.json()["detail"] == "No active AI configuration found"
+
+def test_get_ai_config_exception(client, db, test_user):
+    """Test getting AI config with database exception"""
+    with patch('app.repositories.ai_config.AIConfigRepository.get_active_config') as mock_get:
+        mock_get.side_effect = Exception("Database error")
+        
+        response = client.get("/api/ai/config")
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to get AI configuration"
+
+def test_update_ai_config_success(client, db, test_user, test_ai_config):
+    """Test successful AI config update"""
+    update_data = {
+        "model_type": "OPENAI",
+        "model_name": "o1-mini",
+        "api_key": "new_valid_key"
+    }
+    
+    response = client.put(
+        "/api/ai/config",
+        json=update_data
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == "AI configuration updated successfully"
+    assert data["config"]["model_name"] == update_data["model_name"]
+
+def test_update_ai_config_not_found(client, db, test_user):
+    """Test updating AI config when none exists"""
+    update_data = {
+        "model_type": "OPENAI",
+        "model_name": "gpt-4o-mini",
+        "api_key": "test_valid_key"
+    }
+    
+    response = client.put(
+        "/api/ai/config",
+        json=update_data
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No active AI configuration found to update"
+
+def test_update_ai_config_without_api_key(client, db, test_user, test_ai_config):
+    """Test updating AI config without providing new API key"""
+    update_data = {
+        "model_type": "OPENAI",
+        "model_name": "o1-mini"
+        # No api_key provided
+    }
+    
+    # Mock the repository to handle None API key properly
+    with patch('app.repositories.ai_config.AIConfigRepository.update_config') as mock_update:
+        mock_update.return_value = test_ai_config
+        response = client.put(
+            "/api/ai/config",
+            json=update_data
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["message"] == "AI configuration updated successfully"
+        # Verify that update_config was called with None for api_key (no change)
+        mock_update.assert_called_once()
+        call_args = mock_update.call_args
+        assert call_args[1]['api_key'] is None  # None indicates no change
+
+def test_update_ai_config_failed_validation(client, db, test_user, test_ai_config):
+    """Test update AI config with failed API key validation"""
+    update_data = {
+        "model_type": "OPENAI",
+        "model_name": "gpt-4o-mini",
+        "api_key": "failed_validation"
+    }
+    
+    response = client.put(
+        "/api/ai/config",
+        json=update_data
+    )
+    assert response.status_code == 400
+    data = response.json()
+    # The mock returns False, which triggers the InvalidAPI exception that gets caught and re-raised as validation error
+    assert data["detail"]["type"] == "api_key_validation_error"
+
+def test_update_ai_config_validation_exception(client, db, test_user, test_ai_config):
+    """Test update AI config with validation exception"""
+    update_data = {
+        "model_type": "OPENAI",
+        "model_name": "gpt-4o-mini",
+        "api_key": "invalid_key"
+    }
+    
+    response = client.put(
+        "/api/ai/config",
+        json=update_data
+    )
+    assert response.status_code == 400
+    data = response.json()
+    assert data["detail"]["type"] == "api_key_validation_error"
+
+@patch.dict(os.environ, {
+    'CHATTERMATE_API_KEY': 'test_chattermate_key',
+    'CHATTERMATE_MODEL_NAME': 'gpt-4o-mini'
+})
+@patch('app.api.ai_setup.HAS_ENTERPRISE', True)
+def test_update_ai_config_chattermate_success(client, db, test_user, test_ai_config):
+    """Test successful ChatterMate AI config update"""
+    update_data = {
+        "model_type": "CHATTERMATE",
+        "model_name": "chattermate"
+    }
+    
+    response = client.put(
+        "/api/ai/config",
+        json=update_data
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["message"] == "AI configuration updated successfully"
+    assert data["config"]["model_type"] == "CHATTERMATE"
+
+@patch.dict(os.environ, {}, clear=True)
+@patch('app.api.ai_setup.HAS_ENTERPRISE', True)
+def test_update_ai_config_chattermate_missing_key(client, db, test_user, test_ai_config):
+    """Test ChatterMate AI config update with missing API key"""
+    update_data = {
+        "model_type": "CHATTERMATE",
+        "model_name": "chattermate"
+    }
+    
+    response = client.put(
+        "/api/ai/config",
+        json=update_data
+    )
+    assert response.status_code == 500
+    assert "ChatterMate API configuration missing" in response.json()["detail"]
+
+def test_update_ai_config_general_exception(client, db, test_user, test_ai_config):
+    """Test update AI config with general exception"""
+    update_data = {
+        "model_type": "OPENAI",
+        "model_name": "gpt-4o-mini",
+        "api_key": "test_valid_key"
+    }
+    
+    with patch('app.repositories.ai_config.AIConfigRepository.update_config') as mock_update:
+        mock_update.side_effect = Exception("Database error")
+        
+        response = client.put(
+            "/api/ai/config",
+            json=update_data
+        )
+        assert response.status_code == 500
+        assert response.json()["detail"] == "Failed to update AI configuration"
+
+def test_validate_model_selection_chattermate():
+    """Test validate_model_selection with ChatterMate"""
+    # Should not raise any exception
+    ai_setup_router.validate_model_selection("CHATTERMATE", "chattermate")
+    ai_setup_router.validate_model_selection("chattermate", "CHATTERMATE")
+
+def test_validate_model_selection_groq_valid():
+    """Test validate_model_selection with valid Groq model"""
+    # Should not raise any exception
+    ai_setup_router.validate_model_selection("GROQ", "llama-3.3-70b-versatile")
+
+def test_validate_model_selection_groq_invalid():
+    """Test validate_model_selection with invalid Groq model"""
+    with pytest.raises(ai_setup_router.HTTPException) as exc_info:
+        ai_setup_router.validate_model_selection("GROQ", "invalid-model")
+    
+    assert exc_info.value.status_code == 400
+    assert "Invalid model selection" in exc_info.value.detail["error"]
+    assert "invalid_model" in exc_info.value.detail["type"]
+
+def test_validate_model_selection_openai_valid():
+    """Test validate_model_selection with valid OpenAI model"""
+    # Should not raise any exception
+    ai_setup_router.validate_model_selection("OPENAI", "gpt-4o-mini")
+    ai_setup_router.validate_model_selection("OPENAI", "o1-mini")
+
+def test_validate_model_selection_openai_invalid():
+    """Test validate_model_selection with invalid OpenAI model"""
+    with pytest.raises(ai_setup_router.HTTPException) as exc_info:
+        ai_setup_router.validate_model_selection("OPENAI", "gpt-invalid")
+    
+    assert exc_info.value.status_code == 400
+    assert "Invalid model selection" in exc_info.value.detail["error"]
+    assert "invalid_model" in exc_info.value.detail["type"]
+
+def test_validate_model_selection_unsupported_provider():
+    """Test validate_model_selection with unsupported provider"""
+    with pytest.raises(ai_setup_router.HTTPException) as exc_info:
+        ai_setup_router.validate_model_selection("ANTHROPIC", "claude-3")
+    
+    assert exc_info.value.status_code == 400
+    assert "Unsupported provider" in exc_info.value.detail["error"]
+    assert "invalid_provider" in exc_info.value.detail["type"]
+
+def test_setup_ai_unsupported_model_type(client, db, test_user):
+    """Test setup AI with unsupported model type for API key validation"""
+    config_data = {
+        "model_type": "CHATTERMATE", 
+        "model_name": "some-model",  # Invalid model name for ChatterMate
+        "api_key": "test_valid_key"
+    }
+    
+    # When HAS_ENTERPRISE is False, ChatterMate should be rejected by validation
+    with patch('app.api.ai_setup.HAS_ENTERPRISE', False):
+        response = client.post(
+            "/api/ai/setup",
+            json=config_data
+        )
+        # Should fail validation because CHATTERMATE with non-"chattermate" model name is invalid
+        assert response.status_code == 400
+        data = response.json()
+        assert "error" in data["detail"] 

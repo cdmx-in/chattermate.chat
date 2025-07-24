@@ -97,6 +97,7 @@ async def create_organization(
             except Exception as template_error:
                 logger.error(f"Failed to create template {agent_type} for org {
                              organization.id}: {str(template_error)}")
+                db.rollback()  # Rollback transaction on error
                 continue
 
         # Get or create default permissions

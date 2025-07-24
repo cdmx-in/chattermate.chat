@@ -10,6 +10,24 @@ export const agentService = {
     return response.data
   },
 
+  async createAgent(data: {
+    name: string;
+    display_name: string;
+    agent_type: string;
+    instructions: string[];
+    is_active: boolean;
+    use_workflow?: boolean;
+  }): Promise<Agent> {
+    const response = await api.post('/agent', data)
+    
+    // Update agent in local storage
+    const agents = agentStorage.getAgents()
+    agents.push(response.data)
+    agentStorage.setAgents(agents)
+    
+    return response.data
+  },
+
   async updateAgent(
     agentId: string,
     data: AgentUpdate
