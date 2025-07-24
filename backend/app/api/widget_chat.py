@@ -1376,19 +1376,6 @@ async def handle_form_submission(sid, data):
             # Store form submission in chat history
             chat_repo = ChatRepository(db)
             
-            # Store user form submission
-            chat_repo.create_message({
-                "message": f"Form submitted: {', '.join([f'{k}: {v}' for k, v in form_data.items()])}",
-                "message_type": "user",
-                "session_id": session_id,
-                "organization_id": org_id,
-                "agent_id": session['agent_id'],
-                "customer_id": customer_id,
-                "attributes": {
-                    "form_submission": True,
-                    "form_data": form_data
-                }
-            })
 
             # Check if there's a response message to send
             if workflow_result.message:
