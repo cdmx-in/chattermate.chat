@@ -17,15 +17,17 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, patch, MagicMock
 from datetime import datetime
 from app.agents.chat_agent import ChatAgent, ChatResponse
 from app.models.session_to_agent import SessionStatus
+from sqlalchemy.orm import Session
 
 
 @pytest.fixture
 def mock_db():
-    return Mock()
+    mock_session = MagicMock(spec=Session)
+    return mock_session
 
 
 @pytest.fixture
@@ -36,7 +38,7 @@ def mock_agent_data():
 
 
 @pytest.fixture
-def chat_agent(mock_agent_data):
+def chat_agent(mock_agent_data, mock_db):
     from uuid import uuid4
     from unittest.mock import patch, Mock
     
@@ -47,17 +49,42 @@ def chat_agent(mock_agent_data):
     mock_jira_agent_data.ask_for_rating = True  # Default agent setting
     mock_jira_agent_data.instructions = ["You are a helpful assistant", "Be polite and professional"]
     
+    # Mock AI config
+    mock_ai_config = Mock()
+    mock_ai_config.model_name = "gpt-4"
+    mock_ai_config.model_type = "openai"
+    mock_ai_config.encrypted_api_key = "test-key"
+    
+    # Mock AI config repository
+    mock_ai_config_repo = Mock()
+    mock_ai_config_repo.get_active_config.return_value = mock_ai_config
+    
+    # Mock knowledge search tool
+    mock_knowledge_tool = Mock()
+    
+    # Mock environment variables
+    mock_env = {}
+    
+    # Mock PostgresAgentStorage
+    mock_storage = Mock()
+    mock_storage.get_session_state.return_value = {"status": "active"}
+    
     with patch('app.agents.chat_agent.get_db') as mock_get_db, \
-         patch('app.agents.chat_agent.JiraRepository') as mock_jira_repo:
+         patch('app.agents.chat_agent.JiraRepository') as mock_jira_repo, \
+         patch('app.tools.knowledge_search_byagent.AIConfigRepository', return_value=mock_ai_config_repo), \
+         patch('app.tools.knowledge_search_byagent.KnowledgeSearchByAgent', return_value=mock_knowledge_tool), \
+         patch('app.tools.knowledge_search_byagent.decrypt_api_key', return_value="decrypted-test-key"), \
+         patch('app.agents.chat_agent.PostgresAgentStorage', return_value=mock_storage), \
+         patch('app.agents.chat_agent.settings.DATABASE_URL', "mock://test"), \
+         patch.dict('os.environ', mock_env, clear=True):
         
         # Mock database session
-        mock_db = Mock()
         mock_get_db.return_value = iter([mock_db])
         
         # Mock JiraRepository methods
         mock_jira_repo.return_value.get_agent_with_jira_config.return_value = mock_jira_agent_data
         
-        return ChatAgent(
+        agent = ChatAgent(
             api_key="test-key",
             model_name="gpt-4",
             model_type="openai",
@@ -66,6 +93,10 @@ def chat_agent(mock_agent_data):
             customer_id=str(uuid4()),
             session_id=str(uuid4())
         )
+        
+        # Mock the agent's database session
+        agent.db = mock_db
+        return agent
 
 
 @pytest.fixture
