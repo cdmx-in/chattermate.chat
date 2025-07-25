@@ -45,6 +45,11 @@ class ActionType(str, enum.Enum):
     CUSTOM = "custom"
 
 
+class ExitCondition(str, enum.Enum):
+    SINGLE_EXECUTION = "single_execution"
+    CONTINUOUS_EXECUTION = "continuous_execution"
+
+
 class WorkflowNode(Base):
     __tablename__ = "workflow_nodes"
 

@@ -376,8 +376,66 @@ async def handle_widget_chat(sid, data):
                 # Handle transfer to human if requested by workflow LLM
                 if workflow_result.transfer_to_human:
                     logger.info(f"Workflow LLM requested transfer to human for session {session_id}")
-                    # Update session status to TRANSFERRED
-                    session_repo.update_session_status(session_id, "TRANSFERRED")
+                    
+                    if workflow_result.transfer_group_id:
+                        # Transfer to specific group using workflow transfer method
+                        from app.agents.chat_agent import ChatAgent
+                        chat_agent = ChatAgent(
+                            api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
+                            model_name=session['ai_config'].model_name,
+                            model_type=session['ai_config'].model_type,
+                            org_id=org_id,
+                            agent_id=session['agent_id'],
+                            customer_id=customer_id,
+                            session_id=session_id
+                        )
+                        
+                        transfer_response = await chat_agent.handle_workflow_transfer(
+                            session_id=session_id,
+                            org_id=org_id,
+                            agent_id=session['agent_id'],
+                            customer_id=customer_id,
+                            transfer_group_id=workflow_result.transfer_group_id,
+                            db=db,
+                            chat_repo=chat_repo
+                        )
+                        
+                        # Send the transfer response to the client
+                        await sio.emit('chat_response', {
+                            'message': transfer_response.message,
+                            'session_id': session_id,
+                            'transfer_to_human': transfer_response.transfer_to_human,
+                            'transfer_reason': transfer_response.transfer_reason.value if transfer_response.transfer_reason else None,
+                            'transfer_description': transfer_response.transfer_description,
+                            'end_chat': transfer_response.end_chat,
+                            'request_rating': transfer_response.request_rating
+                        }, room=session_id, namespace='/widget')
+                        
+                        logger.info(f"Transfer completed for session {session_id} to group {workflow_result.transfer_group_id}")
+                        return
+                    else:
+                        # Fallback: just update session status without specific group
+                        logger.warning(f"No transfer_group_id provided for workflow transfer in session {session_id}")
+                        session_repo.update_session_status(session_id, "TRANSFERRED")
+                
+                # Handle end chat if requested by workflow
+                if workflow_result.end_chat:
+                    logger.info(f"Workflow requested end chat for session {session_id}")
+                    
+                    # Create a ChatAgent instance to use the _handle_end_chat method
+                    from app.agents.chat_agent import ChatAgent
+                    chat_agent = ChatAgent(
+                        api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
+                        model_name=session['ai_config'].model_name,
+                        model_type=session['ai_config'].model_type,
+                        org_id=org_id,
+                        agent_id=session['agent_id'],
+                        customer_id=customer_id,
+                        session_id=session_id
+                    )
+                    
+                    # Handle end chat using the agent's method
+                    response = await chat_agent._handle_end_chat(response, session_id, db)
                 
                 # Only store message if there's actual content
                 if workflow_result.message:
@@ -439,7 +497,7 @@ async def handle_widget_chat(sid, data):
                 customer_id=customer_id,
                 session_id=session_id
             )
-            # Get response from ai agent
+            # Get response from ai agent (this already handles end chat internally)
             response = await chat_agent.get_response(
                 message=message,
                 session_id=chat_agent.agent.session_id,

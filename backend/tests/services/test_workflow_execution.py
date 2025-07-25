@@ -21,7 +21,7 @@ import uuid
 from unittest.mock import MagicMock, AsyncMock, patch
 from app.services.workflow_execution import WorkflowExecutionService, WorkflowExecutionResult
 from app.models.workflow import Workflow, WorkflowStatus
-from app.models.workflow_node import WorkflowNode, NodeType
+from app.models.workflow_node import WorkflowNode, NodeType, ExitCondition
 from app.models.workflow_connection import WorkflowConnection
 from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.agents.chat_agent import ChatResponse
@@ -100,9 +100,8 @@ class TestWorkflowExecutionService:
             name="AI Assistant",
             config={
                 "system_prompt": "You are a helpful assistant.",
-                "llm_conditions": [
-                    {"type": "transfer_to_human", "enabled": True, "connection_id": str(uuid.uuid4())}
-                ]
+                "exit_condition": ExitCondition.SINGLE_EXECUTION,
+                "auto_transfer_enabled": False
             },
             outgoing_connections=[],
             incoming_connections=[]
@@ -1208,19 +1207,170 @@ class TestWorkflowExecutionService:
         result_false = workflow_execution_service._find_conditional_next_node(node, False)
         assert result_false == false_connection.target_node_id
 
-    def test_find_llm_conditional_next_node(self, workflow_execution_service, sample_nodes, sample_workflow_with_nodes):
-        """Test finding LLM conditional next node"""
+    @pytest.mark.asyncio
+    async def test_execute_llm_node_single_execution(self, workflow_execution_service, sample_nodes, sample_workflow_with_nodes):
+        """Test LLM node with single execution exit condition"""
         node = sample_nodes["llm"]
+        node.config = {
+            "system_prompt": "You are a helpful assistant.",
+            "exit_condition": ExitCondition.SINGLE_EXECUTION
+        }
+        workflow_state = {}
         
-        # Mock response with transfer request
-        mock_response = MagicMock()
-        mock_response.transfer_to_human = True
-        mock_response.end_chat = False
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent = MagicMock()
+            mock_chat_agent_class.return_value = mock_chat_agent
+            
+            mock_response = MagicMock()
+            mock_response.message = "Hello! How can I help you?"
+            mock_response.transfer_to_human = False
+            mock_response.end_chat = False
+            mock_response.request_rating = False
+            mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
+            
+            result = await workflow_execution_service._execute_llm_node(
+                node=node,
+                workflow=sample_workflow_with_nodes,
+                workflow_state=workflow_state,
+                user_message="Hello",
+                api_key="test_key",
+                model_name="test_model",
+                model_type="openai",
+                org_id="org_123",
+                agent_id="agent_123",
+                customer_id="customer_123",
+                session_id="session_123"
+            )
+            
+            assert result.success is True
+            assert result.message == "Hello! How can I help you?"
+            assert result.should_continue is True  # Should move to next node
+            assert result.next_node_id is not None  # Should have next node
+            assert result.transfer_to_human is False
+
+    @pytest.mark.asyncio
+    async def test_execute_llm_node_continuous_execution(self, workflow_execution_service, sample_nodes, sample_workflow_with_nodes):
+        """Test LLM node with continuous execution exit condition"""
+        node = sample_nodes["llm"]
+        node.config = {
+            "system_prompt": "You are a helpful assistant.",
+            "exit_condition": ExitCondition.CONTINUOUS_EXECUTION,
+            "auto_transfer_enabled": False
+        }
+        workflow_state = {}
         
-        # Test with transfer condition
-        result = workflow_execution_service._find_llm_conditional_next_node(node, sample_workflow_with_nodes, mock_response)
-        # Should find next node since there are outgoing connections
-        assert result is not None
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent = MagicMock()
+            mock_chat_agent_class.return_value = mock_chat_agent
+            
+            mock_response = MagicMock()
+            mock_response.message = "I'll help you with that."
+            mock_response.transfer_to_human = False
+            mock_response.end_chat = False
+            mock_response.request_rating = False
+            mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
+            
+            result = await workflow_execution_service._execute_llm_node(
+                node=node,
+                workflow=sample_workflow_with_nodes,
+                workflow_state=workflow_state,
+                user_message="Can you help me?",
+                api_key="test_key",
+                model_name="test_model",
+                model_type="openai",
+                org_id="org_123",
+                agent_id="agent_123",
+                customer_id="customer_123",
+                session_id="session_123"
+            )
+            
+            assert result.success is True
+            assert result.message == "I'll help you with that."
+            assert result.should_continue is False  # Should stay on current node
+            assert result.next_node_id is None  # Should not move to next node
+            assert result.transfer_to_human is False
+
+    @pytest.mark.asyncio
+    async def test_execute_llm_node_with_ask_for_rating_enabled(self, workflow_execution_service, sample_nodes, sample_workflow_with_nodes):
+        """Test LLM node with ask_for_rating enabled when chat ends"""
+        node = sample_nodes["llm"]
+        node.config = {
+            "system_prompt": "You are a helpful assistant.",
+            "exit_condition": ExitCondition.CONTINUOUS_EXECUTION,
+            "ask_for_rating": True
+        }
+        workflow_state = {}
+        
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent = MagicMock()
+            mock_chat_agent_class.return_value = mock_chat_agent
+            
+            mock_response = MagicMock()
+            mock_response.message = "Thank you for using our service. Goodbye!"
+            mock_response.transfer_to_human = False
+            mock_response.end_chat = True  # This triggers the end chat behavior
+            mock_response.request_rating = False  # This should be overridden by config
+            mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
+            
+            result = await workflow_execution_service._execute_llm_node(
+                node=node,
+                workflow=sample_workflow_with_nodes,
+                workflow_state=workflow_state,
+                user_message="Goodbye!",
+                api_key="test_key",
+                model_name="test_model",
+                model_type="openai",
+                org_id="org_123",
+                agent_id="agent_123",
+                customer_id="customer_123",
+                session_id="session_123"
+            )
+            
+            assert result.success is True
+            assert result.message == "Thank you for using our service. Goodbye!"
+            assert result.end_chat is True
+            assert result.request_rating is True  # Should be True due to config override
+
+    @pytest.mark.asyncio
+    async def test_execute_llm_node_with_ask_for_rating_disabled(self, workflow_execution_service, sample_nodes, sample_workflow_with_nodes):
+        """Test LLM node with ask_for_rating disabled when chat ends"""
+        node = sample_nodes["llm"]
+        node.config = {
+            "system_prompt": "You are a helpful assistant.",
+            "exit_condition": ExitCondition.CONTINUOUS_EXECUTION,
+            "ask_for_rating": False
+        }
+        workflow_state = {}
+        
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent = MagicMock()
+            mock_chat_agent_class.return_value = mock_chat_agent
+            
+            mock_response = MagicMock()
+            mock_response.message = "Thank you for using our service. Goodbye!"
+            mock_response.transfer_to_human = False
+            mock_response.end_chat = True  # This triggers the end chat behavior
+            mock_response.request_rating = True  # This should be overridden by config
+            mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
+            
+            result = await workflow_execution_service._execute_llm_node(
+                node=node,
+                workflow=sample_workflow_with_nodes,
+                workflow_state=workflow_state,
+                user_message="Goodbye!",
+                api_key="test_key",
+                model_name="test_model",
+                model_type="openai",
+                org_id="org_123",
+                agent_id="agent_123",
+                customer_id="customer_123",
+                session_id="session_123"
+            )
+            
+            assert result.success is True
+            assert result.message == "Thank you for using our service. Goodbye!"
+            assert result.end_chat is True
+            assert result.request_rating is False  # Should be False due to config override
 
     def test_update_session_workflow_state(self, workflow_execution_service, mock_session_repo):
         """Test updating session workflow state"""

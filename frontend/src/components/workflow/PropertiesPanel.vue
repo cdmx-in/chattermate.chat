@@ -17,13 +17,22 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch } from 'vue'
 import type { Node, Edge } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
 import { workflowCacheStorage } from '@/utils/storage'
-import { toast } from 'vue-sonner'
-import { useAgentEdit } from '@/composables/useAgentEdit'
-import KnowledgeGrid from '@/components/agent/KnowledgeGrid.vue'
+import LLMNodeConfig from '@/components/workflow/nodes/LLMNodeConfig.vue'
+import FormNodeConfig from '@/components/workflow/nodes/FormNodeConfig.vue'
+import WaitNodeConfig from '@/components/workflow/nodes/WaitNodeConfig.vue'
+import HumanTransferNodeConfig from '@/components/workflow/nodes/HumanTransferNodeConfig.vue'
+import LandingPageNodeConfig from '@/components/workflow/nodes/LandingPageNodeConfig.vue'
+import EndNodeConfig from '@/components/workflow/nodes/EndNodeConfig.vue'
+import ActionNodeConfig from '@/components/workflow/nodes/ActionNodeConfig.vue'
+import MessageNodeConfig from '@/components/workflow/nodes/MessageNodeConfig.vue'
+import ConditionNodeConfig from '@/components/workflow/nodes/ConditionNodeConfig.vue'
+import { ExitCondition } from '@/types/workflow'
+import { listGroups } from '@/services/groups'
+import type { UserGroup } from '@/types/user'
 
 // Collapsible sections state
 const collapsedSections = ref({
@@ -67,19 +76,7 @@ const emit = defineEmits<{
   (e: 'delete'): void
 }>()
 
-// Computed property to detect if condition node is connected to an LLM node from above
-const isConnectedToLLM = computed(() => {
-  if (props.selectedNode.data.nodeType !== 'condition') return false
-  
-  // Find edges where this condition node is the target
-  const incomingEdges = props.currentEdges.filter(edge => edge.target === props.selectedNode.id)
-  
-  // Check if any source node is an LLM
-  return incomingEdges.some(edge => {
-    const sourceNode = props.currentNodes.find(node => node.id === edge.source)
-    return sourceNode?.data.nodeType === 'llm'
-  })
-})
+
 
 const nodeForm = ref({
   name: '',
@@ -90,14 +87,13 @@ const nodeForm = ref({
   // LLM node
   system_prompt: '',
   temperature: 0.7,
+  exit_condition: ExitCondition.SINGLE_EXECUTION,
+  auto_transfer_enabled: false,
+  transfer_group_id: '',
+  ask_for_rating: false,
   // Condition node
   condition_expression: '',
-  // LLM-based condition checkboxes
-  llm_conditions: {
-    user_frustrated: false,
-    request_human_agent: false,
-    no_knowledge: false
-  },
+
   // Form node
   form_fields: [] as FormField[],
   form_title: '',
@@ -125,6 +121,10 @@ const saving = ref(false)
 // Validation errors state
 const validationErrors = ref<Record<string, string>>({})
 
+// User groups state
+const userGroups = ref<UserGroup[]>([])
+const loadingGroups = ref(false)
+
 // Auto-save functionality
 const autoSaveTimeout = ref<number | null>(null)
 
@@ -138,37 +138,76 @@ const debounce = (func: Function, delay: number) => {
   }
 }
 
-// AI generation state
-const showAIPrompt = ref(false)
-const aiPrompt = ref('')
 
-// Initialize agent edit composable (using a mock agent object for AI generation)
-const mockAgent = {
-  id: 'temp-agent',
-  name: 'Workflow Node Agent',
-  display_name: 'Workflow Node Agent',
-  description: 'Temporary agent for AI generation',
-  agent_type: 'general',
-  instructions: '',
-  transfer_to_human: false,
-  ask_for_rating: false,
-  organization_id: 'temp',
-  created_by: 'temp',
-  created_at: new Date(),
-  updated_at: new Date(),
-  is_active: true,
-  enable_rate_limiting: false,
-  overall_limit_per_ip: 0,
-  requests_per_sec: 0,
-  conversation_starters: [],
-  knowledge_base_ids: [],
-  canvas_data: {}
-} as any
-const { generateInstructions, isLoading: aiLoading, error: aiError } = useAgentEdit(mockAgent)
 
 // Toggle collapsible section
-const toggleSection = (section: keyof typeof collapsedSections.value) => {
-  collapsedSections.value[section] = !collapsedSections.value[section]
+const toggleSection = (section: keyof typeof collapsedSections.value | string) => {
+  if (section in collapsedSections.value) {
+    collapsedSections.value[section as keyof typeof collapsedSections.value] = !collapsedSections.value[section as keyof typeof collapsedSections.value]
+  }
+}
+
+// Update LLM form data from child component
+const updateLLMFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update Form form data from child component
+const updateFormFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update Wait form data from child component
+const updateWaitFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update Human Transfer form data from child component
+const updateHumanTransferFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update Landing Page form data from child component
+const updateLandingPageFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update End form data from child component
+const updateEndFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update Action form data from child component
+const updateActionFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update Message form data from child component
+const updateMessageFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update Condition form data from child component
+const updateConditionFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
 }
 
 // Validation functions
@@ -201,21 +240,18 @@ const validateField = (field: string, value: any, nodeType: string): string | nu
       }
       break
     
+    case 'exit_condition':
+      if (nodeType === 'llm' && (!value || value.trim() === '')) {
+        return 'Exit condition is required'
+      }
+      break
+    
     case 'condition_expression':
-      // Only validate condition_expression if not connected to LLM (using traditional mode)
-      if (nodeType === 'condition' && !isConnectedToLLM.value && (!value || value.trim() === '')) {
+      if (nodeType === 'condition' && (!value || value.trim() === '')) {
         return 'Condition expression is required'
       }
       break
     
-    case 'llm_conditions':
-      // Only validate LLM conditions if connected to LLM
-      if (nodeType === 'condition' && isConnectedToLLM.value) {
-        if (!value || (!value.user_frustrated && !value.request_human_agent && !value.no_knowledge)) {
-          return 'At least one LLM condition must be selected'
-        }
-      }
-      break
     
     case 'action_type':
       if (nodeType === 'action' && (!value || value.trim() === '')) {
@@ -302,8 +338,8 @@ const validateForm = (): boolean => {
   
   // Validate each field
   const fieldsToValidate = [
-    'name', 'message_text', 'system_prompt', 'temperature',
-    'condition_expression', 'llm_conditions', 'action_type', 'action_url',
+    'name', 'message_text', 'system_prompt', 'temperature', 'exit_condition',
+    'condition_expression', 'action_type', 'action_url',
     'transfer_department', 'wait_duration', 'wait_unit', 'form_fields',
     'landing_page_heading', 'landing_page_content'
   ]
@@ -336,6 +372,19 @@ const validateFieldOnChange = (field: string) => {
 }
 
 
+
+// Load user groups for transfer
+const loadUserGroups = async () => {
+  try {
+    loadingGroups.value = true
+    userGroups.value = await listGroups()
+  } catch (error) {
+    console.error('Failed to load user groups:', error)
+    userGroups.value = []
+  } finally {
+    loadingGroups.value = false
+  }
+}
 
 // Get node data with latest cache values for PropertiesPanel
 const getNodeDataForForm = (node: Node) => {
@@ -370,6 +419,9 @@ const getNodeDataForForm = (node: Node) => {
 }
 
 // Watch for node selection changes
+// Load user groups on component mount
+loadUserGroups()
+
 watch(() => props.selectedNode, (newNode) => {
   if (newNode) {
     console.log('Node changed, loading form data for:', newNode.id)
@@ -408,14 +460,22 @@ watch(() => props.selectedNode, (newNode) => {
       temperature: nodeData.config?.temperature !== undefined ? 
                    nodeData.config?.temperature : 
                    (nodeData.temperature || 0.7),
+      exit_condition: nodeData.config?.exit_condition || 
+                      nodeData.exit_condition || 
+                      ExitCondition.SINGLE_EXECUTION,
+      auto_transfer_enabled: nodeData.config?.auto_transfer_enabled !== undefined ? 
+                             nodeData.config?.auto_transfer_enabled : 
+                             (nodeData.auto_transfer_enabled || false),
+      transfer_group_id: nodeData.config?.transfer_group_id || 
+                         nodeData.transfer_group_id || 
+                         '',
+      ask_for_rating: nodeData.config?.ask_for_rating !== undefined ? 
+                      nodeData.config?.ask_for_rating : 
+                      (nodeData.ask_for_rating !== undefined ? nodeData.ask_for_rating : true),
       // Condition node
       condition_expression: nodeData.config?.condition_expression || 
                             nodeData.condition_expression || 
                             '',
-      // LLM-based condition checkboxes
-      llm_conditions: nodeData.config?.llm_conditions || 
-                      nodeData.llm_conditions || 
-                      { user_frustrated: false, request_human_agent: false, no_knowledge: false },
       // Form node - prioritize config over outer fields
       form_fields: nodeData.config?.form_fields || 
                    nodeData.form_fields || 
@@ -486,43 +546,7 @@ const getNodeTypeName = (type: string) => {
   return names[type as keyof typeof names] || type
 }
 
-// Get field type icon
-const getFieldTypeIcon = (type: string) => {
-  const icons = {
-    text: '📝',
-    email: '📧',
-    number: '🔢',
-    tel: '📞',
-    textarea: '📄',
-    select: '📋',
-    checkbox: '☑️',
-    radio: '🔘'
-  }
-  return icons[type as keyof typeof icons] || '📝'
-}
 
-// Add form field
-const addFormField = () => {
-  nodeForm.value.form_fields.push({
-    name: '',
-    label: '',
-    type: 'text',
-    required: false,
-    placeholder: '',
-    options: '',
-    minLength: 0,
-    maxLength: 255
-  })
-  // Trigger validation for form fields
-  validateFieldOnChange('form_fields')
-}
-
-// Remove form field
-const removeFormField = (index: number) => {
-  nodeForm.value.form_fields.splice(index, 1)
-  // Trigger validation for form fields
-  validateFieldOnChange('form_fields')
-}
 
 
 
@@ -564,11 +588,14 @@ const getNodeSpecificConfig = (nodeType: string) => {
     case 'llm':
       if (nodeForm.value.system_prompt) config.system_prompt = nodeForm.value.system_prompt
       if (nodeForm.value.temperature !== undefined) config.temperature = nodeForm.value.temperature
+      if (nodeForm.value.exit_condition) config.exit_condition = nodeForm.value.exit_condition
+      if (nodeForm.value.auto_transfer_enabled !== undefined) config.auto_transfer_enabled = nodeForm.value.auto_transfer_enabled
+      if (nodeForm.value.transfer_group_id) config.transfer_group_id = nodeForm.value.transfer_group_id
+      if (nodeForm.value.ask_for_rating !== undefined) config.ask_for_rating = nodeForm.value.ask_for_rating
       break
     
     case 'condition':
       if (nodeForm.value.condition_expression) config.condition_expression = nodeForm.value.condition_expression
-      if (nodeForm.value.llm_conditions) config.llm_conditions = nodeForm.value.llm_conditions
       break
     
     case 'form':
@@ -691,26 +718,9 @@ const mapNodeTypeToBackend = (frontendType: string) => {
   return mapping[frontendType as keyof typeof mapping] || 'message'
 }
 
-// Handle AI generation for system prompt
-const handleGenerateWithAI = async () => {
-  if (!aiPrompt.value.trim()) return
-  
-  try {
-    const generatedInstructions = await generateInstructions(aiPrompt.value)
-    if (generatedInstructions.length > 0) {
-      // Join the generated instructions with newlines
-      nodeForm.value.system_prompt = generatedInstructions.join('\n')
-      showAIPrompt.value = false
-      aiPrompt.value = ''
-      // Trigger validation for the updated field
-      validateFieldOnChange('system_prompt')
-      // Trigger auto-save
-      autoSaveToCache()
-    }
-  } catch (err) {
-    console.error('Failed to generate instructions:', err)
-  }
-}
+
+
+
 
 // Handle close
 const handleClose = () => {
@@ -826,567 +836,130 @@ const handleDelete = () => {
           
           <!-- Message Node -->
           <template v-if="selectedNode.data.nodeType === 'message'">
-            <div class="form-group">
-              <label for="message-text">Message Text *</label>
-              <textarea
-                id="message-text"
-                v-model="nodeForm.message_text"
-                class="form-textarea"
-                :class="{ 'error': validationErrors.message_text }"
-                placeholder="Enter the message to send to users"
-                rows="4"
-                required
-                @blur="validateFieldOnChange('message_text')"
-                @input="validateFieldOnChange('message_text')"
-              ></textarea>
-              <div v-if="validationErrors.message_text" class="error-message">
-                {{ validationErrors.message_text }}
-              </div>
-            </div>
+            <MessageNodeConfig
+              :model-value="{
+                message_text: nodeForm.message_text,
+                show_typing: nodeForm.show_typing
+              }"
+              @update:model-value="updateMessageFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
           </template>
 
           <!-- LLM Node -->
           <template v-if="selectedNode.data.nodeType === 'llm'">
-            <div class="form-group">
-              <div class="instructions-header">
-                <label for="system-prompt">Instructions *</label>
-                <button 
-                  class="ai-generate-button" 
-                  @click="showAIPrompt = true"
-                  :disabled="aiLoading"
-                  type="button"
-                >
-                  <span class="ai-icon">✨</span>
-                  Generate with AI
-                </button>
-              </div>
-              <textarea
-                id="system-prompt"
-                v-model="nodeForm.system_prompt"
-                class="form-textarea"
-                :class="{ 'error': validationErrors.system_prompt }"
-                placeholder="Enter system prompt for the AI"
-                rows="4"
-                required
-                @blur="validateFieldOnChange('system_prompt')"
-                @input="validateFieldOnChange('system_prompt')"
-              ></textarea>
-              <div v-if="validationErrors.system_prompt" class="error-message">
-                {{ validationErrors.system_prompt }}
-              </div>
-            </div>
-            <div class="form-group">
-              <label for="temperature">Temperature</label>
-              <input
-                id="temperature"
-                v-model.number="nodeForm.temperature"
-                type="number"
-                class="form-input"
-                :class="{ 'error': validationErrors.temperature }"
-                min="0"
-                max="2"
-                step="0.1"
-                placeholder="0.7"
-                @blur="validateFieldOnChange('temperature')"
-                @input="validateFieldOnChange('temperature')"
-              />
-              <div v-if="validationErrors.temperature" class="error-message">
-                {{ validationErrors.temperature }}
-              </div>
-            </div>
-
-            <!-- Knowledge Section -->
-            <div class="form-group">
-              <div class="knowledge-section">
-                <div class="section-header knowledge-header" @click="toggleSection('knowledge')">
-                  <div class="section-title">
-                    <svg class="section-icon" :class="{ 'rotated': collapsedSections.knowledge }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                      <polyline points="6,9 12,15 18,9"></polyline>
-                    </svg>
-                    <span>Knowledge Sources</span>
-                  </div>
-                </div>
-                
-                <div class="section-content knowledge-content" :class="{ 'collapsed': collapsedSections.knowledge }">
-                  <div class="knowledge-wrapper">
-                    <KnowledgeGrid 
-                      v-if="!collapsedSections.knowledge"
-                      :agent-id="agentId" 
-                      :organization-id="organizationId"
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <!-- AI Prompt Modal -->
-            <div v-if="showAIPrompt" class="ai-prompt-modal">
-              <div class="ai-prompt-content">
-                <h5>Generate Instructions with AI</h5>
-                <textarea 
-                  v-model="aiPrompt"
-                  placeholder="Describe what you want this AI node to do. For example: 'Create instructions for a customer support assistant that helps with order tracking'"
-                  rows="4"
-                  class="ai-prompt-textarea"
-                ></textarea>
-                <div v-if="aiError" class="error-message">{{ aiError }}</div>
-                <div class="ai-prompt-actions">
-                  <button 
-                    class="cancel-ai-button" 
-                    @click="showAIPrompt = false"
-                    :disabled="aiLoading"
-                    type="button"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    class="generate-ai-button" 
-                    @click="handleGenerateWithAI"
-                    :disabled="aiLoading || !aiPrompt.trim()"
-                    type="button"
-                  >
-                    {{ aiLoading ? 'Generating...' : 'Generate' }}
-                  </button>
-                </div>
-              </div>
-            </div>
+            <LLMNodeConfig
+              :model-value="{
+                system_prompt: nodeForm.system_prompt,
+                temperature: nodeForm.temperature,
+                exit_condition: nodeForm.exit_condition,
+                auto_transfer_enabled: nodeForm.auto_transfer_enabled,
+                transfer_group_id: nodeForm.transfer_group_id,
+                ask_for_rating: nodeForm.ask_for_rating
+              }"
+              @update:model-value="updateLLMFormData"
+              :validation-errors="validationErrors"
+              :user-groups="userGroups"
+              :loading-groups="loadingGroups"
+              :agent-id="agentId"
+              :organization-id="organizationId"
+              :collapsed-sections="collapsedSections"
+              @validate-field="validateFieldOnChange"
+              @toggle-section="toggleSection"
+            />
           </template>
 
           <!-- Condition Node -->
           <template v-if="selectedNode.data.nodeType === 'condition'">
-            <!-- Show smart checkboxes if connected to LLM from above -->
-            <template v-if="isConnectedToLLM">
-              <div class="form-group">
-                <label>LLM-Based Conditions</label>
-                <p class="field-help">Select conditions to trigger based on LLM responses</p>
-                <div class="checkbox-group">
-                  <label class="checkbox-label">
-                    <input
-                      v-model="nodeForm.llm_conditions.user_frustrated"
-                      type="checkbox"
-                      class="form-checkbox"
-                      @change="validateFieldOnChange('llm_conditions')"
-                    />
-                    <span>🔥 Transfer chat if user frustrated</span>
-                  </label>
-                  <label class="checkbox-label">
-                    <input
-                      v-model="nodeForm.llm_conditions.request_human_agent"
-                      type="checkbox"
-                      class="form-checkbox"
-                      @change="validateFieldOnChange('llm_conditions')"
-                    />
-                    <span>👤 Request human agent</span>
-                  </label>
-                  <label class="checkbox-label">
-                    <input
-                      v-model="nodeForm.llm_conditions.no_knowledge"
-                      type="checkbox"
-                      class="form-checkbox"
-                      @change="validateFieldOnChange('llm_conditions')"
-                    />
-                    <span>❓ Not having knowledge to answer</span>
-                  </label>
-                </div>
-                <div v-if="validationErrors.llm_conditions" class="error-message">
-                  {{ validationErrors.llm_conditions }}
-                </div>
-              </div>
-            </template>
-            
-            <!-- Show generic condition expression if not connected to LLM -->
-            <template v-else>
-              <div class="form-group">
-                <label for="condition-expression">Condition Expression *</label>
-                <textarea
-                  id="condition-expression"
-                  v-model="nodeForm.condition_expression"
-                  class="form-textarea"
-                  :class="{ 'error': validationErrors.condition_expression }"
-                  placeholder="Enter condition logic (e.g., user_input.includes('yes'))"
-                  rows="4"
-                  required
-                  @blur="validateFieldOnChange('condition_expression')"
-                  @input="validateFieldOnChange('condition_expression')"
-                ></textarea>
-                <div v-if="validationErrors.condition_expression" class="error-message">
-                  {{ validationErrors.condition_expression }}
-                </div>
-              </div>
-            </template>
+            <ConditionNodeConfig
+              :model-value="{
+                condition_expression: nodeForm.condition_expression
+              }"
+              @update:model-value="updateConditionFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
           </template>
 
           <!-- Form Node -->
           <template v-if="selectedNode.data.nodeType === 'form'">
-            <div class="form-group">
-              <label for="form-title">Form Title</label>
-              <input
-                id="form-title"
-                v-model="nodeForm.form_title"
-                type="text"
-                class="form-input"
-                placeholder="Enter form title"
-              />
-            </div>
-            
-            <div class="form-group">
-              <label for="form-description">Form Description</label>
-              <textarea
-                id="form-description"
-                v-model="nodeForm.form_description"
-                class="form-textarea"
-                placeholder="Enter form description (optional)"
-                rows="3"
-              ></textarea>
-            </div>
-            
-            <div class="form-group">
-              <label for="submit-button-text">Submit Button Text</label>
-              <input
-                id="submit-button-text"
-                v-model="nodeForm.submit_button_text"
-                type="text"
-                class="form-input"
-                placeholder="Submit"
-              />
-            </div>
-            
-            <div class="form-group">
-              <label class="checkbox-group">
-                <input
-                  v-model="nodeForm.form_full_screen"
-                  type="checkbox"
-                  class="form-checkbox"
-                />
-                <span class="checkbox-label">Display form in full screen mode</span>
-              </label>
-              <p class="help-text">When enabled, the form will be displayed as a full screen overlay instead of within the chat interface</p>
-            </div>
-            
-            <div class="form-group">
-              <label>Form Fields</label>
-              <div class="form-fields-container" :class="{ 'error': validationErrors.form_fields }">
-                <div
-                  v-for="(field, index) in nodeForm.form_fields"
-                  :key="index"
-                  class="form-field-item"
-                >
-                  <div class="form-field-header">
-                    <span class="field-type-badge" :class="`field-type-${field.type}`">
-                      {{ getFieldTypeIcon(field.type) }} {{ field.type }}
-                    </span>
-                    <button
-                      type="button"
-                      class="remove-field-btn"
-                      @click="removeFormField(index)"
-                      title="Remove field"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="18" y1="6" x2="6" y2="18"></line>
-                        <line x1="6" y1="6" x2="18" y2="18"></line>
-                      </svg>
-                    </button>
-                  </div>
-                  
-                  <div class="form-field-config">
-                    <div class="field-row">
-                      <div class="field-col">
-                        <label class="field-label">Field Name *</label>
-                        <input
-                          v-model="field.name"
-                          type="text"
-                          class="field-input"
-                          placeholder="field_name"
-                          required
-                          @blur="validateFieldOnChange('form_fields')"
-                          @input="validateFieldOnChange('form_fields')"
-                        />
-                      </div>
-                      <div class="field-col">
-                        <label class="field-label">Display Label *</label>
-                        <input
-                          v-model="field.label"
-                          type="text"
-                          class="field-input"
-                          placeholder="Field Label"
-                          required
-                          @blur="validateFieldOnChange('form_fields')"
-                          @input="validateFieldOnChange('form_fields')"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div class="field-row">
-                      <div class="field-col">
-                        <label class="field-label">Field Type</label>
-                        <select v-model="field.type" class="field-select" @change="validateFieldOnChange('form_fields')">
-                          <option value="text">Text</option>
-                          <option value="email">Email</option>
-                          <option value="number">Number</option>
-                          <option value="tel">Phone</option>
-                          <option value="textarea">Textarea</option>
-                          <option value="select">Select</option>
-                          <option value="checkbox">Checkbox</option>
-                          <option value="radio">Radio</option>
-                        </select>
-                      </div>
-                      <div class="field-col">
-                        <label class="field-label">Required</label>
-                        <label class="checkbox-label">
-                          <input
-                            v-model="field.required"
-                            type="checkbox"
-                            class="form-checkbox"
-                            @change="validateFieldOnChange('form_fields')"
-                          />
-                          <span>Required field</span>
-                        </label>
-                      </div>
-                    </div>
-                    
-                    <div class="field-row">
-                      <div class="field-col-full">
-                        <label class="field-label">Placeholder</label>
-                        <input
-                          v-model="field.placeholder"
-                          type="text"
-                          class="field-input"
-                          placeholder="Enter placeholder text"
-                          @blur="() => {  validateFieldOnChange('form_fields'); }"
-                          @input="() => {  validateFieldOnChange('form_fields'); }"
-                        />
-                      </div>
-                    </div>
-                    
-                    <!-- Options for select/radio fields -->
-                    <div v-if="field.type === 'select' || field.type === 'radio'" class="field-row">
-                      <div class="field-col-full">
-                        <label class="field-label">Options (one per line)</label>
-                        <textarea
-                          v-model="field.options"
-                          class="field-textarea"
-                          placeholder="Option 1&#10;Option 2&#10;Option 3"
-                          rows="3"
-                          @blur="validateFieldOnChange('form_fields')"
-                          @input="validateFieldOnChange('form_fields')"
-                        ></textarea>
-                      </div>
-                    </div>
-                    
-                    <!-- Validation for text fields -->
-                    <div v-if="field.type === 'text' || field.type === 'textarea'" class="field-row">
-                      <div class="field-col">
-                        <label class="field-label">Min Length</label>
-                        <input
-                          v-model.number="field.minLength"
-                          type="number"
-                          class="field-input"
-                          min="0"
-                          placeholder="0"
-                          @blur="validateFieldOnChange('form_fields')"
-                          @input="validateFieldOnChange('form_fields')"
-                        />
-                      </div>
-                      <div class="field-col">
-                        <label class="field-label">Max Length</label>
-                        <input
-                          v-model.number="field.maxLength"
-                          type="number"
-                          class="field-input"
-                          min="1"
-                          placeholder="255"
-                          @blur="validateFieldOnChange('form_fields')"
-                          @input="validateFieldOnChange('form_fields')"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <button
-                  type="button"
-                  class="add-field-btn"
-                  @click="addFormField"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="12" y1="5" x2="12" y2="19"></line>
-                    <line x1="5" y1="12" x2="19" y2="12"></line>
-                  </svg>
-                  Add Form Field
-                </button>
-              </div>
-              <div v-if="validationErrors.form_fields" class="error-message">
-                {{ validationErrors.form_fields }}
-              </div>
-            </div>
+            <FormNodeConfig
+              :model-value="{
+                form_title: nodeForm.form_title,
+                form_description: nodeForm.form_description,
+                submit_button_text: nodeForm.submit_button_text,
+                form_full_screen: nodeForm.form_full_screen,
+                form_fields: nodeForm.form_fields
+              }"
+              @update:model-value="updateFormFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
           </template>
 
           <!-- Action Node -->
           <template v-if="selectedNode.data.nodeType === 'action'">
-            <div class="form-group">
-              <label for="action-type">Action Type *</label>
-              <select
-                id="action-type"
-                v-model="nodeForm.action_type"
-                class="form-select"
-                :class="{ 'error': validationErrors.action_type }"
-                required
-                @blur="validateFieldOnChange('action_type')"
-                @change="validateFieldOnChange('action_type')"
-              >
-                <option value="">Select action type</option>
-                <option value="webhook">Webhook</option>
-                <option value="email">Send Email</option>
-                <option value="api">API Call</option>
-              </select>
-              <div v-if="validationErrors.action_type" class="error-message">
-                {{ validationErrors.action_type }}
-              </div>
-            </div>
-            <div class="form-group">
-              <label for="action-url">URL *</label>
-              <input
-                id="action-url"
-                v-model="nodeForm.action_url"
-                type="url"
-                class="form-input"
-                :class="{ 'error': validationErrors.action_url }"
-                placeholder="https://example.com/webhook"
-                required
-                @blur="validateFieldOnChange('action_url')"
-                @input="validateFieldOnChange('action_url')"
-              />
-              <div v-if="validationErrors.action_url" class="error-message">
-                {{ validationErrors.action_url }}
-              </div>
-            </div>
+            <ActionNodeConfig
+              :model-value="{
+                action_type: nodeForm.action_type,
+                action_url: nodeForm.action_url
+              }"
+              @update:model-value="updateActionFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
           </template>
 
           <!-- Human Transfer Node -->
           <template v-if="selectedNode.data.nodeType === 'humanTransfer'">
-            <div class="form-group">
-              <label for="transfer-department">Department *</label>
-              <select
-                id="transfer-department"
-                v-model="nodeForm.transfer_department"
-                class="form-select"
-                :class="{ 'error': validationErrors.transfer_department }"
-                required
-                @blur="validateFieldOnChange('transfer_department')"
-                @change="validateFieldOnChange('transfer_department')"
-              >
-                <option value="">Select department</option>
-                <option value="general">General Support</option>
-                <option value="sales">Sales</option>
-                <option value="technical">Technical Support</option>
-              </select>
-              <div v-if="validationErrors.transfer_department" class="error-message">
-                {{ validationErrors.transfer_department }}
-              </div>
-            </div>
-            <div class="form-group">
-              <label for="transfer-message">Transfer Message</label>
-              <textarea
-                id="transfer-message"
-                v-model="nodeForm.transfer_message"
-                class="form-textarea"
-                placeholder="Message to show when transferring to human agent"
-                rows="3"
-              ></textarea>
-            </div>
+            <HumanTransferNodeConfig
+              :model-value="{
+                transfer_department: nodeForm.transfer_department,
+                transfer_message: nodeForm.transfer_message
+              }"
+              @update:model-value="updateHumanTransferFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
           </template>
 
           <!-- Wait Node -->
           <template v-if="selectedNode.data.nodeType === 'wait'">
-            <div class="form-group">
-              <label for="wait-duration">Duration *</label>
-              <input
-                id="wait-duration"
-                v-model.number="nodeForm.wait_duration"
-                type="number"
-                class="form-input"
-                :class="{ 'error': validationErrors.wait_duration }"
-                min="1"
-                placeholder="5"
-                required
-                @blur="validateFieldOnChange('wait_duration')"
-                @input="validateFieldOnChange('wait_duration')"
-              />
-              <div v-if="validationErrors.wait_duration" class="error-message">
-                {{ validationErrors.wait_duration }}
-              </div>
-            </div>
-            <div class="form-group">
-              <label for="wait-unit">Time Unit *</label>
-              <select
-                id="wait-unit"
-                v-model="nodeForm.wait_unit"
-                class="form-select"
-                :class="{ 'error': validationErrors.wait_unit }"
-                required
-                @blur="validateFieldOnChange('wait_unit')"
-                @change="validateFieldOnChange('wait_unit')"
-              >
-                <option value="seconds">Seconds</option>
-                <option value="minutes">Minutes</option>
-                <option value="hours">Hours</option>
-              </select>
-              <div v-if="validationErrors.wait_unit" class="error-message">
-                {{ validationErrors.wait_unit }}
-              </div>
-            </div>
+            <WaitNodeConfig
+              :model-value="{
+                wait_duration: nodeForm.wait_duration,
+                wait_unit: nodeForm.wait_unit
+              }"
+              @update:model-value="updateWaitFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
           </template>
 
           <!-- End Node -->
           <template v-if="selectedNode.data.nodeType === 'end'">
-            <div class="form-group">
-              <label for="end-message">Final Message</label>
-              <textarea
-                id="end-message"
-                v-model="nodeForm.final_message"
-                class="form-textarea"
-                placeholder="Final message to show when ending conversation"
-                rows="3"
-              ></textarea>
-            </div>
+            <EndNodeConfig
+              :model-value="{
+                final_message: nodeForm.final_message
+              }"
+              @update:model-value="updateEndFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
           </template>
 
           <!-- Landing Page Node -->
           <template v-if="selectedNode.data.nodeType === 'landingPage'">
-            <div class="form-group">
-              <label for="landing-page-heading">Heading *</label>
-              <input
-                id="landing-page-heading"
-                v-model="nodeForm.landing_page_heading"
-                class="form-input"
-                :class="{ 'error': validationErrors.landing_page_heading }"
-                placeholder="Enter a welcoming heading for your landing page"
-                required
-                @blur="validateFieldOnChange('landing_page_heading')"
-                @input="validateFieldOnChange('landing_page_heading')"
-              />
-              <div v-if="validationErrors.landing_page_heading" class="error-message">
-                {{ validationErrors.landing_page_heading }}
-              </div>
-            </div>
-            
-            <div class="form-group">
-              <label for="landing-page-content">Content *</label>
-              <textarea
-                id="landing-page-content"
-                v-model="nodeForm.landing_page_content"
-                class="form-textarea"
-                :class="{ 'error': validationErrors.landing_page_content }"
-                placeholder="Enter the content text for your landing page. This will be displayed below the heading."
-                rows="4"
-                required
-                @blur="validateFieldOnChange('landing_page_content')"
-                @input="validateFieldOnChange('landing_page_content')"
-              ></textarea>
-              <div v-if="validationErrors.landing_page_content" class="error-message">
-                {{ validationErrors.landing_page_content }}
-              </div>
-            </div>
+            <LandingPageNodeConfig
+              :model-value="{
+                landing_page_heading: nodeForm.landing_page_heading,
+                landing_page_content: nodeForm.landing_page_content
+              }"
+              @update:model-value="updateLandingPageFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
           </template>
         </div>
         </div>
@@ -1764,305 +1337,9 @@ const handleDelete = () => {
   }
 }
 
-/* Form Fields Styles */
-.form-fields-container {
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--background-color);
-  padding: var(--space-sm);
-  max-height: none;
-  overflow: visible;
-}
 
-.form-fields-container.error {
-  border-color: var(--error-color);
-  background-color: rgba(239, 68, 68, 0.05);
-}
 
-.form-field-item {
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--background-soft);
-  margin-bottom: var(--space-sm);
-  overflow: hidden;
-}
 
-.form-field-item:last-child {
-  margin-bottom: 0;
-}
-
-.form-field-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--space-sm) var(--space-md);
-  background: var(--background-muted);
-  border-bottom: 1px solid var(--border-color);
-}
-
-.field-type-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
-  font-size: 0.7rem;
-  font-weight: 500;
-  text-transform: capitalize;
-  background: var(--primary-soft);
-  color: var(--primary-color);
-}
-
-.remove-field-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  background: transparent;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.remove-field-btn:hover {
-  background: var(--error-color);
-  color: white;
-}
-
-.remove-field-btn svg {
-  width: 12px;
-  height: 12px;
-}
-
-.form-field-config {
-  padding: var(--space-md);
-}
-
-.field-row {
-  display: flex;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-sm);
-}
-
-.field-row:last-child {
-  margin-bottom: 0;
-}
-
-.field-col {
-  flex: 1;
-}
-
-.field-col-full {
-  flex: 1;
-  width: 100%;
-}
-
-.field-label {
-  display: block;
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-}
-
-.field-help {
-  font-size: 0.7rem;
-  color: var(--text-muted);
-  margin-bottom: 8px;
-  line-height: 1.3;
-}
-
-.field-input,
-.field-textarea,
-.field-select {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--background-color);
-  color: var(--text-color);
-  font-size: 0.75rem;
-  transition: border-color 0.2s ease;
-}
-
-.field-input:focus,
-.field-textarea:focus,
-.field-select:focus {
-  outline: none;
-  border-color: var(--primary-color);
-  box-shadow: 0 0 0 1px rgba(243, 70, 17, 0.1);
-}
-
-.field-input.error,
-.field-textarea.error,
-.field-select.error {
-  border-color: var(--error-color);
-  background-color: rgba(239, 68, 68, 0.05);
-}
-
-.field-textarea {
-  resize: vertical;
-  min-height: 60px;
-}
-
-.add-field-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-xs);
-  width: 100%;
-  padding: var(--space-sm);
-  background: var(--background-muted);
-  border: 1px dashed var(--border-color);
-  border-radius: var(--radius-md);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 0.8rem;
-  font-weight: 500;
-}
-
-.add-field-btn:hover {
-  background: var(--primary-soft);
-  border-color: var(--primary-color);
-  color: var(--primary-color);
-}
-
-.add-field-btn svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Instructions Header Styles */
-.instructions-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 4px;
-}
-
-.ai-generate-button {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  border: none;
-  border-radius: var(--radius-sm);
-  font-size: 0.7rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.ai-generate-button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
-}
-
-.ai-generate-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
-.ai-icon {
-  font-size: 0.8rem;
-}
-
-/* AI Prompt Modal Styles */
-.ai-prompt-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 1000;
-}
-
-.ai-prompt-content {
-  background: var(--background-color);
-  border-radius: var(--radius-lg);
-  padding: var(--space-lg);
-  width: 90%;
-  max-width: 500px;
-  box-shadow: var(--shadow-xl);
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-md);
-}
-
-.ai-prompt-content h5 {
-  margin: 0 0 var(--space-sm) 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-color);
-}
-
-.ai-prompt-textarea {
-  width: 100%;
-  padding: 10px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  background: var(--background-soft);
-  color: var(--text-color);
-  font-size: 0.85rem;
-  resize: vertical;
-  min-height: 100px;
-  box-sizing: border-box;
-}
-
-.ai-prompt-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-sm);
-}
-
-.cancel-ai-button,
-.generate-ai-button {
-  padding: 8px 16px;
-  border: none;
-  border-radius: var(--radius-md);
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  font-size: 0.85rem;
-  min-width: 80px;
-  white-space: nowrap;
-}
-
-.cancel-ai-button {
-  background: var(--background-muted);
-  color: var(--text-muted);
-  border: 1px solid var(--border-color);
-}
-
-.cancel-ai-button:hover {
-  background: var(--background-alt);
-  color: var(--text-color);
-}
-
-.generate-ai-button {
-  background: var(--primary-color);
-  color: white;
-}
-
-.generate-ai-button:hover {
-  background: var(--primary-dark);
-}
-
-.generate-ai-button:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
 
 /* Knowledge Section Styles */
 .knowledge-section {
@@ -2312,6 +1589,18 @@ const handleDelete = () => {
   margin-top: 4px;
   line-height: 1.3;
 }
+
+/* Exit condition help text styling */
+.help-text template {
+  display: block;
+  padding: 6px 8px;
+  background: var(--background-soft);
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--primary-color);
+  margin-top: 4px;
+}
+
+
 
 /* Override any responsive hiding that might affect buttons */
 @media (max-width: 768px) {

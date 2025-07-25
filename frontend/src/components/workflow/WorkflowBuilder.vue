@@ -26,9 +26,11 @@ import { toast } from 'vue-sonner'
 import { workflowNodeService } from '../../services/workflowNode'
 import { workflowService } from '../../services/workflow'
 import type { WorkflowResponse } from '@/types/workflow'
-import { WorkflowStatus } from '@/types/workflow'
+import { WorkflowStatus, ExitCondition } from '@/types/workflow'
 import PropertiesPanel from './PropertiesPanel.vue'
 import { workflowCacheStorage } from '@/utils/storage'
+import { useWorkflowValidation, type NodeTypeInfo } from '@/composables/useWorkflowValidation'
+import { useWorkflowManagement } from '@/composables/useWorkflowManagement'
 
 // Import Vue Flow styles
 import '@vue-flow/core/dist/style.css'
@@ -57,8 +59,45 @@ const { onConnect, addNodes, removeNodes, addEdges, getNodes, getEdges, vueFlowR
 // Node types configuration - using default Vue Flow nodes for now
 const nodeTypes = {}
 
+// Initialize workflow validation composable
+const {
+  validateAllNodes,
+  highlightNodesWithErrors,
+  resetNodeValidationStyle,
+  resetAllNodesValidationStyle,
+  getNodeDataWithCache
+} = useWorkflowValidation()
+
+// Helper function to check if a node is an LLM with continuous execution
+const isLLMNodeWithContinuousExecution = (node: Node): boolean => {
+  if (node.data.nodeType !== 'llm') return false
+  
+  // First check the cache for the most up-to-date configuration
+  const exitCondition = getLLMNodeExitCondition(node.id)
+  return exitCondition === ExitCondition.CONTINUOUS_EXECUTION
+}
+
+// Helper function to get LLM node exit condition from cache or node data
+const getLLMNodeExitCondition = (nodeId: string): string => {
+  const workflowCache = workflowCacheStorage.getWorkflowCache(props.workflow.id)
+  
+  if (workflowCache && workflowCache.nodes) {
+    const cachedNode = workflowCache.nodes.find((n: any) => n.id === nodeId)
+    if (cachedNode && cachedNode.config?.exit_condition) {
+      return cachedNode.config.exit_condition
+    }
+  }
+  
+  // Fallback to node data
+  const nodes = getNodes.value
+  const node = nodes.find(n => n.id === nodeId)
+  return node?.data.config?.exit_condition || node?.data.exit_condition || ExitCondition.SINGLE_EXECUTION
+}
+
+
+
 // Available node types for sidebar
-const availableNodeTypes = [
+const availableNodeTypes: NodeTypeInfo[] = [
   {
     type: 'landingPage',
     label: 'Landing Page',
@@ -133,26 +172,81 @@ const selectedNode = ref<Node | null>(null)
 const workflowStatus = ref<WorkflowStatus>(props.workflow.status)
 const publishLoading = ref(false)
 
+// Initialize workflow management composable
+const {
+  loadWorkflowData,
+  saveNodeProperties,
+  saveWorkflow,
+  publishWorkflow,
+  unpublishWorkflow,
+  handleNodesDelete,
+  handleNodesChange,
+  handleDeleteEvent,
+  handleEdgesChange,
+  mapNodeTypeToFrontend,
+  mapNodeTypeToBackend
+} = useWorkflowManagement({
+  workflowId: props.workflow.id,
+  selectedNode,
+  showPropertiesPanel,
+  loading,
+  publishLoading,
+  workflowStatus,
+  nodeIdCounter,
+  availableNodeTypes,
+  validateAllNodes,
+  highlightNodesWithErrors,
+  resetAllNodesValidationStyle,
+  getNodes: () => getNodes.value,
+  getEdges: () => getEdges.value,
+  addNodes,
+  addEdges,
+  removeNodes,
+  closePropertiesPanel: () => {
+    showPropertiesPanel.value = false
+    selectedNode.value = null
+    document.body.classList.remove('workflow-properties-panel-open')
+  }
+})
+
 // Helper function to generate UUID-like IDs
 const generateNodeId = (type: string) => {
   return `${type}-${nodeIdCounter.value++}`
 }
 
-// Get node type display name
-const getNodeTypeName = (type: string) => {
-  const names = {
-    landingPage: 'Landing Page',
-    message: 'Message',
-    llm: 'LLM',
-    condition: 'Condition',
-    form: 'Form',
-    action: 'Action',
-    humanTransfer: 'Human Transfer',
-    wait: 'Wait',
-    end: 'End'
+// Handle node deletion
+const deleteSelectedNode = () => {
+  if (selectedNode.value) {
+    const nodeId = selectedNode.value.id
+    console.log('Deleting selected node:', nodeId)
+    
+    // Remove from Vue Flow first
+    removeNodes([nodeId])
+    
+    // Remove from cache
+    workflowNodeService.deleteNodeFromCache(props.workflow.id, nodeId)
+    
+    // Close properties panel and show success message
+    showPropertiesPanel.value = false
+    selectedNode.value = null
+    document.body.classList.remove('workflow-properties-panel-open')
+    
+    toast.success('Node deleted', {
+      position: 'top-center'
+    })
   }
-  return names[type as keyof typeof names] || type
 }
+
+// Handle properties panel close
+const closePropertiesPanel = () => {
+  showPropertiesPanel.value = false
+  selectedNode.value = null
+  
+  // Remove class from body to reset toast positioning
+  document.body.classList.remove('workflow-properties-panel-open')
+}
+
+// Get node type display name
 
 // Computed properties
 const hasNodes = computed(() => getNodes.value.length > 0)
@@ -180,137 +274,9 @@ const hasValidConnections = computed(() => {
 })
 const canPublish = computed(() => hasNodes.value && isDraft.value && hasValidConnections.value)
 
-// Map backend node types to frontend enum values
-const mapNodeTypeToFrontend = (backendType: string) => {
-  const mapping = {
-    'landing_page': 'landingPage', // Backend snake_case to frontend camelCase
-    'message': 'message',
-    'llm': 'llm',
-    'condition': 'condition',
-    'form': 'form',
-    'action': 'action',
-    'human_transfer': 'humanTransfer', // Backend snake_case to frontend camelCase
-    'wait': 'wait',
-    'end': 'end'
-  }
-  return mapping[backendType as keyof typeof mapping] || 'message'
-}
 
-// Map frontend node types to backend enum values
-const mapNodeTypeToBackend = (frontendType: string) => {
-  const mapping = {
-    'landingPage': 'landing_page', // Frontend camelCase to backend snake_case
-    'message': 'message',
-    'llm': 'llm',
-    'condition': 'condition',
-    'form': 'form',
-    'action': 'action',
-    'humanTransfer': 'human_transfer', // Frontend camelCase to backend snake_case
-    'wait': 'wait',
-    'end': 'end'
-  }
-  return mapping[frontendType as keyof typeof mapping] || 'message'
-}
 
-// Load workflow data
-const loadWorkflowData = async () => {
-  try {
-    loading.value = true
-    
-    // Clear any existing cache and load fresh from API
-    workflowCacheStorage.clearWorkflowCache(props.workflow.id)
-    const data = await workflowNodeService.getWorkflowNodes(props.workflow.id, false)
 
-    // Convert backend nodes to Vue Flow nodes
-    const nodes: Node[] = data.nodes.map((node: any) => {
-      const frontendNodeType = mapNodeTypeToFrontend(node.node_type)
-      const nodeType = availableNodeTypes.find(t => t.type === frontendNodeType)
-      return {
-        id: node.id,
-        type: 'default', // Use default Vue Flow node type
-        position: { x: node.position_x, y: node.position_y },
-        data: {
-          label: `${nodeType?.icon || '📄'} ${node.name}`, // Always show with icon
-          cleanName: node.name, // Store clean name from backend
-          description: node.description,
-          config: node.config,
-          nodeType: frontendNodeType, // Store the mapped frontend type
-          icon: nodeType?.icon || '📄',
-          color: nodeType?.color || '#6B7280',
-          // Store all backend properties directly in data for easy access
-          message_text: node.config?.message_text,
-          system_prompt: node.system_prompt,
-          temperature: node.temperature,
-          model_id: node.model_id,
-          form_fields: node.form_fields,
-          form_title: node.form_title,
-          form_description: node.form_description,
-          submit_button_text: node.submit_button_text,
-          form_full_screen: node.form_full_screen,
-          condition_expression: node.condition_expression,
-          action_type: node.action_type,
-          action_config: node.action_config,
-          transfer_rules: node.transfer_rules,
-          wait_duration: node.wait_duration,
-          wait_until_condition: node.wait_until_condition,
-          landing_page_heading: node.landing_page_heading,
-          landing_page_content: node.landing_page_content,
-          // Also spread config for backward compatibility
-          ...node.config
-        },
-        style: {
-          backgroundColor: nodeType?.color || '#6B7280',
-          color: 'white',
-          borderColor: nodeType?.color || '#6B7280'
-        }
-      }
-    })
-
-    // Convert backend connections to Vue Flow edges
-    const edges: Edge[] = data.connections.map((conn: any) => ({
-      id: conn.id,
-      source: conn.source_node_id,
-      target: conn.target_node_id,
-      sourceHandle: conn.source_handle,
-      targetHandle: conn.target_handle,
-      label: conn.label,
-      data: {
-        condition: conn.condition,
-        priority: conn.priority,
-        metadata: conn.connection_metadata
-      }
-    }))
-
-    addNodes(nodes)
-    addEdges(edges)
-    
-    // Update counter for new nodes - extract counter from text IDs like "message-1", "llm-2"
-    const maxCounter = nodes.reduce((max, node) => {
-      const match = node.id.match(/-(\d+)$/)
-      if (match) {
-        return Math.max(max, parseInt(match[1]))
-      }
-      return max
-    }, 0)
-    nodeIdCounter.value = maxCounter + 1
-  } catch (error: any) {
-    console.error('Error loading workflow data:', error)
-    
-    // Don't show error toast for 404 - it means workflow exists but has no nodes yet (normal state)
-    if (error.response?.status !== 404) {
-      toast.error('Failed to load workflow data', {
-        position: 'top-center'
-      })
-    }
-    
-    // For 404, just log and continue with empty workflow
-    if (error.response?.status === 404) {
-      console.log('No nodes found for workflow - starting with empty canvas')
-    }
-  } finally {
-    loading.value = false
-  }
-}
 
 // Handle node drag start
 const handleDragStart = (event: DragEvent, nodeType: string) => {
@@ -410,6 +376,16 @@ const autoConnectToLastNode = (newNode: Node) => {
       return
     }
     
+    // Check if the last node is an LLM with continuous execution
+    if (isLLMNodeWithContinuousExecution(lastNode)) {
+      toast.error('Cannot connect nodes after an LLM node with continuous execution. Continuous execution LLM nodes must be terminal nodes.', {
+        position: 'top-center',
+        duration: 5000,
+        closeButton: true
+      })
+      return
+    }
+    
     const newEdge: Edge = {
       id: `${lastNode.id}-${newNode.id}`,
       source: lastNode.id,
@@ -445,462 +421,6 @@ const handleNodeClick = (event: NodeMouseEvent) => {
   document.body.classList.add('workflow-properties-panel-open')
 }
 
-// Handle properties panel close
-const closePropertiesPanel = () => {
-  showPropertiesPanel.value = false
-  selectedNode.value = null
-  
-  // Remove class from body to reset toast positioning
-  document.body.classList.remove('workflow-properties-panel-open')
-}
-
-// Handle node property save (simplified for cache-only mode)
-const saveNodeProperties = (properties: any) => {
-  if (selectedNode.value) {
-    // Update the node visual data (label and styling)
-    const nodeType = availableNodeTypes.find(t => t.type === selectedNode.value?.data.nodeType)
-    selectedNode.value.data.label = `${nodeType?.icon || '📄'} ${properties.name || selectedNode.value.data.cleanName}`
-    selectedNode.value.data.cleanName = properties.name || selectedNode.value.data.cleanName
-    selectedNode.value.data.description = properties.description || selectedNode.value.data.description
-  }
-  
-  // Reset all validation styling to refresh the validation state based on latest cache data
-  resetAllNodesValidationStyle()
-  
-  // Re-validate to ensure errors are cleared if the node is now valid
-  setTimeout(() => {
-    const validation = validateAllNodes()
-    if (!validation.isValid) {
-      highlightNodesWithErrors()
-    }
-  }, 100) // Small delay to ensure cache is updated
-  
-  // Note: Actual data saving to cache is handled by auto-save in PropertiesPanel
-}
-
-// Handle node deletion
-const deleteSelectedNode = () => {
-  if (selectedNode.value) {
-    const nodeId = selectedNode.value.id
-    console.log('Deleting selected node:', nodeId)
-    
-    // Remove from Vue Flow first
-    removeNodes([nodeId])
-    
-    // Remove from cache
-    workflowNodeService.deleteNodeFromCache(props.workflow.id, nodeId)
-    
-    // Close properties panel and show success message
-    closePropertiesPanel()
-    toast.success('Node deleted', {
-      position: 'top-center'
-    })
-  }
-}
-
-// Get node data with latest cache values
-const getNodeDataWithCache = (node: Node) => {
-  // Get cached workflow data
-  const workflowCache = workflowCacheStorage.getWorkflowCache(props.workflow.id)
-  
-  // Merge node data with cache data, prioritizing cache
-  const nodeData = { ...node.data }
-  
-  if (workflowCache && workflowCache.nodes) {
-    // Find this node in the cache
-    const cachedNode = workflowCache.nodes.find((n: any) => n.id === node.id)
-    if (cachedNode) {
-      // Update name from cache
-      if (cachedNode.name) nodeData.cleanName = cachedNode.name
-      
-      // Update config values from cache
-      if (cachedNode.config) {
-        Object.assign(nodeData, cachedNode.config)
-        nodeData.config = cachedNode.config
-      }
-    }
-  }
-  
-  return nodeData
-}
-
-// Validate all nodes before saving
-const validateAllNodes = (): { isValid: boolean; errors: string[] } => {
-  const nodes = getNodes.value
-  const errors: string[] = []
-  
-  for (const node of nodes) {
-    const nodeType = node.data.nodeType
-    const nodeData = getNodeDataWithCache(node)
-    
-    // Check required fields for each node type
-    switch (nodeType) {
-      case 'message':
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        const messageText = nodeData.message_text || nodeData.config?.message_text
-        if (!messageText || messageText.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Message text is required`)
-        }
-        break
-      
-      case 'llm':
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        const systemPrompt = nodeData.system_prompt || nodeData.config?.system_prompt
-        if (!systemPrompt || systemPrompt.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": System prompt is required`)
-        }
-        break
-      
-      case 'condition':
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        
-        // Check if condition node is connected to an LLM node from above
-        const edges = getEdges.value
-        const incomingEdges = edges.filter(edge => edge.target === node.id)
-        const isConnectedToLLM = incomingEdges.some(edge => {
-          const sourceNode = nodes.find(n => n.id === edge.source)
-          return sourceNode?.data.nodeType === 'llm'
-        })
-        
-        if (isConnectedToLLM) {
-          // If connected to LLM, check that at least one LLM condition is selected
-          const llmConditions = nodeData.llm_conditions || nodeData.config?.llm_conditions
-          if (!llmConditions || (!llmConditions.user_frustrated && !llmConditions.request_human_agent && !llmConditions.no_knowledge)) {
-            errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": At least one LLM condition must be selected`)
-          }
-        } else {
-          // If not connected to LLM, check for condition expression
-          const conditionExpression = nodeData.condition_expression || nodeData.config?.condition_expression
-          if (!conditionExpression || conditionExpression.trim() === '') {
-            errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Condition expression is required`)
-          }
-        }
-        break
-      
-      case 'form':
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        const formFields = nodeData.form_fields || nodeData.config?.form_fields || []
-        if (!formFields || formFields.length === 0) {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": At least one form field is required`)
-        } else {
-          for (let i = 0; i < formFields.length; i++) {
-            const field = formFields[i]
-            if (!field.name || field.name.trim() === '') {
-              errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}" field ${i + 1}: Field name is required`)
-            }
-            if (!field.label || field.label.trim() === '') {
-              errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}" field ${i + 1}: Display label is required`)
-            }
-          }
-        }
-        break
-      
-      case 'action':
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        const actionType = nodeData.action_type || nodeData.config?.action_type
-        if (!actionType || actionType.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Action type is required`)
-        }
-        const actionUrl = nodeData.action_url || nodeData.config?.action_url
-        if (!actionUrl || actionUrl.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Action URL is required`)
-        }
-        break
-      
-      case 'humanTransfer':
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        const transferDepartment = nodeData.transfer_department || nodeData.config?.transfer_department
-        if (!transferDepartment || transferDepartment.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Department is required`)
-        }
-        break
-      
-      case 'wait':
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        const waitDuration = nodeData.wait_duration || nodeData.config?.wait_duration
-        if (!waitDuration || waitDuration < 1) {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Wait duration must be at least 1`)
-        }
-        const waitUnit = nodeData.wait_unit || nodeData.config?.wait_unit
-        if (!waitUnit || waitUnit.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Time unit is required`)
-        }
-        break
-      
-      case 'landingPage':
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        const landingPageHeading = nodeData.landing_page_heading || nodeData.config?.landing_page_heading
-        if (!landingPageHeading || landingPageHeading.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Heading is required`)
-        }
-        const landingPageContent = nodeData.landing_page_content || nodeData.config?.landing_page_content
-        if (!landingPageContent || landingPageContent.trim() === '') {
-          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Content is required`)
-        }
-        break
-      
-      default:
-        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
-          errors.push(`${nodeType} node: Name is required`)
-        }
-        break
-    }
-  }
-  
-  return { isValid: errors.length === 0, errors }
-}
-
-// Add visual indicators for nodes with validation errors
-const highlightNodesWithErrors = () => {
-  const nodes = getNodes.value
-  const validation = validateAllNodes()
-  
-  if (!validation.isValid) {
-    // Update node styles to show validation errors
-    nodes.forEach(node => {
-      const nodeType = node.data.nodeType
-      const nodeData = getNodeDataWithCache(node)
-      let hasError = false
-      
-      // Check if this node has validation errors
-      switch (nodeType) {
-        case 'message':
-          const messageText = nodeData.message_text || nodeData.config?.message_text
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                    !messageText || messageText.trim() === ''
-          break
-        case 'llm':
-          const systemPrompt = nodeData.system_prompt || nodeData.config?.system_prompt
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                    !systemPrompt || systemPrompt.trim() === ''
-          break
-        case 'condition':
-          // Check if condition node is connected to an LLM node from above
-          const edges = getEdges.value
-          const incomingEdges = edges.filter(edge => edge.target === node.id)
-          const isConnectedToLLM = incomingEdges.some(edge => {
-            const sourceNode = nodes.find(n => n.id === edge.source)
-            return sourceNode?.data.nodeType === 'llm'
-          })
-          
-          if (isConnectedToLLM) {
-            // If connected to LLM, check that at least one LLM condition is selected
-            const llmConditions = nodeData.llm_conditions || nodeData.config?.llm_conditions
-            hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                      !llmConditions || (!llmConditions.user_frustrated && !llmConditions.request_human_agent && !llmConditions.no_knowledge)
-          } else {
-            // If not connected to LLM, check for condition expression
-            const conditionExpression = nodeData.condition_expression || nodeData.config?.condition_expression
-            hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                      !conditionExpression || conditionExpression.trim() === ''
-          }
-          break
-        case 'form':
-          const formFields = nodeData.form_fields || nodeData.config?.form_fields || []
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                    !formFields || formFields.length === 0 ||
-                    formFields.some((field: any) => !field.name || field.name.trim() === '' || 
-                                                   !field.label || field.label.trim() === '')
-          break
-        case 'action':
-          const actionType = nodeData.action_type || nodeData.config?.action_type
-          const actionUrl = nodeData.action_url || nodeData.config?.action_url
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                    !actionType || actionType.trim() === '' ||
-                    !actionUrl || actionUrl.trim() === ''
-          break
-        case 'humanTransfer':
-          const transferDepartment = nodeData.transfer_department || nodeData.config?.transfer_department
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                    !transferDepartment || transferDepartment.trim() === ''
-          break
-        case 'wait':
-          const waitDuration = nodeData.wait_duration || nodeData.config?.wait_duration
-          const waitUnit = nodeData.wait_unit || nodeData.config?.wait_unit
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                    !waitDuration || waitDuration < 1 ||
-                    !waitUnit || waitUnit.trim() === ''
-          break
-        case 'landingPage':
-          const landingPageHeading = nodeData.landing_page_heading || nodeData.config?.landing_page_heading
-          const landingPageContent = nodeData.landing_page_content || nodeData.config?.landing_page_content
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === '' || 
-                    !landingPageHeading || landingPageHeading.trim() === '' ||
-                    !landingPageContent || landingPageContent.trim() === ''
-          break
-        default:
-          hasError = !nodeData.cleanName || nodeData.cleanName.trim() === ''
-          break
-      }
-      
-      // Update node style based on validation
-      if (hasError) {
-        node.style = {
-          ...node.style,
-          borderColor: '#EF4444',
-          borderWidth: '2px',
-          borderStyle: 'solid',
-          boxShadow: '0 0 0 2px rgba(239, 68, 68, 0.2)'
-        }
-      } else {
-        // Reset to original style
-        const nodeType = availableNodeTypes.find(t => t.type === node.data.nodeType)
-        node.style = {
-          backgroundColor: nodeType?.color || '#6B7280',
-          color: 'white',
-          borderColor: nodeType?.color || '#6B7280'
-        }
-      }
-    })
-  }
-}
-
-// Reset a specific node's validation styling
-const resetNodeValidationStyle = (node: Node) => {
-  const nodeType = availableNodeTypes.find(t => t.type === node.data.nodeType)
-  node.style = {
-    backgroundColor: nodeType?.color || '#6B7280',
-    color: 'white',
-    borderColor: nodeType?.color || '#6B7280'
-  }
-}
-
-// Reset all nodes validation styling
-const resetAllNodesValidationStyle = () => {
-  const nodes = getNodes.value
-  nodes.forEach(node => {
-    resetNodeValidationStyle(node)
-  })
-}
-
-// Save workflow (save cache to backend)
-const saveWorkflow = async () => {
-  const nodes = getNodes.value
-  const edges = getEdges.value
-  console.log('edges', edges.length)
-  console.log('nodes', nodes.length)
-  // Check if there are no nodes to save
-  if (nodes.length === 0) {
-    toast.error('Cannot save empty workflow. Please add at least one node.', {
-      duration: 4000,
-      closeButton: true,
-      position: 'top-center'
-    })
-    return
-  }
-  
-  // Check for at least one connection if multiple nodes exist
-  if (nodes.length > 1 && edges.length === 0) {
-    toast.error('Cannot save workflow without connections. Please connect your nodes before saving.', {
-      duration: 5000,
-      closeButton: true,
-      position: 'top-center'
-    })
-    return
-  }
-  
-  // For single node workflows, ensure it's a valid starting node type
-  if (nodes.length === 1) {
-    const singleNode = nodes[0]
-    const validStartingNodeTypes = ['landingPage', 'message', 'llm', 'form']
-    if (!validStartingNodeTypes.includes(singleNode.data.nodeType)) {
-      toast.error(`Cannot save workflow with only a ${singleNode.data.nodeType} node. A workflow must start with a Landing Page, Message, LLM, or Form node.`, {
-        duration: 6000,
-        closeButton: true,
-        position: 'top-center'
-      })
-      return
-    }
-  }
-  
-  // Advanced connection validation: Check for isolated nodes
-  if (nodes.length > 1) {
-    const connectedNodeIds = new Set<string>()
-    
-    // Collect all nodes that are connected (either as source or target)
-    edges.forEach(edge => {
-      connectedNodeIds.add(edge.source)
-      connectedNodeIds.add(edge.target)
-    })
-    
-    // Find isolated nodes (nodes that are not connected to anything)
-    const isolatedNodes = nodes.filter(node => !connectedNodeIds.has(node.id))
-    
-    if (isolatedNodes.length > 0) {
-      const isolatedNodeNames = isolatedNodes.map(node => 
-        node.data.cleanName || node.data.label || 'Unnamed node'
-      ).join(', ')
-      
-      toast.error(`Cannot save workflow with isolated nodes: ${isolatedNodeNames}. Please connect all nodes before saving.`, {
-        duration: 6000,
-        closeButton: true,
-        position: 'top-center'
-      })
-      return
-    }
-  }
-  
-  // Validate all nodes have required configuration
-  const validation = validateAllNodes()
-  if (!validation.isValid) {
-    highlightNodesWithErrors()
-    toast.error('Cannot save workflow with validation errors:\n' + validation.errors.join('\n'), {
-      duration: 8000,
-      closeButton: true,
-      position: 'top-center'
-    })
-    return
-  }
-
-  try {
-    loading.value = true
-    
-    // Save entire cache to backend and get the updated data with real UUIDs
-    const savedData = await workflowNodeService.saveWorkflowCache(props.workflow.id)
-    
-    console.log('Workflow saved, reloading with new UUIDs:', savedData)
-    
-    // Close properties panel if open to avoid ID mismatch issues
-    if (showPropertiesPanel.value) {
-      closePropertiesPanel()
-    }
-    
-    // Clear current nodes and edges
-    removeNodes(getNodes.value.map(n => n.id))
-    
-    // Reload workflow data with new UUIDs from backend
-    await loadWorkflowData()
-    
-    toast.success('Workflow saved successfully', {
-      position: 'top-center'
-    })
-  } catch (error) {
-    console.error('Error saving workflow:', error)
-    toast.error('Failed to save workflow', {
-      position: 'top-center'
-    })
-  } finally {
-    loading.value = false
-  }
-}
-
-
 
 // Handle connection creation
 onConnect((params) => {
@@ -909,16 +429,16 @@ onConnect((params) => {
   const sourceNode = nodes.find(n => n.id === params.source)
   const targetNode = nodes.find(n => n.id === params.target)
   
-  // Check if target is a condition node
-  if (targetNode?.data.nodeType === 'condition') {
-    // Only allow LLM nodes as source for condition nodes
-    if (sourceNode?.data.nodeType !== 'llm') {
-      toast.error('Condition nodes can only be connected from LLM nodes', {
-        position: 'top-center',
-        duration: 4000
-      })
-      return
-    }
+  if (!sourceNode || !targetNode) return
+  
+  // Check if source is an LLM node with continuous execution
+  if (isLLMNodeWithContinuousExecution(sourceNode)) {
+    toast.error('Cannot connect nodes after an LLM node with continuous execution. Continuous execution LLM nodes must be terminal nodes.', {
+      position: 'top-center',
+      duration: 5000,
+      closeButton: true
+    })
+    return
   }
   
   const newEdge: Edge = {
@@ -943,117 +463,6 @@ onConnect((params) => {
   workflowNodeService.addConnectionToCache(props.workflow.id, cacheConnectionData)
 })
 
-// Publish/Unpublish workflow
-const publishWorkflow = async () => {
-  try {
-    publishLoading.value = true
-    
-    const nodes = getNodes.value
-    const edges = getEdges.value
-    
-    // Validate connections before publishing
-    if (nodes.length >= 1 && edges.length === 0) {
-      toast.error('Cannot publish workflow without connections between nodes. Please connect your nodes before publishing.', {
-        duration: 5000,
-        closeButton: true,
-        position: 'top-center'
-      })
-      return
-    }
-    
-    // For single node workflows, ensure it's a valid starting node type
-    if (nodes.length === 1) {
-      const singleNode = nodes[0]
-      const validStartingNodeTypes = ['landingPage', 'message', 'llm', 'form']
-      if (!validStartingNodeTypes.includes(singleNode.data.nodeType)) {
-        toast.error(`Cannot publish workflow with only a ${singleNode.data.nodeType} node. A workflow must start with a Landing Page, Message, LLM, or Form node.`, {
-          duration: 6000,
-          closeButton: true,
-          position: 'top-center'
-        })
-        return
-      }
-    }
-    
-    // Advanced connection validation: Check for isolated nodes
-    if (nodes.length > 1) {
-      const connectedNodeIds = new Set<string>()
-      
-      // Collect all nodes that are connected (either as source or target)
-      edges.forEach(edge => {
-        connectedNodeIds.add(edge.source)
-        connectedNodeIds.add(edge.target)
-      })
-      
-      // Find isolated nodes (nodes that are not connected to anything)
-      const isolatedNodes = nodes.filter(node => !connectedNodeIds.has(node.id))
-      
-      if (isolatedNodes.length > 0) {
-        const isolatedNodeNames = isolatedNodes.map(node => 
-          node.data.cleanName || node.data.label || 'Unnamed node'
-        ).join(', ')
-        
-        toast.error(`Cannot publish workflow with isolated nodes: ${isolatedNodeNames}. Please connect all nodes before publishing.`, {
-          duration: 6000,
-          closeButton: true,
-          position: 'top-center'
-        })
-        return
-      }
-    }
-    
-    // Validate before publishing
-    const validation = validateAllNodes()
-    if (!validation.isValid) {
-      highlightNodesWithErrors()
-      toast.error('Please fix validation errors before publishing:\n' + validation.errors.join('\n'), {
-        duration: 8000,
-        closeButton: true,
-        position: 'top-center'
-      })
-      return
-    }
-    
-    // First save the workflow to ensure all changes are persisted
-    await saveWorkflow()
-    
-    // Then publish it
-    const updatedWorkflow = await workflowService.publishWorkflow(props.workflow.id)
-    workflowStatus.value = updatedWorkflow.status
-    
-    toast.success('Workflow published successfully! It\'s now live and ready to handle conversations.', {
-      position: 'top-center'
-    })
-  } catch (error) {
-    console.error('Error publishing workflow:', error)
-    toast.error('Failed to publish workflow', {
-      position: 'top-center'
-    })
-  } finally {
-    publishLoading.value = false
-  }
-}
-
-const unpublishWorkflow = async () => {
-  try {
-    publishLoading.value = true
-    
-    const updatedWorkflow = await workflowService.unpublishWorkflow(props.workflow.id)
-    workflowStatus.value = updatedWorkflow.status
-    
-    toast.success('Workflow unpublished successfully! It\'s now in draft mode.', {
-      position: 'top-center'
-    })
-  } catch (error) {
-    console.error('Error unpublishing workflow:', error)
-    toast.error('Failed to unpublish workflow', {
-      position: 'top-center'
-    })
-  } finally {
-    publishLoading.value = false
-  }
-}
-
 // Close workflow builder
 const closeBuilder = () => {
   // Clean up body class when closing
@@ -1072,128 +481,11 @@ onUnmounted(() => {
   document.body.classList.remove('workflow-properties-panel-open')
 })
 
-// Handle nodes deletion - close properties panel if selected node is deleted
-const handleNodesDelete = (deletedNodes: Node[]) => {
-  console.log('handleNodesDelete called with:', deletedNodes)
-  console.log('Current selectedNode:', selectedNode.value)
-  
-  // Remove deleted nodes from cache
-  deletedNodes.forEach(node => {
-    console.log('Deleting node from cache (handleNodesDelete):', node.id)
-    workflowNodeService.deleteNodeFromCache(props.workflow.id, node.id)
-  })
-  
-  // Check if the currently selected node was deleted
-  if (selectedNode.value && deletedNodes.some(node => node.id === selectedNode.value?.id)) {
-    console.log('Selected node was deleted, closing properties panel')
-    closePropertiesPanel()
-    toast.success('Node deleted', {
-      position: 'top-center'
-    })
-  } else if (selectedNode.value) {
-    console.log('Selected node was NOT in deleted list')
-  } else {
-    console.log('No selected node')
-  }
-}
 
-// Handle nodes change (e.g., node added, moved, deleted)
-const handleNodesChange = (changes: any) => {
-  console.log('Nodes changed:', changes)
-  
-  // Handle different types of changes
-  changes.forEach((change: any) => {
-    switch (change.type) {
-      case 'remove':
-        // Handle node deletion
-        console.log('Node removal detected:', change)
-        // Since the node is already removed from getNodes, we need to create a minimal node object
-        // or directly call the cache deletion with just the ID
-        console.log('Deleting node from cache directly:', change.id)
-        workflowNodeService.deleteNodeFromCache(props.workflow.id, change.id)
-        
-        // Check if the currently selected node was deleted
-        if (selectedNode.value && selectedNode.value.id === change.id) {
-          console.log('Selected node was deleted, closing properties panel')
-          closePropertiesPanel()
-          toast.success('Node deleted', {
-            position: 'top-center'
-          })
-        }
-        break
-      
-      case 'position':
-        // Handle node position change - update cache
-        if (change.position) {
-          const nodeIndex = getNodes.value.findIndex(n => n.id === change.id)
-          if (nodeIndex !== -1) {
-            const node = getNodes.value[nodeIndex]
-            const cacheNodeData = {
-              id: node.id,
-              node_type: mapNodeTypeToBackend(node.data.nodeType),
-              name: node.data.cleanName || node.data.label || 'Node',
-              description: node.data.description || '',
-              position_x: change.position.x,
-              position_y: change.position.y,
-              config: node.data.config || {}
-            }
-            workflowNodeService.updateNodeInCache(props.workflow.id, cacheNodeData)
-          }
-        }
-        break
-    }
-  })
-}
 
-// Handle delete event from Vue Flow
-const handleDeleteEvent = (event: any) => {
-  console.log('Vue Flow delete event:', event)
-  // This might be triggered when nodes or edges are removed from the canvas.
-  if (Array.isArray(event)) {
-    // If event is an array of deleted items
-    const deletedNodes = event.filter((item: any) => item.type === 'node' || !item.type)
-    if (deletedNodes.length > 0) {
-      deletedNodes.forEach((node: any) => {
-        console.log('Deleting node from cache (handleDeleteEvent):', node.id)
-        workflowNodeService.deleteNodeFromCache(props.workflow.id, node.id)
-        
-        // Check if the currently selected node was deleted
-        if (selectedNode.value && selectedNode.value.id === node.id) {
-          closePropertiesPanel()
-          toast.success('Node deleted', {
-            position: 'top-center'
-          })
-        }
-      })
-    }
-  } else if (event.nodes) {
-    // If event contains nodes property
-    event.nodes.forEach((node: any) => {
-      console.log('Deleting node from cache (handleDeleteEvent nodes):', node.id)
-      workflowNodeService.deleteNodeFromCache(props.workflow.id, node.id)
-      
-      // Check if the currently selected node was deleted
-      if (selectedNode.value && selectedNode.value.id === node.id) {
-        closePropertiesPanel()
-        toast.success('Node deleted', {
-          position: 'top-center'
-        })
-      }
-    })
-  } else if (event.id) {
-    // If it's a single node deletion
-    console.log('Deleting node from cache (handleDeleteEvent single):', event.id)
-    workflowNodeService.deleteNodeFromCache(props.workflow.id, event.id)
-    
-    // Check if the currently selected node was deleted
-    if (selectedNode.value && selectedNode.value.id === event.id) {
-      closePropertiesPanel()
-      toast.success('Node deleted', {
-        position: 'top-center'
-      })
-    }
-  }
-}
+
+
+
 </script>
 
 <template>
@@ -1309,6 +601,7 @@ const handleDeleteEvent = (event: any) => {
           @delete="handleDeleteEvent"
           @nodes-remove="handleNodesDelete"
           @elements-remove="handleDeleteEvent"
+          @edges-change="handleEdgesChange"
         >
           <Background pattern-color="#aaa" :gap="16" />
           <Controls />

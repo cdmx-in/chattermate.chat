@@ -52,7 +52,7 @@ def remove_urls_from_message(message: str) -> str:
     return re.sub(url_pattern, '[link removed]', message)
 
 class ChatAgent:
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool = None):
         # Initialize knowledge search tool if org_id and agent_id provided
         tools = []
         if org_id and agent_id:
@@ -77,12 +77,18 @@ class ChatAgent:
         self.agent_id = agent_id
         self.customer_id = customer_id
         self.session_id = session_id
+        
+        # Determine transfer_to_human setting - use parameter if provided, otherwise use agent data
+        if transfer_to_human is not None:
+            self.transfer_to_human = transfer_to_human
+        else:
+            self.transfer_to_human = self.agent_data.transfer_to_human if self.agent_data else False
 
         # Initialize tools
         self.tools = []
         
         # Add Jira tools if agent_id, org_id, and session_id are provided
-        if self.agent_id and self.org_id and self.session_id and not self.agent_data.transfer_to_human and self.agent_data.jira_enabled:
+        if self.agent_id and self.org_id and self.session_id and not self.transfer_to_human and self.agent_data.jira_enabled:
             try:
                 self.jira_tools = JiraTools(
                     agent_id=self.agent_id,
@@ -95,7 +101,7 @@ class ChatAgent:
         
         shopify_config = None
         # Add Shopify tools if agent has Shopify enabled
-        if self.agent_id and self.org_id and self.session_id and not self.agent_data.transfer_to_human:
+        if self.agent_id and self.org_id and self.session_id and not self.transfer_to_human:
             try:
                 # Check if Shopify is enabled for this agent
                 shopify_config_repo = AgentShopifyConfigRepository(db)
@@ -146,7 +152,7 @@ class ChatAgent:
 
             
             # Add transfer instructions if enabled
-            if self.agent_data.transfer_to_human:
+            if self.transfer_to_human:
                 system_message += """
                 You have the ability to transfer this conversation to a human agent if needed. You should transfer the conversation if:
                 1. You are unable to answer the customer's question or solve their problem
@@ -166,7 +172,7 @@ class ChatAgent:
                 system_message += f"\n{end_chat_without_rating}"
             
             # Add Jira instructions if Jira is enabled
-            if self.agent_data and self.agent_data.jira_enabled and not self.agent_data.transfer_to_human:
+            if self.agent_data and self.agent_data.jira_enabled and not self.transfer_to_human:
                 jira_instructions = """
                 You have access to Jira integration tools. You can use these tools to:
                 1. Create a Jira ticket for issues that need further attention
@@ -191,7 +197,7 @@ class ChatAgent:
                 self.jira_instructions_added = True
             
             # Add Shopify instructions if Shopify is enabled
-            if shopify_config and shopify_config.enabled and not self.agent_data.transfer_to_human:
+            if shopify_config and shopify_config.enabled and not self.transfer_to_human:
                 # UPDATED Shopify Instructions (v3)
                 shopify_instructions = """
                 You have access to Shopify tools (`search_products`, `get_product`, `recommend_products`, etc.). 
@@ -358,6 +364,199 @@ class ChatAgent:
             
             return error_response
 
+    async def _handle_end_chat(self, response_content: ChatResponse, session_id: str, db) -> ChatResponse:
+        """
+        Handle end chat logic including session updates and rating requests.
+        
+        Args:
+            response_content: The chat response content
+            session_id: The session ID
+            db: Database session
+            
+        Returns:
+            Updated ChatResponse object
+        """
+        session_repo = SessionToAgentRepository(db)
+        
+        # Only request rating if enabled for this agent
+        should_request_rating = self.agent_data and self.agent_data.ask_for_rating
+        response_content.request_rating = should_request_rating
+
+        session_repo.update_session(
+            session_id,
+            {
+                "status": SessionStatus.CLOSED,
+                "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
+                "end_chat_description": response_content.end_chat_description,
+                "closed_at": datetime.now()
+            }
+        )
+
+        # Add rating request to the message if enabled
+        if should_request_rating:
+            rating_message = "\n\nThank you for chatting with us! Would you please take a moment to rate your experience? Your feedback helps us improve our service."
+            response_content.message += rating_message
+            
+        return response_content
+
+    async def _handle_transfer(self, response_content: ChatResponse, session_id: str, org_id: str, agent_id: str, customer_id: str, db, chat_repo: ChatRepository, transfer_group_id: str = None) -> ChatResponse:
+        """
+        Handle transfer to human logic including session updates, notifications, and availability checks.
+        
+        Args:
+            response_content: The chat response content (can be None for workflow transfers)
+            session_id: The session ID
+            org_id: Organization ID
+            agent_id: Agent ID
+            customer_id: Customer ID
+            db: Database session
+            chat_repo: Chat repository instance
+            transfer_group_id: Optional specific group ID to transfer to (for workflow transfers)
+            
+        Returns:
+            Updated ChatResponse object
+        """
+        from app.models.schemas.chat import TransferReasonType
+        
+        # Determine transfer source and group
+        if transfer_group_id:
+            # Workflow transfer - use provided group ID
+            group_id = transfer_group_id
+            transfer_reason = TransferReasonType.KNOWLEDGE_GAPS.value
+            transfer_description = "Transfer requested by workflow"
+            notification_message = "A chat has been transferred to your group via workflow."
+            is_workflow_transfer = True
+        else:
+            # Agent transfer - use agent's default group
+            if not (self.agent_data and hasattr(self.agent_data, 'groups') and self.agent_data.groups):
+                raise ValueError("No groups available for transfer")
+            group_id = self.agent_data.groups[0].id
+            transfer_reason = response_content.transfer_reason.value if response_content.transfer_reason else None
+            transfer_description = response_content.transfer_description
+            notification_message = f"A chat has been transferred to your group. Reason: {transfer_reason or 'Not specified'}"
+            is_workflow_transfer = False
+        
+        # Get chat history
+        chat_history = chat_repo.get_session_history(session_id)
+        
+        # Update session with transfer details
+        session_repo = SessionToAgentRepository(db)
+        session_repo.update_session(
+            session_id, 
+            {
+                "status": "TRANSFERRED",
+                "transfer_reason": transfer_reason,
+                "transfer_description": transfer_description,
+                "group_id": group_id
+            }
+        )
+        
+        # Get all users in the target group and send notifications
+        users = db.query(User).join(user_groups).filter(user_groups.c.group_id == group_id).all()
+        
+        for user in users:
+            # Create notification record
+            notification = Notification(
+                user_id=user.id,
+                title="New Chat Transfer",
+                message=notification_message,
+                type="SYSTEM",
+                notification_metadata={
+                    "session_id": session_id,
+                    "transfer_reason": transfer_reason,
+                    "transfer_description": transfer_description
+                }
+            )
+            db.add(notification)
+            db.commit()
+            
+            # Send FCM notification
+            await send_fcm_notification(str(user.id), notification, db)
+        
+        # Get availability-based response
+        availability_response = await get_agent_availability_response(
+            agent=self.agent_data,
+            customer_id=customer_id,
+            chat_history=chat_history,
+            db=db,
+            api_key=self.api_key,
+            model_name=self.model_name,
+            model_type=self.model_type,
+            session_id=session_id
+        )
+        
+        # Create ChatResponse object
+        updated_response = ChatResponse(
+            message=availability_response["message"],
+            transfer_to_human=availability_response["transfer_to_human"],
+            transfer_reason=availability_response.get("transfer_reason"),
+            transfer_description=availability_response.get("transfer_description"),
+            end_chat=False,
+            end_chat_reason=None,
+            end_chat_description=None,
+            request_rating=False,
+            create_ticket=False,
+            shopify_output=None
+        )
+        
+        # Prepare message attributes
+        attributes = {
+            "transfer_to_human": updated_response.transfer_to_human,
+            "transfer_reason": updated_response.transfer_reason.value if updated_response.transfer_reason else None,
+            "transfer_description": updated_response.transfer_description,
+            "end_chat": updated_response.end_chat,
+            "end_chat_reason": updated_response.end_chat_reason.value if updated_response.end_chat_reason else None,
+            "end_chat_description": updated_response.end_chat_description,
+            "request_rating": updated_response.request_rating,
+            "shopify_output": updated_response.shopify_output
+        }
+        
+        # Add workflow-specific attributes
+        if is_workflow_transfer:
+            attributes["workflow_transfer"] = True
+            attributes["transfer_group_id"] = transfer_group_id
+        
+        # Store transfer response
+        chat_repo.create_message({
+            "message": updated_response.message,
+            "message_type": "bot",
+            "session_id": session_id,
+            "organization_id": org_id,
+            "agent_id": agent_id,
+            "customer_id": customer_id,
+            "attributes": attributes
+        })
+
+        return updated_response
+
+    async def handle_workflow_transfer(self, session_id: str, org_id: str, agent_id: str, customer_id: str, transfer_group_id: str, db, chat_repo: ChatRepository) -> ChatResponse:
+        """
+        Handle transfer to human from workflow with specific group ID.
+        This is a convenience wrapper around _handle_transfer for workflow transfers.
+        
+        Args:
+            session_id: The session ID
+            org_id: Organization ID
+            agent_id: Agent ID
+            customer_id: Customer ID
+            transfer_group_id: The specific group ID to transfer to
+            db: Database session
+            chat_repo: Chat repository instance
+            
+        Returns:
+            ChatResponse object with transfer response
+        """
+        return await self._handle_transfer(
+            response_content=None,  # No response content for workflow transfers
+            session_id=session_id,
+            org_id=org_id,
+            agent_id=agent_id,
+            customer_id=customer_id,
+            db=db,
+            chat_repo=chat_repo,
+            transfer_group_id=transfer_group_id
+        )
+
     async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
         """
         Get a response from the agent.
@@ -411,113 +610,20 @@ class ChatAgent:
             
             # Handle end chat and rating request
             if response_content.end_chat:
-                session_repo = SessionToAgentRepository(db)
-                
-                # Only request rating if enabled for this agent
-                should_request_rating = self.agent_data and self.agent_data.ask_for_rating
-                response_content.request_rating = should_request_rating
+                response_content = await self._handle_end_chat(response_content, session_id, db)
 
-                session_repo.update_session(
-                    session_id,
-                    {
-                        "status": SessionStatus.CLOSED,
-                        "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
-                        "end_chat_description": response_content.end_chat_description,
-                        "closed_at": datetime.now()
-                    }
-                )
-
-                # Add rating request to the message if enabled
-                if should_request_rating:
-                    rating_message = "\n\nThank you for chatting with us! Would you please take a moment to rate your experience? Your feedback helps us improve our service."
-                    response_content.message += rating_message
-
-            # Handle transfer (existing code)
-            if self.agent_data and self.agent_data.transfer_to_human and response_content.transfer_to_human and hasattr(self.agent_data, 'groups') and self.agent_data.groups:
-                # Get chat history
-                chat_history = []
-                chat_history = chat_repo.get_session_history(session_id)
-                
-                session_repo = SessionToAgentRepository(db)
-                session_repo.update_session(
-                    session_id, 
-                    {
-                        "status": "TRANSFERRED",
-                        "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
-                        "transfer_description": response_content.transfer_description,
-                        "group_id": self.agent_data.groups[0].id
-                    }
-                )
-                
-                # Get all users in the group
-                group_id = self.agent_data.groups[0].id
-                users = db.query(User).join(user_groups).filter(user_groups.c.group_id == group_id).all()
-                
-                for user in users:
-                    # Create notification record
-                    notification = Notification(
-                        user_id=user.id,
-                        title="New Chat Transfer",
-                        message=f"A chat has been transferred to your group. Reason: {response_content.transfer_reason.value if response_content.transfer_reason else 'Not specified'}",
-                        type="SYSTEM",
-                        notification_metadata={
-                            "session_id": session_id,
-                            "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
-                            "transfer_description": response_content.transfer_description
-                        }
-                    )
-                    db.add(notification)
-                    db.commit()
-                    
-                    # Send FCM notification
-                    await send_fcm_notification(str(user.id), notification, db)
-                
-                # Get availability-based response
-                availability_response = await get_agent_availability_response(
-                    agent=self.agent_data,
+            # Handle transfer 
+            if self.agent_data and self.transfer_to_human and response_content.transfer_to_human and hasattr(self.agent_data, 'groups') and self.agent_data.groups:
+                response_content = await self._handle_transfer(
+                    response_content=response_content,
+                    session_id=session_id,
+                    org_id=org_id,
+                    agent_id=agent_id,
                     customer_id=customer_id,
-                    chat_history=chat_history,
                     db=db,
-                    api_key=self.api_key,
-                    model_name=self.model_name,
-                    model_type=self.model_type,
-                    session_id=session_id
+                    chat_repo=chat_repo,
+                    transfer_group_id=None  # Use agent's default group for regular transfers
                 )
-                
-                # Create ChatResponse object
-                response_content = ChatResponse(
-                    message=availability_response["message"],
-                    transfer_to_human=availability_response["transfer_to_human"],
-                    transfer_reason=availability_response.get("transfer_reason"),
-                    transfer_description=availability_response.get("transfer_description"),
-                    end_chat=False,
-                    end_chat_reason=None,
-                    end_chat_description=None,
-                    request_rating=False,
-                    create_ticket=False,
-                    shopify_output=None
-                )
-                
-                # Store AI response with transfer status
-                chat_repo.create_message({
-                    "message": response_content.message,
-                    "message_type": "bot",
-                    "session_id": session_id,
-                    "organization_id": org_id,
-                    "agent_id": agent_id,
-                    "customer_id": customer_id,
-                    "attributes": {
-                        "transfer_to_human": response_content.transfer_to_human,
-                        "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
-                        "transfer_description": response_content.transfer_description,
-                        "end_chat": response_content.end_chat,
-                        "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
-                        "end_chat_description": response_content.end_chat_description,
-                        "request_rating": response_content.request_rating,
-                        "shopify_output": response_content.shopify_output
-                    }
-                })
-
                 return response_content
 
             # Store AI response with all attributes

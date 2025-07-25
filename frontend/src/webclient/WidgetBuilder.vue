@@ -576,10 +576,7 @@ const validateFormField = (field: any, value: any): string | null => {
 
 // Handle full screen form submission
 const submitFullScreenForm = async () => {
-    console.log('submitFullScreenForm called')
-    console.log('Current form data:', formData.value)
-    console.log('Full screen form data:', fullScreenFormData.value)
-    console.log('isSubmittingForm:', isSubmittingForm.value)
+
     
     if (isSubmittingForm.value || !fullScreenFormData.value) {
         console.log('Already submitting or no form data, returning')
