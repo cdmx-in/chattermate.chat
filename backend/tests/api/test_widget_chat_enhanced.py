@@ -324,16 +324,16 @@ class TestHandleWidgetChat:
         
         with patch.object(SessionToAgentRepository, 'get_active_customer_session', return_value=mock_session):
             with patch.object(ChatRepository, 'create_message', return_value=MagicMock()):
-                with patch('app.api.widget_chat.WorkflowExecutionService') as mock_workflow_service:
-                    mock_workflow_service.return_value.execute_workflow = AsyncMock(return_value=mock_workflow_result)
+                with patch('app.api.widget_chat.WorkflowChatService') as mock_workflow_chat_service:
+                    mock_workflow_chat_service.return_value.handle_workflow_chat = AsyncMock(return_value=mock_workflow_result)
                     
                     sid = "test_sid"
                     data = {"message": "Hello"}
                     
                     await widget_chat.handle_widget_chat(sid, data)
                     
-                    # Verify workflow was executed
-                    mock_workflow_service.return_value.execute_workflow.assert_called_once()
+                    # Verify workflow chat was executed
+                    mock_workflow_chat_service.return_value.handle_workflow_chat.assert_called_once()
 
 
 class TestGetWidgetChatHistory:

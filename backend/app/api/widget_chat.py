@@ -35,6 +35,7 @@ from app.repositories.chat import ChatRepository
 from app.repositories.customer import CustomerRepository
 import uuid
 from app.services.socket_rate_limit import socket_rate_limit
+from app.services.workflow_chat import WorkflowChatService
 
 from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
@@ -318,219 +319,35 @@ async def handle_widget_chat(sid, data):
         
         # Check if agent uses workflow and no human agent has taken over
         if active_session.workflow_id and active_session.user_id is None:
-            # Store user message in chat history
-            chat_repo = ChatRepository(db)
-            chat_repo.create_message({
-                "message": message,
-                "message_type": "user",
-                "session_id": session_id,
-                "organization_id": org_id,
-                "agent_id": session['agent_id'],
-                "customer_id": customer_id,
-            })
-            
-            # Execute workflow
-            workflow_service = WorkflowExecutionService(db)
-            workflow_result = await workflow_service.execute_workflow(
+            # Handle workflow chat using the dedicated service
+            workflow_chat_service = WorkflowChatService(db)
+            response = await workflow_chat_service.handle_workflow_chat(
+                active_session=active_session,
+                message=message,
                 session_id=session_id,
-                user_message=message,
-                workflow_id=active_session.workflow_id,
-                current_node_id=active_session.current_node_id,
-                workflow_state=active_session.workflow_state,
-                api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
-                model_name=session['ai_config'].model_name,
-                model_type=session['ai_config'].model_type,
                 org_id=org_id,
-                agent_id=session['agent_id'],
-                customer_id=customer_id
+                customer_id=customer_id,
+                session=session,
+                sio=sio,
+                namespace='/widget'
             )
             
-            if workflow_result.success:
-                logger.info(f"Workflow result form_data: {workflow_result.form_data}")
-                logger.info(f"Workflow result success: {workflow_result.success}")
-                logger.info(f"Workflow result should_continue: {workflow_result.should_continue}")
-                
-                # Handle intermediate messages from MESSAGE nodes during automatic execution
-                if workflow_result.intermediate_messages:
-                    logger.info(f"Found {len(workflow_result.intermediate_messages)} intermediate messages from MESSAGE nodes")
-                    for intermediate_message in workflow_result.intermediate_messages:
-                        logger.debug(f"Emitting intermediate message: {intermediate_message}")
-                        
-                        # Store intermediate message in chat history
-                        chat_repo.create_message({
-                            "message": intermediate_message,
-                            "message_type": "bot",
-                            "session_id": session_id,
-                            "organization_id": org_id,
-                            "agent_id": session['agent_id'],
-                            "customer_id": customer_id,
-                            "attributes": {
-                                "workflow_execution": True,
-                                "workflow_id": str(active_session.workflow_id),
-                                "intermediate_message": True,
-                                "message_node": True
-                            }
-                        })
-                        
-                        # Emit intermediate message to client immediately
-                        await sio.emit('chat_response', {
-                            'message': intermediate_message,
-                            'type': 'chat_response',
-                            'transfer_to_human': False,
-                            'end_chat': False,
-                            'request_rating': False,
-                            'shopify_output': None
-                        }, room=session_id, namespace='/widget')
-                
-                # Check if this is a form node that needs to display a form
-                if workflow_result.form_data:
-                    logger.info(f"Form data detected: {workflow_result.form_data}")
-                    logger.info("Emitting display_form event")
-                    # Emit form display to client
-                    await sio.emit('display_form', {
-                        'form_data': workflow_result.form_data,
-                        'session_id': session_id
-                    }, room=session_id, namespace='/widget')
-                    logger.info("Form display event emitted successfully")
-                    return  # Don't send a regular chat response for form display
-                
-                # Create ChatResponse object from workflow result
-                response = ChatResponse(
-                    message=workflow_result.message,
-                    transfer_to_human=workflow_result.transfer_to_human,
-                    transfer_reason=None,
-                    transfer_description=None,
-                    end_chat=workflow_result.end_chat,
-                    request_rating=workflow_result.request_rating,
-                    create_ticket=False
-                )
-                
-                # Handle transfer to human if requested by workflow LLM
-                if workflow_result.transfer_to_human:
-                    logger.info(f"Workflow LLM requested transfer to human for session {session_id}")
-                    
-                    if workflow_result.transfer_group_id:
-                        # Transfer to specific group using workflow transfer method
-                        from app.agents.chat_agent import ChatAgent
-                        from app.models.schemas.chat import TransferReasonType
-                        
-                        chat_agent = ChatAgent(
-                            api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
-                            model_name=session['ai_config'].model_name,
-                            model_type=session['ai_config'].model_type,
-                            org_id=org_id,
-                            agent_id=session['agent_id'],
-                            customer_id=customer_id,
-                            session_id=session_id
-                        )
-                        
-                        # Create ChatResponse object with transfer details from workflow
-                        llm_response = ChatResponse(
-                            message=workflow_result.message,
-                            transfer_to_human=True,
-                            transfer_reason=TransferReasonType(workflow_result.transfer_reason) if workflow_result.transfer_reason else None,
-                            transfer_description=workflow_result.transfer_description,
-                            end_chat=False,
-                            request_rating=False,
-                            create_ticket=False
-                        )
-                        
-                        transfer_response = await chat_agent.handle_workflow_transfer(
-                            session_id=session_id,
-                            org_id=org_id,
-                            agent_id=session['agent_id'],
-                            customer_id=customer_id,
-                            transfer_group_id=workflow_result.transfer_group_id,
-                            db=db,
-                            chat_repo=chat_repo,
-                            llm_response=llm_response
-                        )
-                        
-                        # Send the transfer response to the client
-                        await sio.emit('chat_response', {
-                            'message': transfer_response.message,
-                            'session_id': session_id,
-                            'transfer_to_human': transfer_response.transfer_to_human,
-                            'transfer_reason': transfer_response.transfer_reason.value if transfer_response.transfer_reason else None,
-                            'transfer_description': transfer_response.transfer_description,
-                            'end_chat': transfer_response.end_chat,
-                            'request_rating': transfer_response.request_rating
-                        }, room=session_id, namespace='/widget')
-                        
-                        logger.info(f"Transfer completed for session {session_id} to group {workflow_result.transfer_group_id}")
-                        return
-                    else:
-                        # Fallback: just update session status without specific group
-                        logger.warning(f"No transfer_group_id provided for workflow transfer in session {session_id}")
-                        session_repo.update_session_status(session_id, "TRANSFERRED")
-                
-                # Handle end chat if requested by workflow
-                if workflow_result.end_chat:
-                    logger.info(f"Workflow requested end chat for session {session_id}")
-                    
-                    # Create a ChatAgent instance to use the _handle_end_chat method
-                    from app.agents.chat_agent import ChatAgent
-                    chat_agent = ChatAgent(
-                        api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
-                        model_name=session['ai_config'].model_name,
-                        model_type=session['ai_config'].model_type,
-                        org_id=org_id,
-                        agent_id=session['agent_id'],
-                        customer_id=customer_id,
-                        session_id=session_id
-                    )
-                    
-                    # Handle end chat using the agent's method
-                    response = await chat_agent._handle_end_chat(response, session_id, db)
-                
-                # Only store message if there's actual content
-                if workflow_result.message:
-                    # Store workflow response in chat history
-                    chat_repo.create_message({
-                        "message": response.message,
-                        "message_type": "bot",
-                        "session_id": session_id,
-                        "organization_id": org_id,
-                        "agent_id": session['agent_id'],
-                        "customer_id": customer_id,
-                        "attributes": {
-                            "workflow_execution": True,
-                            "workflow_id": str(active_session.workflow_id),
-                            "current_node_id": str(workflow_result.next_node_id) if workflow_result.next_node_id else None,
-                            "transfer_to_human": response.transfer_to_human,
-                            "end_chat": response.end_chat,
-                            "request_rating": response.request_rating,
-                        }
-                    })
-            else:
-                # Fallback to regular chat agent if workflow fails
-                logger.error(f"Workflow execution failed: {workflow_result.error}")
-                response = ChatResponse(
-                    message=workflow_result.message or "I apologize, but I'm having trouble processing your request right now.",
-                    transfer_to_human=False,
-                    transfer_reason=None,
-                    transfer_description=None,
-                    end_chat=False,
-                    request_rating=False,
-                    create_ticket=False
-                )
-                
-                # Store error response in chat history
-                chat_repo.create_message({
-                    "message": response.message,
-                    "message_type": "bot",
-                    "session_id": session_id,
-                    "organization_id": org_id,
-                    "agent_id": session['agent_id'],
-                    "customer_id": customer_id,
-                    "attributes": {
-                        "workflow_execution": True,
-                        "workflow_error": workflow_result.error,
-                        "transfer_to_human": response.transfer_to_human,
-                        "end_chat": response.end_chat,
-                        "request_rating": response.request_rating,
-                    }
-                })
+            # If response is None, it means a form was displayed and no regular response should be sent
+            if response is None:
+                return
+            
+            # If this is a transfer response, send it and return
+            if response.transfer_to_human and hasattr(response, '_is_transfer_response'):
+                await sio.emit('chat_response', {
+                    'message': response.message,
+                    'session_id': session_id,
+                    'transfer_to_human': response.transfer_to_human,
+                    'transfer_reason': response.transfer_reason.value if response.transfer_reason else None,
+                    'transfer_description': response.transfer_description,
+                    'end_chat': response.end_chat,
+                    'request_rating': response.request_rating
+                }, room=session_id, namespace='/widget')
+                return
         elif active_session.status == SessionStatus.OPEN and active_session.user_id is None: # open and user has not taken over
             logger.debug(f"Initializing chat agent for model {session['ai_config'].model_type}")
             # Initialize chat agent

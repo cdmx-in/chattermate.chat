@@ -948,14 +948,27 @@ def test_generate_instructions_no_ai_config(
         "existing_instructions": []
     }
     
-    # Mock no AI config
+    # Mock no AI config and make enterprise import fail
     from unittest.mock import patch
+    import sys
+    
+    # Create a mock module to prevent the actual import
+    class MockModule:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("No module named 'app.enterprise.repositories.subscription'")
+    
+    # Add the mock module to sys.modules
+    sys.modules['app.enterprise.repositories.subscription'] = MockModule
+    
     with patch('app.repositories.ai_config.AIConfigRepository.get_active_config') as mock_get_config:
         mock_get_config.return_value = None
         
         response = client.post("/api/agents/generate-instructions", json=prompt_data)
         assert response.status_code == 404
         assert "No AI configuration found" in response.json()["detail"]
+        
+        # Clean up
+        del sys.modules['app.enterprise.repositories.subscription']
 
 def test_generate_instructions_missing_api_key(
     client,
@@ -969,6 +982,12 @@ def test_generate_instructions_missing_api_key(
     }
     
     from unittest.mock import patch, MagicMock
+    import sys
+    
+    # Create a mock module to prevent the actual import
+    class MockModule:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("No module named 'app.enterprise.repositories.subscription'")
     
     # Create AI config mock without API key
     mock_config = MagicMock()
@@ -977,12 +996,18 @@ def test_generate_instructions_missing_api_key(
     mock_config.api_key = ""  # Mock the decrypted api_key property
     mock_config.is_active = True
     
+    # Add the mock module to sys.modules
+    sys.modules['app.enterprise.repositories.subscription'] = MockModule
+    
     with patch('app.repositories.ai_config.AIConfigRepository.get_active_config') as mock_get_config:
         mock_get_config.return_value = mock_config
         
         response = client.post("/api/agents/generate-instructions", json=prompt_data)
         assert response.status_code == 500
         assert "API configuration missing" in response.json()["detail"]
+        
+        # Clean up
+        del sys.modules['app.enterprise.repositories.subscription']
 
 def test_generate_instructions_ai_error(
     client,

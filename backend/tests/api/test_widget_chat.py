@@ -240,8 +240,9 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     # Mock get_active_customer_session
     mock_session = MagicMock()
     mock_session.session_id = session_id
-    mock_session.status = "open"
+    mock_session.status = SessionStatus.OPEN
     mock_session.user_id = None
+    mock_session.workflow_id = None  # Explicitly set to None to avoid workflow path
     monkeypatch.setattr(
         SessionToAgentRepository,
         "get_active_customer_session",

@@ -52,7 +52,7 @@ def remove_urls_from_message(message: str) -> str:
     return re.sub(url_pattern, '[link removed]', message)
 
 class ChatAgent:
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool = None):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None):
         # Initialize knowledge search tool if org_id and agent_id provided
         tools = []
         if org_id and agent_id:
@@ -275,6 +275,7 @@ class ChatAgent:
 
         storage = PostgresAgentStorage(table_name="agent_sessions", db_url=settings.DATABASE_URL)
         
+       
         # Combine all tools
         all_tools = tools.copy()
         if hasattr(self, 'tools') and self.tools:
@@ -364,7 +365,7 @@ class ChatAgent:
             
             return error_response
 
-    async def _handle_end_chat(self, response_content: ChatResponse, session_id: str, db) -> ChatResponse:
+    async def _handle_end_chat(self, response_content: ChatResponse, session_id: str, db, force_rating: bool | None = None) -> ChatResponse:
         """
         Handle end chat logic including session updates and rating requests.
         
@@ -372,14 +373,24 @@ class ChatAgent:
             response_content: The chat response content
             session_id: The session ID
             db: Database session
+            force_rating: Optional parameter to override agent's ask_for_rating setting.
+                         If None, uses agent's default setting.
+                         If True, forces rating request.
+                         If False, disables rating request.
             
         Returns:
             Updated ChatResponse object
         """
         session_repo = SessionToAgentRepository(db)
         
-        # Only request rating if enabled for this agent
-        should_request_rating = self.agent_data and self.agent_data.ask_for_rating
+        # Determine if rating should be requested
+        if force_rating is not None:
+            # Use the forced setting from workflow configuration
+            should_request_rating = force_rating
+        else:
+            # Use agent's default setting
+            should_request_rating = self.agent_data and self.agent_data.ask_for_rating
+            
         response_content.request_rating = should_request_rating
 
         session_repo.update_session(

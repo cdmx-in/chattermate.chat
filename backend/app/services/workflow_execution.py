@@ -31,6 +31,7 @@ from app.models.workflow_connection import WorkflowConnection
 from app.models.session_to_agent import SessionToAgent
 from app.repositories.workflow import WorkflowRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
+from app.repositories.chat import ChatRepository
 from app.agents.chat_agent import ChatAgent, ChatResponse
 from app.core.logger import get_logger
 
@@ -110,11 +111,7 @@ class WorkflowExecutionService:
             workflow = self.workflow_repo.get_workflow_with_nodes_and_connections(workflow_id)
             logger.debug(f"Workflow ID: {workflow.id}, Name: {workflow.name}, Status: {workflow.status}")
             logger.debug(f"Nodes count: {len(workflow.nodes)}")
-            for i, node in enumerate(workflow.nodes):
-                logger.debug(f"Node {i+1}: ID={node.id}, Type={node.node_type}, Name={node.name}")
-            logger.debug(f"Connections count: {len(workflow.connections)}")
-            for i, conn in enumerate(workflow.connections):
-                logger.debug(f"Connection {i+1}: {conn.source_node_id} -> {conn.target_node_id}")
+
             if not workflow:
                 return WorkflowExecutionResult(
                     success=False,
@@ -493,6 +490,11 @@ class WorkflowExecutionService:
                 transfer_group_id = config.get("transfer_group_id")
                 ask_for_rating_config = config.get("ask_for_rating", True)  # Default to True
             
+            # Handle empty or null user message by creating structured context
+            processed_user_message = user_message
+            if not user_message or user_message.strip() == "":
+                processed_user_message = self._build_context_message(session_id, workflow_state)
+            
             # Create chat agent with custom system prompt
             chat_agent = ChatAgent(
                 api_key=api_key,
@@ -508,7 +510,7 @@ class WorkflowExecutionService:
             
             # Get response from LLM using the agent's internal method to avoid double message storage
             response = await chat_agent._get_llm_response_only(
-                message=user_message,
+                message=processed_user_message,
                 session_id=session_id,
                 org_id=org_id,
                 agent_id=agent_id,
@@ -544,14 +546,18 @@ class WorkflowExecutionService:
                     should_continue = False
                     next_node_id = None
                     logger.info(f"LLM node {node.id} continuous execution - staying on current node")
-                    
-
             
-            # Determine if rating should be requested
-            # For LLM nodes, use config value if chat is ending, otherwise use response value
+            # Determine rating request based on config for workflow end chat handling
             request_rating = response.request_rating
             if end_chat and exit_condition == ExitCondition.CONTINUOUS_EXECUTION:
-                request_rating = ask_for_rating_config
+                # For continuous execution, check the ask_for_rating config
+                if 'ask_for_rating' in config:
+                    request_rating = config['ask_for_rating']
+                else:
+                    request_rating = True  # Default to True if not specified
+                
+                # Update the response with the determined rating value
+                response.request_rating = request_rating
 
             return WorkflowExecutionResult(
                 success=True,
@@ -994,5 +1000,110 @@ class WorkflowExecutionService:
             
         except Exception as e:
             logger.error(f"Error updating session workflow state: {str(e)}")
+    
+    def _build_context_message(self, session_id: str, workflow_state: Dict[str, Any]) -> str:
+        """
+        Build a structured context message when user_message is empty or null.
+        Includes chat history and workflow history formatted as instructions for LLM.
+        """
+        try:
+            # Initialize repositories
+            chat_repo = ChatRepository(self.db)
+            
+            # Get chat history for the session
+            chat_history = chat_repo.get_session_history(session_id)
+            
+            # Get workflow history for the session
+            workflow_history = self.session_repo.get_workflow_history(session_id)
+            
+            # Build structured context message
+            context_parts = []
+            
+            # Add instruction header
+            context_parts.append("CONTEXT ANALYSIS REQUEST")
+            context_parts.append("=" * 50)
+            context_parts.append("")
+            context_parts.append("Please analyze the following conversation and workflow context to provide an appropriate response:")
+            context_parts.append("")
+            
+            # Add chat history section
+            if chat_history:
+                context_parts.append("CONVERSATION HISTORY:")
+                context_parts.append("-" * 25)
+                
+                for i, message in enumerate(chat_history, 1):
+                    timestamp = message.created_at.strftime("%Y-%m-%d %H:%M:%S") if message.created_at else "Unknown"
+                    message_type = message.message_type.upper()
+                    
+                    # Format message with context
+                    context_parts.append(f"{i}. [{timestamp}] {message_type}: {message.message}")
+                    
+                    # Add attributes if they contain useful context
+                    if message.attributes:
+                        relevant_attrs = {}
+                        for key, value in message.attributes.items():
+                            if key in ['workflow_execution', 'transfer_to_human', 'end_chat', 'form_submission', 'user_input']:
+                                relevant_attrs[key] = value
+                        
+                        if relevant_attrs:
+                            context_parts.append(f"   Context: {relevant_attrs}")
+                
+                context_parts.append("")
+            else:
+                context_parts.append("CONVERSATION HISTORY: No previous messages")
+                context_parts.append("")
+            
+            # Add workflow history section
+            if workflow_history:
+                context_parts.append("WORKFLOW INTERACTION HISTORY:")
+                context_parts.append("-" * 35)
+                
+                for i, entry in enumerate(workflow_history, 1):
+                    timestamp = entry.get('timestamp', 'Unknown')
+                    entry_type = entry.get('type', 'Unknown')
+                    node_id = entry.get('node_id', 'Unknown')
+                    data = entry.get('data', {})
+                    
+                    context_parts.append(f"{i}. [{timestamp}] {entry_type.upper()} (Node: {node_id})")
+                    
+                    # Format specific data types
+                    if entry_type == 'form_submission' and data:
+                        context_parts.append(f"   Form Data: {json.dumps(data, indent=6)}")
+                    elif entry_type == 'user_input' and data:
+                        context_parts.append(f"   User Input: {data}")
+                    elif data:
+                        context_parts.append(f"   Data: {json.dumps(data, indent=6)}")
+                
+                context_parts.append("")
+            else:
+                context_parts.append("WORKFLOW INTERACTION HISTORY: No previous workflow interactions")
+                context_parts.append("")
+            
+            # Add current workflow state
+            if workflow_state:
+                context_parts.append("CURRENT WORKFLOW STATE:")
+                context_parts.append("-" * 27)
+                context_parts.append(json.dumps(workflow_state, indent=2))
+                context_parts.append("")
+            
+            # Add analysis instructions
+            context_parts.append("ANALYSIS INSTRUCTIONS:")
+            context_parts.append("-" * 23)
+            context_parts.append("1. Review the conversation flow and user interactions")
+            context_parts.append("2. Consider any form submissions or workflow progress")
+            context_parts.append("3. Analyze the current context and user's likely intent")
+            context_parts.append("4. Provide an appropriate response or next action")
+            context_parts.append("5. If transferring to human or ending chat is appropriate, indicate so")
+            context_parts.append("")
+            context_parts.append("Please provide your analysis and recommended response:")
+            
+            return "\n".join(context_parts)
+            
+        except Exception as e:
+            logger.error(f"Error building context message: {str(e)}")
+            # Fallback message
+            return ("Please analyze the current conversation context and provide an appropriate response. "
+                   "The user has not provided a new message, so please review the conversation history "
+                   "and workflow progress to determine the next appropriate action.")
 
  
