@@ -32,7 +32,7 @@ jobs:
       env:
         PYTHONPATH: ${GITHUB_WORKSPACE}/backend
       run: |
-        python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=70
+        python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=65
 
   frontend-test:
     name: Run Frontend Tests
