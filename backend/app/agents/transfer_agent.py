@@ -162,18 +162,37 @@ async def get_agent_availability_response(
     api_key: str,
     model_name: str,
     model_type: str,
-    session_id: str
+    session_id: str,
+    transfer_group_id: str = None
 ) -> dict:
     customer_repo = CustomerRepository(db)
     group_repo = GroupRepository(db)
 
-    # Check if agent has groups
-    agent_groups = agent.get("groups") if isinstance(agent, dict) else agent.groups
-    if not agent or not agent_groups:
-        return {
-            "message": "I apologize, but I'm unable to transfer the chat at this time.",
-            "transfer_to_human": False
-        }
+    # Check if we have a specific transfer group ID (for workflow transfers)
+    if transfer_group_id:
+        # For workflow transfers, use the specific group
+        try:
+            db_group = group_repo.get_group_with_users(transfer_group_id)
+            if not db_group:
+                return {
+                    "message": "I apologize, but I'm unable to transfer the chat at this time.",
+                    "transfer_to_human": False
+                }
+            agent_groups = [db_group]
+        except Exception as e:
+            logger.error(f"Error getting transfer group {transfer_group_id}: {str(e)}")
+            return {
+                "message": "I apologize, but I'm unable to transfer the chat at this time.",
+                "transfer_to_human": False
+            }
+    else:
+        # Check if agent has groups (normal transfer)
+        agent_groups = agent.get("groups") if isinstance(agent, dict) else agent.groups
+        if not agent or not agent_groups:
+            return {
+                "message": "I apologize, but I'm unable to transfer the chat at this time.",
+                "transfer_to_human": False
+            }
 
     # Get customer email if customer_id provided
     customer_email = None

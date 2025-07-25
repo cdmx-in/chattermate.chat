@@ -26,7 +26,7 @@ import { useUsers } from '@/composables/useUsers'
 import UserForm from './UserForm.vue'
 import Modal from '@/components/common/Modal.vue'
 import { userService } from '@/services/user'
-import { inject } from 'vue'
+import { useRouter } from 'vue-router'
 
 const getUserAvatar = (user: User) => {
   if (user.profile_pic) {
@@ -55,12 +55,12 @@ const {
 } = useUsers()
 
 const currentUser = userService.getCurrentUser()
-const openSettings = inject('openSettings') as () => void
+const router = useRouter()
 
 const handleUserAction = (user: User) => {
-  // If user is editing their own profile, open settings instead
+  // If user is editing their own profile, navigate to user settings instead
   if (user.id === currentUser?.id) {
-    openSettings()
+    router.push('/settings/user')
     return
   }
   handleEditUser(user)

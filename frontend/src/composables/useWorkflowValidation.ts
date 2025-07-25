@@ -170,6 +170,13 @@ export function useWorkflowValidation() {
         }
         break
       
+      case 'userInput':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        // Removed prompt_message validation - it's now optional
+        break
+      
       default:
         if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
           errors.push(`${nodeType} node: Name is required`)

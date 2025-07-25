@@ -420,10 +420,16 @@ class ChatAgent:
         
         # Determine transfer source and group
         if transfer_group_id:
-            # Workflow transfer - use provided group ID
+            logger.debug(f"Transfer group ID: {transfer_group_id}")
+            # Workflow transfer - use provided group ID and transfer details from LLM response
             group_id = transfer_group_id
-            transfer_reason = TransferReasonType.KNOWLEDGE_GAPS.value
-            transfer_description = "Transfer requested by workflow"
+            # Use transfer reason/description from LLM response if available, otherwise fallback
+            if response_content and response_content.transfer_reason:
+                transfer_reason = response_content.transfer_reason.value
+                transfer_description = response_content.transfer_description or "Transfer requested by workflow"
+            else:
+                transfer_reason = TransferReasonType.KNOWLEDGE_GAP.value
+                transfer_description = "Transfer requested by workflow"
             notification_message = "A chat has been transferred to your group via workflow."
             is_workflow_transfer = True
         else:
@@ -482,7 +488,8 @@ class ChatAgent:
             api_key=self.api_key,
             model_name=self.model_name,
             model_type=self.model_type,
-            session_id=session_id
+            session_id=session_id,
+            transfer_group_id=transfer_group_id if is_workflow_transfer else None
         )
         
         # Create ChatResponse object
@@ -529,7 +536,7 @@ class ChatAgent:
 
         return updated_response
 
-    async def handle_workflow_transfer(self, session_id: str, org_id: str, agent_id: str, customer_id: str, transfer_group_id: str, db, chat_repo: ChatRepository) -> ChatResponse:
+    async def handle_workflow_transfer(self, session_id: str, org_id: str, agent_id: str, customer_id: str, transfer_group_id: str, db, chat_repo: ChatRepository, llm_response: ChatResponse = None) -> ChatResponse:
         """
         Handle transfer to human from workflow with specific group ID.
         This is a convenience wrapper around _handle_transfer for workflow transfers.
@@ -542,12 +549,13 @@ class ChatAgent:
             transfer_group_id: The specific group ID to transfer to
             db: Database session
             chat_repo: Chat repository instance
+            llm_response: The LLM response containing transfer reason and description
             
         Returns:
             ChatResponse object with transfer response
         """
         return await self._handle_transfer(
-            response_content=None,  # No response content for workflow transfers
+            response_content=llm_response,  # Pass the LLM response to get transfer reason/description
             session_id=session_id,
             org_id=org_id,
             agent_id=agent_id,

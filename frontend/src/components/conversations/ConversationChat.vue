@@ -168,7 +168,7 @@ watch(() => props.chat, (newChat) => {
       scrollToBottom()
     })
   }
-}, { deep: true })
+}, { immediate: true })
 
 // Check Jira status on mount
 onMounted(async () => {
@@ -385,6 +385,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  scroll-behavior: smooth;
 }
 
 .chat-input {

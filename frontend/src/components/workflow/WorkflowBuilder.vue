@@ -133,6 +133,13 @@ const availableNodeTypes: NodeTypeInfo[] = [
     description: 'Collect structured data from users',
     color: '#10B981'
   },
+  {
+    type: 'userInput',
+    label: 'User Input',
+    icon: '✏️',
+    description: 'Wait for user input with a custom prompt',
+    color: '#06B6D4'
+  },
   // {
   //   type: 'action',
   //   label: 'Action',

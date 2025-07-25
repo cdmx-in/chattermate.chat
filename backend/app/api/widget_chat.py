@@ -350,6 +350,38 @@ async def handle_widget_chat(sid, data):
                 logger.info(f"Workflow result success: {workflow_result.success}")
                 logger.info(f"Workflow result should_continue: {workflow_result.should_continue}")
                 
+                # Handle intermediate messages from MESSAGE nodes during automatic execution
+                if workflow_result.intermediate_messages:
+                    logger.info(f"Found {len(workflow_result.intermediate_messages)} intermediate messages from MESSAGE nodes")
+                    for intermediate_message in workflow_result.intermediate_messages:
+                        logger.debug(f"Emitting intermediate message: {intermediate_message}")
+                        
+                        # Store intermediate message in chat history
+                        chat_repo.create_message({
+                            "message": intermediate_message,
+                            "message_type": "bot",
+                            "session_id": session_id,
+                            "organization_id": org_id,
+                            "agent_id": session['agent_id'],
+                            "customer_id": customer_id,
+                            "attributes": {
+                                "workflow_execution": True,
+                                "workflow_id": str(active_session.workflow_id),
+                                "intermediate_message": True,
+                                "message_node": True
+                            }
+                        })
+                        
+                        # Emit intermediate message to client immediately
+                        await sio.emit('chat_response', {
+                            'message': intermediate_message,
+                            'type': 'chat_response',
+                            'transfer_to_human': False,
+                            'end_chat': False,
+                            'request_rating': False,
+                            'shopify_output': None
+                        }, room=session_id, namespace='/widget')
+                
                 # Check if this is a form node that needs to display a form
                 if workflow_result.form_data:
                     logger.info(f"Form data detected: {workflow_result.form_data}")
@@ -380,6 +412,8 @@ async def handle_widget_chat(sid, data):
                     if workflow_result.transfer_group_id:
                         # Transfer to specific group using workflow transfer method
                         from app.agents.chat_agent import ChatAgent
+                        from app.models.schemas.chat import TransferReasonType
+                        
                         chat_agent = ChatAgent(
                             api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
                             model_name=session['ai_config'].model_name,
@@ -390,6 +424,17 @@ async def handle_widget_chat(sid, data):
                             session_id=session_id
                         )
                         
+                        # Create ChatResponse object with transfer details from workflow
+                        llm_response = ChatResponse(
+                            message=workflow_result.message,
+                            transfer_to_human=True,
+                            transfer_reason=TransferReasonType(workflow_result.transfer_reason) if workflow_result.transfer_reason else None,
+                            transfer_description=workflow_result.transfer_description,
+                            end_chat=False,
+                            request_rating=False,
+                            create_ticket=False
+                        )
+                        
                         transfer_response = await chat_agent.handle_workflow_transfer(
                             session_id=session_id,
                             org_id=org_id,
@@ -397,7 +442,8 @@ async def handle_widget_chat(sid, data):
                             customer_id=customer_id,
                             transfer_group_id=workflow_result.transfer_group_id,
                             db=db,
-                            chat_repo=chat_repo
+                            chat_repo=chat_repo,
+                            llm_response=llm_response
                         )
                         
                         # Send the transfer response to the client
@@ -1516,6 +1562,37 @@ async def handle_form_submission(sid, data):
             # Store form submission in chat history
             chat_repo = ChatRepository(db)
             
+            # Handle intermediate messages from MESSAGE nodes during automatic execution
+            if workflow_result.intermediate_messages:
+                logger.info(f"Found {len(workflow_result.intermediate_messages)} intermediate messages from MESSAGE nodes")
+                for intermediate_message in workflow_result.intermediate_messages:
+                    logger.debug(f"Emitting intermediate message: {intermediate_message}")
+                    
+                    # Store intermediate message in chat history
+                    chat_repo.create_message({
+                        "message": intermediate_message,
+                        "message_type": "bot",
+                        "session_id": session_id,
+                        "organization_id": org_id,
+                        "agent_id": session['agent_id'],
+                        "customer_id": customer_id,
+                        "attributes": {
+                            "workflow_execution": True,
+                            "workflow_id": str(active_session.workflow_id),
+                            "intermediate_message": True,
+                            "message_node": True
+                        }
+                    })
+                    
+                    # Emit intermediate message to client immediately
+                    await sio.emit('chat_response', {
+                        'message': intermediate_message,
+                        'type': 'chat_response',
+                        'transfer_to_human': False,
+                        'end_chat': False,
+                        'request_rating': False,
+                        'shopify_output': None
+                    }, room=session_id, namespace='/widget')
 
             # Check if there's a response message to send
             if workflow_result.message:

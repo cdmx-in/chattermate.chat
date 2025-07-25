@@ -77,7 +77,8 @@ export function useWorkflowManagement(options: WorkflowManagementOptions) {
       'action': 'action',
       'human_transfer': 'humanTransfer',
       'wait': 'wait',
-      'end': 'end'
+      'end': 'end',
+      'user_input': 'userInput'
     }
     return mapping[backendType as keyof typeof mapping] || 'message'
   }
@@ -93,7 +94,8 @@ export function useWorkflowManagement(options: WorkflowManagementOptions) {
       'action': 'action',
       'humanTransfer': 'human_transfer',
       'wait': 'wait',
-      'end': 'end'
+      'end': 'end',
+      'userInput': 'user_input'
     }
     return mapping[frontendType as keyof typeof mapping] || 'message'
   }

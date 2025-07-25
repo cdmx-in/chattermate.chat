@@ -47,11 +47,14 @@ class WorkflowExecutionResult:
     should_continue: bool = True
     transfer_to_human: bool = False
     transfer_group_id: Optional[str] = None
+    transfer_reason: Optional[str] = None
+    transfer_description: Optional[str] = None
     end_chat: bool = False
     request_rating: bool = False
     error: Optional[str] = None
     form_data: Optional[Dict[str, Any]] = None
     landing_page_data: Optional[Dict[str, Any]] = None
+    intermediate_messages: Optional[List[str]] = None  # Collect messages from MESSAGE nodes during execution
 
 
 class WorkflowExecutionService:
@@ -151,51 +154,105 @@ class WorkflowExecutionService:
                         error="Current node not found"
                     )
             
-            logger.debug(f"Executing node: {current_node}")
-            # Execute current node
-            result = await self._execute_node(
-                current_node,
-                workflow,
-                workflow_state,
-                user_message,
-                api_key,
-                model_name,
-                model_type,
-                org_id,
-                agent_id,
-                customer_id,
-                session_id
-            )
+            # Automatic execution loop - continue executing nodes until we reach one that requires user interaction
+            final_result = None
+            intermediate_messages = []  # Collect messages from MESSAGE nodes during execution
             
-            # Only store form data in workflow state for form nodes
-            # Remove unnecessary history and variables tracking
+            while current_node:
+                logger.debug(f"Executing node: {current_node.id} ({current_node.node_type})")
+                
+                # Execute current node
+                result = await self._execute_node(
+                    current_node,
+                    workflow,
+                    workflow_state,
+                    user_message,
+                    api_key,
+                    model_name,
+                    model_type,
+                    org_id,
+                    agent_id,
+                    customer_id,
+                    session_id
+                )
+                
+                # Collect messages from MESSAGE nodes during automatic execution
+                if current_node.node_type == NodeType.MESSAGE and result.message:
+                    intermediate_messages.append(result.message)
+                    logger.debug(f"Collected intermediate message from MESSAGE node: {result.message}")
+                
+                final_result = result
+                
+                # Check if we should continue to next node automatically
+                if not result.success:
+                    logger.error(f"Node execution failed: {result.error}")
+                    break
+                
+                # Check stopping conditions
+                if (result.form_data or 
+                    result.landing_page_data or 
+                    result.transfer_to_human or
+                    result.end_chat or
+                    not result.should_continue or
+                    result.next_node_id is None or
+                    (current_node.node_type == NodeType.USER_INPUT and not result.should_continue)):
+                    logger.info(f"Stopping execution at node {current_node.id}: form_data={bool(result.form_data)}, landing_page={bool(result.landing_page_data)}, transfer={result.transfer_to_human}, end_chat={result.end_chat}, should_continue={result.should_continue}, next_node={result.next_node_id}, user_input_waiting={current_node.node_type == NodeType.USER_INPUT and not result.should_continue}")
+                    break
+                
+                # For LLM nodes with continuous execution, don't auto-advance unless specific conditions are met
+                if (current_node.node_type == NodeType.LLM and 
+                    current_node.config and 
+                    current_node.config.get("exit_condition") == "continuous_execution"):
+                    logger.info(f"LLM node {current_node.id} with continuous execution - stopping automatic advancement")
+                    break
+                
+                # Move to next node
+                current_node = self._find_node_by_id(workflow, result.next_node_id)
+                if not current_node:
+                    logger.info(f"Next node {result.next_node_id} not found, reached end of workflow")
+                    break
+                
+                # Clear user message after first iteration (subsequent nodes shouldn't use the original user message)
+                user_message = None
             
-            # For landing pages, forms, and LLM nodes that don't meet advancement conditions
-            # set current_node_id to the current node (not next) so the system knows which node we're currently on
-            if result.landing_page_data or result.form_data or (current_node.node_type == NodeType.LLM and not result.should_continue and not result.transfer_to_human and not result.end_chat):
-                # We're displaying a landing page, form, or staying on LLM node - stay on current node
-                self._update_session_workflow_state(session_id, current_node.id, workflow_state)
-            elif result.transfer_to_human:
+            if not final_result:
+                return WorkflowExecutionResult(
+                    success=False,
+                    message="No execution result",
+                    error="No execution result"
+                )
+            
+            # Update session workflow state based on final result
+            if (final_result.landing_page_data or 
+                final_result.form_data or 
+                (current_node and current_node.node_type == NodeType.USER_INPUT and not final_result.should_continue) or
+                (current_node and current_node.node_type == NodeType.LLM and not final_result.should_continue and not final_result.transfer_to_human and not final_result.end_chat)):
+                # We're displaying a landing page, form, waiting for user input, or staying on LLM node - stay on current node
+                self._update_session_workflow_state(session_id, current_node.id if current_node else None, workflow_state)
+            elif final_result.transfer_to_human:
                 # Transfer to human requested - stay on current node and let the chat handler manage the transfer
-                self._update_session_workflow_state(session_id, current_node.id, workflow_state)
-                logger.info(f"Transfer to human requested from node {current_node.id}, staying on current node")
+                self._update_session_workflow_state(session_id, current_node.id if current_node else None, workflow_state)
+                logger.info(f"Transfer to human requested from node {current_node.id if current_node else 'unknown'}, staying on current node")
             else:
                 # Normal flow - move to next node (or end workflow if end_chat)
-                self._update_session_workflow_state(session_id, result.next_node_id, workflow_state)
+                self._update_session_workflow_state(session_id, final_result.next_node_id, workflow_state)
             
             return WorkflowExecutionResult(
-                success=result.success,
-                message=result.message,
-                next_node_id=result.next_node_id,
+                success=final_result.success,
+                message=final_result.message,
+                next_node_id=final_result.next_node_id,
                 workflow_state=workflow_state,
-                should_continue=result.should_continue,
-                transfer_to_human=result.transfer_to_human,
-                transfer_group_id=result.transfer_group_id,
-                end_chat=result.end_chat,
-                request_rating=result.request_rating,
-                error=result.error,
-                form_data=result.form_data,  # Pass through form_data
-                landing_page_data=result.landing_page_data  # Pass through landing_page_data
+                should_continue=final_result.should_continue,
+                transfer_to_human=final_result.transfer_to_human,
+                transfer_group_id=final_result.transfer_group_id,
+                transfer_reason=final_result.transfer_reason,
+                transfer_description=final_result.transfer_description,
+                end_chat=final_result.end_chat,
+                request_rating=final_result.request_rating,
+                error=final_result.error,
+                form_data=final_result.form_data,  # Pass through form_data
+                landing_page_data=final_result.landing_page_data,  # Pass through landing_page_data
+                intermediate_messages=intermediate_messages # Include collected messages
             )
             
         except Exception as e:
@@ -361,6 +418,9 @@ class WorkflowExecutionService:
             elif node.node_type == NodeType.END:
                 return self._execute_end_node(node, workflow_state)
             
+            elif node.node_type == NodeType.USER_INPUT:
+                return self._execute_user_input_node(node, workflow_state, user_message, session_id)
+            
             else:
                 return WorkflowExecutionResult(
                     success=False,
@@ -500,6 +560,8 @@ class WorkflowExecutionService:
                 should_continue=should_continue,
                 transfer_to_human=transfer_to_human,
                 transfer_group_id=transfer_group_id if transfer_to_human else None,
+                transfer_reason=response.transfer_reason.value if response.transfer_reason else None,
+                transfer_description=response.transfer_description,
                 end_chat=end_chat,
                 request_rating=request_rating
             )
@@ -740,6 +802,111 @@ class WorkflowExecutionService:
             request_rating=request_rating,
             should_continue=False
         )
+    
+    def _execute_user_input_node(
+        self,
+        node: WorkflowNode,
+        workflow_state: Dict[str, Any],
+        user_message: str,
+        session_id: str = None
+    ) -> WorkflowExecutionResult:
+        """Execute a user input node"""
+        logger.info(f"Executing user input node: {node.id}")
+        config = node.config or {}
+        
+        # Check if we're waiting for user input
+        current_state = workflow_state.get("user_input_state", "waiting")
+        
+        if current_state == "waiting" and (not user_message or user_message.strip() == ""):
+            # Still waiting for user input
+            prompt_message = config.get("prompt_message", "")
+            
+            # Only process and display prompt if it exists and is not empty
+            if prompt_message and prompt_message.strip():
+                prompt_message = self._process_variables(prompt_message, workflow_state)
+                message_to_display = prompt_message
+            else:
+                # No prompt message configured - return empty message
+                message_to_display = ""
+            
+            # Mark that we're waiting for user input
+            workflow_state["user_input_state"] = "waiting"
+            workflow_state["user_input_node_id"] = str(node.id)
+            
+            return WorkflowExecutionResult(
+                success=True,
+                message=message_to_display,
+                next_node_id=None,  # Don't proceed yet
+                should_continue=False  # Wait for user input
+            )
+        
+        elif current_state == "waiting" and user_message and user_message.strip():
+            # User has provided input - process and continue
+            user_input = user_message.strip()
+            logger.debug(f"User input received: {user_input}")
+            
+            # Store user input in workflow state temporarily
+            workflow_state["user_input_data"] = user_input
+            workflow_state["user_input_state"] = "received"
+            
+            # Store user input in workflow history
+            if session_id:
+                self.session_repo.add_workflow_history_entry(
+                    session_id, 
+                    node.id, 
+                    "user_input", 
+                    {"input": user_input, "node_name": node.name}
+                )
+            
+            # Clear the user input state after processing
+            workflow_state.pop("user_input_state", None)
+            workflow_state.pop("user_input_node_id", None)
+            workflow_state.pop("user_input_data", None)
+            
+            # Find next node
+            next_node_id = self._find_next_node(node)
+            logger.debug(f"Next node ID: {next_node_id}")
+            
+            # Get confirmation message or use default
+            confirmation_message = config.get("confirmation_message", "")
+            if confirmation_message:
+                confirmation_message = self._process_variables(confirmation_message, workflow_state)
+                return WorkflowExecutionResult(
+                    success=True,
+                    message=confirmation_message,
+                    next_node_id=next_node_id,
+                    should_continue=next_node_id is not None
+                )
+            else:
+                # No confirmation message - proceed silently to next node
+                return WorkflowExecutionResult(
+                    success=True,
+                    message="",
+                    next_node_id=next_node_id,
+                    should_continue=next_node_id is not None
+                )
+        else:
+            # Invalid state - reset to waiting
+            logger.warning(f"Unknown user input state '{current_state}', resetting to waiting")
+            prompt_message = config.get("prompt_message", "")
+            
+            # Only process and display prompt if it exists and is not empty
+            if prompt_message and prompt_message.strip():
+                prompt_message = self._process_variables(prompt_message, workflow_state)
+                message_to_display = prompt_message
+            else:
+                # No prompt message configured - return empty message
+                message_to_display = ""
+            
+            workflow_state["user_input_state"] = "waiting"
+            workflow_state["user_input_node_id"] = str(node.id)
+            
+            return WorkflowExecutionResult(
+                success=True,
+                message=message_to_display,
+                next_node_id=None,
+                should_continue=False
+            )
     
     def _find_next_node(self, node: WorkflowNode) -> Optional[UUID]:
         """Find the next node in the workflow"""

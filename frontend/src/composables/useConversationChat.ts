@@ -71,8 +71,7 @@ export function useConversationChat(
     return !showTakeoverButton.value && !showTakenOverStatus.value
   })
 
-  const scrollToBottom = async () => {
-    await nextTick()
+  const scrollToBottom = () => {
     if (messagesContainer.value) {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
     }
@@ -94,9 +93,9 @@ export function useConversationChat(
   const sendMessage = async () => {
     if (!newMessage.value.trim() || !canSendMessage.value) return
 
+    const messageText = newMessage.value
+    
     try {
-      const messageText = newMessage.value
-      // Clear input immediately for better UX
       newMessage.value = ''
 
       // Add message locally first
@@ -114,20 +113,20 @@ export function useConversationChat(
 
       // Emit message through socket
       socketService.emit('agent_message', {
-        message: messageText,
         session_id: chat.value.session_id,
-        message_type: 'agent',
-        created_at: timestamp
+        message: messageText,
+        agent_id: chat.value.agent_id
       })
 
-      scrollToBottom()
-    } catch (err) {
-      console.error('Failed to send message:', err)
-      toast.error('Failed to send message', {
-        description: 'Please try again',
-        duration: 4000,
-        closeButton: true
-      })
+      // Scroll to bottom after a short delay to ensure DOM is updated
+      setTimeout(() => {
+        scrollToBottom()
+      }, 100)
+
+    } catch (error) {
+      console.error('Error sending message:', error)
+      // Re-add the message to input if sending failed
+      newMessage.value = messageText
     }
   }
 

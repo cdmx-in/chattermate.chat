@@ -30,6 +30,7 @@ import EndNodeConfig from '@/components/workflow/nodes/EndNodeConfig.vue'
 import ActionNodeConfig from '@/components/workflow/nodes/ActionNodeConfig.vue'
 import MessageNodeConfig from '@/components/workflow/nodes/MessageNodeConfig.vue'
 import ConditionNodeConfig from '@/components/workflow/nodes/ConditionNodeConfig.vue'
+import UserInputNodeConfig from '@/components/workflow/nodes/UserInputNodeConfig.vue'
 import { ExitCondition } from '@/types/workflow'
 import { listGroups } from '@/services/groups'
 import type { UserGroup } from '@/types/user'
@@ -113,7 +114,10 @@ const nodeForm = ref({
   final_message: '',
   // Landing Page node
   landing_page_heading: '',
-  landing_page_content: ''
+  landing_page_content: '',
+  // User Input node
+  prompt_message: '',
+  confirmation_message: ''
 })
 
 const saving = ref(false)
@@ -205,6 +209,13 @@ const updateMessageFormData = (data: any) => {
 
 // Update Condition form data from child component
 const updateConditionFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update User Input form data from child component
+const updateUserInputFormData = (data: any) => {
   Object.assign(nodeForm.value, data)
   // Trigger auto-save after updating
   autoSaveToCache()
@@ -317,6 +328,8 @@ const validateField = (field: string, value: any, nodeType: string): string | nu
         return 'Content is required'
       }
       break
+    
+    // Removed prompt_message validation case - it's now optional
   }
   return null
 }
@@ -341,7 +354,7 @@ const validateForm = (): boolean => {
     'name', 'message_text', 'system_prompt', 'temperature', 'exit_condition',
     'condition_expression', 'action_type', 'action_url',
     'transfer_department', 'wait_duration', 'wait_unit', 'form_fields',
-    'landing_page_heading', 'landing_page_content'
+    'landing_page_heading', 'landing_page_content', 'prompt_message', 'confirmation_message'
   ]
   
   fieldsToValidate.forEach(field => {
@@ -524,6 +537,13 @@ watch(() => props.selectedNode, (newNode) => {
       landing_page_content: nodeData.config?.landing_page_content || 
                             nodeData.landing_page_content || 
                             '',
+      // User Input node
+      prompt_message: nodeData.config?.prompt_message || 
+                      nodeData.prompt_message || 
+                      '',
+      confirmation_message: nodeData.config?.confirmation_message || 
+                            nodeData.confirmation_message || 
+                            ''
     }
     
     console.log('Form loaded with values:', nodeForm.value)
@@ -541,7 +561,8 @@ const getNodeTypeName = (type: string) => {
     action: 'Action',
     humanTransfer: 'Human Transfer',
     wait: 'Wait',
-    end: 'End'
+    end: 'End',
+    userInput: 'User Input'
   }
   return names[type as keyof typeof names] || type
 }
@@ -641,6 +662,11 @@ const getNodeSpecificConfig = (nodeType: string) => {
       if (nodeForm.value.landing_page_heading) config.landing_page_heading = nodeForm.value.landing_page_heading
       if (nodeForm.value.landing_page_content) config.landing_page_content = nodeForm.value.landing_page_content
       break
+    
+    case 'userInput':
+      if (nodeForm.value.prompt_message) config.prompt_message = nodeForm.value.prompt_message
+      if (nodeForm.value.confirmation_message) config.confirmation_message = nodeForm.value.confirmation_message
+      break
   }
   
   // Apply additional filtering to remove any blank values
@@ -713,7 +739,8 @@ const mapNodeTypeToBackend = (frontendType: string) => {
     'action': 'action',
     'humanTransfer': 'human_transfer',
     'wait': 'wait',
-    'end': 'end'
+    'end': 'end',
+    'userInput': 'user_input'
   }
   return mapping[frontendType as keyof typeof mapping] || 'message'
 }
@@ -957,6 +984,19 @@ const handleDelete = () => {
                 landing_page_content: nodeForm.landing_page_content
               }"
               @update:model-value="updateLandingPageFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
+          </template>
+
+          <!-- User Input Node -->
+          <template v-if="selectedNode.data.nodeType === 'userInput'">
+            <UserInputNodeConfig
+              :model-value="{
+                prompt_message: nodeForm.prompt_message,
+                confirmation_message: nodeForm.confirmation_message
+              }"
+              @update:model-value="updateUserInputFormData"
               :validation-errors="validationErrors"
               @validate-field="validateFieldOnChange"
             />

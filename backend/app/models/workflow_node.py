@@ -35,6 +35,7 @@ class NodeType(str, enum.Enum):
     WAIT = "wait"
     END = "end"
     LANDING_PAGE = "landing_page"
+    USER_INPUT = "user_input"
 
 
 class ActionType(str, enum.Enum):
