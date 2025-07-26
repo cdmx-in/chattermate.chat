@@ -55,12 +55,29 @@ class KnowledgeManager:
         table_name = f"d_{org_id}"
         
         # Use a more powerful embedding model optimized for semantic search
-        embedder = SentenceTransformerEmbedder(
-            id="sentence-transformers/all-mpnet-base-v2"  # More powerful model for better search results
-        )
-
-        # Update dimensions for the new model
-        embedder.dimensions = 768  # Increased from 384 for better semantic understanding
+        # Force CPU usage in Docker containers to avoid device conflicts
+        import torch
+        import os
+        
+        # Force CPU usage to avoid GPU/meta device issues in containers
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        torch.set_default_tensor_type('torch.FloatTensor')
+        
+        try:
+            embedder = SentenceTransformerEmbedder(
+                id="sentence-transformers/all-mpnet-base-v2",  # More powerful model for better search results
+                device="cpu"  # Explicitly force CPU usage
+            )
+            # Update dimensions for the larger model
+            embedder.dimensions = 768  # Increased from 384 for better semantic understanding
+        except Exception as e:
+            logger.warning(f"Failed to load all-mpnet-base-v2 model: {str(e)}. Falling back to smaller model.")
+            # Fallback to a smaller, more reliable model if the main one fails
+            embedder = SentenceTransformerEmbedder(
+                id="sentence-transformers/all-MiniLM-L6-v2",  # Smaller, more reliable model
+                device="cpu"
+            )
+            embedder.dimensions = 384  # Correct dimensions for the smaller model
 
         self.vector_db = OptimizedPgVector(
             table_name=table_name,
