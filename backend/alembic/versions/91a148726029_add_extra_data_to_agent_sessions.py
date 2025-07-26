@@ -19,13 +19,29 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # Add extra_data column to ai.agent_sessions table
-    op.add_column('agent_sessions', 
-        sa.Column('extra_data', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        schema='ai'
-    )
+    # Check if 'ai' schema exists before attempting to modify the table
+    conn = op.get_bind()
+    result = conn.execute(sa.text("SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'ai'"))
+    schema_exists = result.fetchone() is not None
+    
+    if schema_exists:
+        # Add extra_data column to ai.agent_sessions table
+        op.add_column('agent_sessions', 
+            sa.Column('extra_data', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+            schema='ai'
+        )
+    else:
+        print("Schema 'ai' does not exist, skipping migration")
 
 
 def downgrade() -> None:
-    # Drop extra_data column from ai.agent_sessions table
-    op.drop_column('agent_sessions', 'extra_data', schema='ai')
+    # Check if 'ai' schema exists before attempting to modify the table
+    conn = op.get_bind()
+    result = conn.execute(sa.text("SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'ai'"))
+    schema_exists = result.fetchone() is not None
+    
+    if schema_exists:
+        # Drop extra_data column from ai.agent_sessions table
+        op.drop_column('agent_sessions', 'extra_data', schema='ai')
+    else:
+        print("Schema 'ai' does not exist, skipping migration rollback")
