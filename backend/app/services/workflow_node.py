@@ -128,7 +128,7 @@ class WorkflowNodeService:
                 # Extract and clean node-specific fields into config
                 config_fields = [
                     'message_text', 'system_prompt', 'temperature', 'model_id',
-                    'condition_expression', 'llm_conditions', 'action_type', 'action_url', 'action_config',
+                    'condition_expression', 'action_type', 'action_url', 'action_config',
                     'transfer_department', 'transfer_message', 'transfer_rules',
                     'wait_duration', 'wait_unit', 'wait_until_condition',
                     'final_message', 'form_fields', 'form_title', 'form_description', 

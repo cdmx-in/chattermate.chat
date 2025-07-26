@@ -35,6 +35,7 @@ class NodeType(str, enum.Enum):
     WAIT = "wait"
     END = "end"
     LANDING_PAGE = "landing_page"
+    USER_INPUT = "user_input"
 
 
 class ActionType(str, enum.Enum):
@@ -43,6 +44,11 @@ class ActionType(str, enum.Enum):
     EMAIL = "email"
     NOTIFICATION = "notification"
     CUSTOM = "custom"
+
+
+class ExitCondition(str, enum.Enum):
+    SINGLE_EXECUTION = "single_execution"
+    CONTINUOUS_EXECUTION = "continuous_execution"
 
 
 class WorkflowNode(Base):

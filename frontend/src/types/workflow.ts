@@ -22,6 +22,11 @@ export enum WorkflowStatus {
   ARCHIVED = 'archived'
 }
 
+export enum ExitCondition {
+  SINGLE_EXECUTION = 'single_execution',
+  CONTINUOUS_EXECUTION = 'continuous_execution'
+}
+
 export interface WorkflowCreate {
   name: string
   description?: string

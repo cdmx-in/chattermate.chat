@@ -32,7 +32,7 @@ from .rating import Rating
 from app.models.jira import JiraToken
 from app.models.shopify import ShopifyShop
 from app.models.workflow import Workflow
-from app.models.workflow_node import WorkflowNode
+from app.models.workflow_node import WorkflowNode, ExitCondition
 from app.models.workflow_connection import WorkflowConnection
 
 
@@ -57,6 +57,7 @@ __all__ = [
     "ShopifyShop",
     "Workflow",
     "WorkflowNode",
+    "ExitCondition",
     "WorkflowConnection",
 
 ]

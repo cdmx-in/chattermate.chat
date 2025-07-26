@@ -324,6 +324,21 @@ const ratingEnabled = computed(() => {
     return lastMessage?.attributes?.request_rating || false
 })
 
+// Handle human agent profile picture URL
+const humanAgentPhotoUrl = computed(() => {
+    if (!humanAgent.value.human_agent_profile_pic) {
+        return ''
+    }
+    
+    // Use signed URL if available (AWS S3)
+    if (humanAgent.value.human_agent_profile_pic.includes('amazonaws.com')) {
+        return humanAgent.value.human_agent_profile_pic
+    }
+    
+    // For local storage, prepend the API URL
+    return `${widgetEnv.API_URL}${humanAgent.value.human_agent_profile_pic}`
+})
+
 // Add this after other methods
 const handleEndChat = (message) => {
     
@@ -576,10 +591,7 @@ const validateFormField = (field: any, value: any): string | null => {
 
 // Handle full screen form submission
 const submitFullScreenForm = async () => {
-    console.log('submitFullScreenForm called')
-    console.log('Current form data:', formData.value)
-    console.log('Full screen form data:', fullScreenFormData.value)
-    console.log('isSubmittingForm:', isSubmittingForm.value)
+
     
     if (isSubmittingForm.value || !fullScreenFormData.value) {
         console.log('Already submitting or no form data, returning')
@@ -657,6 +669,31 @@ const handleLandingPageProceed = async () => {
         await proceedWorkflow()
     } catch (error) {
         console.error('Failed to proceed workflow:', error)
+    }
+}
+
+// Handle user input submission
+const handleUserInputSubmit = async (message: any) => {
+    try {
+        if (!message.userInputValue || !message.userInputValue.trim()) {
+            return
+        }
+
+        const userInput = message.userInputValue.trim()
+        
+        // Mark message as submitted
+        message.isSubmitted = true
+        message.submittedValue = userInput
+        
+        // Send the user input as a regular message to continue the workflow
+        await socketSendMessage(userInput, emailInput.value)
+        
+        console.log('User input submitted:', userInput)
+    } catch (error) {
+        console.error('Failed to submit user input:', error)
+        // Reset submission state on error
+        message.isSubmitted = false
+        message.submittedValue = null
     }
 }
 
@@ -989,8 +1026,8 @@ onUnmounted(() => {
             <div class="chat-header" :style="headerBorderStyles">
                 <div class="header-content">
                     <img 
-                        v-if="humanAgent.human_agent_profile_pic || photoUrl" 
-                        :src="humanAgent.human_agent_profile_pic || photoUrl" 
+                        v-if="humanAgentPhotoUrl || photoUrl" 
+                        :src="humanAgentPhotoUrl || photoUrl" 
                         :alt="humanAgent.human_agent_name || agentName" 
                         class="header-avatar"
                     >
@@ -1237,6 +1274,47 @@ onUnmounted(() => {
                                         >
                                             {{ isSubmittingForm ? 'Submitting...' : (message.attributes?.form_data?.submit_button_text || 'Submit') }}
                                         </button>
+                                    </div>
+                                </div>
+                            </template>
+                            <template v-else-if="message.message_type === 'user_input'">
+                                <div class="user-input-content">
+                                    <!-- Only show prompt if message exists and is not empty -->
+                                    <div 
+                                        v-if="message.attributes?.prompt_message && message.attributes.prompt_message.trim()" 
+                                        class="user-input-prompt"
+                                    >
+                                        {{ message.attributes.prompt_message }}
+                                    </div>
+                                    
+                                    <!-- Show input form if not submitted -->
+                                    <div v-if="!message.isSubmitted" class="user-input-form">
+                                        <textarea
+                                            v-model="message.userInputValue"
+                                            class="user-input-textarea"
+                                            placeholder="Type your message here..."
+                                            rows="3"
+                                            @keydown.enter.ctrl="handleUserInputSubmit(message)"
+                                            @keydown.enter.meta="handleUserInputSubmit(message)"
+                                        ></textarea>
+                                        <button
+                                            class="user-input-submit-button"
+                                            @click="handleUserInputSubmit(message)"
+                                            :disabled="!message.userInputValue || !message.userInputValue.trim()"
+                                        >
+                                            Submit
+                                        </button>
+                                    </div>
+                                    
+                                    <!-- Show submitted value -->
+                                    <div v-else class="user-input-submitted">
+                                        <strong>Your input:</strong> {{ message.submittedValue }}
+                                        <div 
+                                            v-if="message.attributes?.confirmation_message && message.attributes.confirmation_message.trim()" 
+                                            class="user-input-confirmation"
+                                        >
+                                            {{ message.attributes.confirmation_message }}
+                                        </div>
                                     </div>
                                 </div>
                             </template>
@@ -3280,5 +3358,123 @@ onUnmounted(() => {
     }
 }
 
+}
+
+/* User Input Message Styles */
+.user-input-content {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.user-input-prompt {
+    font-size: var(--text-base);
+    color: var(--text-primary);
+    line-height: 1.5;
+}
+
+.user-input-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    padding: var(--space-md);
+    background: var(--background-soft);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.user-input-textarea {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--background-base);
+    color: var(--text-primary);
+    font-size: var(--text-base);
+    font-family: inherit;
+    resize: vertical;
+    min-height: 80px;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.user-input-textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(243, 70, 17, 0.1);
+}
+
+.user-input-textarea::placeholder {
+    color: var(--text-muted);
+}
+
+.user-input-actions {
+    display: flex;
+    justify-content: flex-end;
+}
+
+.user-input-submit-button {
+    padding: var(--space-sm) var(--space-lg);
+    background: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 100px;
+}
+
+.user-input-submit-button:hover:not(:disabled) {
+    background: var(--primary-dark);
+    transform: translateY(-1px);
+}
+
+.user-input-submit-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+.user-input-submitted {
+    padding: var(--space-md);
+    background: var(--background-soft);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.submitted-input {
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.submitted-input strong {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* Responsive styles for user input */
+@media (max-width: 768px) {
+    .user-input-form {
+        padding: var(--space-sm);
+        gap: var(--space-xs);
+    }
+    
+    .user-input-textarea {
+        min-height: 60px;
+        padding: var(--space-xs) var(--space-sm);
+    }
+    
+    .user-input-submit-button {
+        padding: var(--space-xs) var(--space-md);
+        font-size: var(--text-xs);
+        min-width: 80px;
+    }
+    
+    .user-input-submitted {
+        padding: var(--space-sm);
+    }
 }
 </style>
