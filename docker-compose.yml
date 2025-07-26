@@ -12,6 +12,7 @@ services:
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
+      - backend_assets:/app/backend-assets
     networks:
       - app-network
 
@@ -27,6 +28,7 @@ services:
     volumes:
       - ./uploads:/app/uploads
       - ./config:/app/config
+      - backend_assets:/app/assets
     depends_on:
       db:
         condition: service_healthy
@@ -111,4 +113,5 @@ networks:
 volumes:
   postgres_data:
   redis_data:
-  frontend_node_modules: 
+  frontend_node_modules:
+  backend_assets: 

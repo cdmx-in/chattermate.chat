@@ -30,7 +30,7 @@ until curl -f http://backend:8000/health; do\n\
 done\n\
 \n\
 echo "Backend is ready - building widget and webclient"\n\
-cd /app && npm run build:widget\n\
+cd /app && npm run build:widgetdocker\n\
 cd /app && npm run build:webclient\n\
 \n\
 echo "Starting frontend development server"\n\
