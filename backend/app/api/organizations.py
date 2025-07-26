@@ -56,18 +56,22 @@ async def create_organization(
     org_data: OrganizationCreate,
     response: Response,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
 ):
     """Create a new organization with an admin user and default roles"""
     try:
         # Check if any organization exists
         existing_orgs = db.query(Organization).first()
+        
+        # If organizations exist, require authentication and proper permissions
         if existing_orgs:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Organization already exists. Only one organization is allowed."
-            )
+            if not current_user:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Authentication required when organizations exist"
+                )
 
+        
+      
         # Create organization
         org_repo = OrganizationRepository(db)
         organization = org_repo.create_organization(
