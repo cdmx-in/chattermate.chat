@@ -29,7 +29,11 @@ until curl -f http://backend:8000/health; do\n\
     sleep 5\n\
 done\n\
 \n\
-echo "Backend is ready - starting frontend"\n\
+echo "Backend is ready - building widget and webclient"\n\
+cd /app && npm run build:widget\n\
+cd /app && npm run build:webclient\n\
+\n\
+echo "Starting frontend development server"\n\
 cd /app && npm run predev && npm run dev -- --host 0.0.0.0 --port 3000' > /usr/local/bin/start.sh
 
 # Make startup script executable
