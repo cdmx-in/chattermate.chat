@@ -39,7 +39,7 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = os.getenv(
-        "DATABASE_URL", "postgresql://test:test@localhost:5432/chattermate")
+        "DATABASE_URL", "postgresql+psycopg://test:test@localhost:5432/chattermate")
     # Redis
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     REDIS_ENABLED: bool = os.getenv("REDIS_ENABLED", "false").lower() == "true"
