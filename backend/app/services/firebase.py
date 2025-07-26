@@ -67,7 +67,7 @@ def initialize_firebase():
     except Exception as e:
         logger.error(f"Error initializing Firebase: {str(e)}")
         logger.warning("Continuing without Firebase initialization")
-        raise
+        
 
 
 async def send_firebase_notification(notification, db):
