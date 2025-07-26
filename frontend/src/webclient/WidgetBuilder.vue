@@ -324,6 +324,18 @@ const ratingEnabled = computed(() => {
     return lastMessage?.attributes?.request_rating || false
 })
 
+// Check if we should show "start new conversation" instead of chat input
+const shouldShowNewConversationOption = computed(() => {
+    // Only in workflow mode
+    if (!window.__INITIAL_DATA__?.workflow) {
+        return false
+    }
+    
+    // Check if there's a submitted rating message
+    const ratingMessage = messages.value.find(msg => msg.message_type === 'rating')
+    return ratingMessage?.isSubmitted === true
+})
+
 // Handle human agent profile picture URL
 const humanAgentPhotoUrl = computed(() => {
     if (!humanAgent.value.human_agent_profile_pic) {
@@ -697,19 +709,30 @@ const handleUserInputSubmit = async (message: any) => {
     }
 }
 
-onMounted(async () => {
-    const isAuthorized = await checkAuthorization()
-    if (!isAuthorized) {
-        connectionStatus.value = 'connected'
-        return
-    }
+// Initialize widget - main initialization logic
+const initializeWidget = async () => {
+    try {
+        const isAuthorized = await checkAuthorization()
+        if (!isAuthorized) {
+            connectionStatus.value = 'connected'
+            return false
+        }
 
-    // For refresh cases, also check if we need to get workflow state
-    if (window.__INITIAL_DATA__?.workflow && hasConversationToken.value) {
-        console.log('Getting workflow state on refresh/reload')
-        await getWorkflowState()
-    }
+        // For refresh cases, also check if we need to get workflow state
+        if (window.__INITIAL_DATA__?.workflow && hasConversationToken.value) {
+            console.log('Getting workflow state on refresh/reload')
+            await getWorkflowState()
+        }
 
+        return true
+    } catch (error) {
+        console.error('Failed to initialize widget:', error)
+        return false
+    }
+}
+
+// Setup event listeners and callbacks
+const setupEventListeners = () => {
     // Register takeover callback
     onTakeover(async () => {
         await checkAuthorization()
@@ -783,6 +806,30 @@ onMounted(async () => {
     onWorkflowProceeded((data) => {
         console.log('Workflow proceeded:', data)
     })
+}
+
+// Start new conversation workflow
+const startNewConversationWorkflow = async () => {
+    try {
+        console.log('Starting new conversation - getting workflow state')
+        await initializeWidget()
+        await getWorkflowState()
+    } catch (error) {
+        console.error('Failed to start new conversation:', error)
+        throw error
+    }
+}
+
+// Handle starting a new conversation
+const handleStartNewConversation = async () => {
+    shouldShowNewConversationOption.value = false
+    messages.value = [] // Clear messages
+    await startNewConversationWorkflow()
+}
+
+onMounted(async () => {
+    await initializeWidget()
+    setupEventListeners()
 })
 
 onUnmounted(() => {
@@ -1380,7 +1427,8 @@ onUnmounted(() => {
                 </div>
             </div>
 
-            <div class="chat-input" :style="agentBubbleStyles">
+            <!-- Chat Input Section (Hidden when conversation is ended in workflow) -->
+            <div v-if="!shouldShowNewConversationOption" class="chat-input" :style="agentBubbleStyles">
                 <div class="email-input" v-if="!hasStartedChat && !hasConversationToken">
                     <input 
                         v-model="emailInput"
@@ -1412,6 +1460,20 @@ onUnmounted(() => {
                             <path d="M5 12L3 21L21 12L3 3L5 12ZM5 12L13 12" stroke="currentColor" stroke-width="2"
                                 stroke-linecap="round" stroke-linejoin="round" />
                         </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- New Conversation Section (Shown when conversation is ended in workflow) -->
+            <div v-else class="new-conversation-section" :style="agentBubbleStyles">
+                <div class="conversation-ended-message">
+                    <p class="ended-text">This chat has ended.</p>
+                    <button 
+                        class="start-new-conversation-button"
+                        :style="userBubbleStyles"
+                        @click="handleStartNewConversation"
+                    >
+                        Click here to start a new conversation
                     </button>
                 </div>
             </div>
@@ -1706,6 +1768,58 @@ onUnmounted(() => {
     gap: 6px;
 }
 
+/* New conversation section styles */
+.new-conversation-section {
+    padding: var(--space-md);
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.conversation-ended-message {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-md);
+    text-align: center;
+    width: 100%;
+}
+
+.ended-text {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.start-new-conversation-button {
+    padding: var(--space-sm) var(--space-lg);
+    border: none;
+    border-radius: var(--radius-lg);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    color: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.start-new-conversation-button:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.start-new-conversation-button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
 .error-alert {
     position: absolute;
     top: 0;
@@ -1754,6 +1868,26 @@ onUnmounted(() => {
         width: 48px;
         height: 48px;
         font-size: 14px;
+    }
+
+    /* Mobile styles for new conversation section */
+    .new-conversation-section {
+        padding: var(--space-sm);
+    }
+
+    .conversation-ended-message {
+        gap: var(--space-sm);
+    }
+
+    .ended-text {
+        font-size: var(--text-xs);
+    }
+
+    .start-new-conversation-button {
+        padding: var(--space-xs) var(--space-md);
+        font-size: var(--text-xs);
+        min-width: 160px;
+        border-radius: var(--radius-md);
     }
 }
 

@@ -112,9 +112,7 @@ class WorkflowChatService:
     ) -> ChatResponse:
         """Handle successful workflow execution"""
         
-        logger.info(f"Workflow result form_data: {workflow_result.form_data}")
-        logger.info(f"Workflow result success: {workflow_result.success}")
-        logger.info(f"Workflow result should_continue: {workflow_result.should_continue}")
+
         
         # Handle intermediate messages from MESSAGE nodes during automatic execution
         if workflow_result.intermediate_messages:
