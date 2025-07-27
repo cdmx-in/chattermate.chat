@@ -223,21 +223,26 @@ async def get_widget_data(
         # Check if agent has workflow enabled
         agent_has_workflow = bool(agent.use_workflow and agent.active_workflow_id)
         
-        # For workflow agents, create customer with blank email if no customer exists
-        # For non-workflow agents, require email
-        should_create_customer = (customer_id == "None" or customer_id is None) and (email or agent_has_workflow)
+        # Check if agent has ASK_ANYTHING chat style
+        is_ask_anything_style = (agent.customization and 
+                               agent.customization.chat_style and 
+                               agent.customization.chat_style.value == "ASK_ANYTHING")
+        
+        # For workflow agents or ASK_ANYTHING style, create customer with blank email if no customer exists
+        # For other agents, require email
+        should_create_customer = (customer_id == "None" or customer_id is None) and (email or agent_has_workflow or is_ask_anything_style)
 
         
         customer_repo = CustomerRepository(db)
         human_agent_info = {}
         
         if should_create_customer:
-            # For workflow agents, generate unique email if no email provided
-            # For non-workflow agents, use the provided email
+            # For workflow agents or ASK_ANYTHING style, generate unique email if no email provided
+            # For other agents, use the provided email
             if email:
                 customer_email = email
-            elif agent_has_workflow:
-                # Generate unique email with timestamp for workflow agents
+            elif agent_has_workflow or is_ask_anything_style:
+                # Generate unique email with timestamp for workflow agents and ASK_ANYTHING style
                 timestamp = int(time.time() * 1000)  # milliseconds for better uniqueness
                 customer_email = f"{timestamp}@noemail.com"
             else:
@@ -284,14 +289,14 @@ async def get_widget_data(
                 "token": new_token
             }
         else:
-            # If workflow is enabled and no customer_id, create anonymous customer
-            if (customer_id == "None" or customer_id is None) and agent_has_workflow:
-                # Generate unique email with timestamp for workflow agents
+            # If workflow is enabled or ASK_ANYTHING style and no customer_id, create anonymous customer
+            if (customer_id == "None" or customer_id is None) and (agent_has_workflow or is_ask_anything_style):
+                # Generate unique email with timestamp for workflow agents and ASK_ANYTHING style
                 timestamp = int(time.time() * 1000)  # milliseconds for better uniqueness
-                workflow_email = f"{timestamp}@noemail.com"
+                anonymous_email = f"{timestamp}@noemail.com"
                 
-                # Create anonymous customer for workflow
-                customer = customer_repo.create_customer(workflow_email, widget.organization_id)
+                # Create anonymous customer for workflow or ASK_ANYTHING style
+                customer = customer_repo.create_customer(anonymous_email, widget.organization_id)
                 
                 # Generate new token with customer_id
                 new_token = create_conversation_token(

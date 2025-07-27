@@ -142,7 +142,12 @@ const isMessageInputEnabled = computed(() => {
         return connectionStatus.value === 'connected' && !loading.value
     }
     
-    // For new conversations, require a valid email
+    // For ASK_ANYTHING style, don't require email
+    if (isAskAnythingStyle.value) {
+        return connectionStatus.value === 'connected' && !loading.value
+    }
+    
+    // For new conversations with other styles, require a valid email
     return isValidEmail(emailInput.value.trim()) && 
            connectionStatus.value === 'connected' && !loading.value
 })
@@ -925,7 +930,7 @@ const shouldShowWelcomeMessage = computed(() => {
             
             <!-- Welcome Input Container -->
             <div class="welcome-input-container">
-                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken">
+                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken && !isAskAnythingStyle">
                     <input 
                         v-model="emailInput"
                         type="email" 
@@ -1524,7 +1529,7 @@ const shouldShowWelcomeMessage = computed(() => {
 
             <!-- Chat Input Section (Hidden when conversation is ended in workflow) -->
             <div v-if="!shouldShowNewConversationOption" class="chat-input" :class="{ 'ask-anything-input': isAskAnythingStyle }" :style="agentBubbleStyles">
-                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken">
+                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken && !isAskAnythingStyle">
                     <input 
                         v-model="emailInput"
                         type="email" 

@@ -338,7 +338,7 @@ export function useWorkflowManagement(options: WorkflowManagementOptions) {
       const edges = getEdges()
       
       // Validate connections before publishing
-      if (nodes.length >= 1 && edges.length === 0) {
+      if (nodes.length > 1 && edges.length === 0) {
         toast.error('Cannot publish workflow without connections between nodes. Please connect your nodes before publishing.', {
           duration: 5000,
           closeButton: true,
