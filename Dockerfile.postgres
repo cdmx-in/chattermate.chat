@@ -7,10 +7,11 @@ RUN apt-get update && apt-get install -y \
     postgresql-server-dev-16 \
     && rm -rf /var/lib/apt/lists/*
 
-# Install pg_vector extension
+# Install pg_vector extension with compatibility fixes for ARM64
 RUN git clone https://github.com/pgvector/pgvector.git && \
     cd pgvector && \
-    make && \
+    git checkout v0.5.1 && \
+    make OPTFLAGS="" && \
     make install
 
 # Add initialization scripts
@@ -20,6 +21,11 @@ COPY ./backend/scripts/init-vector.sql /docker-entrypoint-initdb.d/
 ENV POSTGRES_DB=chattermate
 ENV POSTGRES_USER=postgres
 ENV POSTGRES_PASSWORD=postgres
+
+# Set PostgreSQL configuration for better stability with pgvector
+RUN echo "shared_preload_libraries = 'vector'" >> /usr/share/postgresql/postgresql.conf.sample
+RUN echo "max_connections = 200" >> /usr/share/postgresql/postgresql.conf.sample
+RUN echo "shared_buffers = 256MB" >> /usr/share/postgresql/postgresql.conf.sample
 
 # Expose PostgreSQL port
 EXPOSE 5432 

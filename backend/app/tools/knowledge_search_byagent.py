@@ -71,11 +71,11 @@ class KnowledgeSearchByAgent(Toolkit):
                 # Use the first knowledge source's table and schema since they should all be in the same table
                 source = knowledge_sources[0]
                 embedder = SentenceTransformerEmbedder(
-                    id="sentence-transformers/all-mpnet-base-v2"  # Optimized for chatbot applications
+                    id=settings.EMBEDDING_MODEL_ID  # Use configurable model ID from settings
                 )
-                # Updated dimensions for the smaller model
-                embedder.dimensions = 768  # Reduced from 1024 for faster processing
-                # Initialize vector db
+                # Updated dimensions for the model (all-MiniLM-L6-v2 uses 384 dimensions)
+                embedder.dimensions = 384
+                # Initialize vector db with simpler search type to avoid connection issues
                 vector_db = PgVector(
                     table_name=source.table_name,
                     db_url=settings.DATABASE_URL,
@@ -131,4 +131,6 @@ class KnowledgeSearchByAgent(Toolkit):
 
         except Exception as e:
             logger.error(f"Error searching knowledge base: {str(e)}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             return "Error searching knowledge base."

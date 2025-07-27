@@ -1,5 +1,5 @@
 """
-ChatterMate - Knowledge Base
+ChatterMate - Knowledge Base Management
 Copyright (C) 2024 ChatterMate
 
 This program is free software: you can redistribute it and/or modify
@@ -37,6 +37,13 @@ from urllib.parse import urlparse
 from uuid import UUID
 from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
 
+# Try to import enterprise modules
+try:
+    from app.enterprise.repositories.subscription import SubscriptionRepository
+    HAS_ENTERPRISE = True
+except ImportError:
+    HAS_ENTERPRISE = False
+
 logger = get_logger(__name__)
 
 
@@ -54,30 +61,13 @@ class KnowledgeManager:
         embedder = None
         table_name = f"d_{org_id}"
         
-        # Use a more powerful embedding model optimized for semantic search
-        # Force CPU usage in Docker containers to avoid device conflicts
-        import torch
-        import os
-        
-        # Force CPU usage to avoid GPU/meta device issues in containers
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
-        torch.set_default_tensor_type('torch.FloatTensor')
-        
-        try:
-            embedder = SentenceTransformerEmbedder(
-                id="sentence-transformers/all-mpnet-base-v2",  # More powerful model for better search results
-                device="cpu"  # Explicitly force CPU usage
-            )
-            # Update dimensions for the larger model
-            embedder.dimensions = 768  # Increased from 384 for better semantic understanding
-        except Exception as e:
-            logger.warning(f"Failed to load all-mpnet-base-v2 model: {str(e)}. Falling back to smaller model.")
-            # Fallback to a smaller, more reliable model if the main one fails
-            embedder = SentenceTransformerEmbedder(
-                id="sentence-transformers/all-MiniLM-L6-v2",  # Smaller, more reliable model
-                device="cpu"
-            )
-            embedder.dimensions = 384  # Correct dimensions for the smaller model
+        # Use the configured embedding model with reduced parallelism
+        embedder = SentenceTransformerEmbedder(
+            id=settings.EMBEDDING_MODEL_ID  # Use configurable model ID
+        )
+
+        # Update dimensions for the model (all-MiniLM-L6-v2 uses 384 dimensions)
+        embedder.dimensions = 384
 
         self.vector_db = OptimizedPgVector(
             table_name=table_name,
@@ -226,16 +216,32 @@ class KnowledgeManager:
             
             for url in urls:
                 logger.debug(f"Adding website: {url}")
-                # Use enhanced website knowledge base for better content extraction
-                knowledge_base = EnhancedWebsiteKnowledgeBase(
-                    urls=[url],  # Pass single URL in a list
-                    max_links=max_links,
-                    max_depth=3,  # Default depth
-                    min_content_length=100,  # Minimum content length to consider
-                    timeout=30,  # Request timeout
-                    max_retries=3,  # Maximum retries for failed requests
-                    vector_db=self.vector_db
-                )
+                
+                # Use config values when not in enterprise mode
+                if not HAS_ENTERPRISE:
+                    knowledge_base = EnhancedWebsiteKnowledgeBase(
+                        urls=[url],  # Pass single URL in a list
+                        max_links=settings.KB_MAX_LINKS,
+                        max_depth=settings.KB_MAX_DEPTH,
+                        min_content_length=settings.KB_MIN_CONTENT_LENGTH,
+                        timeout=settings.KB_TIMEOUT,
+                        max_retries=settings.KB_MAX_RETRIES,
+                        max_workers=min(settings.KB_MAX_WORKERS, settings.EMBEDDING_MAX_WORKERS),  # Use the smaller of the two
+                        vector_db=self.vector_db
+                    )
+                else:
+                    # Use enterprise-provided values where available, config defaults otherwise
+                    knowledge_base = EnhancedWebsiteKnowledgeBase(
+                        urls=[url],  # Pass single URL in a list
+                        max_links=max_links,  # Use enterprise subscription limit
+                        max_depth=settings.KB_MAX_DEPTH,  # Use config for depth
+                        min_content_length=settings.KB_MIN_CONTENT_LENGTH,  # Use config
+                        timeout=settings.KB_TIMEOUT,  # Use config for timeout
+                        max_retries=settings.KB_MAX_RETRIES,  # Use config for retries
+                        max_workers=min(settings.KB_MAX_WORKERS, settings.EMBEDDING_MAX_WORKERS),  # Use the smaller of the two
+                        vector_db=self.vector_db
+                    )
+                    
                 logger.debug(f"Enhanced knowledge base created for: {url}")
                 
                 knowledge_base.load(recreate=False, upsert=True, filters={
