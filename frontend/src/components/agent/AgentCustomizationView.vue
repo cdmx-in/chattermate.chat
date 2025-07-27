@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, watch, onMounted, computed, onUnmounted } from 'vue'
+import { ref, watch, onMounted, computed, onUnmounted, nextTick } from 'vue'
 import type { AgentWithCustomization, AgentCustomization, ChatStyle } from '@/types/agent'
 import { agentService } from '@/services/agent'
 import WebFont from 'webfontloader'
@@ -29,6 +29,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     (e: 'cancel'): void
     (e: 'preview', customization: AgentCustomization & { showBubblePreview?: boolean }): void
+    (e: 'chat-style-changed', oldStyle: ChatStyle, newStyle: ChatStyle): void
 }>()
 
 const customization = ref<AgentCustomization>({
@@ -84,7 +85,12 @@ const handleSave = async () => {
 }
 
 // Watch for changes and emit preview event
+const isInternalUpdate = ref(false)
+
 watch(customization, (newValue) => {
+    if (isInternalUpdate.value) {
+        return // Skip if this is an internal update to prevent loops
+    }
     console.log('AgentCustomizationView - Customization changed, emitting preview:', newValue)
     emit('preview', newValue)
 }, { deep: true })
@@ -92,6 +98,7 @@ watch(customization, (newValue) => {
 // Watch for prop changes to update local customization
 watch(() => props.agent.customization, (newCustomization) => {
     if (newCustomization) {
+        isInternalUpdate.value = true
         customization.value = {
             id: newCustomization.id ?? 0,
             agent_id: props.agent.id,
@@ -107,12 +114,25 @@ watch(() => props.agent.customization, (newCustomization) => {
             welcome_title: newCustomization.welcome_title ?? '',
             welcome_subtitle: newCustomization.welcome_subtitle ?? '',
         }
+        nextTick(() => {
+            isInternalUpdate.value = false
+        })
     }
 }, { deep: true })
 
 // Add state for Google Fonts
 const googleFonts = ref<Array<{ family: string, variants: string[] }>>([])
 const isLoadingFonts = ref(true)
+
+// Watch for chat style changes specifically
+const previousChatStyle = ref(customization.value.chat_style)
+watch(() => customization.value.chat_style, (newStyle, oldStyle) => {
+    if (newStyle !== oldStyle && !isInternalUpdate.value) {
+        console.log('Chat style changed:', oldStyle, '->', newStyle)
+        emit('chat-style-changed', oldStyle || 'CHATBOT', newStyle || 'CHATBOT')
+        previousChatStyle.value = newStyle
+    }
+})
 
 // Load Google Fonts
 onMounted(async () => {
@@ -185,11 +205,7 @@ const handleFontSelect = (font: string) => {
     showFontDropdown.value = false
 }
 
-const handleChatStyleChange = (event: Event) => {
-    const target = event.target as HTMLSelectElement
-    const selectedValue = target.value as ChatStyle
-    customization.value.chat_style = selectedValue
-}
+
 </script>
 
 <template>
@@ -204,7 +220,6 @@ const handleChatStyleChange = (event: Event) => {
                     <div class="chat-style-dropdown">
                         <select 
                             v-model="customization.chat_style" 
-                            @change="handleChatStyleChange"
                             class="chat-style-select"
                         >
                             <option 
