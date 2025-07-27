@@ -31,10 +31,15 @@ const props = defineProps<{
     agentName: string
     agentId: string
 }>()
-console.log(props.customization.font_family)
+console.log('AgentChatPreviewPanel props:', props.customization)
 const isExpanded = ref(true)
 const emailInput = ref('')
 const hasStartedChat = ref(false)
+
+// Watch for customization changes to debug
+watch(() => props.customization, (newCustomization) => {
+    console.log('Customization changed:', newCustomization)
+}, { deep: true, immediate: true })
 
 // Initialize chat composable
 const {
@@ -47,25 +52,24 @@ const {
     cleanup
 } = useAgentChat(props.agentId)
 
-// Handle message submit
+// Handle message submit - dummy for preview only
 const handleSubmit = () => {
-    if (currentInput.value.trim()) {
-        sendMessage(currentInput.value)
-        hasStartedChat.value = true
-    }
+    // Do nothing - this is just a preview
+    return
 }
 
-// Handle enter key
+// Handle enter key - dummy for preview only
 const handleKeyPress = (event: KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault()
-        handleSubmit()
-    }
+    // Do nothing - this is just a preview
+    return
 }
 
 // Lifecycle hooks
 onMounted(() => {
-    initChat()
+    // Don't initialize chat for ASK_ANYTHING style to avoid adding initial messages
+    if (!isAskAnythingStyle.value) {
+        initChat()
+    }
 
     // Load initial font
     if (props.customization.font_family) {
@@ -236,10 +240,52 @@ const isValidEmail = (email: string) => {
 const isMessageInputEnabled = computed(() => {
     return props.isActive && !isLoading.value && isValidEmail(emailInput.value.trim())
 })
+
+// Add computed property for ASK_ANYTHING style detection
+const isAskAnythingStyle = computed(() => {
+    return props.customization.chat_style === 'ASK_ANYTHING'
+})
+
+// Computed property for container styles
+const containerStyles = computed(() => {
+    const baseStyles = {
+        width: '400px',
+        height: '600px',
+        borderRadius: '24px'
+    }
+    
+    if (isAskAnythingStyle.value) {
+        return {
+            ...baseStyles,
+            width: '500px',  // Increased width for ASK_ANYTHING style
+            minWidth: '450px'
+        }
+    }
+    
+    return baseStyles
+})
+
+// Computed property for welcome message display
+const shouldShowWelcomeMessage = computed(() => {
+    return isAskAnythingStyle.value && messages.value.length === 0
+})
+
+// Computed properties for welcome text with reactive updates
+const welcomeTitle = computed(() => {
+    const title = props.customization.welcome_title
+    console.log('Welcome title computed:', title)
+    return title || `Welcome to ${props.agentName}`
+})
+
+const welcomeSubtitle = computed(() => {
+    const subtitle = props.customization.welcome_subtitle
+    console.log('Welcome subtitle computed:', subtitle)
+    return subtitle || "I'm here to help you with anything you need. What can I assist you with today?"
+})
 </script>
 
 <template>
-    <div class="chat-container" :class="{ collapsed: !isExpanded }">
+    <div class="chat-container" :class="{ collapsed: !isExpanded, 'ask-anything-style': isAskAnythingStyle }" :style="containerStyles">
         <!-- Chat Toggle Button -->
         <div class="toggle-container" v-if="!isExpanded || customization.showBubblePreview">
             <button class="chat-toggle" :class="{ preview: customization.showBubblePreview }" :style="chatIconStyles"
@@ -255,12 +301,58 @@ const isMessageInputEnabled = computed(() => {
             </button>
         </div>
 
+        <!-- Welcome Message for ASK_ANYTHING Style -->
+        <div v-if="shouldShowWelcomeMessage && isExpanded && !customization.showBubblePreview" class="welcome-message-section" :style="chatStyles">
+            <div class="welcome-content">
+                <div class="welcome-header">
+                    <img 
+                        v-if="photoUrl" 
+                        :src="photoUrl" 
+                        :alt="agentName" 
+                        class="welcome-avatar"
+                    >
+                    <h1 class="welcome-title">{{ welcomeTitle }}</h1>
+                    <p class="welcome-subtitle">{{ welcomeSubtitle }}</p>
+                </div>
+            </div>
+            
+            <!-- ASK_ANYTHING Input directly in welcome section -->
+            <div class="welcome-input-container">
+                <div class="welcome-message-input">
+                    <input 
+                        v-model="currentInput" 
+                        type="text" 
+                        placeholder="Ask me anything..." 
+                        @keypress="() => {}"
+                        :disabled="true"
+                        class="welcome-message-field"
+                    >
+                    <button 
+                        class="welcome-send-button" 
+                        :style="accentStyles" 
+                        @click="() => {}"
+                        :disabled="true"
+                    >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M5 12L3 21L21 12L3 3L5 12ZM5 12L13 12" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Powered by footer for welcome message -->
+            <div class="powered-by-welcome" :style="messageNameStyles">
+                Powered by ChatterMate
+            </div>
+        </div>
+
         <!-- Chat Panel -->
         <div class="chat-panel" :class="[
-            { disabled: !isActive },
+            { disabled: !isActive, 'ask-anything-chat': isAskAnythingStyle },
             `chat-panel-${agentId}`
-        ]" :style="chatStyles" v-if="isExpanded && !customization.showBubblePreview">
-            <div class="chat-header" :style="{
+        ]" :style="chatStyles" v-if="isExpanded && !customization.showBubblePreview && !shouldShowWelcomeMessage">
+            <div v-if="!isAskAnythingStyle" class="chat-header" :style="{
                 background: customization.chat_background_color,
                 ...headerBorderStyles
             }">
@@ -315,29 +407,32 @@ const isMessageInputEnabled = computed(() => {
                 {{ error }}
             </div>
 
-            <div class="chat-input" :style="agentBubbleStyles">
-                <div class="email-input" v-if="!hasStartedChat">
+            <div class="chat-input" :class="{ 'ask-anything-input': isAskAnythingStyle }" :style="agentBubbleStyles">
+                <!-- Hide email input for ASK_ANYTHING style -->
+                <div class="email-input" v-if="!hasStartedChat && !isAskAnythingStyle">
                     <input 
                         v-model="emailInput"
                         type="email" 
                         placeholder="Enter your email address to begin" 
-                        :disabled="!isActive || isLoading"
-                        :class="{ 'invalid': emailInput.trim() && !isValidEmail(emailInput.trim()) }"
+                        :disabled="true"
+                        :class="{ 'invalid': false }"
                     >
                 </div>
                 <div class="message-input">
                     <input 
                         v-model="currentInput" 
                         type="text" 
-                        :placeholder="'Type a message...'"
-                        @keypress="handleKeyPress"
+                        :placeholder="isAskAnythingStyle ? 'Ask me anything...' : 'Type a message...'"
+                        @keypress="() => {}"
                         :disabled="true"
+                        :class="{ 'ask-anything-field': isAskAnythingStyle }"
                     >
                     <button 
                         class="send-button" 
+                        :class="{ 'ask-anything-send': isAskAnythingStyle }"
                         :style="accentStyles" 
-                        @click="handleSubmit"
-                        :disabled="!currentInput.trim() || !isMessageInputEnabled"
+                        @click="() => {}"
+                        :disabled="true"
                     >
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M5 12L3 21L21 12L3 3L5 12ZM5 12L13 12" stroke="currentColor" stroke-width="2"
@@ -352,6 +447,8 @@ const isMessageInputEnabled = computed(() => {
                 Powered by ChatterMate
             </div>
         </div>
+
+
     </div>
 </template>
 
@@ -766,5 +863,336 @@ const isMessageInputEnabled = computed(() => {
 
 .email-input input.invalid:focus {
     outline-color: var(--error-color);
+}
+
+/* ========== ASK_ANYTHING CHAT STYLE ========== */
+
+.chat-container.ask-anything-style {
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+}
+
+/* Welcome Message Section for ASK_ANYTHING Style */
+.welcome-message-section {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--background-base);
+    border-radius: 24px;
+    position: relative;
+    overflow: hidden;
+    padding: var(--space-xl) var(--space-xl) var(--space-lg);
+    box-sizing: border-box;
+}
+
+.welcome-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    max-width: 400px;
+    text-align: center;
+    flex: 1;
+}
+
+.welcome-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-lg);
+}
+
+.welcome-avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    object-fit: cover;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    border: 3px solid white;
+}
+
+.welcome-title {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+ 
+}
+
+.welcome-subtitle {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.6;
+    max-width: 350px;
+    font-weight: 400;
+}
+
+/* Welcome Input Section */
+.welcome-input-section {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--background-base);
+    border-radius: 24px;
+    position: relative;
+}
+
+.welcome-input-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-lg);
+    max-width: 400px;
+    margin: 0 auto;
+    width: 100%;
+    padding: 0;
+}
+
+.welcome-input-container .email-input {
+    width: 100%;
+    margin-bottom: var(--space-md);
+}
+
+.welcome-email-input {
+    width: 100%;
+    padding: 16px 20px;
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    background: var(--background-base);
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.welcome-email-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(243, 70, 17, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}
+
+.welcome-email-input.invalid {
+    border-color: var(--error-color);
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
+}
+
+.welcome-email-input.disabled {
+    background-color: rgba(0, 0, 0, 0.05);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.welcome-message-input {
+    display: flex;
+    gap: var(--space-md);
+    width: 100%;
+    align-items: center;
+}
+
+.welcome-message-field {
+    flex: 1;
+    padding: 16px 20px;
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    background: var(--background-base);
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.welcome-message-field:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(243, 70, 17, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}
+
+.welcome-message-field::placeholder {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.welcome-send-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+    min-width: 48px;
+    height: 48px;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    color: white;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 14px rgba(243, 70, 17, 0.3);
+}
+
+.welcome-send-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(243, 70, 17, 0.4);
+}
+
+.welcome-send-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.powered-by-welcome {
+    text-align: center;
+    font-size: 0.75rem;
+    opacity: 0.6;
+    color: var(--text-muted);
+    padding: var(--space-md);
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: auto;
+}
+
+/* ASK_ANYTHING Chat Panel Modifications */
+.chat-panel.ask-anything-chat {
+    background: var(--background-base);
+    border-radius: 24px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+/* ASK_ANYTHING: Complete chat messages container override */
+.chat-container.ask-anything-style .chat-messages {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: var(--space-lg) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    gap: var(--space-md) !important;
+    max-width: 450px !important;
+    margin: 0 auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+/* ASK_ANYTHING: Reset all message base styles */
+.chat-container.ask-anything-style .chat-messages .message {
+    display: flex !important;
+    gap: var(--space-sm) !important;
+    max-width: 85% !important;
+    align-items: flex-start !important;
+    margin-bottom: var(--space-md) !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    width: auto !important;
+    align-self: unset !important;
+    justify-content: unset !important;
+    text-align: unset !important;
+}
+
+/* ASK_ANYTHING: User messages - force right alignment */
+.chat-container.ask-anything-style .chat-messages .message.user-message,
+.chat-container.ask-anything-style .message.user-message {
+    align-self: flex-end !important;
+    margin-left: auto !important;
+    margin-right: 0 !important;
+    flex-direction: row-reverse !important;
+    text-align: right !important;
+    justify-content: flex-start !important;
+    width: auto !important;
+    max-width: 85% !important;
+}
+
+/* ASK_ANYTHING: Bot messages - force left alignment */
+.chat-container.ask-anything-style .chat-messages .message.bot-message,
+.chat-container.ask-anything-style .chat-messages .message.assistant-message,
+.chat-container.ask-anything-style .message.bot-message,
+.chat-container.ask-anything-style .message.assistant-message,
+.chat-container.ask-anything-style .chat-messages .message.bot,
+.chat-container.ask-anything-style .message.bot {
+    align-self: flex-start !important;
+    margin-left: 0 !important;
+    margin-right: auto !important;
+    flex-direction: row !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+    width: auto !important;
+    max-width: 85% !important;
+}
+
+/* ASK_ANYTHING Input Styling */
+.chat-input.ask-anything-input {
+    padding: var(--space-lg) !important;
+    background: var(--background-base) !important;
+    border-top: 1px solid var(--border-color) !important;
+    border-radius: 0 0 24px 24px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+}
+
+.chat-input.ask-anything-input .message-input {
+    max-width: 450px !important;
+    margin: 0 auto !important;
+    gap: var(--space-md) !important;
+    display: flex !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+
+.ask-anything-field {
+    padding: 16px 20px !important;
+    border: 2px solid var(--border-color) !important;
+    border-radius: 12px !important;
+    font-size: 0.9rem !important;
+    font-weight: 500 !important;
+    background: var(--background-base) !important;
+    color: var(--text-primary) !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05) !important;
+}
+
+.ask-anything-field:focus {
+    outline: none !important;
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 0 4px rgba(243, 70, 17, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1) !important;
+    transform: translateY(-1px) !important;
+}
+
+.send-button.ask-anything-send {
+    padding: 16px !important;
+    min-width: 48px !important;
+    height: 48px !important;
+    border-radius: 12px !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 14px rgba(243, 70, 17, 0.3) !important;
+}
+
+.send-button.ask-anything-send:hover:not(:disabled) {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 25px rgba(243, 70, 17, 0.4) !important;
+}
+
+/* ASK_ANYTHING: Typing indicator alignment */
+.chat-container.ask-anything-style .typing-indicator,
+.chat-container.ask-anything-style .message.loading {
+    align-self: flex-start !important;
+    margin-left: 0 !important;
+    margin-right: auto !important;
+    justify-content: flex-start !important;
 }
 </style>

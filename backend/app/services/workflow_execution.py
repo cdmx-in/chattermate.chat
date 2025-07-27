@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import traceback
+import asyncio
 from typing import Optional, Dict, Any, List, Tuple
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -467,6 +468,44 @@ class WorkflowExecutionService:
     ) -> WorkflowExecutionResult:
         """Execute an LLM node"""
         try:
+            # Check if both user message and workflow history are empty
+            if not user_message or user_message.strip() == "":
+                # Check if there's any meaningful chat history or workflow history
+                chat_repo = ChatRepository(self.db)
+                chat_history = chat_repo.get_session_history(session_id)
+                workflow_history = self.session_repo.get_workflow_history(session_id)
+                
+                # If both message and history are empty, skip LLM execution
+                if (not chat_history or len(chat_history) == 0) and (not workflow_history or len(workflow_history) == 0):
+                    logger.info(f"Skipping LLM node {node.id} execution - no user message and no history available")
+                    
+                    # Get exit condition to determine how to proceed
+                    config = node.config or {}
+                    exit_condition = config.get("exit_condition", ExitCondition.SINGLE_EXECUTION)
+                    if isinstance(exit_condition, str):
+                        try:
+                            exit_condition = ExitCondition(exit_condition)
+                        except ValueError:
+                            exit_condition = ExitCondition.SINGLE_EXECUTION
+                    
+                    if exit_condition == ExitCondition.SINGLE_EXECUTION:
+                        # Single execution: move to next node
+                        next_node_id = self._find_next_node(node)
+                        return WorkflowExecutionResult(
+                            success=True,
+                            message="",  # Empty message since no execution occurred
+                            next_node_id=next_node_id,
+                            should_continue=next_node_id is not None
+                        )
+                    else:
+                        # Continuous execution: wait for user input
+                        return WorkflowExecutionResult(
+                            success=True,
+                            message="",  # Empty message since no execution occurred
+                            next_node_id=None,
+                            should_continue=False
+                        )
+            
             # Get system prompt from config and process variables
             config = node.config or {}
             system_prompt = config.get("system_prompt", "You are a helpful assistant.")
@@ -496,7 +535,7 @@ class WorkflowExecutionService:
                 processed_user_message = self._build_context_message(session_id, workflow_state)
             
             # Create chat agent with custom system prompt
-            chat_agent = ChatAgent(
+            chat_agent = await ChatAgent.create_async(
                 api_key=api_key,
                 model_name=model_name,
                 model_type=model_type,
@@ -508,15 +547,27 @@ class WorkflowExecutionService:
                 transfer_to_human=auto_transfer
             )
             
-            # Get response from LLM using the agent's internal method to avoid double message storage
-            response = await chat_agent._get_llm_response_only(
-                message=processed_user_message,
-                session_id=session_id,
-                org_id=org_id,
-                agent_id=agent_id,
-                customer_id=customer_id
-            )
+            try:
+                # Get response from LLM using the agent's internal method to avoid double message storage
+                response = await chat_agent._get_llm_response_only(
+                    message=processed_user_message,
+                    session_id=session_id,
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    customer_id=customer_id
+                )
+            finally:
+                # Always clean up MCP tools, even if there's an error
+                # Use asyncio.create_task to ensure cleanup doesn't block the main flow
+                try:
+                    cleanup_task = asyncio.create_task(chat_agent.cleanup_mcp_tools())
+                    await asyncio.wait_for(cleanup_task, timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.debug("MCP cleanup timed out (non-critical)")
+                except Exception as cleanup_error:
+                    logger.debug(f"MCP cleanup warning in workflow (non-critical): {str(cleanup_error)}")
             
+            logger.debug(f"Response: {response}")
             # Handle exit conditions
             next_node_id = None
             should_continue = False

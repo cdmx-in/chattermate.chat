@@ -16,6 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
+import asyncio
 from app.core.logger import get_logger
 from app.agents.chat_agent import ChatAgent, ChatResponse
 from app.repositories.chat import ChatRepository
@@ -233,7 +234,7 @@ class WorkflowChatService:
         
         if workflow_result.transfer_group_id:
             # Transfer to specific group using workflow transfer method
-            chat_agent = ChatAgent(
+            chat_agent = await ChatAgent.create_async(
                 api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
                 model_name=session['ai_config'].model_name,
                 model_type=session['ai_config'].model_type,
@@ -243,32 +244,43 @@ class WorkflowChatService:
                 session_id=session_id
             )
             
-            # Create ChatResponse object with transfer details from workflow
-            llm_response = ChatResponse(
-                message=workflow_result.message,
-                transfer_to_human=True,
-                transfer_reason=TransferReasonType(workflow_result.transfer_reason) if workflow_result.transfer_reason else None,
-                transfer_description=workflow_result.transfer_description,
-                end_chat=False,
-                request_rating=False,
-                create_ticket=False
-            )
-            
-            transfer_response = await chat_agent.handle_workflow_transfer(
-                session_id=session_id,
-                org_id=org_id,
-                agent_id=session['agent_id'],
-                customer_id=customer_id,
-                transfer_group_id=workflow_result.transfer_group_id,
-                db=self.db,
-                chat_repo=self.chat_repo,
-                llm_response=llm_response
-            )
-            
-            logger.info(f"Transfer completed for session {session_id} to group {workflow_result.transfer_group_id}")
-            # Mark this as a transfer response so widget_chat.py can handle it properly
-            transfer_response._is_transfer_response = True
-            return transfer_response
+            try:
+                # Create ChatResponse object with transfer details from workflow
+                llm_response = ChatResponse(
+                    message=workflow_result.message,
+                    transfer_to_human=True,
+                    transfer_reason=TransferReasonType(workflow_result.transfer_reason) if workflow_result.transfer_reason else None,
+                    transfer_description=workflow_result.transfer_description,
+                    end_chat=False,
+                    request_rating=False,
+                    create_ticket=False
+                )
+                
+                transfer_response = await chat_agent.handle_workflow_transfer(
+                    session_id=session_id,
+                    org_id=org_id,
+                    agent_id=session['agent_id'],
+                    customer_id=customer_id,
+                    transfer_group_id=workflow_result.transfer_group_id,
+                    db=self.db,
+                    chat_repo=self.chat_repo,
+                    llm_response=llm_response
+                )
+                
+                logger.info(f"Transfer completed for session {session_id} to group {workflow_result.transfer_group_id}")
+                # Mark this as a transfer response so widget_chat.py can handle it properly
+                transfer_response._is_transfer_response = True
+                return transfer_response
+            finally:
+                # Clean up MCP tools
+                # Use asyncio.create_task to ensure cleanup doesn't block the main flow
+                try:
+                    cleanup_task = asyncio.create_task(chat_agent.cleanup_mcp_tools())
+                    await asyncio.wait_for(cleanup_task, timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.debug("MCP cleanup timed out in workflow transfer (non-critical)")
+                except Exception as cleanup_error:
+                    logger.debug(f"MCP cleanup warning in workflow transfer (non-critical): {str(cleanup_error)}")
         else:
             # Fallback: just update session status without specific group
             logger.warning(f"No transfer_group_id provided for workflow transfer in session {session_id}")
@@ -288,7 +300,7 @@ class WorkflowChatService:
         logger.info(f"Workflow requested end chat for session {session_id}")
         
         # Create a ChatAgent instance to use the _handle_end_chat method
-        chat_agent = ChatAgent(
+        chat_agent = await ChatAgent.create_async(
             api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
             model_name=session['ai_config'].model_name,
             model_type=session['ai_config'].model_type,
@@ -298,9 +310,20 @@ class WorkflowChatService:
             session_id=session_id
         )
         
-        # Handle end chat using the agent's method with rating from response
-        # The response.request_rating value comes from the workflow execution config
-        return await chat_agent._handle_end_chat(response, session_id, self.db, response.request_rating)
+        try:
+            # Handle end chat using the agent's method with rating from response
+            # The response.request_rating value comes from the workflow execution config
+            return await chat_agent._handle_end_chat(response, session_id, self.db, response.request_rating)
+        finally:
+            # Clean up MCP tools
+            # Use asyncio.create_task to ensure cleanup doesn't block the main flow
+            try:
+                cleanup_task = asyncio.create_task(chat_agent.cleanup_mcp_tools())
+                await asyncio.wait_for(cleanup_task, timeout=2.0)
+            except asyncio.TimeoutError:
+                logger.debug("MCP cleanup timed out in workflow end chat (non-critical)")
+            except Exception as cleanup_error:
+                logger.debug(f"MCP cleanup warning in workflow end chat (non-critical): {str(cleanup_error)}")
     
     def _store_workflow_response(
         self, 

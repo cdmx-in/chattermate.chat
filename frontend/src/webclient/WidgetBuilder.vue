@@ -840,10 +840,41 @@ onUnmounted(() => {
     })
     cleanup()
 })
+
+// Add after the existing computed properties, around line 120
+const isAskAnythingStyle = computed(() => {
+    console.log('isAskAnythingStyle', customization.value.chat_style)
+    return customization.value.chat_style === 'ASK_ANYTHING'
+})
+
+const containerStyles = computed(() => {
+    const baseStyles = {
+        width: '100%',
+        height: '580px',
+        borderRadius: 'var(--radius-lg)'
+    }
+    
+    if (isAskAnythingStyle.value) {
+        return {
+            ...baseStyles,
+            width: '100%',
+            maxWidth: '800px',  // Increased width for ASK_ANYTHING style
+            minWidth: '600px'   // Ensure minimum width
+        }
+    }
+    
+    return baseStyles
+})
+
+const shouldShowWelcomeMessage = computed(() => {
+    console.log("isAskAnythingStyle.value", isAskAnythingStyle.value)
+    console.log("messages.value.length", messages.value.length)
+    return isAskAnythingStyle.value && messages.value.length === 0
+})
 </script>
 
 <template>
-    <div class="chat-container" :class="{ collapsed: !isExpanded }" :style="shadowStyle">
+    <div class="chat-container" :class="{ collapsed: !isExpanded, 'ask-anything-style': isAskAnythingStyle }" :style="{ ...shadowStyle, ...containerStyles }">
         <!-- Loading State -->
         <div v-if="isInitializing" class="initializing-overlay">
             <div class="loading-spinner">
@@ -875,6 +906,70 @@ onUnmounted(() => {
         <!-- Error Alert -->
         <div v-if="showError" class="error-alert" :style="chatIconStyles">
             {{ errorMessage }}
+        </div>
+
+        <!-- Welcome Message for ASK_ANYTHING Style -->
+        <div v-if="shouldShowWelcomeMessage" class="welcome-message-section" :style="chatStyles">
+            <div class="welcome-content">
+                <div class="welcome-header">
+                    <img 
+                        v-if="photoUrl" 
+                        :src="photoUrl" 
+                        :alt="agentName" 
+                        class="welcome-avatar"
+                    >
+                    <h1 class="welcome-title">{{ customization.welcome_title || `Welcome to ${agentName}` }}</h1>
+                    <p class="welcome-subtitle">{{ customization.welcome_subtitle || "I'm here to help you with anything you need. What can I assist you with today?" }}</p>
+                </div>
+            </div>
+            
+            <!-- Welcome Input Container -->
+            <div class="welcome-input-container">
+                <div class="email-input" v-if="!hasStartedChat && !hasConversationToken">
+                    <input 
+                        v-model="emailInput"
+                        type="email" 
+                        placeholder="Enter your email address" 
+                        :disabled="loading || connectionStatus !== 'connected'"
+                        :class="{ 
+                            'invalid': emailInput.trim() && !isValidEmail(emailInput.trim()),
+                            'disabled': connectionStatus !== 'connected'
+                        }"
+                        class="welcome-email-input"
+                    >
+                </div>
+                <div class="welcome-message-input">
+                    <input 
+                        v-model="newMessage" 
+                        type="text" 
+                        :placeholder="connectionStatus === 'connected' ? 'Ask me anything...' : 'Connecting...'" 
+                        @keypress="handleKeyPress"
+                        :disabled="!isMessageInputEnabled"
+                        :class="{ 'disabled': connectionStatus !== 'connected' }"
+                        class="welcome-message-field"
+                    >
+                    <button 
+                        class="welcome-send-button" 
+                        :style="userBubbleStyles" 
+                        @click="sendMessage"
+                        :disabled="!newMessage.trim() || !isMessageInputEnabled"
+                    >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M5 12L3 21L21 12L3 3L5 12ZM5 12L13 12" stroke="currentColor" stroke-width="2"
+                                stroke-linecap="round" stroke-linejoin="round" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Powered by footer for welcome message -->
+            <div class="powered-by-welcome" :style="messageNameStyles">
+                <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M45 15H15C13.3431 15 12 16.3431 12 18V42C12 43.6569 13.3431 45 15 45H25L30 52L35 45H45C46.6569 45 48 43.6569 48 42V18C48 16.3431 46.6569 15 45 15Z" fill="currentColor" opacity="0.8"/>
+                    <path d="M36 27C36 27 32.5 26 30 26C27.5 26 24 27 24 31C24 35 27.5 36 30 36C32.5 36 36 35 36 35V33C36 33 33 34 31.5 34C30 34 27 33 27 31C27 29 30 28 31.5 28C33 28 36 29 36 29V27Z" fill="currentColor"/>
+                </svg>
+                Powered by ChatterMate
+            </div>
         </div>
 
         <!-- Landing Page Display (Full Screen) -->
@@ -1068,9 +1163,9 @@ onUnmounted(() => {
             </div>
         </div>
 
-        <!-- Chat Panel (Only show when landing page and full screen form are not active) -->
-        <div v-else class="chat-panel" :style="chatStyles" v-if="isExpanded">
-            <div class="chat-header" :style="headerBorderStyles">
+        <!-- Chat Panel (Only show when landing page, full screen form, and welcome message are not active) -->
+        <div v-else-if="!shouldShowWelcomeMessage" class="chat-panel" :class="{ 'ask-anything-chat': isAskAnythingStyle }" :style="chatStyles" v-if="isExpanded">
+            <div v-if="!isAskAnythingStyle" class="chat-header" :style="headerBorderStyles">
                 <div class="header-content">
                     <img 
                         v-if="humanAgentPhotoUrl || photoUrl" 
@@ -1428,7 +1523,7 @@ onUnmounted(() => {
             </div>
 
             <!-- Chat Input Section (Hidden when conversation is ended in workflow) -->
-            <div v-if="!shouldShowNewConversationOption" class="chat-input" :style="agentBubbleStyles">
+            <div v-if="!shouldShowNewConversationOption" class="chat-input" :class="{ 'ask-anything-input': isAskAnythingStyle }" :style="agentBubbleStyles">
                 <div class="email-input" v-if="!hasStartedChat && !hasConversationToken">
                     <input 
                         v-model="emailInput"
@@ -1445,13 +1540,14 @@ onUnmounted(() => {
                     <input 
                         v-model="newMessage" 
                         type="text" 
-                        :placeholder="connectionStatus === 'connected' ? 'Type a message...' : 'Connecting...'" 
+                        :placeholder="connectionStatus === 'connected' ? (isAskAnythingStyle ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'" 
                         @keypress="handleKeyPress"
                         :disabled="!isMessageInputEnabled"
-                        :class="{ 'disabled': connectionStatus !== 'connected' }"
+                        :class="{ 'disabled': connectionStatus !== 'connected', 'ask-anything-field': isAskAnythingStyle }"
                     >
                     <button 
                         class="send-button" 
+                        :class="{ 'ask-anything-send': isAskAnythingStyle }"
                         :style="userBubbleStyles" 
                         @click="sendMessage"
                         :disabled="!newMessage.trim() || !isMessageInputEnabled"
@@ -1487,6 +1583,8 @@ onUnmounted(() => {
                 Powered by ChatterMate
             </div>
         </div>
+
+
 
         <!-- Rating Dialog -->
         <div v-if="showRatingDialog" class="rating-dialog">
@@ -3609,6 +3707,552 @@ onUnmounted(() => {
     
     .user-input-submitted {
         padding: var(--space-sm);
+    }
+}
+
+/* ========== ASK_ANYTHING CHAT STYLE - COMPLETE OVERRIDE ========== */
+
+.chat-container.ask-anything-style {
+    max-width: 800px;
+    min-width: 600px;
+    margin: 0 auto;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+}
+
+/* ASK_ANYTHING: Complete chat messages container override */
+.chat-container.ask-anything-style .chat-messages {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    padding: var(--space-xl) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    gap: var(--space-md) !important;
+    -webkit-overflow-scrolling: touch !important;
+    scroll-behavior: smooth !important;
+    margin-top: 0 !important;
+    max-width: 600px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+/* ASK_ANYTHING: Reset all message base styles */
+.chat-container.ask-anything-style .chat-messages .message {
+    display: flex !important;
+    gap: var(--space-sm) !important;
+    max-width: 85% !important;
+    align-items: flex-start !important;
+    margin-bottom: var(--space-md) !important;
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+    width: auto !important;
+    align-self: unset !important;
+    justify-content: unset !important;
+    text-align: unset !important;
+}
+
+/* ASK_ANYTHING: User messages - force right alignment */
+.chat-container.ask-anything-style .chat-messages .message.user-message,
+.chat-container.ask-anything-style .message.user-message,
+.chat-container.ask-anything-style div.message.user-message {
+    align-self: flex-end !important;
+    margin-left: auto !important;
+    margin-right: 0 !important;
+    flex-direction: row-reverse !important;
+    text-align: right !important;
+    justify-content: flex-start !important;
+    width: auto !important;
+    max-width: 85% !important;
+}
+
+/* ASK_ANYTHING: Agent/Bot messages - force left alignment */
+.chat-container.ask-anything-style .chat-messages .message.agent-message,
+.chat-container.ask-anything-style .chat-messages .message.bot,
+.chat-container.ask-anything-style .chat-messages .message.agent,
+.chat-container.ask-anything-style .message.agent-message,
+.chat-container.ask-anything-style .message.bot,
+.chat-container.ask-anything-style .message.agent,
+.chat-container.ask-anything-style div.message.agent-message,
+.chat-container.ask-anything-style div.message.bot,
+.chat-container.ask-anything-style div.message.agent {
+    align-self: flex-start !important;
+    margin-left: 0 !important;
+    margin-right: auto !important;
+    flex-direction: row !important;
+    text-align: left !important;
+    justify-content: flex-start !important;
+    width: auto !important;
+    max-width: 85% !important;
+}
+
+/* ASK_ANYTHING: Typing indicator - force left alignment */
+.chat-container.ask-anything-style .typing-indicator {
+    display: flex !important;
+    gap: 4px !important;
+    padding: 12px 16px !important;
+    margin-top: var(--space-md) !important;
+    align-self: flex-start !important;
+    margin-left: 0 !important;
+    margin-right: auto !important;
+    width: auto !important;
+    max-width: 85% !important;
+    justify-content: flex-start !important;
+}
+
+/* ASK_ANYTHING: System messages - center them */
+.chat-container.ask-anything-style .chat-messages .message.system-message,
+.chat-container.ask-anything-style .message.system-message {
+    align-self: center !important;
+    margin: var(--space-sm) auto !important;
+    text-align: center !important;
+    max-width: 100% !important;
+    justify-content: center !important;
+}
+
+/* ASK_ANYTHING: Message bubbles */
+.chat-container.ask-anything-style .message-bubble {
+    padding: var(--space-md) var(--space-lg) !important;
+    border-radius: 20px !important;
+    line-height: 1.4 !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08) !important;
+    max-width: 100% !important;
+    width: auto !important;
+    display: inline-block !important;
+}
+
+.chat-container.ask-anything-style .user-message .message-bubble {
+    border-bottom-right-radius: 6px !important;
+}
+
+.chat-container.ask-anything-style .agent-message .message-bubble,
+.chat-container.ask-anything-style .bot .message-bubble,
+.chat-container.ask-anything-style .agent .message-bubble {
+    border-bottom-left-radius: 6px !important;
+}
+
+/* ASK_ANYTHING: Chat Panel Layout */
+.chat-panel.ask-anything-chat {
+    max-width: 700px;
+    margin: 0 auto;
+    background: var(--background-base);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+}
+
+/* ASK_ANYTHING Input Styling */
+.chat-input.ask-anything-input {
+    padding: var(--space-xl) !important;
+    background: var(--background-base) !important;
+    border-top: 1px solid var(--border-color) !important;
+    border-radius: 0 0 var(--radius-lg) var(--radius-lg) !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+}
+
+.chat-input.ask-anything-input .message-input {
+    max-width: 600px !important;
+    margin: 0 auto !important;
+    gap: var(--space-md) !important;
+    display: flex !important;
+    align-items: center !important;
+    width: 100% !important;
+}
+
+.chat-input.ask-anything-input .email-input {
+    max-width: 600px !important;
+    margin: 0 auto var(--space-md) auto !important;
+    width: 100% !important;
+}
+
+.chat-input.ask-anything-input .email-input input {
+    padding: 18px 24px;
+    border: 2px solid var(--border-color);
+    border-radius: 16px;
+    font-size: 1rem;
+    font-weight: 500;
+    background: var(--background-base);
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.chat-input.ask-anything-input .email-input input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(243, 70, 17, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}
+
+.ask-anything-field {
+    padding: 18px 24px !important;
+    border: 2px solid var(--border-color) !important;
+    border-radius: 16px !important;
+    font-size: 1rem !important;
+    font-weight: 500 !important;
+    background: var(--background-base) !important;
+    color: var(--text-primary) !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05) !important;
+}
+
+.ask-anything-field:focus {
+    outline: none !important;
+    border-color: var(--primary-color) !important;
+    box-shadow: 0 0 0 4px rgba(243, 70, 17, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1) !important;
+    transform: translateY(-1px) !important;
+}
+
+.ask-anything-field::placeholder {
+    color: var(--text-muted) !important;
+    font-weight: 400 !important;
+}
+
+.send-button.ask-anything-send {
+    padding: 18px !important;
+    min-width: 56px !important;
+    height: 56px !important;
+    border-radius: 16px !important;
+    transition: all 0.3s ease !important;
+    box-shadow: 0 4px 14px rgba(243, 70, 17, 0.3) !important;
+}
+
+.send-button.ask-anything-send:hover:not(:disabled) {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 8px 25px rgba(243, 70, 17, 0.4) !important;
+}
+
+.send-button.ask-anything-send:active:not(:disabled) {
+    transform: translateY(0) !important;
+    box-shadow: 0 4px 14px rgba(243, 70, 17, 0.3) !important;
+}
+
+/* Welcome Message Section for ASK_ANYTHING Style */
+.welcome-message-section {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--background-base);
+    border-radius: var(--radius-lg);
+    position: relative;
+    overflow: hidden;
+    padding: var(--space-xl);
+    box-sizing: border-box;
+}
+
+.welcome-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    max-width: 600px;
+    text-align: center;
+    flex: 1;
+}
+
+.welcome-header {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-lg);
+}
+
+.welcome-avatar {
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    object-fit: cover;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+    border: 4px solid white;
+}
+
+.welcome-title {
+    font-size: 2.5rem;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0;
+    line-height: 1.2;
+    letter-spacing: -0.02em;
+}
+
+.welcome-subtitle {
+    font-size: 1.125rem;
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.6;
+    max-width: 500px;
+    font-weight: 400;
+}
+
+/* Welcome Input Section */
+.welcome-input-section {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    background: var(--background-base);
+    border-radius: var(--radius-lg);
+    position: relative;
+}
+
+.welcome-input-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-lg);
+    max-width: 600px;
+    margin: 0 auto;
+    width: 100%;
+    padding: 0;
+}
+
+.welcome-input-container .email-input {
+    width: 100%;
+    margin-bottom: var(--space-md);
+}
+
+.welcome-email-input {
+    width: 100%;
+    padding: 18px 24px;
+    border: 2px solid var(--border-color);
+    border-radius: 16px;
+    font-size: 1rem;
+    font-weight: 500;
+    background: var(--background-base);
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.welcome-email-input:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(243, 70, 17, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}
+
+.welcome-email-input.invalid {
+    border-color: var(--error-color);
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.1);
+}
+
+.welcome-email-input.disabled {
+    background-color: rgba(0, 0, 0, 0.05);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.welcome-message-input {
+    display: flex;
+    gap: var(--space-md);
+    width: 100%;
+    align-items: center;
+}
+
+.welcome-message-field {
+    flex: 1;
+    padding: 18px 24px;
+    border: 2px solid var(--border-color);
+    border-radius: 16px;
+    font-size: 1rem;
+    font-weight: 500;
+    background: var(--background-base);
+    color: var(--text-primary);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+}
+
+.welcome-message-field:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 4px rgba(243, 70, 17, 0.1), 0 8px 16px rgba(0, 0, 0, 0.1);
+    transform: translateY(-1px);
+}
+
+.welcome-message-field.disabled {
+    background-color: rgba(0, 0, 0, 0.05);
+    cursor: not-allowed;
+    opacity: 0.7;
+}
+
+.welcome-message-field::placeholder {
+    color: var(--text-muted);
+    font-weight: 400;
+}
+
+.welcome-send-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    min-width: 56px;
+    height: 56px;
+    border: none;
+    border-radius: 16px;
+    cursor: pointer;
+    color: white;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 14px rgba(243, 70, 17, 0.3);
+}
+
+.welcome-send-button:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 25px rgba(243, 70, 17, 0.4);
+}
+
+.welcome-send-button:active:not(:disabled) {
+    transform: translateY(0);
+    box-shadow: 0 4px 14px rgba(243, 70, 17, 0.3);
+}
+
+.welcome-send-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.powered-by-welcome {
+    text-align: center;
+    font-size: 0.75rem;
+    opacity: 0.6;
+    color: var(--text-muted);
+    padding: var(--space-md);
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: auto;
+}
+
+/* Responsive styles for ASK_ANYTHING */
+@media (max-width: 768px) {
+    .chat-container.ask-anything-style {
+        min-width: 100%;
+        max-width: 100%;
+        margin: 0;
+    }
+    
+    .chat-panel.ask-anything-chat {
+        max-width: 100%;
+        margin: 0;
+        border-radius: 0;
+    }
+    
+    .chat-container.ask-anything-style .chat-messages {
+        padding: var(--space-lg) !important;
+        max-width: 100% !important;
+        padding-top: var(--space-lg) !important;
+    }
+    
+    .chat-input.ask-anything-input {
+        padding: var(--space-lg);
+        border-radius: 0;
+    }
+    
+    .chat-input.ask-anything-input .message-input,
+    .chat-input.ask-anything-input .email-input {
+        max-width: 100%;
+    }
+    
+    .ask-anything-field {
+        padding: 16px 20px !important;
+        font-size: 0.9rem !important;
+        border-radius: 12px !important;
+    }
+    
+    .send-button.ask-anything-send {
+        padding: 16px !important;
+        min-width: 52px !important;
+        height: 52px !important;
+        border-radius: 12px !important;
+    }
+    
+    .welcome-title {
+        font-size: 2rem;
+    }
+    
+    .welcome-subtitle {
+        font-size: 1rem;
+    }
+    
+    .welcome-input-container {
+        padding: var(--space-lg);
+        gap: var(--space-md);
+    }
+    
+    .welcome-email-input,
+    .welcome-message-field {
+        padding: 16px 20px;
+        font-size: 0.9rem;
+        border-radius: 12px;
+    }
+    
+    .welcome-send-button {
+        padding: 16px;
+        min-width: 52px;
+        height: 52px;
+        border-radius: 12px;
+    }
+    
+    .welcome-avatar {
+        width: 64px;
+        height: 64px;
+    }
+    
+    .welcome-message-input {
+        gap: var(--space-sm);
+    }
+}
+
+@media (max-width: 480px) {
+    .welcome-title {
+        font-size: 1.75rem;
+    }
+    
+    .welcome-subtitle {
+        font-size: 0.9rem;
+    }
+    
+    .welcome-input-container {
+        padding: var(--space-md);
+    }
+    
+    .welcome-email-input,
+    .welcome-message-field {
+        padding: 14px 18px;
+        font-size: 0.85rem;
+    }
+    
+    .welcome-send-button {
+        padding: 14px;
+        min-width: 48px;
+        height: 48px;
+    }
+    
+    .chat-input.ask-anything-input {
+        padding: var(--space-md);
+    }
+    
+    .ask-anything-field {
+        padding: 14px 18px !important;
+        font-size: 0.85rem !important;
+    }
+    
+    .send-button.ask-anything-send {
+        padding: 14px !important;
+        min-width: 48px !important;
+        height: 48px !important;
     }
 }
 </style>

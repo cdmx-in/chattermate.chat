@@ -34,6 +34,16 @@ class AgentType(str, enum.Enum):
     CUSTOM = "custom"
 
 
+class ChatStyle(str, enum.Enum):
+    CHATBOT = "CHATBOT"
+    ASK_ANYTHING = "ASK_ANYTHING"
+
+
+class WidgetPosition(str, enum.Enum):
+    FLOATING = "FLOATING"
+    FIXED = "FIXED"
+
+
 class AgentCustomization(Base):
     __tablename__ = "agent_customizations"
 
@@ -49,6 +59,10 @@ class AgentCustomization(Base):
     font_family = Column(String, default="Inter, system-ui, sans-serif")
     custom_css = Column(Text)
     customization_metadata = Column(JSON, default={})
+    chat_style = Column(SQLEnum(ChatStyle), default=ChatStyle.CHATBOT, nullable=False)
+    widget_position = Column(SQLEnum(WidgetPosition), default=WidgetPosition.FLOATING, nullable=False)
+    welcome_title = Column(String, nullable=True)
+    welcome_subtitle = Column(String, nullable=True)
 
     # Relationship
     agent = relationship("Agent", back_populates="customization")
@@ -104,6 +118,8 @@ class Agent(Base):
     organization = relationship("Organization", back_populates="agents")
     knowledge_links = relationship(
         "KnowledgeToAgent", back_populates="agent", cascade="all, delete-orphan")
+    mcp_tool_links = relationship(
+        "MCPToolToAgent", back_populates="agent", cascade="all, delete-orphan")
     customization = relationship(
         "AgentCustomization", back_populates="agent", uselist=False)
     widgets = relationship("Widget", back_populates="agent")

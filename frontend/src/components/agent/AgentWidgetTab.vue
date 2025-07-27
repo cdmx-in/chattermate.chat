@@ -17,6 +17,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
+import { computed } from 'vue'
+
 interface Widget {
   id: string;
   [key: string]: any;
@@ -34,14 +36,39 @@ const props = defineProps({
   widgetLoading: {
     type: Boolean,
     required: true
+  },
+  agent: {
+    type: Object,
+    required: true
   }
 })
 
-const emit = defineEmits(['copy-widget-code'])
+const emit = defineEmits(['copy-widget-code', 'copy-iframe-code'])
 
 const copyWidgetCode = () => {
   emit('copy-widget-code')
 }
+
+const copyIframeCode = () => {
+  emit('copy-iframe-code')
+}
+
+// Check if this is an "Ask Anything" style agent
+const isAskAnythingStyle = computed(() => {
+  return props.agent?.customization?.chat_style === 'ASK_ANYTHING'
+})
+
+// Generate iframe URL
+const iframeUrl = computed(() => {
+  if (!props.widget?.id) return ''
+  return `${props.widgetUrl}/api/v1/widgets/${props.widget.id}/data`
+})
+
+// Generate iframe embed code
+const iframeEmbedCode = computed(() => {
+  if (!props.widget?.id) return ''
+  return `<iframe src="${iframeUrl.value}" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write"></iframe>`
+})
 </script>
 
 <template>
@@ -80,6 +107,57 @@ const copyWidgetCode = () => {
             <div class="info-icon">ℹ️</div>
             <div class="info-content">
               <p>The widget will appear as a chat button in the bottom right corner of your website.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Iframe Integration Section for Ask Anything Style -->
+      <div v-if="isAskAnythingStyle" class="widget-info">
+        <h4 class="widget-section-title">Iframe Integration (Ask Anything Style)</h4>
+        <div v-if="widgetLoading" class="loading-indicator">
+          <div class="loading-spinner"></div>
+          Loading iframe info...
+        </div>
+        <div v-else-if="widget" class="widget-code-section">
+          <p class="code-description">For "Ask Anything" style agents, you can also embed the chat interface directly as an iframe:</p>
+          
+          <!-- Iframe Preview -->
+          <div class="iframe-preview-section">
+            <h5 class="preview-title">Preview:</h5>
+            <div class="iframe-preview-container">
+              <iframe 
+                :src="iframeUrl"
+                class="iframe-preview"
+                frameborder="0"
+                title="AI Assistant Preview"
+                allow="clipboard-write"
+              ></iframe>
+            </div>
+          </div>
+
+          <!-- Iframe Code -->
+          <div class="code-container">
+            <code>{{ iframeEmbedCode }}</code>
+            <button class="copy-button" @click="copyIframeCode" title="Copy iframe code">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none"
+                xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M8 4V16C8 17.1046 8.89543 18 10 18H18C19.1046 18 20 17.1046 20 16V7.41421C20 6.88378 19.7893 6.37507 19.4142 6L16 2.58579C15.6249 2.21071 15.1162 2 14.5858 2H10C8.89543 2 8 2.89543 8 4Z"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round" />
+                <path
+                  d="M16 18V20C16 21.1046 15.1046 22 14 22H6C4.89543 22 4 21.1046 4 20V8C4 6.89543 4.89543 6 6 6H8"
+                  stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                  stroke-linejoin="round" />
+              </svg>
+            </button>
+          </div>
+          
+          <div class="info-box">
+            <div class="info-icon">💡</div>
+            <div class="info-content">
+              <p><strong>Iframe Benefits:</strong> Perfect for embedding the full chat interface directly into your page content, ideal for help pages, contact forms, or dedicated support sections.</p>
             </div>
           </div>
         </div>
@@ -282,5 +360,39 @@ const copyWidgetCode = () => {
 .customize-btn:hover {
   filter: brightness(1.1);
   transform: translateY(-1px);
+}
+
+/* Iframe integration styles */
+.iframe-preview-section {
+  margin-bottom: var(--space-lg);
+}
+
+.preview-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: var(--space-sm);
+}
+
+.iframe-preview-container {
+  background: var(--background-alt);
+  border-radius: var(--radius-lg);
+  padding: var(--space-md);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.iframe-preview {
+  width: 100%;
+  height: 400px;
+  border-radius: var(--radius-md);
+  background: white;
+  display: block;
+}
+
+@media (max-width: 768px) {
+  .iframe-preview {
+    height: 300px;
+  }
 }
 </style> 

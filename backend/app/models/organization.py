@@ -61,6 +61,7 @@ class Organization(Base):
     agents = relationship("Agent", back_populates="organization")
     knowledge_sources = relationship(
         "Knowledge", back_populates="organization")
+    mcp_tools = relationship("MCPTool", back_populates="organization")
     widgets = relationship("Widget", back_populates="organization")
     groups = relationship("UserGroup", back_populates="organization")
     workflows = relationship("Workflow", back_populates="organization")

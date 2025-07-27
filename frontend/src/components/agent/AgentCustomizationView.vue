@@ -18,7 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <script setup lang="ts">
 import { ref, watch, onMounted, computed, onUnmounted } from 'vue'
-import type { AgentWithCustomization, AgentCustomization } from '@/types/agent'
+import type { AgentWithCustomization, AgentCustomization, ChatStyle } from '@/types/agent'
 import { agentService } from '@/services/agent'
 import WebFont from 'webfontloader'
 
@@ -42,14 +42,39 @@ const customization = ref<AgentCustomization>({
     photo_url: props.agent.customization?.photo_url,
     custom_css: props.agent.customization?.custom_css,
     customization_metadata: props.agent.customization?.customization_metadata ?? {},
+    chat_style: props.agent.customization?.chat_style ?? 'CHATBOT',
+    welcome_title: props.agent.customization?.welcome_title ?? '',
+    welcome_subtitle: props.agent.customization?.welcome_subtitle ?? '',
 })
+
+// Chat style options with descriptions
+const chatStyleOptions = [
+    {
+        value: 'CHATBOT' as ChatStyle,
+        label: 'Chatbot',
+        description: 'Traditional customer support style with agent branding',
+        icon: '💬'
+    },
+    {
+        value: 'ASK_ANYTHING' as ChatStyle,
+        label: 'Ask Anything',
+        description: 'Modern AI assistant style for general queries',
+        icon: '🤖'
+    }
+]
 
 const handleSave = async () => {
     try {
-        await agentService.updateCustomization(
+        const updatedCustomization = await agentService.updateCustomization(
             props.agent.id,
             customization.value,
         )
+        
+        // Update local customization with the response
+        customization.value = updatedCustomization
+        
+        // Emit preview to update the preview panel
+        emit('preview', updatedCustomization)
         
         // Show success message or handle success state
         console.log('Customization saved successfully')
@@ -60,7 +85,29 @@ const handleSave = async () => {
 
 // Watch for changes and emit preview event
 watch(customization, (newValue) => {
+    console.log('AgentCustomizationView - Customization changed, emitting preview:', newValue)
     emit('preview', newValue)
+}, { deep: true })
+
+// Watch for prop changes to update local customization
+watch(() => props.agent.customization, (newCustomization) => {
+    if (newCustomization) {
+        customization.value = {
+            id: newCustomization.id ?? 0,
+            agent_id: props.agent.id,
+            chat_background_color: newCustomization.chat_background_color ?? '#F8F9FA',
+            chat_bubble_color: newCustomization.chat_bubble_color ?? '#E9ECEF',
+            icon_color: newCustomization.icon_color ?? '#6C757D',
+            accent_color: newCustomization.accent_color ?? '#f34611',
+            font_family: newCustomization.font_family ?? 'Inter, system-ui, sans-serif',
+            photo_url: newCustomization.photo_url,
+            custom_css: newCustomization.custom_css,
+            customization_metadata: newCustomization.customization_metadata ?? {},
+            chat_style: newCustomization.chat_style ?? 'CHATBOT',
+            welcome_title: newCustomization.welcome_title ?? '',
+            welcome_subtitle: newCustomization.welcome_subtitle ?? '',
+        }
+    }
 }, { deep: true })
 
 // Add state for Google Fonts
@@ -78,6 +125,10 @@ onMounted(async () => {
     } finally {
         isLoadingFonts.value = false
     }
+    
+    // Emit initial preview to ensure preview panel gets the customization data
+    console.log('AgentCustomizationView - Emitting initial preview:', customization.value)
+    emit('preview', customization.value)
 })
 
 // Update font preview when selection changes
@@ -133,11 +184,79 @@ const handleFontSelect = (font: string) => {
     customization.value.font_family = font
     showFontDropdown.value = false
 }
+
+const handleChatStyleChange = (event: Event) => {
+    const target = event.target as HTMLSelectElement
+    const selectedValue = target.value as ChatStyle
+    customization.value.chat_style = selectedValue
+}
 </script>
 
 <template>
     <div class="customization-form">
         <div class="form-content">
+            <!-- Widget Style Section -->
+            <div class="form-section">
+                <h4>Chat Style</h4>
+                
+                <div class="form-group">
+                    <label>Style Type</label>
+                    <div class="chat-style-dropdown">
+                        <select 
+                            v-model="customization.chat_style" 
+                            @change="handleChatStyleChange"
+                            class="chat-style-select"
+                        >
+                            <option 
+                                v-for="option in chatStyleOptions" 
+                                :key="option.value" 
+                                :value="option.value"
+                            >
+                                {{ option.icon }} {{ option.label }} - {{ option.description }}
+                            </option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Welcome Text Section (only for ASK_ANYTHING style) -->
+            <div v-if="customization.chat_style === 'ASK_ANYTHING'" class="form-section">
+                <h4>Welcome Message</h4>
+                <p class="section-description">
+                    Customize the welcome message shown when users first open the chat.
+                </p>
+                
+                <div class="form-group">
+                    <label for="welcome-title">Welcome Title</label>
+                    <input 
+                        id="welcome-title"
+                        type="text" 
+                        v-model="customization.welcome_title"
+                        placeholder="e.g., Welcome to our AI Assistant"
+                        class="text-input"
+                        maxlength="100"
+                    >
+                    <small class="input-hint">
+                        Leave empty to use default: "Welcome to {{ props.agent.display_name || props.agent.name }}"
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label for="welcome-subtitle">Welcome Subtitle</label>
+                    <textarea 
+                        id="welcome-subtitle"
+                        v-model="customization.welcome_subtitle"
+                        placeholder="e.g., I'm here to help you with anything you need. What can I assist you with today?"
+                        class="text-textarea"
+                        rows="3"
+                        maxlength="250"
+                    ></textarea>
+                    <small class="input-hint">
+                        Leave empty to use default message
+                    </small>
+                </div>
+            </div>
+
             <div class="form-section">
                 <h4>Colors</h4>
                 <div class="color-grid">
@@ -233,13 +352,15 @@ const handleFontSelect = (font: string) => {
 }
 
 .form-group {
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-md);
 }
 
 .form-group label {
     display: block;
-    margin-bottom: var(--space-xs);
+    margin-bottom: var(--space-sm);
     color: var(--text-muted);
+    font-weight: 500;
+    font-size: var(--text-sm);
 }
 
 .form-group input[type="file"],
@@ -277,13 +398,6 @@ const handleFontSelect = (font: string) => {
     text-align: center;
     color: var(--text-muted);
     font-size: var(--text-sm);
-}
-
-.image-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: var(--space-sm);
-    margin-bottom: var(--space-sm);
 }
 
 .color-grid {
@@ -342,6 +456,7 @@ const handleFontSelect = (font: string) => {
     font-weight: 500;
     flex: 1;
     min-width: 120px;
+    transition: var(--transition-fast);
 }
 
 .save-button {
@@ -349,9 +464,17 @@ const handleFontSelect = (font: string) => {
     color: white;
 }
 
+.save-button:hover {
+    background: var(--primary-dark);
+}
+
 .cancel-button {
     background: var(--background-soft);
     color: var(--text-color);
+}
+
+.cancel-button:hover {
+    background: var(--background-mute);
 }
 
 .font-picker {
@@ -384,11 +507,13 @@ const handleFontSelect = (font: string) => {
     border-radius: var(--radius-md);
     margin-top: var(--space-xs);
     z-index: 10;
+    box-shadow: var(--shadow-lg);
 }
 
 .font-option {
     padding: var(--space-sm);
     cursor: pointer;
+    transition: var(--transition-fast);
 }
 
 .font-option:hover {
@@ -398,5 +523,82 @@ const handleFontSelect = (font: string) => {
 .color-picker label {
     font-size: var(--text-sm);
     margin-bottom: var(--space-xs);
+}
+
+/* Chat style dropdown styles */
+.chat-style-dropdown {
+    position: relative;
+}
+
+.chat-style-select {
+    width: 100%;
+    padding: var(--space-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--background-soft);
+    color: var(--text-color);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.chat-style-select:hover {
+    border-color: var(--border-color-hover);
+    background: var(--background-mute);
+}
+
+.chat-style-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+}
+
+/* Welcome text customization styles */
+.section-description {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-md);
+    line-height: 1.5;
+}
+
+.text-input,
+.text-textarea {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--background-soft);
+    color: var(--text-color);
+    font-size: var(--text-sm);
+    font-family: inherit;
+    transition: var(--transition-fast);
+    resize: vertical;
+}
+
+.text-input:focus,
+.text-textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+    background: var(--background-base);
+}
+
+.text-input::placeholder,
+.text-textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.input-hint {
+    display: block;
+    margin-top: var(--space-xs);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+}
+
+.text-textarea {
+    min-height: 80px;
+    line-height: 1.5;
 }
 </style>

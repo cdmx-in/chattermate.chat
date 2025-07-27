@@ -30,6 +30,7 @@ import AgentWidgetTab from './AgentWidgetTab.vue'
 import AgentAdvancedTab from './AgentAdvancedTab.vue'
 import AgentInstructionsTab from './AgentInstructionsTab.vue'
 import AgentWorkflowTab from './AgentWorkflowTab.vue'
+import AgentMCPToolsTab from './AgentMCPToolsTab.vue'
 import { Cropper, CircleStencil } from 'vue-advanced-cropper'
 import 'vue-advanced-cropper/dist/style.css'
 import { useAgentChat } from '@/composables/useAgentChat'
@@ -57,7 +58,9 @@ const previewCustomization = ref<AgentCustomization>({
     photo_url: agentData.value.customization?.photo_url,
     icon_color: agentData.value.customization?.icon_color ?? '#6C757D',
     custom_css: agentData.value.customization?.custom_css,
-    customization_metadata: agentData.value.customization?.customization_metadata ?? {}
+    customization_metadata: agentData.value.customization?.customization_metadata ?? {},
+    chat_style: agentData.value.customization?.chat_style ?? 'CHATBOT',
+    widget_position: agentData.value.customization?.widget_position
 })
 
 
@@ -81,6 +84,40 @@ const instructionsText = computed({
 const iframeUrl = computed(() => {
     if (!widget.value?.id) return ''
     return `${baseUrl.value}/widgets/${widget.value.id}/data?widget_id=${widget.value.id}`
+})
+
+// Computed property to check if chat style is ASK_ANYTHING for preview adjustments
+const isAskAnythingStyle = computed(() => {
+    return previewCustomization.value.chat_style === 'ASK_ANYTHING'
+})
+
+// Computed property for preview wrapper styles
+const previewWrapperStyles = computed(() => {
+    const baseStyles = {
+        background: 'var(--background-alt, #f0f0f0)',
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+        height: '600px',
+        flexShrink: '0',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
+        border: '1px solid var(--border-color)'
+    }
+    
+    if (isAskAnythingStyle.value) {
+        return {
+            ...baseStyles,
+            width: '700px',  // Increased width for ASK_ANYTHING style
+            minWidth: '600px'
+        }
+    }
+    
+    return {
+        ...baseStyles,
+        width: '400px'
+    }
 })
 
 const emit = defineEmits<{
@@ -135,7 +172,22 @@ const {
 const { cleanup } = useAgentChat(agentData.value.id)
 
 const handlePreview = (customization: AgentCustomization) => {
-    previewCustomization.value = customization
+    previewCustomization.value = {
+        ...customization,
+        chat_style: customization.chat_style ?? 'CHATBOT',
+        widget_position: customization.widget_position
+    }
+    
+    // Also update the agentData customization to keep it in sync
+    // This ensures when switching tabs, the latest saved data is preserved
+    agentData.value.customization = {
+        ...customization,
+        chat_style: customization.chat_style ?? 'CHATBOT',
+        widget_position: customization.widget_position
+    }
+    
+    // Update storage to keep data in sync
+    agentStorage.updateAgent(agentData.value)
 }
 
 const photoUrl = computed(() => {
@@ -158,6 +210,17 @@ const handleClose = () => {
 
 const copyWidgetCode = () => {
     copyWidgetCodeFn(widgetUrl.value)
+}
+
+const copyIframeCode = () => {
+    if (!widget.value?.id) return
+    const iframeCode = `<iframe src="${widgetUrl.value}/api/v1/widgets/${widget.value.id}/data" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write"></iframe>`
+    navigator.clipboard.writeText(iframeCode).then(() => {
+        // Could show a toast notification here
+        console.log('Iframe code copied to clipboard')
+    }).catch(err => {
+        console.error('Failed to copy iframe code: ', err)
+    })
 }
 
 // Dialog state for knowledge tips
@@ -247,8 +310,14 @@ const handleCustomizationSave = (updatedAgent: AgentWithCustomization) => {
     // Update storage to keep data in sync
     agentStorage.updateAgent(updatedAgent)
     
-    // Update preview customization
-    previewCustomization.value = updatedAgent.customization ?? previewCustomization.value
+    // Update preview customization with all properties including chat_style
+    if (updatedAgent.customization) {
+        previewCustomization.value = {
+            ...updatedAgent.customization,
+            chat_style: updatedAgent.customization.chat_style ?? 'CHATBOT',
+            widget_position: updatedAgent.customization.widget_position
+        }
+    }
     
     // Switch back to general tab
     switchTab('general')
@@ -380,7 +449,7 @@ onMounted(async () => {
     // Check if we should switch to knowledge tab based on URL query parameter
     const urlParams = new URLSearchParams(window.location.search)
     const tab = urlParams.get('tab')
-    if (tab && ['agent', 'preview', 'knowledge', 'integrations', 'widget', 'advanced', 'workflow-builder', 'customization'].includes(tab)) {
+    if (tab && ['agent', 'preview', 'knowledge', 'integrations', 'mcp-tools', 'widget', 'advanced', 'workflow-builder', 'customization'].includes(tab)) {
         activeTab.value = tab
     } else if (agentData.value.use_workflow === true) {
         // Show workflow builder tab by default when using workflow
@@ -549,6 +618,13 @@ onMounted(async () => {
                         </button>
                         <button 
                             class="tab-button" 
+                            :class="{ 'active': activeTab === 'mcp-tools' }"
+                            @click="switchTab('mcp-tools')"
+                        >
+                            MCP Tools
+                        </button>
+                        <button 
+                            class="tab-button" 
                             :class="{ 'active': activeTab === 'widget' }"
                             @click="switchTab('widget')"
                         >
@@ -593,7 +669,7 @@ onMounted(async () => {
                                         This is how your chat widget will appear to users. The preview shows the exact interface they will interact with.
                                     </p>
                                 </div>
-                                <div class="preview-wrapper">
+                                <div class="preview-wrapper" :style="previewWrapperStyles">
                                     <iframe 
                                         v-if="widget?.id"
                                         :src="iframeUrl"
@@ -653,13 +729,22 @@ onMounted(async () => {
                             />
                         </div>
 
+                        <!-- MCP Tools Tab -->
+                        <div v-if="activeTab === 'mcp-tools'" class="tab-content">
+                            <AgentMCPToolsTab
+                                :agent-id="agentData.id"
+                            />
+                        </div>
+
                         <!-- Widget Tab -->
                         <div v-if="activeTab === 'widget'" class="tab-content">
                             <AgentWidgetTab
                                 :widget="widget"
                                 :widget-url="widgetUrl"
                                 :widget-loading="widgetLoading"
+                                :agent="agent"
                                 @copy-widget-code="copyWidgetCode"
+                                @copy-iframe-code="copyIframeCode"
                             />
                         </div>
 
@@ -782,7 +867,9 @@ onMounted(async () => {
     min-height: 100vh;
     height: auto;
     background: var(--background-base);
-    overflow: visible;
+    overflow-x: hidden;
+    max-width: 100vw;
+    box-sizing: border-box;
 }
 
 .detail-panel {
@@ -793,12 +880,13 @@ onMounted(async () => {
     overflow: visible;
     display: flex;
     flex-direction: column;
-    margin: var(--space-md);
-    min-height: calc(100vh - 2 * var(--space-md));
+    margin: var(--space-sm);
+    min-height: calc(100vh - 2 * var(--space-sm));
+    max-width: 100%;
 }
 
 .panel-header {
-    padding: var(--space-xl) var(--space-xl) var(--space-lg);
+    padding: var(--space-lg) var(--space-lg) var(--space-md);
     border-bottom: 1px solid var(--border-color);
     background: var(--background-soft);
 }
@@ -806,7 +894,7 @@ onMounted(async () => {
 .header-layout {
     display: flex;
     align-items: center;
-    gap: var(--space-lg);
+    gap: var(--space-md);
 }
 
 .back-button {
@@ -841,21 +929,23 @@ onMounted(async () => {
 
 .agent-header {
     display: flex;
-    gap: var(--space-lg);
+    gap: var(--space-md);
     align-items: center;
     flex: 1;
+    min-width: 0; /* Allow shrinking */
 }
 
 .agent-avatar {
     position: relative;
     cursor: pointer;
-    width: 96px;
-    height: 96px;
+    width: 80px;
+    height: 80px;
     border-radius: 50%;
     overflow: hidden;
     border: 3px solid white;
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     transition: all 0.3s ease;
+    flex-shrink: 0;
 }
 
 .agent-avatar:hover {
@@ -904,14 +994,19 @@ onMounted(async () => {
     display: flex;
     flex-direction: column;
     gap: var(--space-sm);
+    min-width: 0; /* Allow shrinking */
+    overflow: hidden;
 }
 
 .agent-info h3 {
-    font-size: 1.5rem;
+    font-size: 1.25rem;
     font-weight: 700;
     color: var(--text-color);
     margin: 0;
     line-height: 1.3;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .name-section {
@@ -919,6 +1014,8 @@ onMounted(async () => {
     align-items: center;
     justify-content: space-between;
     gap: var(--space-sm);
+    min-width: 0;
+    overflow: hidden;
 }
 
 .name-display {
@@ -939,10 +1036,11 @@ onMounted(async () => {
     padding: var(--space-sm) var(--space-md);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
-    font-size: 1.2rem;
+    font-size: 1rem;
     font-weight: 600;
     background: white;
     color: var(--text-color);
+    min-width: 0;
 }
 
 .name-input:focus {
@@ -1572,17 +1670,8 @@ input:checked + .slider:before {
 }
 
 .preview-wrapper {
-    background: var(--background-alt, #f0f0f0);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    height: 600px;
-    width: 400px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    border: 1px solid var(--border-color);
+    /* Base styles are now handled by computed previewWrapperStyles */
+    transition: all 0.3s ease;
 }
 
 .loading-preview {
@@ -1787,7 +1876,7 @@ input:checked + .slider:before {
     display: flex;
     flex-direction: column;
     background: var(--background-base);
-    padding: var(--space-xl);
+    padding: var(--space-lg);
     min-height: calc(100vh - 200px);
 }
 
@@ -1795,7 +1884,7 @@ input:checked + .slider:before {
     padding: var(--space-md) var(--space-lg);
     background: transparent;
     border: none;
-    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
     cursor: pointer;
     transition: all 0.3s ease;
     font-weight: 500;
@@ -1805,6 +1894,11 @@ input:checked + .slider:before {
     text-align: center;
     white-space: nowrap;
     border-bottom: 3px solid transparent;
+    flex-shrink: 0;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .tabs-navigation {
@@ -1815,17 +1909,26 @@ input:checked + .slider:before {
     display: flex;
     gap: var(--space-sm);
     border-bottom: 1px solid var(--border-color);
-    padding: 0 var(--space-xl);
+    padding: 0 var(--space-lg);
     margin: 0;
     overflow-x: auto;
     background: white;
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE and Edge */
+    min-height: 60px;
+    align-items: flex-end;
+}
+
+.tabs-navigation.horizontal::-webkit-scrollbar {
+    display: none; /* Chrome, Safari and Opera */
 }
 
 .tab-button:hover {
     color: var(--text-color);
     background: var(--background-soft);
     transform: translateY(-1px);
+    border-radius: var(--radius-md);
 }
 
 .tab-button.active {
@@ -1833,6 +1936,7 @@ input:checked + .slider:before {
     font-weight: 600;
     background: var(--primary-soft);
     border-bottom-color: var(--primary-color);
+    border-radius: var(--radius-md) var(--radius-md) 0 0;
 }
 
 .tabs-navigation.horizontal .tab-button.active::after {
@@ -2023,6 +2127,102 @@ input:checked + .slider:before {
     border-radius: var(--radius-lg);
     padding: var(--space-lg);
     padding-top: 0;
+}
+
+/* Responsive Design for smaller laptops */
+@media (max-width: 1600px) {
+    .panel-header {
+        padding: var(--space-md) var(--space-md) var(--space-sm);
+    }
+    
+    .header-layout {
+        gap: var(--space-sm);
+    }
+    
+    .agent-header {
+        gap: var(--space-sm);
+    }
+    
+    .agent-avatar {
+        width: 64px;
+        height: 64px;
+    }
+    
+    .agent-info h3 {
+        font-size: 1.125rem;
+    }
+    
+    .tabs-navigation.horizontal {
+        padding: 0 var(--space-md);
+        gap: var(--space-xs);
+        min-height: 56px;
+    }
+    
+    .tab-button {
+        padding: var(--space-sm) var(--space-md);
+        font-size: 0.875rem;
+        min-height: 40px;
+    }
+    
+    .tab-content-container {
+        padding: var(--space-md);
+    }
+}
+
+@media (max-width: 1440px) {
+    .detail-panel {
+        margin: var(--space-xs);
+    }
+    
+    .panel-header {
+        padding: var(--space-sm) var(--space-sm) var(--space-xs);
+    }
+    
+    .agent-avatar {
+        width: 56px;
+        height: 56px;
+    }
+    
+    .agent-info h3 {
+        font-size: 1rem;
+    }
+    
+    .mode-button {
+        padding: var(--space-xs) var(--space-xs);
+    }
+    
+    .mode-label {
+        font-size: 0.625rem;
+    }
+    
+    .status-and-mode {
+        gap: var(--space-xs);
+    }
+    
+    .mode-toggle {
+        padding: 1px;
+    }
+    
+    .status-text {
+        font-size: 0.75rem;
+    }
+    
+    .tabs-navigation.horizontal {
+        padding: 0 var(--space-sm);
+        gap: 2px;
+        min-height: 52px;
+    }
+    
+    .tab-button {
+        padding: var(--space-xs) var(--space-sm);
+        font-size: 0.8rem;
+        min-height: 36px;
+    }
+    
+    .customization-tab-layout {
+        padding: var(--space-sm);
+        gap: var(--space-md);
+    }
 }
 
 

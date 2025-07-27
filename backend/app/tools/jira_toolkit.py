@@ -22,7 +22,7 @@ from app.core.logger import get_logger
 from app.services.jira import JiraService
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.api.jira import CreateJiraIssueModel
-from app.database import get_db
+from app.database import SessionLocal
 from app.models.organization import Organization
 from app.models.agent import Agent
 from uuid import UUID
@@ -36,7 +36,6 @@ class JiraTools(Toolkit):
         self.org_id = org_id
         self.session_id = session_id
         self.jira_service = JiraService()
-        self.db = next(get_db())
         
         # Register the functions
         self.register(self.create_jira_ticket)
@@ -76,76 +75,78 @@ class JiraTools(Toolkit):
                 is_update = True
                 logger.info(f"Found existing ticket {existing_ticket_id} for session {self.session_id}, will update it")
             
-            # Get the agent's Jira configuration
-            try:
-                agent_uuid = UUID(str(self.agent_id))
-                agent = self.db.query(Agent).filter(Agent.id == agent_uuid).first()
-            except (ValueError, TypeError) as e:
-                logger.error(f"Invalid agent ID format: {e}")
-                return json.dumps({
-                    "success": False,
-                    "message": f"Invalid agent ID format: {str(e)}"
-                })
+            # Use context manager for database operations
+            with SessionLocal() as db:
+                # Get the agent's Jira configuration
+                try:
+                    agent_uuid = UUID(str(self.agent_id))
+                    agent = db.query(Agent).filter(Agent.id == agent_uuid).first()
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Invalid agent ID format: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "message": f"Invalid agent ID format: {str(e)}"
+                    })
+                    
+                if not agent:
+                    return json.dumps({
+                        "success": False,
+                        "message": "Agent not found"
+                    })
+                    
+                # Get the organization
+                try:
+                    org_uuid = UUID(str(self.org_id))
+                    organization = db.query(Organization).filter(
+                            Organization.id == org_uuid
+                    ).first()
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Invalid organization ID format: {e}")
+                    return json.dumps({
+                        "success": False,
+                        "message": f"Invalid organization ID format: {str(e)}"
+                    })
+            
                 
-            if not agent:
-                return json.dumps({
-                    "success": False,
-                    "message": "Agent not found"
-                })
+                if not organization:
+                    return json.dumps({
+                        "success": False,
+                        "message": "Organization not found"
+                    })
                 
-            # Get the organization
-            try:
-                org_uuid = UUID(str(self.org_id))
-                organization = self.db.query(Organization).filter(
-                        Organization.id == org_uuid
+                # Get the agent's Jira configuration
+                from app.models.jira import AgentJiraConfig
+                jira_config = db.query(AgentJiraConfig).filter(
+                    AgentJiraConfig.agent_id == str(self.agent_id)
                 ).first()
-            except (ValueError, TypeError) as e:
-                logger.error(f"Invalid organization ID format: {e}")
-                return json.dumps({
-                    "success": False,
-                    "message": f"Invalid organization ID format: {str(e)}"
-                })
-        
-            
-            if not organization:
-                return json.dumps({
-                    "success": False,
-                    "message": "Organization not found"
-                })
-            
-            # Get the agent's Jira configuration
-            from app.models.jira import AgentJiraConfig
-            jira_config = self.db.query(AgentJiraConfig).filter(
-                AgentJiraConfig.agent_id == str(self.agent_id)
-            ).first()
-            
-            if not jira_config or not jira_config.enabled:
-                return json.dumps({
-                    "success": False,
-                    "message": "Jira integration is not enabled for this agent"
-                })
                 
-            # Create the issue data
-            issue_data = CreateJiraIssueModel(
-                projectKey=jira_config.project_key,
-                issueTypeId=jira_config.issue_type_id,
-                summary=summary,
-                description=description,
-                priority=priority,
-                chatId=str(self.session_id)  # Ensure session_id is a string
-            )
-            
-            # Get the Jira token
-            from app.models.jira import JiraToken
-            token = self.db.query(JiraToken).filter(
-                JiraToken.organization_id == organization.id
-            ).first()
-            
-            if not token:
-                return json.dumps({
-                    "success": False,
-                    "message": "No Jira connection found"
-                })
+                if not jira_config or not jira_config.enabled:
+                    return json.dumps({
+                        "success": False,
+                        "message": "Jira integration is not enabled for this agent"
+                    })
+                    
+                # Create the issue data
+                issue_data = CreateJiraIssueModel(
+                    projectKey=jira_config.project_key,
+                    issueTypeId=jira_config.issue_type_id,
+                    summary=summary,
+                    description=description,
+                    priority=priority,
+                    chatId=str(self.session_id)  # Ensure session_id is a string
+                )
+                
+                # Get the Jira token
+                from app.models.jira import JiraToken
+                token = db.query(JiraToken).filter(
+                    JiraToken.organization_id == organization.id
+                ).first()
+                
+                if not token:
+                    return json.dumps({
+                        "success": False,
+                        "message": "No Jira connection found"
+                    })
             
             # Check if token is valid and refresh if needed
             is_valid = self.jira_service.validate_token(token)
@@ -192,7 +193,7 @@ class JiraTools(Toolkit):
                     token.token_type = token_data["token_type"]
                     token.expires_at = datetime.utcnow() + timedelta(seconds=token_data["expires_in"])
                     
-                    self.db.commit()
+                    db.commit()
                     logger.info("Successfully refreshed Jira token")
                     
                 except Exception as e:
@@ -399,7 +400,7 @@ class JiraTools(Toolkit):
                     ticket_url = f"https://{org_name}.atlassian.net/browse/{ticket_key}"
                 
                 # Update the session with ticket information
-                session_repo = SessionToAgentRepository(self.db)
+                session_repo = SessionToAgentRepository(db)
                 try:
                     # Use the combined description for updates, or just the new description for new tickets
                     final_description = combined_description if is_update and 'combined_description' in locals() else description
@@ -457,56 +458,58 @@ class JiraTools(Toolkit):
             import requests
             from datetime import datetime, timedelta
             
-            # If no ticket ID is provided, check if there's a ticket for this session
-            if not ticket_id:
-                session_repo = SessionToAgentRepository(self.db)
+            # Use context manager for database operations
+            with SessionLocal() as db:
+                # If no ticket ID is provided, check if there's a ticket for this session
+                if not ticket_id:
+                    session_repo = SessionToAgentRepository(db)
+                    try:
+                        session = session_repo.get_session(str(self.session_id))
+                    except Exception as e:
+                        logger.error(f"Failed to get session: {e}")
+                        return json.dumps({
+                            "success": False,
+                            "message": f"Failed to get session: {str(e)}"
+                        })
+                    
+                    if not session or not session.ticket_id:
+                        return json.dumps({
+                            "success": False,
+                            "message": "No ticket found for this session"
+                        })
+                        
+                    ticket_id = session.ticket_id
+                
+                # Get the organization
                 try:
-                    session = session_repo.get_session(str(self.session_id))
-                except Exception as e:
-                    logger.error(f"Failed to get session: {e}")
+                    org_uuid = UUID(str(self.org_id))
+                    organization = db.query(Organization).filter(
+                            Organization.id == org_uuid
+                    ).first()
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Invalid organization ID format: {e}")
                     return json.dumps({
                         "success": False,
-                        "message": f"Failed to get session: {str(e)}"
+                        "message": f"Invalid organization ID format: {str(e)}"
                     })
                 
-                if not session or not session.ticket_id:
+                if not organization:
                     return json.dumps({
                         "success": False,
-                        "message": "No ticket found for this session"
+                        "message": "Organization not found"
                     })
-                    
-                ticket_id = session.ticket_id
-            
-            # Get the organization
-            try:
-                org_uuid = UUID(str(self.org_id))
-                organization = self.db.query(Organization).filter(
-                        Organization.id == org_uuid
+                
+                # Get the ticket status from Jira
+                from app.models.jira import JiraToken
+                token = db.query(JiraToken).filter(
+                    JiraToken.organization_id == organization.id
                 ).first()
-            except (ValueError, TypeError) as e:
-                logger.error(f"Invalid organization ID format: {e}")
-                return json.dumps({
-                    "success": False,
-                    "message": f"Invalid organization ID format: {str(e)}"
-                })
-            
-            if not organization:
-                return json.dumps({
-                    "success": False,
-                    "message": "Organization not found"
-                })
-            
-            # Get the ticket status from Jira
-            from app.models.jira import JiraToken
-            token = self.db.query(JiraToken).filter(
-                JiraToken.organization_id == organization.id
-            ).first()
-            
-            if not token:
-                return json.dumps({
-                    "success": False,
-                    "message": "No Jira connection found"
-                })
+                
+                if not token:
+                    return json.dumps({
+                        "success": False,
+                        "message": "No Jira connection found"
+                    })
             
             # Check if token is valid and refresh if needed
             is_valid = self.jira_service.validate_token(token)
@@ -553,7 +556,7 @@ class JiraTools(Toolkit):
                     token.token_type = token_data["token_type"]
                     token.expires_at = datetime.utcnow() + timedelta(seconds=token_data["expires_in"])
                     
-                    self.db.commit()
+                    db.commit()
                     logger.info("Successfully refreshed Jira token")
                     
                 except Exception as e:
@@ -663,22 +666,24 @@ class JiraTools(Toolkit):
         try:
             import json
             
-            # Get the session
-            session_repo = SessionToAgentRepository(self.db)
-            try:
-                session = session_repo.get_session(str(self.session_id))
-            except Exception as e:
-                logger.error(f"Failed to get session: {e}")
-                return json.dumps({
-                    "exists": False,
-                    "message": f"Failed to get session: {str(e)}"
-                })
-            
-            if not session or not session.ticket_id:
-                return json.dumps({
-                    "exists": False,
-                    "message": "No ticket found for this session"
-                })
+            # Use context manager for database operations
+            with SessionLocal() as db:
+                # Get the session
+                session_repo = SessionToAgentRepository(db)
+                try:
+                    session = session_repo.get_session(str(self.session_id))
+                except Exception as e:
+                    logger.error(f"Failed to get session: {e}")
+                    return json.dumps({
+                        "exists": False,
+                        "message": f"Failed to get session: {str(e)}"
+                    })
+                
+                if not session or not session.ticket_id:
+                    return json.dumps({
+                        "exists": False,
+                        "message": "No ticket found for this session"
+                    })
                 
             # Get the ticket status
             ticket_status_str = self.get_ticket_status(session.ticket_id)

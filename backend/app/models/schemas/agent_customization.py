@@ -19,6 +19,17 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from pydantic import BaseModel
 from typing import Optional, Dict
 from uuid import UUID
+import enum
+
+
+class ChatStyle(str, enum.Enum):
+    CHATBOT = "CHATBOT"
+    ASK_ANYTHING = "ASK_ANYTHING"
+
+
+class WidgetPosition(str, enum.Enum):
+    FLOATING = "FLOATING"
+    FIXED = "FIXED"
 
 
 class CustomizationBase(BaseModel):
@@ -32,6 +43,10 @@ class CustomizationBase(BaseModel):
     font_family: Optional[str] = "Inter, system-ui, sans-serif"
     custom_css: Optional[str] = None
     customization_metadata: Optional[Dict] = {}
+    chat_style: Optional[ChatStyle] = ChatStyle.CHATBOT
+    widget_position: Optional[WidgetPosition] = WidgetPosition.FLOATING
+    welcome_title: Optional[str] = None
+    welcome_subtitle: Optional[str] = None
 
 
 class CustomizationCreate(CustomizationBase):

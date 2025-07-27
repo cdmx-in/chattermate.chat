@@ -21,7 +21,8 @@ from agno.agent import Agent
 from app.utils.agno_utils import create_model
 from app.core.logger import get_logger
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
-from app.database import get_db
+from app.tools.mcp_manager import ChatAgentMCPMixin
+from app.database import get_db, SessionLocal
 from agno.storage.agent.postgres import PostgresAgentStorage
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
@@ -39,6 +40,7 @@ from app.tools.shopify_toolkit import ShopifyTools
 from app.utils.response_parser import parse_response_content
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
 import re
+import asyncio
 
 logger = get_logger(__name__)
 
@@ -51,8 +53,8 @@ def remove_urls_from_message(message: str) -> str:
     url_pattern = r'https?://[^\s\)\]"]+'
     return re.sub(url_pattern, '[link removed]', message)
 
-class ChatAgent:
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None):
+class ChatAgent(ChatAgentMCPMixin):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None):
         # Initialize knowledge search tool if org_id and agent_id provided
         tools = []
         if org_id and agent_id:
@@ -61,22 +63,35 @@ class ChatAgent:
             tools.append(knowledge_tool)
 
         # Get template instructions and Jira config in a single optimized query
-        db = next(get_db())
-        jira_repo = JiraRepository(db)
-        if agent_id:
-            self.agent_data = jira_repo.get_agent_with_jira_config(agent_id)
-        else:
-            self.agent_data = None
+        # Use context manager for database operations
+        with SessionLocal() as db:
+            jira_repo = JiraRepository(db)
+            if agent_id:
+                self.agent_data = jira_repo.get_agent_with_jira_config(agent_id)
+            else:
+                self.agent_data = None
+            
+            # Check if Shopify is enabled for this agent while we have the db session
+            shopify_config = None
+            if agent_id and org_id and session_id:
+                try:
+                    shopify_config_repo = AgentShopifyConfigRepository(db)
+                    shopify_config = shopify_config_repo.get_agent_shopify_config(agent_id)
+                except Exception as e:
+                    logger.error(f"Failed to get Shopify config: {e}")
+                    shopify_config = None
         
         self.api_key = api_key
         self.model_name = model_name
         self.model_type = model_type
         self.jira_instructions_added = False
         self.shopify_instructions_added = False
+        self.mcp_instructions_added = False
         self.org_id = org_id
         self.agent_id = agent_id
         self.customer_id = customer_id
         self.session_id = session_id
+        self.mcp_tools = mcp_tools or []
         
         # Determine transfer_to_human setting - use parameter if provided, otherwise use agent data
         if transfer_to_human is not None:
@@ -88,7 +103,7 @@ class ChatAgent:
         self.tools = []
         
         # Add Jira tools if agent_id, org_id, and session_id are provided
-        if self.agent_id and self.org_id and self.session_id and not self.transfer_to_human and self.agent_data.jira_enabled:
+        if self.agent_id and self.org_id and self.session_id and not self.transfer_to_human and self.agent_data and self.agent_data.jira_enabled:
             try:
                 self.jira_tools = JiraTools(
                     agent_id=self.agent_id,
@@ -99,22 +114,22 @@ class ChatAgent:
             except Exception as e:
                 logger.error(f"Failed to initialize Jira tools: {e}")
         
-        shopify_config = None
         # Add Shopify tools if agent has Shopify enabled
-        if self.agent_id and self.org_id and self.session_id and not self.transfer_to_human:
+        if self.agent_id and self.org_id and self.session_id and not self.transfer_to_human and shopify_config and shopify_config.enabled:
             try:
-                # Check if Shopify is enabled for this agent
-                shopify_config_repo = AgentShopifyConfigRepository(db)
-                shopify_config = shopify_config_repo.get_agent_shopify_config(self.agent_id)
-                if shopify_config and shopify_config.enabled:
-                    self.shopify_tools = ShopifyTools(
-                        agent_id=self.agent_id,
-                        org_id=self.org_id,
-                        session_id=self.session_id
-                    )
-                    self.tools.append(self.shopify_tools)
+                self.shopify_tools = ShopifyTools(
+                    agent_id=self.agent_id,
+                    org_id=self.org_id,
+                    session_id=self.session_id
+                )
+                self.tools.append(self.shopify_tools)
             except Exception as e:
                 logger.error(f"Failed to initialize Shopify tools: {e}")
+
+        # Add MCP tools if provided
+        if self.mcp_tools:
+            self.tools.extend(self.mcp_tools)
+            logger.debug(f"Added {len(self.mcp_tools)} MCP tools to agent")
 
         if self.agent_data:
             # Define end chat instructions to avoid long lines
@@ -259,6 +274,17 @@ class ChatAgent:
                 """
                 system_message += "\n\n" + shopify_instructions
                 self.shopify_instructions_added = True
+
+            # Add MCP tools instructions if MCP tools are available
+            if self.mcp_tools:
+                mcp_instructions = """
+                You have access to MCP (Model Context Protocol) tools that provide additional capabilities.
+                These tools allow you to interact with external systems and perform various operations.
+                Use these tools when they can help answer the customer's questions or solve their problems.
+                Always use the appropriate tool for the specific task at hand.
+                """
+                system_message += "\n\n" + mcp_instructions
+                self.mcp_instructions_added = True
         else:
             system_message = [
                 "You are a helpful customer service agent.",
@@ -269,7 +295,7 @@ class ChatAgent:
             model_type=model_type,
             api_key=api_key,
             model_name=model_name,
-            max_tokens=2000 if self.shopify_instructions_added else 1000,
+            max_tokens=2000 if (self.shopify_instructions_added or self.mcp_instructions_added) else 1000,
             # response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
         )
 
@@ -290,7 +316,7 @@ class ChatAgent:
            agent_id=str(agent_id),
            storage=storage,
            add_history_to_messages=True,
-           tool_call_limit=2,
+        #    tool_call_limit=3,
            num_history_responses=10,
            read_chat_history=True,
            markdown=False,
@@ -591,96 +617,95 @@ class ChatAgent:
             if customer_id:
                 self.customer_id = customer_id
                 
-            # Get database connection
-            db = next(get_db())
-            
-            chat_repo = ChatRepository(db)
-            
-            self.agent.session_id = session_id
+            # Use context manager for database operations
+            with SessionLocal() as db:
+                chat_repo = ChatRepository(db)
+                
+                self.agent.session_id = session_id
 
-            # Create user message
-            chat_repo.create_message({
-                "message": message,
-                "message_type": "user",
-                "session_id": session_id,
-                "organization_id": org_id,
-                "agent_id": agent_id,
-                "customer_id": customer_id,
-                "attributes": {}
-            })
-
-            
-            # Get AI response
-            response = await self.agent.arun(
-                message=message,
-                session_id=session_id,
-                stream=False
-            )
-
-            # Use the utility function to parse the response
-            response_content = parse_response_content(response)
-
-            logger.debug(f"Response content: {response_content}")
-            
-            # If shopify_output is present, remove URLs from message
-            if response_content.shopify_output:
-                response_content.message = remove_urls_from_message(response_content.message)
-                logger.debug(f"Cleaned message for Shopify output: {response_content.message}")
-            
-            # Handle end chat and rating request
-            if response_content.end_chat:
-                response_content = await self._handle_end_chat(response_content, session_id, db)
-
-            # Handle transfer 
-            if self.agent_data and self.transfer_to_human and response_content.transfer_to_human and hasattr(self.agent_data, 'groups') and self.agent_data.groups:
-                response_content = await self._handle_transfer(
-                    response_content=response_content,
-                    session_id=session_id,
-                    org_id=org_id,
-                    agent_id=agent_id,
-                    customer_id=customer_id,
-                    db=db,
-                    chat_repo=chat_repo,
-                    transfer_group_id=None  # Use agent's default group for regular transfers
-                )
-                return response_content
-
-            # Store AI response with all attributes
-            attributes = {
-                "transfer_to_human": response_content.transfer_to_human,
-                "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
-                "transfer_description": response_content.transfer_description,
-                "end_chat": response_content.end_chat,
-                "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
-                "end_chat_description": response_content.end_chat_description,
-                "request_rating": response_content.request_rating,
-                "shopify_output": response_content.shopify_output
-            }
-            
-            # Add ticket attributes if present
-            if response_content.create_ticket:
-                attributes.update({
-                    "create_ticket": response_content.create_ticket,
-                    "ticket_summary": response_content.ticket_summary,
-                    "ticket_description": response_content.ticket_description,
-                    "integration_type": response_content.integration_type,
-                    "ticket_id": response_content.ticket_id,
-                    "ticket_status": response_content.ticket_status,
-                    "ticket_priority": response_content.ticket_priority
+                # Create user message
+                chat_repo.create_message({
+                    "message": message,
+                    "message_type": "user",
+                    "session_id": session_id,
+                    "organization_id": org_id,
+                    "agent_id": agent_id,
+                    "customer_id": customer_id,
+                    "attributes": {}
                 })
-            
-            
-            chat_repo.create_message({
-                "message": response_content.message,
-                "message_type": "bot",
-                "session_id": session_id,
-                "organization_id": org_id,
-                "agent_id": agent_id,
-                "customer_id": customer_id,
-                "attributes": attributes
-            })
-            
-            return response_content
+
+                
+                # Get AI response
+                response = await self.agent.arun(
+                    message=message,
+                    session_id=session_id,
+                    stream=False
+                )
+
+                # Use the utility function to parse the response
+                response_content = parse_response_content(response)
+
+                logger.debug(f"Response content: {response_content}")
+                
+                # If shopify_output is present, remove URLs from message
+                if response_content.shopify_output:
+                    response_content.message = remove_urls_from_message(response_content.message)
+                    logger.debug(f"Cleaned message for Shopify output: {response_content.message}")
+                
+                # Handle end chat and rating request
+                if response_content.end_chat:
+                    response_content = await self._handle_end_chat(response_content, session_id, db)
+
+                # Handle transfer 
+                if self.agent_data and self.transfer_to_human and response_content.transfer_to_human and hasattr(self.agent_data, 'groups') and self.agent_data.groups:
+                    response_content = await self._handle_transfer(
+                        response_content=response_content,
+                        session_id=session_id,
+                        org_id=org_id,
+                        agent_id=agent_id,
+                        customer_id=customer_id,
+                        db=db,
+                        chat_repo=chat_repo,
+                        transfer_group_id=None  # Use agent's default group for regular transfers
+                    )
+                    return response_content
+
+                # Store AI response with all attributes
+                attributes = {
+                    "transfer_to_human": response_content.transfer_to_human,
+                    "transfer_reason": response_content.transfer_reason.value if response_content.transfer_reason else None,
+                    "transfer_description": response_content.transfer_description,
+                    "end_chat": response_content.end_chat,
+                    "end_chat_reason": response_content.end_chat_reason.value if response_content.end_chat_reason else None,
+                    "end_chat_description": response_content.end_chat_description,
+                    "request_rating": response_content.request_rating,
+                    "shopify_output": response_content.shopify_output
+                }
+                
+                # Add ticket attributes if present
+                if response_content.create_ticket:
+                    attributes.update({
+                        "create_ticket": response_content.create_ticket,
+                        "ticket_summary": response_content.ticket_summary,
+                        "ticket_description": response_content.ticket_description,
+                        "integration_type": response_content.integration_type,
+                        "ticket_id": response_content.ticket_id,
+                        "ticket_status": response_content.ticket_status,
+                        "ticket_priority": response_content.ticket_priority
+                    })
+                
+                
+                chat_repo.create_message({
+                    "message": response_content.message,
+                    "message_type": "bot",
+                    "session_id": session_id,
+                    "organization_id": org_id,
+                    "agent_id": agent_id,
+                    "customer_id": customer_id,
+                    "attributes": attributes
+                })
+                
+                return response_content
 
         except Exception as e:
             traceback.print_exc()
@@ -703,17 +728,17 @@ class ChatAgent:
             
             # Store error message
             try:
-                db = next(get_db())
-                chat_repo = ChatRepository(db)
-                chat_repo.create_message({
-                    "message": error_message,
-                    "message_type": "bot",
-                    "session_id": session_id,
-                    "organization_id": org_id,
-                    "agent_id": agent_id,
-                    "customer_id": customer_id,
-                    "attributes": {"error": str(e)}
-                })
+                with SessionLocal() as db:
+                    chat_repo = ChatRepository(db)
+                    chat_repo.create_message({
+                        "message": error_message,
+                        "message_type": "bot",
+                        "session_id": session_id,
+                        "organization_id": org_id,
+                        "agent_id": agent_id,
+                        "customer_id": customer_id,
+                        "attributes": {"error": str(e)}
+                    })
             except Exception as store_error:
                 logger.error(f"Failed to store error message: {str(store_error)}")
             

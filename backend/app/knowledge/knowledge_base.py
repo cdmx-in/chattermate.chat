@@ -26,7 +26,7 @@ from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.repositories.ai_config import AIConfigRepository
-from app.database import get_db
+from app.database import SessionLocal
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.knowledge import KnowledgeRepository
 from typing import List, Optional, Dict, Union
@@ -51,11 +51,11 @@ class KnowledgeManager:
     def __init__(self, org_id: UUID, agent_id: Optional[str] = None):
         self.org_id = org_id
         self.agent_id = agent_id
-        self.db = next(get_db())
 
-        # Get API key from AI config
-        ai_config_repo = AIConfigRepository(self.db)
-        ai_config = ai_config_repo.get_active_config(org_id)
+        # Get API key from AI config using context manager
+        with SessionLocal() as db:
+            ai_config_repo = AIConfigRepository(db)
+            ai_config = ai_config_repo.get_active_config(org_id)
         
         # Default to SentenceTransformer embedder if no AI config is found
         embedder = None
@@ -76,31 +76,33 @@ class KnowledgeManager:
             search_type=SearchType.vector,
             embedder=embedder
         )
-        self.knowledge_repo = KnowledgeRepository(self.db)
-        self.link_repo = KnowledgeToAgentRepository(self.db)
 
     def _add_knowledge_source(self, source: str, source_type: SourceType):
         """Track knowledge source in database"""
-        # Create or get knowledge source
-        knowledge = Knowledge(
-            organization_id=self.org_id,
-            source=source,
-            source_type=source_type,
-            table_name=self.vector_db.table_name,
-            schema=self.vector_db.schema
-        )
-        logger.debug(f"Adding knowledge source: {knowledge}")
-        knowledge = self.knowledge_repo.create(knowledge)
-        logger.debug(f"Knowledge source added: {knowledge}")
-        # Link to agent if specified
-        if self.agent_id:
-            link = KnowledgeToAgent(
-                knowledge_id=knowledge.id,
-                agent_id=self.agent_id
+        with SessionLocal() as db:
+            knowledge_repo = KnowledgeRepository(db)
+            link_repo = KnowledgeToAgentRepository(db)
+            
+            # Create or get knowledge source
+            knowledge = Knowledge(
+                organization_id=self.org_id,
+                source=source,
+                source_type=source_type,
+                table_name=self.vector_db.table_name,
+                schema=self.vector_db.schema
             )
-            self.link_repo.create(link)
+            logger.debug(f"Adding knowledge source: {knowledge}")
+            knowledge = knowledge_repo.create(knowledge)
+            logger.debug(f"Knowledge source added: {knowledge}")
+            # Link to agent if specified
+            if self.agent_id:
+                link = KnowledgeToAgent(
+                    knowledge_id=knowledge.id,
+                    agent_id=self.agent_id
+                )
+                link_repo.create(link)
 
-        return knowledge
+            return knowledge
 
     async def add_pdf_urls(self, urls: List[str]) -> bool:
         """Add knowledge from PDF URLs"""
@@ -317,10 +319,12 @@ class KnowledgeManager:
     def get_knowledge_base(self) -> List[Dict]:
         """Get all knowledge sources for the organization or specific agent"""
         try:
-            if self.agent_id:
-                sources = self.knowledge_repo.get_by_agent(self.agent_id)
-            else:
-                sources = self.knowledge_repo.get_by_org(self.org_id)
+            with SessionLocal() as db:
+                knowledge_repo = KnowledgeRepository(db)
+                if self.agent_id:
+                    sources = knowledge_repo.get_by_agent(self.agent_id)
+                else:
+                    sources = knowledge_repo.get_by_org(self.org_id)
 
             return [{
                 'id': source.id,
