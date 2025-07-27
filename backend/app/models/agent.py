@@ -61,6 +61,8 @@ class AgentCustomization(Base):
     customization_metadata = Column(JSON, default={})
     chat_style = Column(SQLEnum(ChatStyle), default=ChatStyle.CHATBOT, nullable=False)
     widget_position = Column(SQLEnum(WidgetPosition), default=WidgetPosition.FLOATING, nullable=False)
+    welcome_title = Column(String, nullable=True)
+    welcome_subtitle = Column(String, nullable=True)
 
     # Relationship
     agent = relationship("Agent", back_populates="customization")

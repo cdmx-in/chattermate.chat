@@ -40,6 +40,8 @@ class AgentCustomizationResponse(BaseModel):
     photo_url: Optional[str] = None
     chat_style: Optional[str] = "CHATBOT"
     widget_position: Optional[str] = "FLOATING"
+    welcome_title: Optional[str] = None
+    welcome_subtitle: Optional[str] = None
 
     @property
     def photo_url_signed(self) -> Optional[str]:

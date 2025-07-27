@@ -77,6 +77,8 @@ export interface AgentCustomization {
   customization_metadata?: Record<string, any>
   chat_style?: ChatStyle
   widget_position?: WidgetPosition
+  welcome_title?: string
+  welcome_subtitle?: string
 }
 
 export interface AgentWithCustomization extends AgentResponse {

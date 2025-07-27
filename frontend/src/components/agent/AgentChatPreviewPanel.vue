@@ -31,10 +31,15 @@ const props = defineProps<{
     agentName: string
     agentId: string
 }>()
-console.log(props.customization.font_family)
+console.log('AgentChatPreviewPanel props:', props.customization)
 const isExpanded = ref(true)
 const emailInput = ref('')
 const hasStartedChat = ref(false)
+
+// Watch for customization changes to debug
+watch(() => props.customization, (newCustomization) => {
+    console.log('Customization changed:', newCustomization)
+}, { deep: true, immediate: true })
 
 // Initialize chat composable
 const {
@@ -264,6 +269,19 @@ const containerStyles = computed(() => {
 const shouldShowWelcomeMessage = computed(() => {
     return isAskAnythingStyle.value && messages.value.length === 0
 })
+
+// Computed properties for welcome text with reactive updates
+const welcomeTitle = computed(() => {
+    const title = props.customization.welcome_title
+    console.log('Welcome title computed:', title)
+    return title || `Welcome to ${props.agentName}`
+})
+
+const welcomeSubtitle = computed(() => {
+    const subtitle = props.customization.welcome_subtitle
+    console.log('Welcome subtitle computed:', subtitle)
+    return subtitle || "I'm here to help you with anything you need. What can I assist you with today?"
+})
 </script>
 
 <template>
@@ -293,8 +311,8 @@ const shouldShowWelcomeMessage = computed(() => {
                         :alt="agentName" 
                         class="welcome-avatar"
                     >
-                    <h1 class="welcome-title">Welcome to {{ agentName }}</h1>
-                    <p class="welcome-subtitle">I'm here to help you with anything you need. What can I assist you with today?</p>
+                    <h1 class="welcome-title">{{ welcomeTitle }}</h1>
+                    <p class="welcome-subtitle">{{ welcomeSubtitle }}</p>
                 </div>
             </div>
             

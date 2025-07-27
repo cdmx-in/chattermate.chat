@@ -43,6 +43,8 @@ const customization = ref<AgentCustomization>({
     custom_css: props.agent.customization?.custom_css,
     customization_metadata: props.agent.customization?.customization_metadata ?? {},
     chat_style: props.agent.customization?.chat_style ?? 'CHATBOT',
+    welcome_title: props.agent.customization?.welcome_title ?? '',
+    welcome_subtitle: props.agent.customization?.welcome_subtitle ?? '',
 })
 
 // Chat style options with descriptions
@@ -83,6 +85,7 @@ const handleSave = async () => {
 
 // Watch for changes and emit preview event
 watch(customization, (newValue) => {
+    console.log('AgentCustomizationView - Customization changed, emitting preview:', newValue)
     emit('preview', newValue)
 }, { deep: true })
 
@@ -101,6 +104,8 @@ watch(() => props.agent.customization, (newCustomization) => {
             custom_css: newCustomization.custom_css,
             customization_metadata: newCustomization.customization_metadata ?? {},
             chat_style: newCustomization.chat_style ?? 'CHATBOT',
+            welcome_title: newCustomization.welcome_title ?? '',
+            welcome_subtitle: newCustomization.welcome_subtitle ?? '',
         }
     }
 }, { deep: true })
@@ -120,6 +125,10 @@ onMounted(async () => {
     } finally {
         isLoadingFonts.value = false
     }
+    
+    // Emit initial preview to ensure preview panel gets the customization data
+    console.log('AgentCustomizationView - Emitting initial preview:', customization.value)
+    emit('preview', customization.value)
 })
 
 // Update font preview when selection changes
@@ -207,6 +216,44 @@ const handleChatStyleChange = (event: Event) => {
                             </option>
                         </select>
                     </div>
+                </div>
+            </div>
+
+            <!-- Welcome Text Section (only for ASK_ANYTHING style) -->
+            <div v-if="customization.chat_style === 'ASK_ANYTHING'" class="form-section">
+                <h4>Welcome Message</h4>
+                <p class="section-description">
+                    Customize the welcome message shown when users first open the chat.
+                </p>
+                
+                <div class="form-group">
+                    <label for="welcome-title">Welcome Title</label>
+                    <input 
+                        id="welcome-title"
+                        type="text" 
+                        v-model="customization.welcome_title"
+                        placeholder="e.g., Welcome to our AI Assistant"
+                        class="text-input"
+                        maxlength="100"
+                    >
+                    <small class="input-hint">
+                        Leave empty to use default: "Welcome to {{ props.agent.display_name || props.agent.name }}"
+                    </small>
+                </div>
+
+                <div class="form-group">
+                    <label for="welcome-subtitle">Welcome Subtitle</label>
+                    <textarea 
+                        id="welcome-subtitle"
+                        v-model="customization.welcome_subtitle"
+                        placeholder="e.g., I'm here to help you with anything you need. What can I assist you with today?"
+                        class="text-textarea"
+                        rows="3"
+                        maxlength="250"
+                    ></textarea>
+                    <small class="input-hint">
+                        Leave empty to use default message
+                    </small>
                 </div>
             </div>
 
@@ -504,5 +551,54 @@ const handleChatStyleChange = (event: Event) => {
     outline: none;
     border-color: var(--primary-color);
     box-shadow: 0 0 0 1px var(--primary-color);
+}
+
+/* Welcome text customization styles */
+.section-description {
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-md);
+    line-height: 1.5;
+}
+
+.text-input,
+.text-textarea {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--background-soft);
+    color: var(--text-color);
+    font-size: var(--text-sm);
+    font-family: inherit;
+    transition: var(--transition-fast);
+    resize: vertical;
+}
+
+.text-input:focus,
+.text-textarea:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
+    background: var(--background-base);
+}
+
+.text-input::placeholder,
+.text-textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 0.7;
+}
+
+.input-hint {
+    display: block;
+    margin-top: var(--space-xs);
+    color: var(--text-muted);
+    font-size: var(--text-xs);
+    line-height: 1.4;
+}
+
+.text-textarea {
+    min-height: 80px;
+    line-height: 1.5;
 }
 </style>

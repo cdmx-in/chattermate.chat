@@ -29,6 +29,8 @@ export interface AgentCustomization {
     font_family?: string;
     custom_css?: string;
     customization_metadata?: Record<string, any>;
+    welcome_title?: string;
+    welcome_subtitle?: string;
 }
 
 

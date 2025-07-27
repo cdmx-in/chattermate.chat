@@ -918,8 +918,8 @@ const shouldShowWelcomeMessage = computed(() => {
                         :alt="agentName" 
                         class="welcome-avatar"
                     >
-                    <h1 class="welcome-title">Welcome to {{ agentName }}</h1>
-                    <p class="welcome-subtitle">I'm here to help you with anything you need. What can I assist you with today?</p>
+                    <h1 class="welcome-title">{{ customization.welcome_title || `Welcome to ${agentName}` }}</h1>
+                    <p class="welcome-subtitle">{{ customization.welcome_subtitle || "I'm here to help you with anything you need. What can I assist you with today?" }}</p>
                 </div>
             </div>
             

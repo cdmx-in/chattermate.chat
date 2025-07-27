@@ -211,6 +211,17 @@ const copyWidgetCode = () => {
     copyWidgetCodeFn(widgetUrl.value)
 }
 
+const copyIframeCode = () => {
+    if (!widget.value?.id) return
+    const iframeCode = `<iframe src="${widgetUrl.value}/api/v1/widgets/${widget.value.id}/data" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write"></iframe>`
+    navigator.clipboard.writeText(iframeCode).then(() => {
+        // Could show a toast notification here
+        console.log('Iframe code copied to clipboard')
+    }).catch(err => {
+        console.error('Failed to copy iframe code: ', err)
+    })
+}
+
 // Dialog state for knowledge tips
 const showTips = ref(false)
 
@@ -716,7 +727,9 @@ onMounted(async () => {
                                 :widget="widget"
                                 :widget-url="widgetUrl"
                                 :widget-loading="widgetLoading"
+                                :agent="agent"
                                 @copy-widget-code="copyWidgetCode"
+                                @copy-iframe-code="copyIframeCode"
                             />
                         </div>
 

@@ -45,6 +45,8 @@ class CustomizationBase(BaseModel):
     customization_metadata: Optional[Dict] = {}
     chat_style: Optional[ChatStyle] = ChatStyle.CHATBOT
     widget_position: Optional[WidgetPosition] = WidgetPosition.FLOATING
+    welcome_title: Optional[str] = None
+    welcome_subtitle: Optional[str] = None
 
 
 class CustomizationCreate(CustomizationBase):
