@@ -102,13 +102,19 @@ class OptimizedPgVector(PgVector):
                                 if doc.embedding is None:
                                     doc.embed(embedder=self.embedder)
                                 
+                                # Merge filters into document metadata for searchability
+                                merged_meta_data = doc.meta_data.copy() if doc.meta_data else {}
+                                if filters:
+                                    merged_meta_data.update(filters)
+                                    logger.debug(f"Merged filters into meta_data: {filters}")
+                                
                                 cleaned_content = self._clean_content(doc.content)
                                 content_hash = md5(cleaned_content.encode()).hexdigest()
                                 _id = doc.id or content_hash
                                 record = {
                                     "id": _id,
                                     "name": doc.name,
-                                    "meta_data": doc.meta_data,
+                                    "meta_data": merged_meta_data,  # Use merged metadata
                                     "filters": filters,
                                     "content": cleaned_content,
                                     "embedding": doc.embedding,
@@ -158,6 +164,12 @@ class OptimizedPgVector(PgVector):
                                 # Skip embedding if the document already has an embedding
                                 if doc.embedding is None:
                                     doc.embed(embedder=self.embedder)
+                                
+                                # Merge filters into document metadata for searchability
+                                merged_meta_data = doc.meta_data.copy() if doc.meta_data else {}
+                                if filters:
+                                    merged_meta_data.update(filters)
+                                    logger.debug(f"Merged filters into meta_data: {filters}")
                                     
                                 cleaned_content = self._clean_content(doc.content)
                                 content_hash = md5(cleaned_content.encode()).hexdigest()
@@ -165,7 +177,7 @@ class OptimizedPgVector(PgVector):
                                 record = {
                                     "id": _id,
                                     "name": doc.name,
-                                    "meta_data": doc.meta_data,
+                                    "meta_data": merged_meta_data,  # Use merged metadata
                                     "filters": filters,
                                     "content": cleaned_content,
                                     "embedding": doc.embedding,
