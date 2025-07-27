@@ -16,6 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
+import asyncio
 import datetime
 import json
 import os
@@ -350,8 +351,8 @@ async def handle_widget_chat(sid, data):
                 return
         elif active_session.status == SessionStatus.OPEN and active_session.user_id is None: # open and user has not taken over
             logger.debug(f"Initializing chat agent for model {session['ai_config'].model_type}")
-            # Initialize chat agent
-            chat_agent = ChatAgent(
+            # Initialize chat agent with async factory method for MCP tools support
+            chat_agent = await ChatAgent.create_async(
                 api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
                 model_name=session['ai_config'].model_name,
                 model_type=session['ai_config'].model_type,
@@ -360,13 +361,24 @@ async def handle_widget_chat(sid, data):
                 customer_id=customer_id,
                 session_id=session_id
             )
-            # Get response from ai agent (this already handles end chat internally)
-            response = await chat_agent.get_response(
-                message=message,
-                session_id=chat_agent.agent.session_id,
-                org_id=org_id,
-                agent_id=session['agent_id'],
-                customer_id=customer_id)
+            try:
+                # Get response from ai agent (this already handles end chat internally)
+                response = await chat_agent.get_response(
+                    message=message,
+                    session_id=chat_agent.agent.session_id,
+                    org_id=org_id,
+                    agent_id=session['agent_id'],
+                    customer_id=customer_id)
+            finally:
+                # Clean up MCP tools
+                # Use asyncio.create_task to ensure cleanup doesn't block the main flow
+                try:
+                    cleanup_task = asyncio.create_task(chat_agent.cleanup_mcp_tools())
+                    await asyncio.wait_for(cleanup_task, timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.debug("MCP cleanup timed out in widget chat (non-critical)")
+                except Exception as cleanup_error:
+                    logger.debug(f"MCP cleanup warning in widget chat (non-critical): {str(cleanup_error)}")
         elif active_session.status == SessionStatus.TRANSFERRED and active_session.user_id is None: # transferred and user has not taken over
             logger.debug(f"Transferring chat to human for session {session_id}")
             # Get response from agent transfer ai agent

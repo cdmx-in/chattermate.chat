@@ -21,6 +21,7 @@ from agno.agent import Agent
 from app.utils.agno_utils import create_model
 from app.core.logger import get_logger
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
+from app.tools.mcp_manager import ChatAgentMCPMixin
 from app.database import get_db, SessionLocal
 from agno.storage.agent.postgres import PostgresAgentStorage
 from app.repositories.chat import ChatRepository
@@ -39,6 +40,7 @@ from app.tools.shopify_toolkit import ShopifyTools
 from app.utils.response_parser import parse_response_content
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
 import re
+import asyncio
 
 logger = get_logger(__name__)
 
@@ -51,8 +53,8 @@ def remove_urls_from_message(message: str) -> str:
     url_pattern = r'https?://[^\s\)\]"]+'
     return re.sub(url_pattern, '[link removed]', message)
 
-class ChatAgent:
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None):
+class ChatAgent(ChatAgentMCPMixin):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None):
         # Initialize knowledge search tool if org_id and agent_id provided
         tools = []
         if org_id and agent_id:
@@ -84,10 +86,12 @@ class ChatAgent:
         self.model_type = model_type
         self.jira_instructions_added = False
         self.shopify_instructions_added = False
+        self.mcp_instructions_added = False
         self.org_id = org_id
         self.agent_id = agent_id
         self.customer_id = customer_id
         self.session_id = session_id
+        self.mcp_tools = mcp_tools or []
         
         # Determine transfer_to_human setting - use parameter if provided, otherwise use agent data
         if transfer_to_human is not None:
@@ -121,6 +125,11 @@ class ChatAgent:
                 self.tools.append(self.shopify_tools)
             except Exception as e:
                 logger.error(f"Failed to initialize Shopify tools: {e}")
+
+        # Add MCP tools if provided
+        if self.mcp_tools:
+            self.tools.extend(self.mcp_tools)
+            logger.debug(f"Added {len(self.mcp_tools)} MCP tools to agent")
 
         if self.agent_data:
             # Define end chat instructions to avoid long lines
@@ -265,6 +274,17 @@ class ChatAgent:
                 """
                 system_message += "\n\n" + shopify_instructions
                 self.shopify_instructions_added = True
+
+            # Add MCP tools instructions if MCP tools are available
+            if self.mcp_tools:
+                mcp_instructions = """
+                You have access to MCP (Model Context Protocol) tools that provide additional capabilities.
+                These tools allow you to interact with external systems and perform various operations.
+                Use these tools when they can help answer the customer's questions or solve their problems.
+                Always use the appropriate tool for the specific task at hand.
+                """
+                system_message += "\n\n" + mcp_instructions
+                self.mcp_instructions_added = True
         else:
             system_message = [
                 "You are a helpful customer service agent.",
@@ -275,7 +295,7 @@ class ChatAgent:
             model_type=model_type,
             api_key=api_key,
             model_name=model_name,
-            max_tokens=2000 if self.shopify_instructions_added else 1000,
+            max_tokens=2000 if (self.shopify_instructions_added or self.mcp_instructions_added) else 1000,
             # response_format={"type": "json_object"} if model_type.upper() != 'GROQ' else {"type": "text"}
         )
 
@@ -296,7 +316,7 @@ class ChatAgent:
            agent_id=str(agent_id),
            storage=storage,
            add_history_to_messages=True,
-           tool_call_limit=2,
+        #    tool_call_limit=3,
            num_history_responses=10,
            read_chat_history=True,
            markdown=False,

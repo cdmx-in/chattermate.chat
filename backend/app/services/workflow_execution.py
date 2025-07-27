@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import traceback
+import asyncio
 from typing import Optional, Dict, Any, List, Tuple
 from uuid import UUID
 from sqlalchemy.orm import Session
@@ -534,7 +535,7 @@ class WorkflowExecutionService:
                 processed_user_message = self._build_context_message(session_id, workflow_state)
             
             # Create chat agent with custom system prompt
-            chat_agent = ChatAgent(
+            chat_agent = await ChatAgent.create_async(
                 api_key=api_key,
                 model_name=model_name,
                 model_type=model_type,
@@ -546,15 +547,27 @@ class WorkflowExecutionService:
                 transfer_to_human=auto_transfer
             )
             
-            # Get response from LLM using the agent's internal method to avoid double message storage
-            response = await chat_agent._get_llm_response_only(
-                message=processed_user_message,
-                session_id=session_id,
-                org_id=org_id,
-                agent_id=agent_id,
-                customer_id=customer_id
-            )
+            try:
+                # Get response from LLM using the agent's internal method to avoid double message storage
+                response = await chat_agent._get_llm_response_only(
+                    message=processed_user_message,
+                    session_id=session_id,
+                    org_id=org_id,
+                    agent_id=agent_id,
+                    customer_id=customer_id
+                )
+            finally:
+                # Always clean up MCP tools, even if there's an error
+                # Use asyncio.create_task to ensure cleanup doesn't block the main flow
+                try:
+                    cleanup_task = asyncio.create_task(chat_agent.cleanup_mcp_tools())
+                    await asyncio.wait_for(cleanup_task, timeout=2.0)
+                except asyncio.TimeoutError:
+                    logger.debug("MCP cleanup timed out (non-critical)")
+                except Exception as cleanup_error:
+                    logger.debug(f"MCP cleanup warning in workflow (non-critical): {str(cleanup_error)}")
             
+            logger.debug(f"Response: {response}")
             # Handle exit conditions
             next_node_id = None
             should_continue = False

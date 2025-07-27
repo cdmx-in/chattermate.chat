@@ -118,6 +118,8 @@ class Agent(Base):
     organization = relationship("Organization", back_populates="agents")
     knowledge_links = relationship(
         "KnowledgeToAgent", back_populates="agent", cascade="all, delete-orphan")
+    mcp_tool_links = relationship(
+        "MCPToolToAgent", back_populates="agent", cascade="all, delete-orphan")
     customization = relationship(
         "AgentCustomization", back_populates="agent", uselist=False)
     widgets = relationship("Widget", back_populates="agent")
