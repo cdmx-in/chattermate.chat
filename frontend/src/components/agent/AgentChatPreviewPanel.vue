@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch, nextTick } from 'vue'
 import type { AgentCustomization } from '@/types/agent'
 import { getAvatarUrl } from '@/utils/avatars'
 import { useAgentChat } from '@/composables/useAgentChat'
@@ -36,10 +36,84 @@ const isExpanded = ref(true)
 const emailInput = ref('')
 const hasStartedChat = ref(false)
 
+// Store original messages for restoration when switching back to CHATBOT
+const originalMessages = ref<any[]>([])
+const hasStoredMessages = ref(false)
+
 // Watch for customization changes to debug
 watch(() => props.customization, (newCustomization) => {
     console.log('Customization changed:', newCustomization)
 }, { deep: true, immediate: true })
+
+// Handle chat style changes
+const handleChatStyleChange = (oldStyle: string, newStyle: string) => {
+    console.log('🔄 Processing chat style change:', { oldStyle, newStyle, currentMessages: messages.value.length })
+    
+    if (oldStyle === 'CHATBOT' && newStyle === 'ASK_ANYTHING') {
+        // Store current messages and clear them
+        if (messages.value.length > 0 && !hasStoredMessages.value) {
+            console.log('💾 Storing messages for later restoration:', messages.value.length)
+            originalMessages.value = [...messages.value]
+            hasStoredMessages.value = true
+        }
+        console.log('🧹 Clearing messages for ASK_ANYTHING style')
+        messages.value.splice(0) // Clear all messages more efficiently
+        
+    } else if (oldStyle === 'ASK_ANYTHING' && newStyle === 'CHATBOT') {
+        // Restore original messages or initialize chat
+        if (hasStoredMessages.value && originalMessages.value.length > 0) {
+            console.log('📥 Restoring original messages:', originalMessages.value.length)
+            messages.value.splice(0, messages.value.length, ...originalMessages.value)
+        } else {
+            console.log('🆕 No stored messages, initializing new chat')
+            // Clear any existing messages first
+            messages.value.splice(0)
+            // Initialize chat if no stored messages
+            initChat()
+        }
+    }
+    
+    // Force reactivity update
+    nextTick(() => {
+        console.log('✅ Chat style change completed:', {
+            newStyle,
+            messagesCount: messages.value.length,
+            shouldShowWelcome: shouldShowWelcomeMessage.value,
+            shouldShowChat: shouldShowChatPanel.value
+        })
+    })
+}
+
+// Track previous chat style to avoid infinite loops
+const previousChatStyle = ref(props.customization.chat_style)
+const isChangingStyle = ref(false)
+
+// Watch for chat style changes to manage messages
+watch(() => props.customization.chat_style, async (newStyle) => {
+    // Prevent multiple rapid changes
+    if (isChangingStyle.value) {
+        console.log('Style change already in progress, skipping')
+        return
+    }
+    
+    const oldStyle = previousChatStyle.value
+    
+    if (oldStyle && newStyle && newStyle !== oldStyle) {
+        console.log('Valid chat style change detected:', oldStyle, '->', newStyle)
+        isChangingStyle.value = true
+        
+        try {
+            handleChatStyleChange(oldStyle, newStyle)
+            previousChatStyle.value = newStyle
+        } finally {
+            // Allow next change after a short delay
+            nextTick(() => {
+                isChangingStyle.value = false
+                console.log('Style change completed, ready for next change')
+            })
+        }
+    }
+}, { immediate: false })
 
 // Initialize chat composable
 const {
@@ -66,6 +140,9 @@ const handleKeyPress = (event: KeyboardEvent) => {
 
 // Lifecycle hooks
 onMounted(() => {
+    // Set initial chat style
+    previousChatStyle.value = props.customization.chat_style
+    
     // Don't initialize chat for ASK_ANYTHING style to avoid adding initial messages
     if (!isAskAnythingStyle.value) {
         initChat()
@@ -267,7 +344,26 @@ const containerStyles = computed(() => {
 
 // Computed property for welcome message display
 const shouldShowWelcomeMessage = computed(() => {
-    return isAskAnythingStyle.value && messages.value.length === 0
+    const showWelcome = isAskAnythingStyle.value && messages.value.length === 0
+    console.log('shouldShowWelcomeMessage:', {
+        isAskAnythingStyle: isAskAnythingStyle.value,
+        messagesLength: messages.value.length,
+        showWelcome,
+        chatStyle: props.customization.chat_style
+    })
+    return showWelcome
+})
+
+// Computed property for showing chat panel
+const shouldShowChatPanel = computed(() => {
+    const showChat = !shouldShowWelcomeMessage.value
+    console.log('shouldShowChatPanel:', {
+        shouldShowWelcomeMessage: shouldShowWelcomeMessage.value,
+        showChat,
+        isAskAnythingStyle: isAskAnythingStyle.value,
+        messagesLength: messages.value.length
+    })
+    return showChat
 })
 
 // Computed properties for welcome text with reactive updates
@@ -351,7 +447,7 @@ const welcomeSubtitle = computed(() => {
         <div class="chat-panel" :class="[
             { disabled: !isActive, 'ask-anything-chat': isAskAnythingStyle },
             `chat-panel-${agentId}`
-        ]" :style="chatStyles" v-if="isExpanded && !customization.showBubblePreview && !shouldShowWelcomeMessage">
+        ]" :style="chatStyles" v-if="isExpanded && !customization.showBubblePreview && shouldShowChatPanel">
             <div v-if="!isAskAnythingStyle" class="chat-header" :style="{
                 background: customization.chat_background_color,
                 ...headerBorderStyles

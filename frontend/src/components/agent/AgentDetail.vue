@@ -190,6 +190,13 @@ const handlePreview = (customization: AgentCustomization) => {
     agentStorage.updateAgent(agentData.value)
 }
 
+// Handle chat style changes for message management in preview
+const handleChatStyleChange = (oldStyle: string, newStyle: string) => {
+    console.log('Chat style changed in parent:', oldStyle, 'to', newStyle)
+    // The actual message management is handled in AgentChatPreviewPanel
+    // This handler is just for potential future use
+}
+
 const photoUrl = computed(() => {
     if (!agentData.value.customization?.photo_url) {
         return getAvatarUrl(agentData.value.agent_type.toLowerCase())
@@ -774,6 +781,7 @@ onMounted(async () => {
                                         @preview="handlePreview"
                                         @save="handleCustomizationSave"
                                         @cancel="() => switchTab('general')"
+                                        @chat-style-changed="handleChatStyleChange"
                                     />
                                 </div>
                                 <div class="customization-preview">
