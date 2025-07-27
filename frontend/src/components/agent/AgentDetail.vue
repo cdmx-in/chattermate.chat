@@ -57,7 +57,9 @@ const previewCustomization = ref<AgentCustomization>({
     photo_url: agentData.value.customization?.photo_url,
     icon_color: agentData.value.customization?.icon_color ?? '#6C757D',
     custom_css: agentData.value.customization?.custom_css,
-    customization_metadata: agentData.value.customization?.customization_metadata ?? {}
+    customization_metadata: agentData.value.customization?.customization_metadata ?? {},
+    chat_style: agentData.value.customization?.chat_style ?? 'CHATBOT',
+    widget_position: agentData.value.customization?.widget_position
 })
 
 
@@ -81,6 +83,40 @@ const instructionsText = computed({
 const iframeUrl = computed(() => {
     if (!widget.value?.id) return ''
     return `${baseUrl.value}/widgets/${widget.value.id}/data?widget_id=${widget.value.id}`
+})
+
+// Computed property to check if chat style is ASK_ANYTHING for preview adjustments
+const isAskAnythingStyle = computed(() => {
+    return previewCustomization.value.chat_style === 'ASK_ANYTHING'
+})
+
+// Computed property for preview wrapper styles
+const previewWrapperStyles = computed(() => {
+    const baseStyles = {
+        background: 'var(--background-alt, #f0f0f0)',
+        borderRadius: 'var(--radius-lg)',
+        overflow: 'hidden',
+        height: '600px',
+        flexShrink: '0',
+        display: 'flex',
+        alignItems: 'flex-start',
+        justifyContent: 'center',
+        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
+        border: '1px solid var(--border-color)'
+    }
+    
+    if (isAskAnythingStyle.value) {
+        return {
+            ...baseStyles,
+            width: '700px',  // Increased width for ASK_ANYTHING style
+            minWidth: '600px'
+        }
+    }
+    
+    return {
+        ...baseStyles,
+        width: '400px'
+    }
 })
 
 const emit = defineEmits<{
@@ -135,7 +171,22 @@ const {
 const { cleanup } = useAgentChat(agentData.value.id)
 
 const handlePreview = (customization: AgentCustomization) => {
-    previewCustomization.value = customization
+    previewCustomization.value = {
+        ...customization,
+        chat_style: customization.chat_style ?? 'CHATBOT',
+        widget_position: customization.widget_position
+    }
+    
+    // Also update the agentData customization to keep it in sync
+    // This ensures when switching tabs, the latest saved data is preserved
+    agentData.value.customization = {
+        ...customization,
+        chat_style: customization.chat_style ?? 'CHATBOT',
+        widget_position: customization.widget_position
+    }
+    
+    // Update storage to keep data in sync
+    agentStorage.updateAgent(agentData.value)
 }
 
 const photoUrl = computed(() => {
@@ -247,8 +298,14 @@ const handleCustomizationSave = (updatedAgent: AgentWithCustomization) => {
     // Update storage to keep data in sync
     agentStorage.updateAgent(updatedAgent)
     
-    // Update preview customization
-    previewCustomization.value = updatedAgent.customization ?? previewCustomization.value
+    // Update preview customization with all properties including chat_style
+    if (updatedAgent.customization) {
+        previewCustomization.value = {
+            ...updatedAgent.customization,
+            chat_style: updatedAgent.customization.chat_style ?? 'CHATBOT',
+            widget_position: updatedAgent.customization.widget_position
+        }
+    }
     
     // Switch back to general tab
     switchTab('general')
@@ -593,7 +650,7 @@ onMounted(async () => {
                                         This is how your chat widget will appear to users. The preview shows the exact interface they will interact with.
                                     </p>
                                 </div>
-                                <div class="preview-wrapper">
+                                <div class="preview-wrapper" :style="previewWrapperStyles">
                                     <iframe 
                                         v-if="widget?.id"
                                         :src="iframeUrl"
@@ -1572,17 +1629,8 @@ input:checked + .slider:before {
 }
 
 .preview-wrapper {
-    background: var(--background-alt, #f0f0f0);
-    border-radius: var(--radius-lg);
-    overflow: hidden;
-    height: 600px;
-    width: 400px;
-    flex-shrink: 0;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    border: 1px solid var(--border-color);
+    /* Base styles are now handled by computed previewWrapperStyles */
+    transition: all 0.3s ease;
 }
 
 .loading-preview {

@@ -20,7 +20,7 @@ from typing import Optional, Tuple
 import http.cookies
 from app.core.security import verify_conversation_token, verify_token, create_access_token
 from app.core.logger import get_logger
-from app.database import get_db
+from app.database import get_db, SessionLocal
 from app.models.user import User
 from sqlalchemy.orm import Session
 from app.core.socketio import sio
@@ -77,8 +77,8 @@ async def authenticate_socket(sid: str, environ: dict) -> Tuple[Optional[str], O
             # Try to refresh using refresh token
             if 'refresh_token' in cookies:
                 refresh_token = cookies['refresh_token'].value
-                db = next(get_db())
-                access_token = await refresh_access_token(refresh_token, db)
+                with SessionLocal() as db:
+                    access_token = await refresh_access_token(refresh_token, db)
 
                 # Emit cookie_set event with the new token
                 await sio.emit('cookie_set', {
@@ -137,12 +137,12 @@ async def authenticate_socket_conversation_token(sid: str, auth: dict) -> Tuple[
         logger.info(f"Authenticated widget {widget_id} for customer {customer_id}")
 
         # Get widget to verify and get org_id
-        db = next(get_db())
-        widget = db.query(Widget).filter(Widget.id == widget_id).first()
-        if not widget:
-            return None, None, None, None
+        with SessionLocal() as db:
+            widget = db.query(Widget).filter(Widget.id == widget_id).first()
+            if not widget:
+                return None, None, None, None
 
-        org_id = widget.organization_id
+            org_id = widget.organization_id
         db.close()
         return widget_id, org_id, customer_id, conversation_token
 

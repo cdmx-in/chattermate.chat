@@ -21,7 +21,7 @@ from agno.tools import Toolkit
 from app.core.logger import get_logger
 from app.services.shopify import ShopifyService
 from app.repositories.session_to_agent import SessionToAgentRepository
-from app.database import get_db
+from app.database import SessionLocal
 from app.models.organization import Organization
 from app.models.agent import Agent
 from app.models.shopify import AgentShopifyConfig, ShopifyShop
@@ -40,10 +40,6 @@ class ShopifyTools(Toolkit):
         self.agent_id = agent_id
         self.org_id = org_id
         self.session_id = session_id
-        self.db = next(get_db())
-        self.shopify_service = ShopifyService(self.db)
-        self.shopify_repo = ShopifyShopRepository(self.db)
-        self.agent_shopify_config_repo = AgentShopifyConfigRepository(self.db)
         
         # Register the functions
         self.register(self.list_products)
@@ -62,27 +58,31 @@ class ShopifyTools(Toolkit):
         """
         try:
             logger.debug(f"Getting shop for agent {self.agent_id}")
-            # Get the agent's Shopify configuration
-            shopify_config = self.agent_shopify_config_repo.get_agent_shopify_config(str(self.agent_id))
             
-            if not shopify_config or not shopify_config.enabled or not shopify_config.shop_id:
-                logger.warning("Shopify integration is not enabled for this agent")
-                return None
+            with SessionLocal() as db:
+                # Get the agent's Shopify configuration
+                agent_shopify_config_repo = AgentShopifyConfigRepository(db)
+                shopify_config = agent_shopify_config_repo.get_agent_shopify_config(str(self.agent_id))
                 
-            # Get the shop
-            shop = self.shopify_repo.get_shop(shopify_config.shop_id)
-            
-            if not shop or not shop.is_installed:
-                logger.warning("Shopify shop not found or not installed")
-                return None
+                if not shopify_config or not shopify_config.enabled or not shopify_config.shop_id:
+                    logger.warning("Shopify integration is not enabled for this agent")
+                    return None
+                    
+                # Get the shop
+                shopify_repo = ShopifyShopRepository(db)
+                shop = shopify_repo.get_shop(shopify_config.shop_id)
                 
-            # Verify the shop belongs to the current organization
-            org_uuid = UUID(str(self.org_id))
-            if str(shop.organization_id) != str(org_uuid):
-                logger.warning(f"Shop {shop.id} does not belong to organization {self.org_id}")
-                return None
-                
-            return shop
+                if not shop or not shop.is_installed:
+                    logger.warning("Shopify shop not found or not installed")
+                    return None
+                    
+                # Verify the shop belongs to the current organization
+                org_uuid = UUID(str(self.org_id))
+                if str(shop.organization_id) != str(org_uuid):
+                    logger.warning(f"Shop {shop.id} does not belong to organization {self.org_id}")
+                    return None
+                    
+                return shop
             
         except Exception as e:
             logger.error(f"Error getting shop for agent: {str(e)}")
@@ -108,9 +108,11 @@ class ShopifyTools(Toolkit):
                     "message": "Shopify integration is not enabled for this agent or shop not found"
                 })
                 
-            # List products
-            result = self.shopify_service.get_products(shop, limit)
-            return json.dumps(result)
+            # List products using context manager for database operations
+            with SessionLocal() as db:
+                shopify_service = ShopifyService(db)
+                result = shopify_service.get_products(shop, limit)
+                return json.dumps(result)
             
         except Exception as e:
             logger.error(f"Error listing products: {str(e)}")
@@ -139,8 +141,10 @@ class ShopifyTools(Toolkit):
                     "message": "Shopify integration is not enabled for this agent or shop not found"
                 })
                 
-            # Get the product
-            result = self.shopify_service.get_product(shop, product_id)
+            # Get the product using context manager for database operations
+            with SessionLocal() as db:
+                shopify_service = ShopifyService(db)
+                result = shopify_service.get_product(shop, product_id)
             
             # Check if product was found
             if result.get("success", False) and result.get("product"):
@@ -620,8 +624,10 @@ class ShopifyTools(Toolkit):
                     "message": "Shopify integration is not enabled for this agent or shop not found"
                 })
                 
-            # Get order details
-            result = self.shopify_service.get_order(shop, order_id)
+            # Get order details using context manager for database operations
+            with SessionLocal() as db:
+                shopify_service = ShopifyService(db)
+                result = shopify_service.get_order(shop, order_id)
             
             # If successful, extract relevant order status information
             if result.get("success", False) and result.get("order"):

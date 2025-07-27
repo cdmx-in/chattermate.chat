@@ -18,7 +18,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <script setup lang="ts">
 import { ref, watch, onMounted, computed, onUnmounted } from 'vue'
-import type { AgentWithCustomization, AgentCustomization } from '@/types/agent'
+import type { AgentWithCustomization, AgentCustomization, ChatStyle } from '@/types/agent'
 import { agentService } from '@/services/agent'
 import WebFont from 'webfontloader'
 
@@ -42,14 +42,37 @@ const customization = ref<AgentCustomization>({
     photo_url: props.agent.customization?.photo_url,
     custom_css: props.agent.customization?.custom_css,
     customization_metadata: props.agent.customization?.customization_metadata ?? {},
+    chat_style: props.agent.customization?.chat_style ?? 'CHATBOT',
 })
+
+// Chat style options with descriptions
+const chatStyleOptions = [
+    {
+        value: 'CHATBOT' as ChatStyle,
+        label: 'Chatbot',
+        description: 'Traditional customer support style with agent branding',
+        icon: '💬'
+    },
+    {
+        value: 'ASK_ANYTHING' as ChatStyle,
+        label: 'Ask Anything',
+        description: 'Modern AI assistant style for general queries',
+        icon: '🤖'
+    }
+]
 
 const handleSave = async () => {
     try {
-        await agentService.updateCustomization(
+        const updatedCustomization = await agentService.updateCustomization(
             props.agent.id,
             customization.value,
         )
+        
+        // Update local customization with the response
+        customization.value = updatedCustomization
+        
+        // Emit preview to update the preview panel
+        emit('preview', updatedCustomization)
         
         // Show success message or handle success state
         console.log('Customization saved successfully')
@@ -61,6 +84,25 @@ const handleSave = async () => {
 // Watch for changes and emit preview event
 watch(customization, (newValue) => {
     emit('preview', newValue)
+}, { deep: true })
+
+// Watch for prop changes to update local customization
+watch(() => props.agent.customization, (newCustomization) => {
+    if (newCustomization) {
+        customization.value = {
+            id: newCustomization.id ?? 0,
+            agent_id: props.agent.id,
+            chat_background_color: newCustomization.chat_background_color ?? '#F8F9FA',
+            chat_bubble_color: newCustomization.chat_bubble_color ?? '#E9ECEF',
+            icon_color: newCustomization.icon_color ?? '#6C757D',
+            accent_color: newCustomization.accent_color ?? '#f34611',
+            font_family: newCustomization.font_family ?? 'Inter, system-ui, sans-serif',
+            photo_url: newCustomization.photo_url,
+            custom_css: newCustomization.custom_css,
+            customization_metadata: newCustomization.customization_metadata ?? {},
+            chat_style: newCustomization.chat_style ?? 'CHATBOT',
+        }
+    }
 }, { deep: true })
 
 // Add state for Google Fonts
@@ -133,11 +175,41 @@ const handleFontSelect = (font: string) => {
     customization.value.font_family = font
     showFontDropdown.value = false
 }
+
+const handleChatStyleChange = (event: Event) => {
+    const target = event.target as HTMLSelectElement
+    const selectedValue = target.value as ChatStyle
+    customization.value.chat_style = selectedValue
+}
 </script>
 
 <template>
     <div class="customization-form">
         <div class="form-content">
+            <!-- Widget Style Section -->
+            <div class="form-section">
+                <h4>Chat Style</h4>
+                
+                <div class="form-group">
+                    <label>Style Type</label>
+                    <div class="chat-style-dropdown">
+                        <select 
+                            v-model="customization.chat_style" 
+                            @change="handleChatStyleChange"
+                            class="chat-style-select"
+                        >
+                            <option 
+                                v-for="option in chatStyleOptions" 
+                                :key="option.value" 
+                                :value="option.value"
+                            >
+                                {{ option.icon }} {{ option.label }} - {{ option.description }}
+                            </option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
             <div class="form-section">
                 <h4>Colors</h4>
                 <div class="color-grid">
@@ -233,13 +305,15 @@ const handleFontSelect = (font: string) => {
 }
 
 .form-group {
-    margin-bottom: var(--space-sm);
+    margin-bottom: var(--space-md);
 }
 
 .form-group label {
     display: block;
-    margin-bottom: var(--space-xs);
+    margin-bottom: var(--space-sm);
     color: var(--text-muted);
+    font-weight: 500;
+    font-size: var(--text-sm);
 }
 
 .form-group input[type="file"],
@@ -277,13 +351,6 @@ const handleFontSelect = (font: string) => {
     text-align: center;
     color: var(--text-muted);
     font-size: var(--text-sm);
-}
-
-.image-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: var(--space-sm);
-    margin-bottom: var(--space-sm);
 }
 
 .color-grid {
@@ -342,6 +409,7 @@ const handleFontSelect = (font: string) => {
     font-weight: 500;
     flex: 1;
     min-width: 120px;
+    transition: var(--transition-fast);
 }
 
 .save-button {
@@ -349,9 +417,17 @@ const handleFontSelect = (font: string) => {
     color: white;
 }
 
+.save-button:hover {
+    background: var(--primary-dark);
+}
+
 .cancel-button {
     background: var(--background-soft);
     color: var(--text-color);
+}
+
+.cancel-button:hover {
+    background: var(--background-mute);
 }
 
 .font-picker {
@@ -384,11 +460,13 @@ const handleFontSelect = (font: string) => {
     border-radius: var(--radius-md);
     margin-top: var(--space-xs);
     z-index: 10;
+    box-shadow: var(--shadow-lg);
 }
 
 .font-option {
     padding: var(--space-sm);
     cursor: pointer;
+    transition: var(--transition-fast);
 }
 
 .font-option:hover {
@@ -398,5 +476,33 @@ const handleFontSelect = (font: string) => {
 .color-picker label {
     font-size: var(--text-sm);
     margin-bottom: var(--space-xs);
+}
+
+/* Chat style dropdown styles */
+.chat-style-dropdown {
+    position: relative;
+}
+
+.chat-style-select {
+    width: 100%;
+    padding: var(--space-sm);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    background: var(--background-soft);
+    color: var(--text-color);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.chat-style-select:hover {
+    border-color: var(--border-color-hover);
+    background: var(--background-mute);
+}
+
+.chat-style-select:focus {
+    outline: none;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 1px var(--primary-color);
 }
 </style>

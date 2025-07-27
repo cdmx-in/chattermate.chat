@@ -58,6 +58,9 @@ export interface ChatMessage {
   message_type?: string
 }
 
+export type ChatStyle = 'CHATBOT' | 'ASK_ANYTHING'
+export type WidgetPosition = 'FLOATING' | 'FIXED'
+
 export interface AgentCustomization {
   id: number
   agent_id: string // UUID
@@ -72,6 +75,8 @@ export interface AgentCustomization {
   font_family?: string
   custom_css?: string
   customization_metadata?: Record<string, any>
+  chat_style?: ChatStyle
+  widget_position?: WidgetPosition
 }
 
 export interface AgentWithCustomization extends AgentResponse {

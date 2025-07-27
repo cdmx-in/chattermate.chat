@@ -38,6 +38,8 @@ class AgentCustomizationResponse(BaseModel):
     accent_color: Optional[str] = None
     font_family: Optional[str] = None
     photo_url: Optional[str] = None
+    chat_style: Optional[str] = "CHATBOT"
+    widget_position: Optional[str] = "FLOATING"
 
     @property
     def photo_url_signed(self) -> Optional[str]:

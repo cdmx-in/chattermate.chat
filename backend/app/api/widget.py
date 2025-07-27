@@ -124,7 +124,9 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
             "chat_bubble_color": agent_customization.chat_bubble_color,
             "accent_color": agent_customization.accent_color,
             "font_family": agent_customization.font_family,
-            "photo_url": photo_url
+            "photo_url": photo_url,
+            "chat_style": agent_customization.chat_style.value if agent_customization.chat_style else "CHATBOT",
+            "widget_position": agent_customization.widget_position.value if agent_customization.widget_position else "FLOATING"
         }
         
 

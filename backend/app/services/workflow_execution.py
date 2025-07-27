@@ -467,6 +467,44 @@ class WorkflowExecutionService:
     ) -> WorkflowExecutionResult:
         """Execute an LLM node"""
         try:
+            # Check if both user message and workflow history are empty
+            if not user_message or user_message.strip() == "":
+                # Check if there's any meaningful chat history or workflow history
+                chat_repo = ChatRepository(self.db)
+                chat_history = chat_repo.get_session_history(session_id)
+                workflow_history = self.session_repo.get_workflow_history(session_id)
+                
+                # If both message and history are empty, skip LLM execution
+                if (not chat_history or len(chat_history) == 0) and (not workflow_history or len(workflow_history) == 0):
+                    logger.info(f"Skipping LLM node {node.id} execution - no user message and no history available")
+                    
+                    # Get exit condition to determine how to proceed
+                    config = node.config or {}
+                    exit_condition = config.get("exit_condition", ExitCondition.SINGLE_EXECUTION)
+                    if isinstance(exit_condition, str):
+                        try:
+                            exit_condition = ExitCondition(exit_condition)
+                        except ValueError:
+                            exit_condition = ExitCondition.SINGLE_EXECUTION
+                    
+                    if exit_condition == ExitCondition.SINGLE_EXECUTION:
+                        # Single execution: move to next node
+                        next_node_id = self._find_next_node(node)
+                        return WorkflowExecutionResult(
+                            success=True,
+                            message="",  # Empty message since no execution occurred
+                            next_node_id=next_node_id,
+                            should_continue=next_node_id is not None
+                        )
+                    else:
+                        # Continuous execution: wait for user input
+                        return WorkflowExecutionResult(
+                            success=True,
+                            message="",  # Empty message since no execution occurred
+                            next_node_id=None,
+                            should_continue=False
+                        )
+            
             # Get system prompt from config and process variables
             config = node.config or {}
             system_prompt = config.get("system_prompt", "You are a helpful assistant.")
