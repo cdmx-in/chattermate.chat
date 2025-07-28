@@ -80,3 +80,13 @@ chattermate-cli/src/utils/env.ts
 chattermate-cli/templates/docker-compose.yml
 chattermate-cli/templates/README.md
 chattermate-cli/templates/scripts/init-vector.sql
+chattermate-cli/dist/templates/docker-compose.yml
+chattermate-cli/dist/templates/README.md
+chattermate-cli/dist/templates/backend/.env.example
+chattermate-cli/dist/templates/frontend/.env.example
+chattermate-cli/dist/templates/scripts/init-vector.sql
+chattermate-cli/dist/utils/keys.d.ts
+chattermate-cli/dist/utils/keys.js
+chattermate-cli/src/utils/keys.ts
+chattermate-cli/templates/backend/.env.example
+chattermate-cli/templates/frontend/.env.example
