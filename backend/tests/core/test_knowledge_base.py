@@ -66,14 +66,14 @@ def knowledge_manager(mock_db, mock_ai_config, mock_vector_db):
     org_id = uuid4()
     agent_id = uuid4()
     
-    with patch('app.knowledge.knowledge_base.get_db') as mock_get_db, \
+    with patch('app.knowledge.knowledge_base.SessionLocal') as mock_session_local, \
          patch('app.knowledge.knowledge_base.AIConfigRepository') as mock_ai_config_repo, \
          patch('app.knowledge.knowledge_base.PgVector') as mock_pg_vector, \
          patch('app.knowledge.knowledge_base.KnowledgeRepository') as mock_knowledge_repo, \
          patch('app.knowledge.knowledge_base.KnowledgeToAgentRepository') as mock_link_repo:
         
         # Configure basic mocks
-        mock_get_db.return_value.__next__.return_value = mock_db
+        mock_session_local.return_value.__enter__.return_value = mock_db
         mock_ai_config_repo.return_value.get_active_config.return_value = mock_ai_config
         mock_pg_vector.return_value = mock_vector_db
         
