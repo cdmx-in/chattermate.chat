@@ -1,5 +1,4 @@
-# Build stage
-FROM python:3.12-slim AS builder
+FROM python:3.12-slim
 
 WORKDIR /app
 
@@ -7,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     libpq-dev \
+    netcat-traditional \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
@@ -33,38 +33,11 @@ RUN mkdir -p uploads/agents && \
 # Make startup script executable
 RUN chmod +x ./scripts/start.sh
 
-# Production stage
-FROM python:3.12-slim
-
-WORKDIR /app
-
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
-    libpq-dev \
-    netcat-traditional \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy from builder - including Python scripts directory
-COPY --from=builder /usr/local/lib/python3.12/site-packages/ /usr/local/lib/python3.12/site-packages/
-COPY --from=builder /usr/local/bin/ /usr/local/bin/
-COPY --from=builder /app ./
-
-# Create cache directories in production image
-RUN mkdir -p .cache/huggingface/transformers && \
-    mkdir -p .cache/huggingface/sentence_transformers && \
-    mkdir -p .cache/huggingface/hub && \
-    mkdir -p .cache/torch && \
-    mkdir -p .cache/pytorch_transformers && \
-    chmod -R 755 .cache
-
 # Set environment variables
 ENV PYTHONPATH=/app
 ENV PORT=8000
 ENV ENVIRONMENT=production
-ENV WORKERS=4
-ENV TIMEOUT=120
-ENV LOG_LEVEL=info
+
 # Set HuggingFace cache directories
 ENV HF_HOME=/app/.cache/huggingface
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface/transformers
@@ -78,16 +51,5 @@ ENV PYTORCH_TRANSFORMERS_CACHE=/app/.cache/pytorch_transformers
 # Expose the port
 EXPOSE 8000
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# Run the application with Gunicorn
-CMD ["sh", "-c", "gunicorn app.main:app \
-    --workers ${WORKERS} \
-    --worker-class uvicorn.workers.UvicornWorker \
-    --bind 0.0.0.0:${PORT} \
-    --timeout ${TIMEOUT} \
-    --access-logfile - \
-    --error-logfile - \
-    --log-level ${LOG_LEVEL}"] 
+# Run the startup script
+CMD ["./scripts/start.sh"] 

@@ -1,8 +1,9 @@
 import axios, { AxiosError } from 'axios'
 import router from '@/router'
+import { getApiUrl } from '@/config/api'
 
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
+  baseURL: getApiUrl(),
   withCredentials: true, // Important for cookies
   headers: {
     'Content-Type': 'application/json',
@@ -26,7 +27,7 @@ api.interceptors.response.use(
           {},
           {
             withCredentials: true,
-            baseURL: import.meta.env.VITE_API_URL,
+            baseURL: getApiUrl(),
           },
         )
 
