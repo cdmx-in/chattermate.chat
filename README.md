@@ -4,6 +4,39 @@
 
 ChatterMate is a no-code AI chatbot agent framework. It enables businesses to provide 24/7 support through AI agents that can handle common queries, escalate complex issues to the human agent on need basics, and continuously learn from knowledge base articles. Integrate the chat widget easily on any website. 
 
+## Quick Start with CLI
+
+Get ChatterMate running in minutes with our CLI tool:
+
+```bash
+# Install the ChatterMate CLI globally
+npm install -g chattermate-cli
+
+# Create a new ChatterMate project
+chattermate init my-chattermate-project
+
+# Navigate to your project
+cd my-chattermate-project
+
+# Start all services with Docker
+chattermate start
+
+# Open http://localhost/ in your browser
+```
+
+That's it! ChatterMate is now running with all services configured.
+
+### CLI Commands
+
+```bash
+chattermate init <project-name>    # Initialize a new project
+chattermate start                  # Start all services
+chattermate stop                   # Stop all services  
+chattermate status                 # Check service status
+chattermate logs                   # View service logs
+chattermate reset                  # Reset and cleanup project
+```
+
 ## Documentation
 
 [docs.chattermate.chat](https://docs.chattermate.chat)
@@ -43,12 +76,31 @@ https://chattermate.chat
 
 ## Prerequisites
 
+### For CLI Installation (Recommended)
+- Node.js 16+
+- Docker & Docker Compose
+- npm or yarn
+
+### For Manual Installation
 - Python 3.12+
 - PostgreSQL 14+ (with Vector extension)
 - Firebase Project for push notification
 - Redis (Optional for rate limiting and multiserver socket deployment)
 
-#### Local Development with Docker
+## Installation Methods
+
+### Method 1: CLI Installation (Recommended)
+
+The fastest way to get started is using our CLI tool:
+
+```bash
+npm install -g chattermate-cli
+chattermate init my-project
+cd my-project
+chattermate start
+```
+
+### Method 2: Docker Installation
 
 For local development, you can build the images yourself:
 
@@ -76,6 +128,10 @@ docker compose logs -f frontend # frontend logs
 
 
 ## Non Docker Installation
+
+### Method 3: Manual Installation
+
+> **Note**: For most users, we recommend using the CLI installation method above. Manual installation is for advanced users who want to customize the setup.
 
 ### Backend Setup
 ```bash

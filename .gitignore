@@ -90,3 +90,13 @@ chattermate-cli/dist/utils/keys.js
 chattermate-cli/src/utils/keys.ts
 chattermate-cli/templates/backend/.env.example
 chattermate-cli/templates/frontend/.env.example
+chattermate-cli/dist/templates/Dockerfile.postgres
+chattermate-cli/dist/templates/backend/scripts/init-vector.sql
+chattermate-cli/dist/templates/backend/scripts/preload_models.py
+chattermate-cli/dist/templates/backend/scripts/start.sh
+chattermate-cli/dist/templates/frontend/nginx.conf
+chattermate-cli/templates/Dockerfile.postgres
+chattermate-cli/templates/backend/scripts/init-vector.sql
+chattermate-cli/templates/backend/scripts/preload_models.py
+chattermate-cli/templates/backend/scripts/start.sh
+chattermate-cli/templates/frontend/nginx.conf
