@@ -316,7 +316,7 @@ class ChatAgent(ChatAgentMCPMixin):
            agent_id=str(agent_id),
            storage=storage,
            add_history_to_messages=True,
-        #    tool_call_limit=3,
+           tool_call_limit=10,
            num_history_responses=10,
            read_chat_history=True,
            markdown=False,

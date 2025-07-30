@@ -62,33 +62,17 @@ export function useMCPTools(agentId: string) {
       name: 'File System',
       description: 'Access and manage files and directories',
       transport_type: 'stdio' as MCPTransportType,
-      command: 'uvx',
-      args: ['@modelcontextprotocol/server-filesystem'],
+      command: 'npx',
+      args: ['-y','@modelcontextprotocol/server-filesystem'],
       env_vars: { ALLOWED_DIRECTORIES: '/path/to/allowed/directory' }
-    },
-    {
-      name: 'Git Repository',
-      description: 'Interact with Git repositories',
-      transport_type: 'stdio' as MCPTransportType,
-      command: 'uvx',
-      args: ['@modelcontextprotocol/server-git'],
-      env_vars: {}
-    },
-    {
-      name: 'Web Search',
-      description: 'Search the web using Brave Search API',
-      transport_type: 'stdio' as MCPTransportType,
-      command: 'uvx',
-      args: ['@modelcontextprotocol/server-brave-search'],
-      env_vars: { BRAVE_API_KEY: 'your-api-key' }
     },
     {
       name: 'Weather',
       description: 'Get weather information',
       transport_type: 'stdio' as MCPTransportType,
       command: 'uvx',
-      args: ['@modelcontextprotocol/server-weather'],
-      env_vars: { WEATHER_API_KEY: 'your-api-key' }
+      args: ["--from", "git+https://github.com/adhikasp/mcp-weather.git", "mcp-weather"],
+      env_vars: { ACCUWEATHER_API_KEY: 'your-api-key' }
     }
   ]
 
