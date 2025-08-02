@@ -1,6 +1,6 @@
 import axios, { AxiosError } from 'axios'
 import router from '@/router'
-import { getApiUrl } from '@/config/api'
+import { getApiUrl } from '../config/api'
 
 const api = axios.create({
   baseURL: getApiUrl(),
