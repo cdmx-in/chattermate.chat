@@ -180,10 +180,7 @@ async def create_organization(
                 "email": admin.email,
                 "full_name": admin.full_name,
                 "organization_id": str(organization.id),
-                "role": {
-                    "id": admin_role.id,
-                    "name": admin_role.name
-                }
+                "role": admin_role.to_dict()
             }, default=str)),
             samesite="lax",
             max_age=604800  # 7 days
@@ -210,10 +207,7 @@ async def create_organization(
                 "email": admin.email,
                 "full_name": admin.full_name,
                 "organization_id": organization.id,
-                "role": {
-                    "id": admin_role.id,
-                    "name": admin_role.name,
-                }
+                "role": admin_role.to_dict()
             }
         }
 

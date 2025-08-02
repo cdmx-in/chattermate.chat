@@ -18,29 +18,53 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
-    # Check if 'ai' schema exists before attempting to modify the table
+    # Check if 'ai' schema and agent_sessions table exist before attempting to modify
     conn = op.get_bind()
-    result = conn.execute(sa.text("SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'ai'"))
-    schema_exists = result.fetchone() is not None
     
-    if schema_exists:
+    # Check if schema exists
+    schema_result = conn.execute(sa.text("SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'ai'"))
+    schema_exists = schema_result.fetchone() is not None
+    
+    if not schema_exists:
+        print("Schema 'ai' does not exist, skipping migration")
+        return
+    
+    # Check if table exists
+    table_result = conn.execute(sa.text(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'ai' AND table_name = 'agent_sessions'"
+    ))
+    table_exists = table_result.fetchone() is not None
+    
+    if table_exists:
         # Add team_id column to ai.agent_sessions table
         op.add_column('agent_sessions', 
             sa.Column('team_id', sa.UUID(), nullable=True),
             schema='ai'
         )
     else:
-        print("Schema 'ai' does not exist, skipping migration")
+        print("Table 'ai.agent_sessions' does not exist, skipping migration")
 
 
 def downgrade() -> None:
-    # Check if 'ai' schema exists before attempting to modify the table
+    # Check if 'ai' schema and agent_sessions table exist before attempting to modify
     conn = op.get_bind()
-    result = conn.execute(sa.text("SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'ai'"))
-    schema_exists = result.fetchone() is not None
     
-    if schema_exists:
+    # Check if schema exists
+    schema_result = conn.execute(sa.text("SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'ai'"))
+    schema_exists = schema_result.fetchone() is not None
+    
+    if not schema_exists:
+        print("Schema 'ai' does not exist, skipping migration rollback")
+        return
+    
+    # Check if table exists
+    table_result = conn.execute(sa.text(
+        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'ai' AND table_name = 'agent_sessions'"
+    ))
+    table_exists = table_result.fetchone() is not None
+    
+    if table_exists:
         # Drop team_id column from ai.agent_sessions table
         op.drop_column('agent_sessions', 'team_id', schema='ai')
     else:
-        print("Schema 'ai' does not exist, skipping migration rollback")
+        print("Table 'ai.agent_sessions' does not exist, skipping migration rollback")
