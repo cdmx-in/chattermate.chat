@@ -53,7 +53,7 @@ class TestOptimizedPgVector:
         # Act
         db = OptimizedPgVector(
             table_name="test_table",
-            db_url="postgresql://user:pass@localhost/testdb",
+            db_url="postgresql+psycopg://user:pass@localhost/testdb",
             embedder=mock_embedder
         )
         
@@ -71,7 +71,7 @@ class TestOptimizedPgVector:
         
         db = OptimizedPgVector(
             table_name="test_table",
-            db_url="postgresql://user:pass@localhost/testdb",
+            db_url="postgresql+psycopg://user:pass@localhost/testdb",
             embedder=mock_embedder
         )
         db.Session = mock_session
@@ -115,7 +115,7 @@ class TestOptimizedPgVector:
         
         db = OptimizedPgVector(
             table_name="test_table",
-            db_url="postgresql://user:pass@localhost/testdb",
+            db_url="postgresql+psycopg://user:pass@localhost/testdb",
             embedder=mock_embedder
         )
         db.Session = mock_session
