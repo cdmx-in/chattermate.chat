@@ -154,8 +154,12 @@ const handleSubmit = async () => {
         return
     }
 
-    if (passwordStrength.value.score < 3) {
-        error.value = 'Password is not strong enough'
+    if (!passwordStrength.value.hasMinLength || 
+        !passwordStrength.value.hasUpperCase || 
+        !passwordStrength.value.hasLowerCase || 
+        !passwordStrength.value.hasNumber || 
+        !passwordStrength.value.hasSpecialChar) {
+        error.value = 'Password must meet all requirements'
         return
     }
 
