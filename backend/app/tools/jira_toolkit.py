@@ -323,8 +323,12 @@ class JiraTools(Toolkit):
                         
                         logger.info(f"Appending new description to existing ticket {existing_ticket_id}")
                     else:
-                        logger.warning(f"Failed to get existing ticket details: {existing_ticket_response.text}")
-                        # Continue with just the new description
+                        error_msg = f"Failed to get existing ticket details: {existing_ticket_response.text}"
+                        logger.warning(error_msg)
+                        return json.dumps({
+                            "success": False,
+                            "message": error_msg
+                        })
                     
                     # Update existing ticket
                     url = f"https://api.atlassian.com/ex/jira/{str(token.cloud_id)}/rest/api/3/issue/{existing_ticket_id}"

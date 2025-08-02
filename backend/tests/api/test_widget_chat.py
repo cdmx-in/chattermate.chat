@@ -275,7 +275,7 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     mock_result.should_continue = True
     mock_workflow_execution.execute_workflow = AsyncMock(return_value=mock_result)
     
-    with patch("app.api.widget_chat.ChatAgent", return_value=mock_chat_agent), \
+    with patch("app.api.widget_chat.ChatAgent.create_async", AsyncMock(return_value=mock_chat_agent)), \
          patch("app.api.widget_chat.WorkflowExecutionService", return_value=mock_workflow_execution):
         await widget_chat.handle_widget_chat(sid, data)
     

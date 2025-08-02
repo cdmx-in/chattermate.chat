@@ -75,7 +75,7 @@ class TestWorkflowChatServiceEndChat:
         
         # Mock decrypt_api_key to return a test key
         with patch('app.services.workflow_chat.decrypt_api_key', return_value='test-api-key'):
-            with patch('app.services.workflow_chat.ChatAgent', return_value=mock_chat_agent):
+            with patch('app.services.workflow_chat.ChatAgent.create_async', AsyncMock(return_value=mock_chat_agent)):
                 result = await workflow_chat_service._handle_workflow_end_chat(
                 response=response,
                 session_id="test-session",
@@ -121,7 +121,7 @@ class TestWorkflowChatServiceEndChat:
         
         # Mock decrypt_api_key to return a test key
         with patch('app.services.workflow_chat.decrypt_api_key', return_value='test-api-key'):
-            with patch('app.services.workflow_chat.ChatAgent', return_value=mock_chat_agent):
+            with patch('app.services.workflow_chat.ChatAgent.create_async', AsyncMock(return_value=mock_chat_agent)):
                 result = await workflow_chat_service._handle_workflow_end_chat(
                 response=response,
                 session_id="test-session",
@@ -157,9 +157,8 @@ class TestWorkflowChatServiceEndChat:
         mock_chat_agent = Mock()
         mock_chat_agent._handle_end_chat = AsyncMock(return_value=response)
         
-        with patch('app.services.workflow_chat.ChatAgent') as mock_chat_agent_class:
+        with patch('app.services.workflow_chat.ChatAgent.create_async', AsyncMock(return_value=mock_chat_agent)) as mock_create_async:
             with patch('app.services.workflow_chat.decrypt_api_key', return_value='decrypted-key'):
-                mock_chat_agent_class.return_value = mock_chat_agent
                 
                 await workflow_chat_service._handle_workflow_end_chat(
                     response=response,
@@ -169,8 +168,8 @@ class TestWorkflowChatServiceEndChat:
                     customer_id="test-customer"
                 )
                 
-                # Verify ChatAgent was created with correct parameters
-                mock_chat_agent_class.assert_called_once_with(
+                # Verify ChatAgent.create_async was called with correct parameters
+                mock_create_async.assert_called_once_with(
                     api_key='decrypted-key',
                     model_name='gpt-4',
                     model_type='openai',

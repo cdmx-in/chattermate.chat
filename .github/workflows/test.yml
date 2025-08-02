@@ -28,11 +28,11 @@ jobs:
         pip install -r requirements.txt
         pip install pytest pytest-asyncio httpx pytest-cov
 
-    # - name: Run tests with coverage
-    #   env:
-    #     PYTHONPATH: ${GITHUB_WORKSPACE}/backend
-    #   run: |
-    #     python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=65
+    - name: Run tests with coverage
+      env:
+        PYTHONPATH: ${GITHUB_WORKSPACE}/backend
+      run: |
+        python -m pytest tests/ -v --cov=app --cov-report=term-missing --cov-fail-under=65
 
   frontend-test:
     name: Run Frontend Tests

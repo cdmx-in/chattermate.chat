@@ -68,7 +68,7 @@ def knowledge_manager(mock_db, mock_ai_config, mock_vector_db):
     
     with patch('app.knowledge.knowledge_base.SessionLocal') as mock_session_local, \
          patch('app.knowledge.knowledge_base.AIConfigRepository') as mock_ai_config_repo, \
-         patch('app.knowledge.knowledge_base.PgVector') as mock_pg_vector, \
+         patch('app.knowledge.knowledge_base.OptimizedPgVector') as mock_pg_vector, \
          patch('app.knowledge.knowledge_base.KnowledgeRepository') as mock_knowledge_repo, \
          patch('app.knowledge.knowledge_base.KnowledgeToAgentRepository') as mock_link_repo:
         
@@ -96,9 +96,9 @@ async def test_add_pdf_urls_success(knowledge_manager, mock_knowledge):
     """Test successful addition of PDF URLs"""
     # Setup
     urls = ["http://example.com/test.pdf"]
-    knowledge_manager.knowledge_repo.create.return_value = mock_knowledge
     
-    with patch('app.knowledge.knowledge_base.PDFUrlKnowledgeBase') as mock_pdf_kb:
+    with patch('app.knowledge.knowledge_base.PDFUrlKnowledgeBase') as mock_pdf_kb, \
+         patch.object(knowledge_manager, '_add_knowledge_source', return_value=mock_knowledge) as mock_add_source:
         # Configure mock
         mock_pdf_kb_instance = MagicMock()
         mock_pdf_kb.return_value = mock_pdf_kb_instance
@@ -110,7 +110,7 @@ async def test_add_pdf_urls_success(knowledge_manager, mock_knowledge):
         assert result is True
         mock_pdf_kb.assert_called_once()
         mock_pdf_kb_instance.load.assert_called_once()
-        knowledge_manager.knowledge_repo.create.assert_called_once()
+        mock_add_source.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_add_pdf_urls_failure(knowledge_manager):
@@ -134,9 +134,9 @@ async def test_add_websites_success(knowledge_manager, mock_knowledge):
     # Setup
     urls = ["http://example.com"]
     max_links = 5
-    knowledge_manager.knowledge_repo.create.return_value = mock_knowledge
     
-    with patch('app.knowledge.knowledge_base.EnhancedWebsiteKnowledgeBase') as mock_web_kb:
+    with patch('app.knowledge.knowledge_base.EnhancedWebsiteKnowledgeBase') as mock_web_kb, \
+         patch.object(knowledge_manager, '_add_knowledge_source', return_value=mock_knowledge) as mock_add_source:
         # Configure mock
         mock_web_kb_instance = MagicMock()
         mock_web_kb.return_value = mock_web_kb_instance
@@ -148,17 +148,17 @@ async def test_add_websites_success(knowledge_manager, mock_knowledge):
         assert result is True
         mock_web_kb.assert_called_once()
         mock_web_kb_instance.load.assert_called_once()
-        knowledge_manager.knowledge_repo.create.assert_called_once()
+        mock_add_source.assert_called_once()
 
 @pytest.mark.asyncio
 async def test_add_pdf_files_success(knowledge_manager, mock_knowledge):
     """Test successful addition of PDF files"""
     # Setup
     files = ["/path/to/test.pdf"]
-    knowledge_manager.knowledge_repo.create.return_value = mock_knowledge
     
     with patch('app.knowledge.knowledge_base.PDFKnowledgeBase') as mock_pdf_kb, \
-         patch('app.knowledge.knowledge_base.PDFImageReader') as mock_pdf_reader:
+         patch('app.knowledge.knowledge_base.PDFImageReader') as mock_pdf_reader, \
+         patch.object(knowledge_manager, '_add_knowledge_source', return_value=mock_knowledge) as mock_add_source:
         # Configure mocks
         mock_pdf_kb_instance = MagicMock()
         mock_pdf_kb.return_value = mock_pdf_kb_instance
@@ -170,7 +170,7 @@ async def test_add_pdf_files_success(knowledge_manager, mock_knowledge):
         assert result is True
         mock_pdf_kb.assert_called_once()
         mock_pdf_kb_instance.load.assert_called_once()
-        knowledge_manager.knowledge_repo.create.assert_called_once()
+        mock_add_source.assert_called_once()
 
 def test_get_knowledge_base_for_agent(knowledge_manager, mock_knowledge):
     """Test getting knowledge base for a specific agent"""
@@ -178,34 +178,42 @@ def test_get_knowledge_base_for_agent(knowledge_manager, mock_knowledge):
     mock_knowledge.agent_links = [
         MagicMock(agent_id=knowledge_manager.agent_id)
     ]
-    knowledge_manager.knowledge_repo.get_by_agent.return_value = [mock_knowledge]
     
-    # Execute
-    result = knowledge_manager.get_knowledge_base()
-    
-    # Assert
-    assert len(result) == 1
-    assert result[0]['id'] == mock_knowledge.id
-    assert result[0]['source'] == mock_knowledge.source
-    assert result[0]['source_type'] == mock_knowledge.source_type
-    knowledge_manager.knowledge_repo.get_by_agent.assert_called_once_with(knowledge_manager.agent_id)
+    with patch('app.knowledge.knowledge_base.KnowledgeRepository') as mock_knowledge_repo_class:
+        mock_knowledge_repo_instance = MagicMock()
+        mock_knowledge_repo_class.return_value = mock_knowledge_repo_instance
+        mock_knowledge_repo_instance.get_by_agent.return_value = [mock_knowledge]
+        
+        # Execute
+        result = knowledge_manager.get_knowledge_base()
+        
+        # Assert
+        assert len(result) == 1
+        assert result[0]['id'] == mock_knowledge.id
+        assert result[0]['source'] == mock_knowledge.source
+        assert result[0]['source_type'] == mock_knowledge.source_type
+        mock_knowledge_repo_instance.get_by_agent.assert_called_once_with(knowledge_manager.agent_id)
 
 def test_get_knowledge_base_for_org(knowledge_manager, mock_knowledge):
     """Test getting knowledge base for an organization"""
     # Setup
     knowledge_manager.agent_id = None
     mock_knowledge.agent_links = []
-    knowledge_manager.knowledge_repo.get_by_org.return_value = [mock_knowledge]
     
-    # Execute
-    result = knowledge_manager.get_knowledge_base()
-    
-    # Assert
-    assert len(result) == 1
-    assert result[0]['id'] == mock_knowledge.id
-    assert result[0]['source'] == mock_knowledge.source
-    assert result[0]['source_type'] == mock_knowledge.source_type
-    knowledge_manager.knowledge_repo.get_by_org.assert_called_once_with(knowledge_manager.org_id)
+    with patch('app.knowledge.knowledge_base.KnowledgeRepository') as mock_knowledge_repo_class:
+        mock_knowledge_repo_instance = MagicMock()
+        mock_knowledge_repo_class.return_value = mock_knowledge_repo_instance
+        mock_knowledge_repo_instance.get_by_org.return_value = [mock_knowledge]
+        
+        # Execute
+        result = knowledge_manager.get_knowledge_base()
+        
+        # Assert
+        assert len(result) == 1
+        assert result[0]['id'] == mock_knowledge.id
+        assert result[0]['source'] == mock_knowledge.source
+        assert result[0]['source_type'] == mock_knowledge.source_type
+        mock_knowledge_repo_instance.get_by_org.assert_called_once_with(knowledge_manager.org_id)
 
 @pytest.mark.asyncio
 async def test_process_knowledge_pdf_file(knowledge_manager):

@@ -126,10 +126,10 @@ def test_initialize_firebase_failure(mock_logger):
         error_msg = "Failed to initialize"
         mock_cert.side_effect = Exception(error_msg)
         
-        # Execute and Assert
-        with pytest.raises(Exception, match=error_msg):
-            initialize_firebase()
+        # Execute - function should handle exception gracefully, not raise it
+        initialize_firebase()
         
+        # Assert that error was logged but function continued without raising
         mock_logger.error.assert_called_with(f"Error initializing Firebase: {error_msg}")
         mock_logger.warning.assert_called_with("Continuing without Firebase initialization")
 
