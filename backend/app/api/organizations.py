@@ -62,13 +62,12 @@ async def create_organization(
         # Check if any organization exists
         existing_orgs = db.query(Organization).first()
         
-        # If organizations exist, require authentication and proper permissions
+        # If organizations exist, return 403 Forbidden
         if existing_orgs:
-            if not current_user:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required when organizations exist"
-                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Organization already exists"
+            )
 
         
       

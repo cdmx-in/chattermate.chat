@@ -186,13 +186,13 @@ async def test_authenticate_socket_conversation_token_success(mock_db, mock_widg
     mock_db.query.return_value.filter.return_value.first.return_value = mock_widget
     
     with patch('app.core.auth_utils.verify_conversation_token') as mock_verify, \
-         patch('app.core.auth_utils.get_db') as mock_get_db:
+         patch('app.core.auth_utils.SessionLocal') as mock_session_local:
         mock_verify.return_value = {
             "widget_id": str(mock_widget.id),
             "sub": customer_id,
             "type": "conversation"
         }
-        mock_get_db.return_value.__next__.return_value = mock_db
+        mock_session_local.return_value.__enter__.return_value = mock_db
         
         # Execute
         result_widget_id, result_org_id, result_customer_id, result_token = await authenticate_socket_conversation_token(sid, auth)

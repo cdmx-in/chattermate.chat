@@ -25,6 +25,7 @@ from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.models.chat_history import ChatHistory
 from app.models.customer import Customer
 from app.models.agent import Agent, AgentType
+from app.models.schemas.jira import AgentWithJiraConfig
 from app.agents.chat_agent import ChatAgent, ChatResponse, TransferReasonType
 from app.repositories.ai_config import AIConfigRepository
 from uuid import uuid4
@@ -185,7 +186,14 @@ def mock_db_session(db):
         yield db
     
     with patch('app.agents.chat_agent.get_db', get_mock_db), \
-         patch('app.tools.knowledge_search_byagent.get_db', get_mock_db):
+         patch('app.tools.knowledge_search_byagent.SessionLocal') as mock_knowledge_session_local, \
+         patch('app.agents.chat_agent.SessionLocal') as mock_chat_agent_session_local:
+        # Setup SessionLocal to return our test db when used as context manager
+        mock_knowledge_session_local.return_value.__enter__.return_value = db
+        mock_knowledge_session_local.return_value.__exit__.return_value = None
+        
+        mock_chat_agent_session_local.return_value.__enter__.return_value = db
+        mock_chat_agent_session_local.return_value.__exit__.return_value = None
         yield db
 
 @pytest.mark.asyncio
@@ -194,9 +202,33 @@ async def test_chat_agent_initialization(test_organization_id, test_agent, mock_
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
          patch('app.agents.chat_agent.AgentShopifyConfigRepository') as mock_shopify_config_repo, \
+         patch('app.agents.chat_agent.JiraRepository') as mock_jira_repo, \
          patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
         mock_shopify_config_repo.return_value.get_agent_shopify_config.return_value = None
+        
+        # Create a proper AgentWithJiraConfig mock
+        agent_with_jira_config = AgentWithJiraConfig(
+            id=test_agent.id,
+            name=test_agent.name,
+            display_name=test_agent.display_name,
+            description=test_agent.description,
+            instructions=test_agent.instructions,
+            tools=test_agent.tools,
+            agent_type=test_agent.agent_type,
+            is_default=test_agent.is_default,
+            is_active=test_agent.is_active,
+            organization_id=test_agent.organization_id,
+            transfer_to_human=test_agent.transfer_to_human,
+            ask_for_rating=test_agent.ask_for_rating,
+            knowledge=[],
+            jira_enabled=False,
+            jira_project_key=None,
+            jira_issue_type_id=None,
+            groups=[],
+            organization=None
+        )
+        mock_jira_repo.return_value.get_agent_with_jira_config.return_value = agent_with_jira_config
         
         # Create a mock session_id to ensure shopify_config is properly initialized
         mock_session_id = str(uuid4())
@@ -223,9 +255,33 @@ async def test_chat_agent_get_response(test_organization_id, test_agent, test_us
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
          patch('app.agents.chat_agent.AgentShopifyConfigRepository') as mock_shopify_config_repo, \
+         patch('app.agents.chat_agent.JiraRepository') as mock_jira_repo, \
          patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
         mock_shopify_config_repo.return_value.get_agent_shopify_config.return_value = None
+        
+        # Create a proper AgentWithJiraConfig mock
+        agent_with_jira_config = AgentWithJiraConfig(
+            id=test_agent.id,
+            name=test_agent.name,
+            display_name=test_agent.display_name,
+            description=test_agent.description,
+            instructions=test_agent.instructions,
+            tools=test_agent.tools,
+            agent_type=test_agent.agent_type,
+            is_default=test_agent.is_default,
+            is_active=test_agent.is_active,
+            organization_id=test_agent.organization_id,
+            transfer_to_human=test_agent.transfer_to_human,
+            ask_for_rating=test_agent.ask_for_rating,
+            knowledge=[],
+            jira_enabled=False,
+            jira_project_key=None,
+            jira_issue_type_id=None,
+            groups=[],
+            organization=None
+        )
+        mock_jira_repo.return_value.get_agent_with_jira_config.return_value = agent_with_jira_config
         
         # Create a mock session_id to ensure shopify_config is properly initialized
         mock_session_id = str(uuid4())
@@ -284,9 +340,33 @@ async def test_chat_agent_error_handling(test_organization_id, test_agent, test_
     # Mock the AI config repository and use MockAgentStorage
     with patch('app.tools.knowledge_search_byagent.AIConfigRepository') as mock_ai_config_repo, \
          patch('app.agents.chat_agent.AgentShopifyConfigRepository') as mock_shopify_config_repo, \
+         patch('app.agents.chat_agent.JiraRepository') as mock_jira_repo, \
          patch('app.agents.chat_agent.PostgresAgentStorage', return_value=MockAgentStorage()):
         mock_ai_config_repo.return_value.get_active_config.return_value = None
         mock_shopify_config_repo.return_value.get_agent_shopify_config.return_value = None
+        
+        # Create a proper AgentWithJiraConfig mock
+        agent_with_jira_config = AgentWithJiraConfig(
+            id=test_agent.id,
+            name=test_agent.name,
+            display_name=test_agent.display_name,
+            description=test_agent.description,
+            instructions=test_agent.instructions,
+            tools=test_agent.tools,
+            agent_type=test_agent.agent_type,
+            is_default=test_agent.is_default,
+            is_active=test_agent.is_active,
+            organization_id=test_agent.organization_id,
+            transfer_to_human=test_agent.transfer_to_human,
+            ask_for_rating=test_agent.ask_for_rating,
+            knowledge=[],
+            jira_enabled=False,
+            jira_project_key=None,
+            jira_issue_type_id=None,
+            groups=[],
+            organization=None
+        )
+        mock_jira_repo.return_value.get_agent_with_jira_config.return_value = agent_with_jira_config
         
         # Create a mock session_id to ensure shopify_config is properly initialized
         mock_session_id = str(uuid4())

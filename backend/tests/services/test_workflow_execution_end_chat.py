@@ -70,7 +70,7 @@ class TestWorkflowExecutionEndChat:
         node.config.get.side_effect = config_dict.get
         
         # Mock chat agent and its response
-        mock_chat_agent = Mock()
+        mock_chat_agent = AsyncMock()
         mock_response = Mock(spec=ChatResponse)
         mock_response.message = "Thank you for chatting with us. Goodbye!"
         mock_response.transfer_to_human = False
@@ -90,37 +90,38 @@ class TestWorkflowExecutionEndChat:
         mock_updated_response.transfer_description = None
         mock_updated_response.success = True  # Add success attribute
         
+        # Set up async method return values
         mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
         mock_chat_agent._handle_end_chat = AsyncMock(return_value=mock_updated_response)
         
         # Mock _find_next_node
         next_node_id = uuid4()
-        with patch('app.services.workflow_execution.ChatAgent', return_value=mock_chat_agent), \
-             patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
-             patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
-            
-            result = await workflow_service._execute_llm_node(
-                node=node,
-                workflow=sample_workflow,
-                workflow_state={},
-                user_message="Goodbye",
-                api_key="test-key",
-                model_name="gpt-4",
-                model_type="openai",
-                org_id="test-org",
-                agent_id="test-agent",
-                customer_id="test-customer",
-                session_id="test-session"
-            )
-            
-            # Verify _handle_end_chat was NOT called (it's handled in workflow_chat service)
-            mock_chat_agent._handle_end_chat.assert_not_called()
-            
-            # Verify the result has the correct rating setting
-            assert result.success is True
-            assert result.end_chat is True
-            assert result.request_rating is True
-            assert result.next_node_id == next_node_id
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent_class.create_async = AsyncMock(return_value=mock_chat_agent)
+            with patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
+                 patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
+                result = await workflow_service._execute_llm_node(
+                    node=node,
+                    workflow=sample_workflow,
+                    workflow_state={},
+                    user_message="Goodbye",
+                    api_key="test-key",
+                    model_name="gpt-4",
+                    model_type="openai",
+                    org_id="test-org",
+                    agent_id="test-agent",
+                    customer_id="test-customer",
+                    session_id="test-session"
+                )
+                
+                # Verify _handle_end_chat was NOT called (it's handled in workflow_chat service)
+                mock_chat_agent._handle_end_chat.assert_not_called()
+                
+                # Verify the result has the correct rating setting
+                assert result.success is True
+                assert result.end_chat is True
+                assert result.request_rating is True
+                assert result.next_node_id == next_node_id
     
     @pytest.mark.asyncio
     async def test_llm_node_end_chat_with_rating_config_false(self, workflow_service, sample_workflow):
@@ -145,7 +146,7 @@ class TestWorkflowExecutionEndChat:
         node.config.__contains__ = lambda *args: args[1] in config_dict  # Fix lambda to handle multiple args
         
         # Mock chat agent and its response
-        mock_chat_agent = Mock()
+        mock_chat_agent = AsyncMock()
         mock_response = Mock(spec=ChatResponse)
         mock_response.message = "Thank you for chatting with us. Goodbye!"
         mock_response.transfer_to_human = False
@@ -165,37 +166,38 @@ class TestWorkflowExecutionEndChat:
         mock_updated_response.transfer_description = None
         mock_updated_response.success = True  # Add success attribute
         
+        # Set up async method return values
         mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
         mock_chat_agent._handle_end_chat = AsyncMock(return_value=mock_updated_response)
         
         # Mock _find_next_node
         next_node_id = uuid4()
-        with patch('app.services.workflow_execution.ChatAgent', return_value=mock_chat_agent), \
-             patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
-             patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
-            
-            result = await workflow_service._execute_llm_node(
-                node=node,
-                workflow=sample_workflow,
-                workflow_state={},
-                user_message="Goodbye",
-                api_key="test-key",
-                model_name="gpt-4",
-                model_type="openai",
-                org_id="test-org",
-                agent_id="test-agent",
-                customer_id="test-customer",
-                session_id="test-session"
-            )
-            
-            # Verify _handle_end_chat was NOT called (it's handled in workflow_chat service)
-            mock_chat_agent._handle_end_chat.assert_not_called()
-            
-            # Verify the result has the correct rating setting
-            assert result.success is True
-            assert result.end_chat is True
-            assert result.request_rating is False
-            assert result.next_node_id == next_node_id
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent_class.create_async = AsyncMock(return_value=mock_chat_agent)
+            with patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
+                 patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
+                result = await workflow_service._execute_llm_node(
+                    node=node,
+                    workflow=sample_workflow,
+                    workflow_state={},
+                    user_message="Goodbye",
+                    api_key="test-key",
+                    model_name="gpt-4",
+                    model_type="openai",
+                    org_id="test-org",
+                    agent_id="test-agent",
+                    customer_id="test-customer",
+                    session_id="test-session"
+                )
+                
+                # Verify _handle_end_chat was NOT called (it's handled in workflow_chat service)
+                mock_chat_agent._handle_end_chat.assert_not_called()
+                
+                # Verify the result has the correct rating setting
+                assert result.success is True
+                assert result.end_chat is True
+                assert result.request_rating is False
+                assert result.next_node_id == next_node_id
     
     @pytest.mark.asyncio
     async def test_llm_node_end_chat_without_rating_config(self, workflow_service, sample_workflow):
@@ -218,7 +220,7 @@ class TestWorkflowExecutionEndChat:
         node.config.get.side_effect = config_dict.get
         
         # Mock chat agent and its response
-        mock_chat_agent = Mock()
+        mock_chat_agent = AsyncMock()
         mock_response = Mock(spec=ChatResponse)
         mock_response.message = "Thank you for chatting with us. Goodbye!"
         mock_response.transfer_to_human = False
@@ -238,37 +240,38 @@ class TestWorkflowExecutionEndChat:
         mock_updated_response.transfer_description = None
         mock_updated_response.success = True  # Add success attribute
         
+        # Set up async method return values
         mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
         mock_chat_agent._handle_end_chat = AsyncMock(return_value=mock_updated_response)
         
         # Mock _find_next_node
         next_node_id = uuid4()
-        with patch('app.services.workflow_execution.ChatAgent', return_value=mock_chat_agent), \
-             patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
-             patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
-            
-            result = await workflow_service._execute_llm_node(
-                node=node,
-                workflow=sample_workflow,
-                workflow_state={},
-                user_message="Goodbye",
-                api_key="test-key",
-                model_name="gpt-4",
-                model_type="openai",
-                org_id="test-org",
-                agent_id="test-agent",
-                customer_id="test-customer",
-                session_id="test-session"
-            )
-            
-            # Verify _handle_end_chat was NOT called (it's handled in workflow_chat service)
-            mock_chat_agent._handle_end_chat.assert_not_called()
-            
-            # Verify the result has the correct rating setting (default True)
-            assert result.success is True
-            assert result.end_chat is True
-            assert result.request_rating is True
-            assert result.next_node_id == next_node_id
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent_class.create_async = AsyncMock(return_value=mock_chat_agent)
+            with patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
+                 patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
+                result = await workflow_service._execute_llm_node(
+                    node=node,
+                    workflow=sample_workflow,
+                    workflow_state={},
+                    user_message="Goodbye",
+                    api_key="test-key",
+                    model_name="gpt-4",
+                    model_type="openai",
+                    org_id="test-org",
+                    agent_id="test-agent",
+                    customer_id="test-customer",
+                    session_id="test-session"
+                )
+                
+                # Verify _handle_end_chat was NOT called (it's handled in workflow_chat service)
+                mock_chat_agent._handle_end_chat.assert_not_called()
+                
+                # Verify the result has the correct rating setting (default True)
+                assert result.success is True
+                assert result.end_chat is True
+                assert result.request_rating is True
+                assert result.next_node_id == next_node_id
     
     @pytest.mark.asyncio
     async def test_llm_node_end_chat_single_execution_no_config_override(self, workflow_service, sample_workflow):
@@ -292,7 +295,7 @@ class TestWorkflowExecutionEndChat:
         node.config.get.side_effect = config_dict.get
         
         # Mock chat agent and its response
-        mock_chat_agent = Mock()
+        mock_chat_agent = AsyncMock()
         mock_response = Mock(spec=ChatResponse)
         mock_response.message = "Thank you for chatting with us. Goodbye!"
         mock_response.transfer_to_human = False
@@ -312,37 +315,38 @@ class TestWorkflowExecutionEndChat:
         mock_updated_response.transfer_description = None
         mock_updated_response.success = True  # Add success attribute
         
+        # Set up async method return values
         mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
         mock_chat_agent._handle_end_chat = AsyncMock(return_value=mock_updated_response)
         
         # Mock _find_next_node
         next_node_id = uuid4()
-        with patch('app.services.workflow_execution.ChatAgent', return_value=mock_chat_agent), \
-             patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
-             patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
-            
-            result = await workflow_service._execute_llm_node(
-                node=node,
-                workflow=sample_workflow,
-                workflow_state={},
-                user_message="Goodbye",
-                api_key="test-key",
-                model_name="gpt-4",
-                model_type="openai",
-                org_id="test-org",
-                agent_id="test-agent",
-                customer_id="test-customer",
-                session_id="test-session"
-            )
-            
-            # Verify _handle_end_chat was NOT called (it's handled in workflow_chat service)
-            mock_chat_agent._handle_end_chat.assert_not_called()
-            
-            # Verify the result (single execution doesn't override rating)
-            assert result.success is True
-            assert result.end_chat is True
-            assert result.request_rating is False  # Uses original response value
-            assert result.next_node_id == next_node_id
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent_class.create_async = AsyncMock(return_value=mock_chat_agent)
+            with patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
+                 patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
+                result = await workflow_service._execute_llm_node(
+                    node=node,
+                    workflow=sample_workflow,
+                    workflow_state={},
+                    user_message="Goodbye",
+                    api_key="test-key",
+                    model_name="gpt-4",
+                    model_type="openai",
+                    org_id="test-org",
+                    agent_id="test-agent",
+                    customer_id="test-customer",
+                    session_id="test-session"
+                )
+                
+                # Verify _handle_end_chat was NOT called (it's handled in workflow_chat service)
+                mock_chat_agent._handle_end_chat.assert_not_called()
+                
+                # Verify the result (single execution doesn't override rating)
+                assert result.success is True
+                assert result.end_chat is True
+                assert result.request_rating is False
+                assert result.next_node_id == next_node_id
     
     @pytest.mark.asyncio
     async def test_llm_node_no_end_chat_no_handle_end_chat_call(self, workflow_service, sample_workflow):
@@ -365,7 +369,7 @@ class TestWorkflowExecutionEndChat:
         node.config.get.side_effect = config_dict.get
         
         # Mock chat agent and its response (no end chat)
-        mock_chat_agent = Mock()
+        mock_chat_agent = AsyncMock()
         mock_response = Mock(spec=ChatResponse)
         mock_response.message = "How can I help you today?"
         mock_response.transfer_to_human = False
@@ -375,29 +379,34 @@ class TestWorkflowExecutionEndChat:
         mock_response.transfer_description = None
         mock_response.success = True  # Add success attribute
         
+        # Set up async method return values
         mock_chat_agent._get_llm_response_only = AsyncMock(return_value=mock_response)
         
-        with patch('app.services.workflow_execution.ChatAgent', return_value=mock_chat_agent), \
-             patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]):
-            
-            result = await workflow_service._execute_llm_node(
-                node=node,
-                workflow=sample_workflow,
-                workflow_state={},
-                user_message="Hello",
-                api_key="test-key",
-                model_name="gpt-4",
-                model_type="openai",
-                org_id="test-org",
-                agent_id="test-agent",
-                customer_id="test-customer",
-                session_id="test-session"
-            )
-            
-            # Verify _handle_end_chat was NOT called
-            mock_chat_agent._handle_end_chat.assert_not_called()
-            
-            # Verify the result
-            assert result.success is True
-            assert result.end_chat is False
-            assert result.request_rating is False 
+        # Mock _find_next_node
+        next_node_id = uuid4()
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent_class.create_async = AsyncMock(return_value=mock_chat_agent)
+            with patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]), \
+                 patch.object(workflow_service, '_find_next_node', return_value=next_node_id):
+                result = await workflow_service._execute_llm_node(
+                    node=node,
+                    workflow=sample_workflow,
+                    workflow_state={},
+                    user_message="Hello",
+                    api_key="test-key",
+                    model_name="gpt-4",
+                    model_type="openai",
+                    org_id="test-org",
+                    agent_id="test-agent",
+                    customer_id="test-customer",
+                    session_id="test-session"
+                )
+                
+                # Verify _handle_end_chat was NOT called
+                mock_chat_agent._handle_end_chat.assert_not_called()
+                
+                # Verify the result
+                assert result.success is True
+                assert result.end_chat is False
+                assert result.request_rating is False
+                assert result.next_node_id is None
