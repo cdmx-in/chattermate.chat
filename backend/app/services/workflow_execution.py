@@ -179,6 +179,14 @@ class WorkflowExecutionService:
                     intermediate_messages.append(result.message)
                     logger.debug(f"Collected intermediate message from MESSAGE node: {result.message}")
                 
+                # Also collect messages from LLM nodes that are not the final stopping node
+                # This handles the case where LLM node with single execution produces a response
+                # but then moves to the next node (like USER_INPUT)
+                if (current_node.node_type == NodeType.LLM and result.message and 
+                    result.should_continue and result.next_node_id is not None):
+                    intermediate_messages.append(result.message)
+                    logger.debug(f"Collected intermediate message from LLM node: {result.message}")
+                
                 final_result = result
                 
                 # Check if we should continue to next node automatically

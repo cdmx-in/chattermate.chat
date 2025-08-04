@@ -119,13 +119,13 @@ const availableNodeTypes: NodeTypeInfo[] = [
     description: 'AI model processing with configurable prompts',
     color: '#8B5CF6'
   },
-  {
-    type: 'condition',
-    label: 'Condition',
-    icon: '🔀',
-    description: 'Branch conversation based on conditions',
-    color: '#F59E0B'
-  },
+  // {
+  //   type: 'condition',
+  //   label: 'Condition',
+  //   icon: '🔀',
+  //   description: 'Branch conversation based on conditions (Coming Soon)',
+  //   color: '#F59E0B'
+  // },
   {
     type: 'form',
     label: 'Form',
@@ -373,16 +373,6 @@ const autoConnectToLastNode = (newNode: Node) => {
     : otherNodes[otherNodes.length - 1]
 
   if (lastNode) {
-    // Check if the new node is a condition node and the last node is not an LLM
-    if (newNode.data.nodeType === 'condition' && lastNode.data.nodeType !== 'llm') {
-      // Don't auto-connect if it would violate the rule
-      toast.info('Condition nodes can only be connected from LLM nodes.', {
-        position: 'top-center',
-        duration: 4000
-      })
-      return
-    }
-    
     // Check if the last node is an LLM with continuous execution
     if (isLLMNodeWithContinuousExecution(lastNode)) {
       toast.error('Cannot connect nodes after an LLM node with continuous execution. Continuous execution LLM nodes must be terminal nodes.', {
