@@ -262,7 +262,7 @@ class ChatAgentMCPMixin:
     async def create_async(cls, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", 
                           org_id: str = None, agent_id: str = None, customer_id: str = None, 
                           session_id: str = None, custom_system_prompt: str = None, 
-                          transfer_to_human: bool | None = None):
+                          transfer_to_human: bool | None = None, source: str = None):
         """
         Async factory method to create a ChatAgent with MCP tools initialized.
         """
@@ -287,7 +287,8 @@ class ChatAgentMCPMixin:
             session_id=session_id,
             custom_system_prompt=custom_system_prompt,
             transfer_to_human=transfer_to_human,
-            mcp_tools=mcp_tools
+            mcp_tools=mcp_tools,
+            source=source
         )
         
         # Attach the MCP manager to the instance for cleanup

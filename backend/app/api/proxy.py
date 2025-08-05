@@ -11,7 +11,7 @@ License, or (at your option) any later version.
 import requests
 import re
 from urllib.parse import urljoin, urlparse
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from bs4 import BeautifulSoup
 import logging
@@ -20,34 +20,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# Security: Only allow certain domains for demo purposes
-ALLOWED_DOMAINS = [
-    'example.com',
-    'html5test.opensuse.org',
-    'www.w3schools.com',
-    'developer.mozilla.org',
-    'httpbin.org',
-    'jsonplaceholder.typicode.com',
-    'paywithatoa.co.uk',  # Add the specific domain we're testing
-    'www.paywithatoa.co.uk'
-]
-
 def is_domain_allowed(url: str) -> bool:
-    """Check if the domain is in our allowed list"""
+    """Validate URL format and basic security checks"""
     try:
         parsed = urlparse(url)
-        domain = parsed.netloc.lower()
-        
-        # Remove www. for comparison
-        domain_without_www = domain.replace('www.', '')
-        
-        return (domain in ALLOWED_DOMAINS or 
-                domain_without_www in ALLOWED_DOMAINS or
-                any(allowed in domain for allowed in ALLOWED_DOMAINS))
+        # Basic validation that URL has a domain
+        return bool(parsed.netloc)
     except Exception:
         return False
 
-def modify_html_content(html_content: str, original_url: str, proxy_base_url: str) -> str:
+def modify_html_content(html_content: str, original_url: str) -> str:
     """
     Modify HTML content to work within our proxy iframe:
     - Convert relative URLs to absolute URLs
@@ -73,7 +55,11 @@ def modify_html_content(html_content: str, original_url: str, proxy_base_url: st
         for element in soup.find_all(['script']):
             # Keep essential scripts but remove those that might break iframe
             script_content = element.get_text()
-            if any(keyword in script_content.lower() for keyword in ['framebuster', 'top.location', 'parent.location', 'window.top']):
+            if any(keyword in script_content.lower() for keyword in [
+                'framebuster', 'top.location', 'parent.location', 'window.top',
+                'history.pushstate', 'history.replacestate', 'window.history'
+            ]):
+                logger.debug(f"Removing problematic script: {script_content[:100]}...")
                 element.decompose()
             elif element.get('src'):
                 # Convert relative script sources to absolute
@@ -103,6 +89,70 @@ def modify_html_content(html_content: str, original_url: str, proxy_base_url: st
         if soup.head:
             soup.head.append(style_tag)
         
+        # Add JavaScript to handle common iframe issues
+        iframe_script = soup.new_tag('script')
+        iframe_script.string = """
+            // Iframe compatibility fixes
+            (function() {
+                // Override problematic history methods
+                try {
+                    const originalPushState = history.pushState;
+                    const originalReplaceState = history.replaceState;
+                    
+                    history.pushState = function(...args) {
+                        try {
+                            return originalPushState.apply(this, args);
+                        } catch (e) {
+                            console.warn('History pushState blocked in iframe:', e);
+                        }
+                    };
+                    
+                    history.replaceState = function(...args) {
+                        try {
+                            return originalReplaceState.apply(this, args);
+                        } catch (e) {
+                            console.warn('History replaceState blocked in iframe:', e);
+                        }
+                    };
+                } catch (e) {
+                    console.warn('Could not override history methods:', e);
+                }
+                
+                // Handle fetch with better error handling
+                const originalFetch = window.fetch;
+                window.fetch = function(...args) {
+                    return originalFetch.apply(this, args).catch(error => {
+                        if (error.name === 'TypeError' && error.message.includes('CORS')) {
+                            console.warn('CORS error intercepted:', error);
+                            // Return a minimal response to prevent complete failure
+                            return new Response('{}', {
+                                status: 200,
+                                headers: { 'Content-Type': 'application/json' }
+                            });
+                        }
+                        throw error;
+                    });
+                };
+                
+                // Prevent some common iframe-breaking patterns
+                try {
+                    if (window.top !== window.self) {
+                        // We're in an iframe, disable some problematic behaviors
+                        window.addEventListener('error', function(e) {
+                            if (e.message && e.message.includes('SecurityError')) {
+                                e.preventDefault();
+                                console.warn('SecurityError prevented:', e.message);
+                            }
+                        });
+                    }
+                } catch (e) {
+                    // Access to window.top blocked, which is expected in cross-origin iframe
+                }
+            })();
+        """
+        if soup.head:
+            soup.head.append(iframe_script)
+        
         return str(soup)
     
     except Exception as e:
@@ -128,16 +178,16 @@ async def proxy_website(url: str = Query(..., description="URL of the website to
     if not is_domain_allowed(url):
         raise HTTPException(
             status_code=403, 
-            detail="Domain not allowed for security reasons. This is a demo feature."
+            detail="Invalid URL format or domain not accessible."
         )
     
     try:
         # Set headers to mimic a regular browser request
+        # Note: Removing Accept-Encoding to avoid compression issues with some sites
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
         }
@@ -156,9 +206,25 @@ async def proxy_website(url: str = Query(..., description="URL of the website to
                 headers={'Content-Type': content_type}
             )
         
+        # Ensure proper text decoding - use response.text which handles encoding automatically
+        # response.text handles gzip decompression and encoding detection automatically
+        html_content = response.text
+        
+        # Double-check that we got valid text content
+        if not html_content or len(html_content.strip()) == 0:
+            logger.error(f"Empty or invalid content received from {url}")
+            raise HTTPException(status_code=502, detail="Website returned empty or invalid content")
+        
+        # Check if content looks like binary (shouldn't happen with response.text, but safety check)
+        try:
+            # Try to encode as UTF-8 to verify it's valid text
+            html_content.encode('utf-8')
+        except UnicodeEncodeError:
+            logger.error(f"Received non-text content from {url}")
+            raise HTTPException(status_code=502, detail="Website returned non-text content")
+        
         # Modify the HTML content for iframe compatibility
-        proxy_base_url = "http://localhost:8000/api/proxy"  # Adjust based on your setup
-        modified_content = modify_html_content(response.text, url, proxy_base_url)
+        modified_content = modify_html_content(html_content, url)
         
         # Return the modified HTML with appropriate headers
         return HTMLResponse(
@@ -167,6 +233,10 @@ async def proxy_website(url: str = Query(..., description="URL of the website to
                 'Content-Type': 'text/html; charset=utf-8',
                 'X-Frame-Options': 'ALLOWALL',  # Allow iframe embedding
                 'Content-Security-Policy': "frame-ancestors *;",  # Allow embedding in any frame
+                'Access-Control-Allow-Origin': '*',  # Allow cross-origin requests
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+                'Referrer-Policy': 'no-referrer-when-downgrade',  # Preserve referrer for API calls
             }
         )
         
@@ -179,6 +249,75 @@ async def proxy_website(url: str = Query(..., description="URL of the website to
     except Exception as e:
         logger.error(f"Error proxying website {url}: {e}")
         raise HTTPException(status_code=500, detail="Error loading website")
+
+@router.api_route("/api-proxy", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"])
+async def proxy_api_request(
+    request: Request,
+    url: str = Query(..., description="URL of the API endpoint to proxy")
+):
+    """
+    Proxy API requests from websites loaded through our proxy.
+    This helps handle CORS issues for API calls made by proxied sites.
+    """
+    
+    # Validate URL
+    if not url:
+        raise HTTPException(status_code=400, detail="URL parameter is required")
+    
+    # Ensure URL has protocol
+    if not url.startswith(('http://', 'https://')):
+        url = f'https://{url}'
+    
+    # Security check
+    if not is_domain_allowed(url):
+        raise HTTPException(
+            status_code=403, 
+            detail="Invalid URL format or domain not accessible."
+        )
+    
+    try:
+        # Get request body if present
+        body = await request.body() if request.method in ["POST", "PUT", "PATCH"] else None
+        
+        # Forward headers (excluding problematic ones)
+        headers = {}
+        for key, value in request.headers.items():
+            if key.lower() not in ['host', 'content-length', 'connection']:
+                headers[key] = value
+        
+        # Add user agent if not present
+        if 'user-agent' not in headers:
+            headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        
+        # Make the request
+        response = requests.request(
+            method=request.method,
+            url=url,
+            headers=headers,
+            data=body,
+            timeout=10,
+            allow_redirects=True
+        )
+        
+        # Return response with CORS headers
+        return HTMLResponse(
+            content=response.content,
+            status_code=response.status_code,
+            headers={
+                'Content-Type': response.headers.get('Content-Type', 'application/json'),
+                'Access-Control-Allow-Origin': '*',
+                'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+                'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Requested-With',
+            }
+        )
+        
+    except requests.exceptions.Timeout:
+        raise HTTPException(status_code=408, detail="API request timed out")
+    except requests.exceptions.ConnectionError:
+        raise HTTPException(status_code=503, detail="Unable to connect to the API")
+    except Exception as e:
+        logger.error(f"Error proxying API request {url}: {e}")
+        raise HTTPException(status_code=500, detail="Error processing API request")
 
 @router.get("/website-screenshot")
 async def screenshot_website(url: str = Query(..., description="URL of the website to screenshot")):

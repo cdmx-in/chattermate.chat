@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Response, Cookie, Header
+from fastapi import APIRouter, Depends, HTTPException, Response, Cookie, Header, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session, class_mapper
 from typing import List, Optional
@@ -59,6 +59,7 @@ async def get_widget_ui(
     widget_id: str,
     response: Response,
     authorization: Optional[str] = Header(None),
+    source: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """Get widget UI and handle customer authentication"""
@@ -95,7 +96,14 @@ async def get_widget_ui(
             pass
 
     # No valid token, create new one
-    token = create_conversation_token(widget_id=widget_id)
+    # Store source in token if widget_id matches and source is provided (prioritize new source, fallback to old)
+    token_extra_data = {}
+    if widget_id == "397046dc-0093-4499-ab45-a0afe3c3ee14":
+        if source:
+            token_extra_data["source"] = source
+
+    
+    token = create_conversation_token(widget_id=widget_id, **token_extra_data)
     
     return HTMLResponse(await get_widget_html(
         widget_id=widget_id,
@@ -200,6 +208,7 @@ async def get_widget_data(
 
     token = authorization.split(' ')[1]
     widget = None
+    old_token_source = None
     # Verify conversation token and get widget_id from token
     try:
         token_data = verify_conversation_token(token)
@@ -211,8 +220,9 @@ async def get_widget_data(
         widget = db.query(Widget).filter(Widget.id == widget_id).first()
         if not widget:
                 raise HTTPException(status_code=404, detail="Widget not found")
-        # Get customer_id from token if exists
+        # Get customer_id and source from token if exists
         customer_id = token_data.get("sub")
+        old_token_source = token_data.get("source")
 
         agent_repo = AgentRepository(db)
         agent = agent_repo.get_by_id(widget.agent_id)
@@ -261,10 +271,15 @@ async def get_widget_data(
             if customer:
                 human_agent_info = await get_human_agent_session_info(db, customer.id)
             
-            # Generate new token with customer_id
+            # Generate new token with customer_id and preserve source if applicable
+            new_token_extra_data = {}
+            if widget_id == "397046dc-0093-4499-ab45-a0afe3c3ee14" and old_token_source:
+                new_token_extra_data["source"] = old_token_source
+            
             new_token = create_conversation_token(
                 customer_id=customer.id,
-                widget_id=widget_id
+                widget_id=widget_id,
+                **new_token_extra_data
             )
             
             # Create a copy of customization to modify photo_url

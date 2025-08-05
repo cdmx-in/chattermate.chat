@@ -32,13 +32,14 @@ from uuid import UUID
 import os
 
 class KnowledgeSearchByAgent(Toolkit):
-    def __init__(self, agent_id: str, org_id: UUID):
+    def __init__(self, agent_id: str, org_id: UUID, source: str = None):
         super().__init__(name="knowledge_search_by_agent")
         self.name = "knowledge_search_by_agent"
         self.description = "Search the knowledge base for information about a query"
         self.function = self.search_knowledge_base
         self.agent_id = agent_id
         self.org_id = org_id
+        self.source = source
         
         # Get API key from AI config - use context manager for database session
         with SessionLocal() as db:
@@ -92,9 +93,11 @@ class KnowledgeSearchByAgent(Toolkit):
 
                 # Convert UUID to string in filters
                 filters = {"agent_id": [str(self.agent_id)]}
+                if self.source:
+                    filters["name"] = self.source
                 logger.debug(f"Search filters: {filters}")
 
-                # Search with agent_id filter
+                # Search with filters
                 documents = self.agent_knowledge.search(
                     query=query,
                     num_documents=5,
