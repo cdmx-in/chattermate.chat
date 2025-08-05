@@ -23,6 +23,8 @@ pydantic-settings>=2.0.0
 # Utilities
 email-validator
 python-dateutil
+requests
+beautifulsoup4
 
 # Testing
 pytest

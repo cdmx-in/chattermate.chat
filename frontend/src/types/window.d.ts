@@ -5,5 +5,6 @@ interface Window {
         customization: Record<string, any>;
         customerId: string;
         customer: Record<string, any>;
+        initialToken?: string;
     };
 } 

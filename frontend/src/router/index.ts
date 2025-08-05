@@ -186,6 +186,12 @@ const allRoutes = hasEnterpriseModule ? [
     meta: { requiresAuth: false }
   },
   {
+    path: '/explore',
+    name: 'explore',
+    component: loadEnterpriseComponent(moduleImports.exploreView),
+    meta: { requiresAuth: false }
+  },
+  {
     path: '/settings/subscription',
     name: 'subscription',
     component: loadEnterpriseComponent(moduleImports.subscriptionView),
