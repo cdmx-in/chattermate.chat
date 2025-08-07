@@ -89,6 +89,110 @@ const isExpanded = ref(true)
 const emailInput = ref('')
 const hasConversationToken = ref(false)
 
+// Handle input synchronization
+const handleInputSync = (event: Event) => {
+    const target = event.target as HTMLInputElement
+    newMessage.value = target.value
+}
+
+
+
+// MutationObserver to detect DOM changes and re-setup listeners
+let domObserver: MutationObserver | null = null
+
+const setupDOMObserver = () => {
+    if (domObserver) {
+        domObserver.disconnect()
+    }
+    
+    domObserver = new MutationObserver((mutations) => {
+        let shouldResetup = false
+        
+        mutations.forEach((mutation) => {
+            // Check if input fields were added/removed
+            if (mutation.type === 'childList') {
+                const addedInputs = Array.from(mutation.addedNodes).some(node => 
+                    node.nodeType === Node.ELEMENT_NODE && 
+                    (node as Element).matches('input, textarea') ||
+                    (node as Element).querySelector?.('input, textarea')
+                )
+                
+                const removedInputs = Array.from(mutation.removedNodes).some(node => 
+                    node.nodeType === Node.ELEMENT_NODE && 
+                    (node as Element).matches('input, textarea') ||
+                    (node as Element).querySelector?.('input, textarea')
+                )
+                
+                if (addedInputs || removedInputs) {
+                    shouldResetup = true
+                }
+            }
+        })
+        
+        if (shouldResetup) {
+            setTimeout(setupNativeEventListeners, 100)
+        }
+    })
+    
+    // Observe the widget container for changes
+    const widgetContainer = document.querySelector('.widget-container') || document.body
+    domObserver.observe(widgetContainer, {
+        childList: true,
+        subtree: true
+    })
+}
+
+// Setup native DOM event listeners as fallback
+const setupNativeEventListeners = () => {
+    // Try multiple selectors to find input fields
+    const selectors = [
+        '.widget-container input[type="text"]',
+        '.chat-container input[type="text"]',
+        '.message-input input',
+        '.welcome-message-field',
+        '.ask-anything-field',
+        'input[placeholder*="message"]',
+        'input[placeholder*="Type"]',
+        'input.message-input',
+        'textarea',
+        'input'
+    ]
+    
+    let inputFields = []
+    for (const selector of selectors) {
+        const fields = document.querySelectorAll(selector)
+        if (fields.length > 0) {
+            inputFields = Array.from(fields)
+            break
+        }
+    }
+    
+    if (inputFields.length === 0) {
+        setTimeout(setupNativeEventListeners, 200)
+        return
+    }
+    
+    inputFields.forEach((input) => {
+        // Remove existing listeners to avoid duplicates
+        input.removeEventListener('input', handleNativeInput)
+        input.removeEventListener('keyup', handleNativeInput)
+        input.removeEventListener('change', handleNativeInput)
+        
+        // Add native event listeners
+        input.addEventListener('input', handleNativeInput, true)
+        input.addEventListener('keyup', handleNativeInput, true)
+        input.addEventListener('change', handleNativeInput, true)
+    })
+}
+
+// Native input handler that bypasses Vue
+const handleNativeInput = (event: Event) => {
+    const target = event.target as HTMLInputElement
+    newMessage.value = target.value
+}
+
+
+
 // Add loading state
 const isInitializing = ref(true)
 
@@ -101,7 +205,7 @@ const hasToken = computed(() => !!token.value)
 // Initialize from initial data
 initializeFromData()
 const initialData = window.__INITIAL_DATA__
-
+console.log('Initial data:', initialData)
 if (initialData?.initialToken) {
     token.value = initialData.initialToken
     // Notify parent window to store token
@@ -155,14 +259,27 @@ const isMessageInputEnabled = computed(() => {
 // Update the sendMessage function
 const sendMessage = async () => {
     if (!newMessage.value.trim()) return
-
+    
     // If first message, fetch customization with email first
     if (!hasStartedChat.value && emailInput.value) {
         await checkAuthorization()
     }
 
     await socketSendMessage(newMessage.value, emailInput.value)
+    
     newMessage.value = ''
+    
+    // Also clear the actual DOM input field to ensure it's visually cleared
+    const inputField = document.querySelector('input[placeholder*="Type a message"]') as HTMLInputElement
+    if (inputField) {
+        inputField.value = ''
+    }
+    
+    // Re-setup native event listeners after message is sent
+    // The DOM might have changed, so we need to reattach listeners
+    setTimeout(() => {
+        setupNativeEventListeners()
+    }, 500)
 }
 
 // Handle enter key
@@ -717,7 +834,21 @@ const handleUserInputSubmit = async (message: any) => {
 // Initialize widget - main initialization logic
 const initializeWidget = async () => {
     try {
+        // Wait for window.__INITIAL_DATA__ to be available
+        let attempts = 0
+        const maxAttempts = 50 // 5 seconds max wait
+        while (!window.__INITIAL_DATA__?.widgetId && attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 100))
+            attempts++
+        }
+        
+        if (!window.__INITIAL_DATA__?.widgetId) {
+            console.error('Widget data not available after waiting')
+            return false
+        }
+
         const isAuthorized = await checkAuthorization()
+        
         if (!isAuthorized) {
             connectionStatus.value = 'connected'
             return false
@@ -725,7 +856,6 @@ const initializeWidget = async () => {
 
         // For refresh cases, also check if we need to get workflow state
         if (window.__INITIAL_DATA__?.workflow && hasConversationToken.value) {
-            console.log('Getting workflow state on refresh/reload')
             await getWorkflowState()
         }
 
@@ -835,6 +965,14 @@ const handleStartNewConversation = async () => {
 onMounted(async () => {
     await initializeWidget()
     setupEventListeners()
+    
+    // Setup DOM observer to detect changes
+    setupDOMObserver()
+    
+    // Add native DOM event listeners as fallback for input synchronization
+    setTimeout(() => {
+        setupNativeEventListeners()
+    }, 500)
 })
 
 onUnmounted(() => {
@@ -843,12 +981,18 @@ onUnmounted(() => {
             scrollToBottom()
         }
     })
+    
+    // Clean up DOM observer
+    if (domObserver) {
+        domObserver.disconnect()
+        domObserver = null
+    }
+    
     cleanup()
 })
 
 // Add after the existing computed properties, around line 120
 const isAskAnythingStyle = computed(() => {
-    console.log('isAskAnythingStyle', customization.value.chat_style)
     return customization.value.chat_style === 'ASK_ANYTHING'
 })
 
@@ -872,8 +1016,6 @@ const containerStyles = computed(() => {
 })
 
 const shouldShowWelcomeMessage = computed(() => {
-    console.log("isAskAnythingStyle.value", isAskAnythingStyle.value)
-    console.log("messages.value.length", messages.value.length)
     return isAskAnythingStyle.value && messages.value.length === 0
 })
 </script>
@@ -949,6 +1091,8 @@ const shouldShowWelcomeMessage = computed(() => {
                         type="text" 
                         :placeholder="connectionStatus === 'connected' ? 'Ask me anything...' : 'Connecting...'" 
                         @keypress="handleKeyPress"
+                        @input="handleInputSync"
+                        @change="handleInputSync"
                         :disabled="!isMessageInputEnabled"
                         :class="{ 'disabled': connectionStatus !== 'connected' }"
                         class="welcome-message-field"
@@ -1547,6 +1691,8 @@ const shouldShowWelcomeMessage = computed(() => {
                         type="text" 
                         :placeholder="connectionStatus === 'connected' ? (isAskAnythingStyle ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'" 
                         @keypress="handleKeyPress"
+                        @input="handleInputSync"
+                        @change="handleInputSync"
                         :disabled="!isMessageInputEnabled"
                         :class="{ 'disabled': connectionStatus !== 'connected', 'ask-anything-field': isAskAnythingStyle }"
                     >

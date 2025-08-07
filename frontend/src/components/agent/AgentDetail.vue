@@ -37,7 +37,7 @@ import { useAgentChat } from '@/composables/useAgentChat'
 import { useAgentDetail } from '@/composables/useAgentDetail'
 import { agentService } from '@/services/agent'
 import { toast } from 'vue-sonner'
-import { agentStorage } from '@/utils/storage'
+import { agentStorage, subscriptionStorage } from '@/utils/storage'
 
 const props = defineProps<{
     agent: AgentWithCustomization
@@ -233,12 +233,26 @@ const copyIframeCode = () => {
 // Dialog state for knowledge tips
 const showTips = ref(false)
 
+// Dialog state for upgrade modal
+const showUpgradeModal = ref(false)
+const upgradeModalType = ref<'workflow' | 'mcp' | 'advanced'>('workflow')
+
 const openTips = () => {
     showTips.value = true
 }
 
 const closeTips = () => {
     showTips.value = false
+}
+
+const closeUpgradeModal = () => {
+    showUpgradeModal.value = false
+}
+
+const handleUpgrade = () => {
+    // Navigate to subscription/upgrade page
+    // You can implement this based on your routing structure
+    window.location.href = '/subscription'
 }
 
 // Tab switching function
@@ -251,9 +265,99 @@ const switchTab = (tab: string) => {
     window.history.replaceState({}, '', url.toString())
 }
 
+// Check if workflow feature is available in current plan
+const hasWorkflowFeature = computed(() => {
+    return subscriptionStorage.hasFeature('workflow')
+})
+
+// Check if subscription is active
+const isSubscriptionActive = computed(() => {
+    return subscriptionStorage.isSubscriptionActive()
+})
+
+// Determine if workflow is locked (feature not available or subscription not active)
+const isWorkflowLocked = computed(() => {
+    return !hasWorkflowFeature.value || !isSubscriptionActive.value
+})
+
+// Check if MCP tools feature is available in current plan
+const hasMCPFeature = computed(() => {
+    return subscriptionStorage.hasFeature('mcp_tools')
+})
+
+// Determine if MCP tools is locked
+const isMCPLocked = computed(() => {
+    return !hasMCPFeature.value || !isSubscriptionActive.value
+})
+
+// Check if advanced features are available in current plan
+const hasAdvancedFeature = computed(() => {
+    return subscriptionStorage.hasFeature('advanced_settings')
+})
+
+// Determine if advanced tab is locked
+const isAdvancedLocked = computed(() => {
+    return !hasAdvancedFeature.value || !isSubscriptionActive.value
+})
+
+// Computed properties for dynamic modal content
+const modalTitle = computed(() => {
+    switch (upgradeModalType.value) {
+        case 'workflow':
+            return 'Unlock Workflow Features'
+        case 'mcp':
+            return 'Unlock MCP Tools'
+        case 'advanced':
+            return 'Unlock Advanced Settings'
+        default:
+            return 'Unlock Premium Features'
+    }
+})
+
+const modalDescription = computed(() => {
+    switch (upgradeModalType.value) {
+        case 'workflow':
+            return 'Workflow mode allows you to create sophisticated automation flows with conditional logic, multiple steps, and advanced integrations.'
+        case 'mcp':
+            return 'MCP Tools enable integration with Model Context Protocol servers to extend your agent\'s capabilities with external data sources and services.'
+        case 'advanced':
+            return 'Advanced settings provide fine-grained control over your agent\'s behavior, performance tuning, and enterprise-grade configuration options.'
+        default:
+            return 'Upgrade your plan to access premium features and unlock the full potential of your AI agent.'
+    }
+})
+
+const modalFeatures = computed(() => {
+    switch (upgradeModalType.value) {
+        case 'workflow':
+            return [
+                'Visual workflow builder',
+                'Conditional logic & branching',
+                'Advanced integrations',
+                'Custom automation flows'
+            ]
+        case 'mcp':
+            return [
+                'Connect to MCP servers',
+                'External data integration',
+                'Custom tool extensions',
+                'Protocol-based communication'
+            ]
+        case 'advanced':
+            return [
+                'Performance optimization',
+                'Custom system prompts',
+                'Enterprise configurations',
+                'Advanced debugging tools'
+            ]
+        default:
+            return ['Premium features', 'Advanced capabilities', 'Enhanced functionality', 'Priority support']
+    }
+})
+
 // Determine if we should show workflow or general tab
 const showWorkflowTab = computed(() => {
-    return agentData.value.use_workflow === true
+    return agentData.value.use_workflow === true && hasWorkflowFeature.value
 })
 
 // Handle fullscreen toggle from workflow tab
@@ -263,6 +367,13 @@ const handleWorkflowFullscreenToggle = (isFullscreen: boolean) => {
 
 // Handle workflow toggle
 const handleToggleUseWorkflow = async () => {
+    // Check if workflow feature is locked
+    if (isWorkflowLocked.value) {
+        upgradeModalType.value = 'workflow'
+        showUpgradeModal.value = true
+        return
+    }
+
     try {
         const newValue = !agentData.value.use_workflow
         const updatedAgent = await agentService.updateAgent(agentData.value.id, { use_workflow: newValue })
@@ -555,8 +666,13 @@ onMounted(async () => {
                                     </button>
                                     <button 
                                         class="mode-button" 
-                                        :class="{ 'active': agentData.use_workflow }"
+                                        :class="{ 
+                                            'active': agentData.use_workflow,
+                                            'locked': isWorkflowLocked
+                                        }"
+                                        :disabled="isWorkflowLocked && !agentData.use_workflow"
                                         @click="agentData.use_workflow || handleToggleUseWorkflow()"
+                                        :title="isWorkflowLocked ? 'Upgrade your plan to unlock Workflow mode' : 'Switch to Workflow mode'"
                                     >
                                         <svg class="mode-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                             <rect x="3" y="3" width="6" height="6"/>
@@ -566,6 +682,7 @@ onMounted(async () => {
                                             <path d="M12 15v-3"/>
                                         </svg>
                                         <span class="mode-label">Workflow</span>
+                                        <font-awesome-icon v-if="isWorkflowLocked" icon="fa-solid fa-lock" class="lock-icon" />
                                     </button>
                                 </div>
                             </div>
@@ -589,11 +706,17 @@ onMounted(async () => {
                         </button>
                         <button 
                             class="tab-button" 
-                            :class="{ 'active': activeTab === 'workflow-builder' }"
-                            @click="switchTab('workflow-builder')"
-                            v-if="agentData.use_workflow"
+                            :class="{ 
+                                'active': activeTab === 'workflow-builder',
+                                'locked': isWorkflowLocked 
+                            }"
+                            :disabled="isWorkflowLocked"
+                            @click="isWorkflowLocked ? (upgradeModalType = 'workflow', showUpgradeModal = true) : switchTab('workflow-builder')"
+                            :title="isWorkflowLocked ? 'Upgrade your plan to unlock Workflow Builder' : 'Workflow Builder'"
+                            v-if="agentData.use_workflow || isWorkflowLocked"
                         >
                             Workflow Builder
+                            <font-awesome-icon v-if="isWorkflowLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
                         </button>
                         <button 
                             class="tab-button" 
@@ -625,10 +748,13 @@ onMounted(async () => {
                         </button>
                         <button 
                             class="tab-button" 
-                            :class="{ 'active': activeTab === 'mcp-tools' }"
-                            @click="switchTab('mcp-tools')"
+                            :class="{ 'active': activeTab === 'mcp-tools', 'locked': isMCPLocked }"
+                            :disabled="isMCPLocked"
+                            @click="isMCPLocked ? (upgradeModalType = 'mcp', showUpgradeModal = true) : switchTab('mcp-tools')"
+                            :title="isMCPLocked ? 'Upgrade your plan to unlock MCP Tools' : 'MCP Tools'"
                         >
                             MCP Tools
+                            <font-awesome-icon v-if="isMCPLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
                         </button>
                         <button 
                             class="tab-button" 
@@ -639,10 +765,13 @@ onMounted(async () => {
                         </button>
                         <button 
                             class="tab-button" 
-                            :class="{ 'active': activeTab === 'advanced' }"
-                            @click="switchTab('advanced')"
+                            :class="{ 'active': activeTab === 'advanced', 'locked': isAdvancedLocked }"
+                            :disabled="isAdvancedLocked"
+                            @click="isAdvancedLocked ? (upgradeModalType = 'advanced', showUpgradeModal = true) : switchTab('advanced')"
+                            :title="isAdvancedLocked ? 'Upgrade your plan to unlock Advanced Settings' : 'Advanced'"
                         >
                             Advanced
+                            <font-awesome-icon v-if="isAdvancedLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
                         </button>
 
  
@@ -862,6 +991,45 @@ onMounted(async () => {
                 </div>
                 <div class="tips-dialog-footer">
                     <button class="close-tips-button" @click="closeTips">Got it</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Upgrade Modal -->
+        <div v-if="showUpgradeModal" class="upgrade-modal-overlay">
+            <div class="upgrade-modal">
+                <div class="upgrade-modal-header">
+                    <div class="upgrade-icon">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                            <path d="M2 17l10 5 10-5"/>
+                            <path d="M2 12l10 5 10-5"/>
+                        </svg>
+                    </div>
+                    <h3>{{ modalTitle }}</h3>
+                    <button class="close-button" @click="closeUpgradeModal">×</button>
+                </div>
+                <div class="upgrade-modal-content">
+                    <p class="upgrade-description">
+                        {{ modalDescription }}
+                    </p>
+                    <div class="upgrade-features">
+                        <div v-for="feature in modalFeatures" :key="feature" class="feature-item">
+                            <svg class="feature-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="20,6 9,17 4,12"/>
+                            </svg>
+                            <span>{{ feature }}</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="upgrade-modal-footer">
+                    <button class="upgrade-button" @click="handleUpgrade">
+                        Upgrade Plan
+                        <svg class="upgrade-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M5 12h14m-7-7 7 7-7 7"/>
+                        </svg>
+                    </button>
+                    <button class="cancel-upgrade-button" @click="closeUpgradeModal">Maybe Later</button>
                 </div>
             </div>
         </div>
@@ -1280,6 +1448,25 @@ onMounted(async () => {
 .mode-label {
     font-size: 0.75rem;
     font-weight: 500;
+}
+
+.mode-button.locked {
+    opacity: 0.6;
+    cursor: not-allowed;
+    position: relative;
+}
+
+.mode-button.locked:hover {
+    background: var(--background-muted);
+    color: var(--text-muted);
+    transform: none;
+}
+
+.lock-icon {
+    font-size: 10px;
+    margin-left: var(--space-xs);
+    opacity: 0.7;
+    color: var(--warning-color);
 }
 
 @keyframes pulse-online {
@@ -1889,7 +2076,7 @@ input:checked + .slider:before {
 }
 
 .tab-button {
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-lg) var(--space-xl);
     background: transparent;
     border: none;
     border-radius: var(--radius-md) var(--radius-md) 0 0;
@@ -1903,7 +2090,7 @@ input:checked + .slider:before {
     white-space: nowrap;
     border-bottom: 3px solid transparent;
     flex-shrink: 0;
-    min-height: 44px;
+    min-height: 48px;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1915,7 +2102,7 @@ input:checked + .slider:before {
 
 .tabs-navigation.horizontal {
     display: flex;
-    gap: var(--space-sm);
+    gap: var(--space-md);
     border-bottom: 1px solid var(--border-color);
     padding: 0 var(--space-lg);
     margin: 0;
@@ -1924,7 +2111,7 @@ input:checked + .slider:before {
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
     scrollbar-width: none; /* Firefox */
     -ms-overflow-style: none; /* IE and Edge */
-    min-height: 60px;
+    min-height: 64px;
     align-items: flex-end;
 }
 
@@ -1949,6 +2136,25 @@ input:checked + .slider:before {
 
 .tabs-navigation.horizontal .tab-button.active::after {
     display: none;
+}
+
+.tab-button.locked {
+    opacity: 0.6;
+    cursor: not-allowed;
+    position: relative;
+}
+
+.tab-button.locked:hover {
+    color: var(--text-muted);
+    background: var(--background-soft);
+    transform: none;
+}
+
+.lock-icon-small {
+    font-size: 12px;
+    margin-left: var(--space-xs);
+    opacity: 0.7;
+    color: var(--warning-color);
 }
 
 .integration-section {
@@ -2161,15 +2367,15 @@ input:checked + .slider:before {
     }
     
     .tabs-navigation.horizontal {
-        padding: 0 var(--space-md);
+        padding: 0 var(--space-sm);
         gap: var(--space-xs);
-        min-height: 56px;
+        min-height: 60px;
     }
     
     .tab-button {
-        padding: var(--space-sm) var(--space-md);
-        font-size: 0.875rem;
-        min-height: 40px;
+        padding: var(--space-md) var(--space-sm);
+        font-size: 0.8rem;
+        min-height: 44px;
     }
     
     .tab-content-container {
@@ -2216,21 +2422,226 @@ input:checked + .slider:before {
     }
     
     .tabs-navigation.horizontal {
-        padding: 0 var(--space-sm);
-        gap: 2px;
-        min-height: 52px;
+        padding: 0 var(--space-xs);
+        gap: var(--space-xs);
+        min-height: 56px;
     }
     
     .tab-button {
-        padding: var(--space-xs) var(--space-sm);
-        font-size: 0.8rem;
-        min-height: 36px;
+        padding: var(--space-sm) var(--space-xs);
+        font-size: 0.75rem;
+        min-height: 40px;
     }
     
     .customization-tab-layout {
         padding: var(--space-sm);
         gap: var(--space-md);
     }
+}
+
+/* Additional responsive for very compact screens */
+@media (max-width: 1200px) {
+    .tabs-navigation.horizontal {
+        padding: 0 4px;
+        gap: 2px;
+        min-height: 52px;
+    }
+    
+    .tab-button {
+        padding: var(--space-xs) 6px;
+        font-size: 0.7rem;
+        min-height: 36px;
+    }
+    
+    .detail-panel {
+        margin: 2px;
+    }
+}
+
+/* Upgrade Modal Styles */
+.upgrade-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.85);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+
+.upgrade-modal {
+    background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    overflow: hidden;
+    animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px) scale(0.95);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.upgrade-modal-header {
+    padding: var(--space-xl);
+    text-align: center;
+    position: relative;
+    background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+    color: white;
+}
+
+.upgrade-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto var(--space-md);
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.upgrade-icon svg {
+    width: 24px;
+    height: 24px;
+}
+
+.upgrade-modal-header h3 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 0;
+    color: white;
+}
+
+.upgrade-modal-header .close-button {
+    position: absolute;
+    top: var(--space-md);
+    right: var(--space-md);
+    background: rgba(255, 255, 255, 0.2);
+    border: none;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    color: white;
+    cursor: pointer;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.upgrade-modal-header .close-button:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: scale(1.1);
+}
+
+.upgrade-modal-content {
+    padding: var(--space-xl);
+}
+
+.upgrade-description {
+    font-size: 1rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+    margin-bottom: var(--space-xl);
+    text-align: center;
+}
+
+.upgrade-features {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.feature-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding: var(--space-sm);
+    background: var(--background-soft);
+    border-radius: var(--radius-md);
+    border-left: 3px solid var(--primary-color);
+}
+
+.feature-icon {
+    width: 18px;
+    height: 18px;
+    color: var(--success-color);
+    flex-shrink: 0;
+}
+
+.feature-item span {
+    font-weight: 500;
+    color: var(--text-color);
+}
+
+.upgrade-modal-footer {
+    padding: var(--space-lg) var(--space-xl);
+    background: var(--background-soft);
+    display: flex;
+    gap: var(--space-md);
+    justify-content: center;
+}
+
+.upgrade-button {
+    background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+    color: white;
+    border: none;
+    border-radius: var(--radius-full);
+    padding: var(--space-md) var(--space-xl);
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.upgrade-button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+    filter: brightness(1.1);
+}
+
+.upgrade-arrow {
+    width: 16px;
+    height: 16px;
+    transition: transform 0.2s ease;
+}
+
+.upgrade-button:hover .upgrade-arrow {
+    transform: translateX(2px);
+}
+
+.cancel-upgrade-button {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-full);
+    padding: var(--space-md) var(--space-lg);
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.cancel-upgrade-button:hover {
+    background: var(--background-muted);
+    color: var(--text-color);
+    border-color: var(--text-muted);
 }
 
 

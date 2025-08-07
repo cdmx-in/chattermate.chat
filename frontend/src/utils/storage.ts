@@ -1,9 +1,12 @@
 import type { Agent } from '@/types/agent'
 import type { UserGroup } from '@/types/user'
+import type { CurrentSubscription, Plan } from '@/modules/enterprise/composables/useSubscriptionStore'
 
 const STORAGE_KEYS = {
   ACTIVE_AGENT: 'active_agent',
   AGENTS: 'agents',
+  CURRENT_SUBSCRIPTION: 'current_subscription',
+  AVAILABLE_PLANS: 'available_plans',
 } as const
 
 export const agentStorage = {
@@ -83,6 +86,132 @@ export const agentStorage = {
   clear(): void {
     localStorage.removeItem(STORAGE_KEYS.ACTIVE_AGENT)
     localStorage.removeItem(STORAGE_KEYS.AGENTS)
+  },
+}
+
+// Subscription storage
+export const subscriptionStorage = {
+  // Store current subscription
+  setCurrentSubscription(subscription: CurrentSubscription | null): void {
+    if (subscription) {
+      localStorage.setItem(STORAGE_KEYS.CURRENT_SUBSCRIPTION, JSON.stringify(subscription))
+    } else {
+      localStorage.removeItem(STORAGE_KEYS.CURRENT_SUBSCRIPTION)
+    }
+  },
+
+  // Get current subscription
+  getCurrentSubscription(): CurrentSubscription | null {
+    const stored = localStorage.getItem(STORAGE_KEYS.CURRENT_SUBSCRIPTION)
+    if (!stored) return null
+    try {
+      return JSON.parse(stored) as CurrentSubscription
+    } catch (e) {
+      console.error('Failed to parse stored subscription:', e)
+      return null
+    }
+  },
+
+  // Store available plans
+  setAvailablePlans(plans: Plan[]): void {
+    localStorage.setItem(STORAGE_KEYS.AVAILABLE_PLANS, JSON.stringify(plans))
+  },
+
+  // Get available plans
+  getAvailablePlans(): Plan[] {
+    const stored = localStorage.getItem(STORAGE_KEYS.AVAILABLE_PLANS)
+    if (!stored) return []
+    try {
+      return JSON.parse(stored) as Plan[]
+    } catch (e) {
+      console.error('Failed to parse stored plans:', e)
+      return []
+    }
+  },
+
+  // Clear subscription data
+  clearSubscriptionData(): void {
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_SUBSCRIPTION)
+    localStorage.removeItem(STORAGE_KEYS.AVAILABLE_PLANS)
+  },
+
+  // Check if a feature is enabled in the current plan
+  hasFeature(featureName: string): boolean {
+    const subscription = this.getCurrentSubscription()
+    if (!subscription?.plan?.features) {
+      return false
+    }
+    
+    return Boolean(subscription.plan.features[featureName])
+  },
+
+  // Check multiple features at once
+  hasFeatures(featureNames: string[]): { [key: string]: boolean } {
+    const subscription = this.getCurrentSubscription()
+    const result: { [key: string]: boolean } = {}
+    
+    featureNames.forEach(featureName => {
+      result[featureName] = subscription?.plan?.features?.[featureName] || false
+    })
+    
+    return result
+  },
+
+  // Get all available features for the current plan
+  getAllFeatures(): { [key: string]: boolean } {
+    const subscription = this.getCurrentSubscription()
+    return subscription?.plan?.features || {}
+  },
+
+  // Check if subscription is active (not expired or cancelled)
+  isSubscriptionActive(): boolean {
+    const subscription = this.getCurrentSubscription()
+    if (!subscription) return false
+
+    const now = new Date()
+    
+    // If cancelled, check if still within current period
+    if (subscription.status === 'cancelled') {
+      if (subscription.current_period_end) {
+        const periodEnd = new Date(subscription.current_period_end)
+        return now <= periodEnd
+      }
+      return false
+    }
+    
+    // If trial, check if trial is still active
+    if (subscription.status === 'trial') {
+      const trialEnd = new Date(subscription.trial_end)
+      return now <= trialEnd
+    }
+    
+    // For active subscriptions
+    return subscription.status === 'active'
+  },
+
+  // Get plan limits
+  getPlanLimits(): {
+    maxAgents: number | null
+    maxKnowledgeSources: number
+    maxSubPages: number
+    dataRetentionDays: number
+  } {
+    const subscription = this.getCurrentSubscription()
+    if (!subscription?.plan) {
+      return {
+        maxAgents: 0,
+        maxKnowledgeSources: 0,
+        maxSubPages: 0,
+        dataRetentionDays: 0
+      }
+    }
+
+    return {
+      maxAgents: subscription.plan.max_agents,
+      maxKnowledgeSources: subscription.plan.max_knowledge_sources,
+      maxSubPages: subscription.plan.max_sub_pages,
+      dataRetentionDays: subscription.plan.data_retention_days
+    }
   },
 }
 
@@ -198,5 +327,12 @@ export function useAgentStorage() {
 export function useWorkflowCacheStorage() {
   return {
     ...workflowCacheStorage,
+  }
+}
+
+// Create a composable for subscription storage
+export function useSubscriptionStorage() {
+  return {
+    ...subscriptionStorage,
   }
 }

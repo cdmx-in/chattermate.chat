@@ -16,6 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
+import traceback
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Body, Query, status
 from typing import List, Optional
 from app.models.user import User
@@ -23,6 +24,7 @@ from app.core.auth import get_current_user, require_permissions
 from app.core.logger import get_logger
 import json
 import os
+import asyncio
 from pydantic import BaseModel
 from sqlalchemy import text
 from uuid import UUID
@@ -35,6 +37,10 @@ from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.core.config import settings
 from sqlalchemy.orm import Session
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
+from app.repositories.user import UserRepository
+from app.models.notification import Notification, NotificationType
+from app.services.user import send_fcm_notification
+from app.workers.knowledge_processor import process_queue_item, run_processor
 
 # Try to import enterprise modules
 try:
@@ -49,12 +55,8 @@ logger = get_logger(__name__)
 # Add this near the top of the file with other constants
 TEMP_DIR = "temp"
 
-# Add these variables at the top of the file
-PROCESSOR_STATUS = {
-    "last_run": None,
-    "is_running": False,
-    "error": None
-}
+# Import processor status from shared module
+from app.core.processor import PROCESSOR_STATUS
 
 
 class UrlsRequest(BaseModel):
@@ -62,6 +64,9 @@ class UrlsRequest(BaseModel):
     pdf_urls: List[str] = []
     websites: List[str] = []
     agent_id: Optional[str] = None
+    
+class ExploreUrlRequest(BaseModel):
+    url: str
 
 
 @router.post("/upload/pdf")
@@ -159,6 +164,178 @@ async def upload_pdf_files(
 
     except Exception as e:
         logger.error(f"Error uploading PDFs: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/explore/add-url")
+async def add_explore_url(
+    request: ExploreUrlRequest = Body(...),
+    db: Session = Depends(get_db)
+):
+    """Add URL from explore view without authentication, using environment variables"""
+    try:
+        # Get values from environment
+        agent_id = settings.EXPLORE_AGENT_ID
+        org_id = settings.EXPLORE_SOURCE_ORG_ID
+        
+        
+        # Check if URL already exists in knowledge base
+        knowledge_repo = KnowledgeRepository(db)
+        existing_sources = knowledge_repo.get_by_sources(UUID(org_id), [request.url])
+        
+        if existing_sources:
+            return {
+                "status": "exists",
+                "message": "URL already exists in knowledge base"
+            }
+        
+        # Create queue item
+        queue_repo = KnowledgeQueueRepository(db)
+        queue_item = KnowledgeQueue(
+            organization_id=UUID(org_id),
+            agent_id=UUID(agent_id),
+            user_id='154540a3-6177-4b1b-aab2-f23f0ef74ac7',
+            source_type='website',
+            source=request.url,
+            status=QueueStatus.PENDING,
+            queue_metadata={
+                "max_links": 20  # Default to 10 links
+            }
+        )
+        
+        # Add to queue
+        queue_item = queue_repo.create(queue_item)
+        
+        # Process immediately
+        asyncio.create_task(process_queue_item(queue_item.id))
+        
+        return {
+            "status": "success",
+            "message": "URL added to knowledge base and processing started",
+            "queue_id": queue_item.id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error adding explore URL: {str(e)}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+def _get_crawled_urls_info(crawled_urls):
+    """Get comprehensive information about crawled URLs"""
+    if not crawled_urls or not isinstance(crawled_urls, list):
+        return {
+            "latest_url": None,
+            "all_urls": [],
+            "count": 0
+        }
+    
+    all_urls = []
+    latest_url = None
+    
+    try:
+        for item in crawled_urls:
+            if isinstance(item, str):
+                # New format: just URL strings
+                all_urls.append(item)
+                latest_url = item  # Keep updating to get the last one
+            elif isinstance(item, dict) and "url" in item:
+                # Legacy format: objects with url, timestamp, status
+                all_urls.append(item["url"])
+                latest_url = item["url"]
+    except (KeyError, TypeError) as e:
+        logger.warning(f"Error processing crawled URLs: {str(e)}")
+    
+    return {
+        "latest_url": latest_url,
+        "all_urls": all_urls,
+        "count": len(all_urls)
+    }
+
+
+@router.get("/explore/progress/{queue_id}")
+async def get_explore_progress(
+    queue_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get progress status for knowledge base processing"""
+    try:
+        queue_repo = KnowledgeQueueRepository(db)
+        queue_item = queue_repo.get_by_id(queue_id)
+        
+        # Refresh the item to get the latest data from the database
+        if queue_item:
+            db.refresh(queue_item)
+        
+        if not queue_item:
+            raise HTTPException(status_code=404, detail="Queue item not found")
+        
+        # Get processing stage information
+        stage_info = {
+            "not_started": {"label": "Initializing", "step": 1, "total": 4},
+            "NOT_STARTED": {"label": "Initializing", "step": 1, "total": 4},
+            "crawling": {"label": "Crawling Website", "step": 2, "total": 4},
+            "CRAWLING": {"label": "Crawling Website", "step": 2, "total": 4},
+            "embedding": {"label": "Processing Content", "step": 3, "total": 4},
+            "EMBEDDING": {"label": "Processing Content", "step": 3, "total": 4},
+            "completed": {"label": "Completed", "step": 4, "total": 4},
+            "COMPLETED": {"label": "Completed", "step": 4, "total": 4}
+        }
+        
+        # Safely get enum values
+        def get_enum_value(enum_field):
+            if enum_field is None:
+                return None
+            return enum_field.value if hasattr(enum_field, 'value') else str(enum_field)
+        
+        # Get processing stage as string
+        processing_stage_str = get_enum_value(queue_item.processing_stage) or "NOT_STARTED"
+        status_str = get_enum_value(queue_item.status) or "PENDING"
+        
+        # Override stage to "COMPLETED" if status is COMPLETED
+        if status_str.upper() == "COMPLETED":
+            processing_stage_str = "COMPLETED"
+        
+        logger.debug(f"Queue {queue_id}: status='{status_str}', stage='{processing_stage_str}', progress={queue_item.progress_percentage}, is_complete={status_str.upper() in ['COMPLETED', 'FAILED']}")
+        logger.debug(f"Queue {queue_id}: crawled_urls count={len(queue_item.crawled_urls) if queue_item.crawled_urls else 0}")
+        logger.debug(f"Queue {queue_id}: crawled_urls raw value: {queue_item.crawled_urls}")
+        
+        current_stage = stage_info.get(processing_stage_str, 
+                                     {"label": "Processing", "step": 1, "total": 4})
+        
+        # Calculate overall progress based on stage and percentage
+        if status_str.upper() == "COMPLETED":
+            overall_progress = 100.0
+        else:
+            stage_weight = (current_stage["step"] - 1) / current_stage["total"] * 100
+            stage_progress = (queue_item.progress_percentage or 0) / current_stage["total"]
+            overall_progress = min(100, stage_weight + stage_progress)
+        
+        # Get crawled URLs information
+        crawled_urls_info = _get_crawled_urls_info(queue_item.crawled_urls)
+        
+        return {
+            "queue_id": queue_item.id,
+            "status": status_str,
+            "processing_stage": processing_stage_str,
+            "progress_percentage": queue_item.progress_percentage or 0,
+            "overall_progress": round(overall_progress, 1),
+            "current_stage": current_stage,
+            "source": queue_item.source,
+            "total_items": queue_item.total_items or 0,
+            "processed_items": queue_item.processed_items or 0,
+            "created_at": queue_item.created_at.isoformat() if queue_item.created_at else None,
+            "updated_at": queue_item.updated_at.isoformat() if queue_item.updated_at else None,
+            "crawled_url": crawled_urls_info["latest_url"],
+            "crawled_urls": crawled_urls_info["all_urls"],
+            "crawled_count": crawled_urls_info["count"],
+            "is_complete": status_str.upper() in ["COMPLETED", "FAILED"],
+            "error_message": getattr(queue_item, 'error_message', None)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting progress for queue {queue_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

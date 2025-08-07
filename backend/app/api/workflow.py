@@ -27,8 +27,47 @@ from app.core.auth import require_permissions
 from app.services.workflow import WorkflowService
 from app.models.schemas.workflow import WorkflowCreate, WorkflowResponse, WorkflowUpdate
 
+# Enterprise feature check
+try:
+    from app.enterprise.repositories.subscription import SubscriptionRepository
+    from app.enterprise.repositories.plan import PlanRepository
+    HAS_ENTERPRISE = True
+except ImportError:
+    HAS_ENTERPRISE = False
+
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+def check_workflow_feature_access(current_user: User, db: Session):
+    """Check if user has access to workflow feature"""
+    if not HAS_ENTERPRISE:
+        return  # Allow access in non-enterprise mode
+    
+    subscription_repo = SubscriptionRepository(db)
+    plan_repo = PlanRepository(db)
+    
+    # Get current subscription
+    subscription = subscription_repo.get_by_organization(str(current_user.organization_id))
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No active subscription found"
+        )
+    
+    # Check subscription status
+    if not subscription.is_active() and not subscription.is_trial():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Subscription is not active"
+        )
+    
+    # Check if workflow feature is available in the plan
+    if not plan_repo.check_feature_availability(str(subscription.plan_id), 'workflow'):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workflow feature is not available in your current plan. Please upgrade to access this feature."
+        )
 
 
 @router.post("", response_model=WorkflowResponse, status_code=status.HTTP_201_CREATED)
@@ -39,6 +78,9 @@ async def create_workflow(
 ):
     """Create a new workflow"""
     try:
+        # Check workflow feature access
+        check_workflow_feature_access(current_user, db)
+        
         workflow_service = WorkflowService(db)
         
         # Create workflow with organization ID from current user
@@ -85,6 +127,9 @@ async def get_workflow_by_agent_id(
 ):
     """Get workflow by agent ID"""
     try:
+        # Check workflow feature access
+        check_workflow_feature_access(current_user, db)
+        
         workflow_service = WorkflowService(db)
         
         # Get workflow for the agent
@@ -133,6 +178,9 @@ async def update_workflow(
 ):
     """Update workflow"""
     try:
+        # Check workflow feature access
+        check_workflow_feature_access(current_user, db)
+        
         workflow_service = WorkflowService(db)
         
         # Update workflow
@@ -182,6 +230,9 @@ async def delete_workflow(
 ):
     """Delete workflow"""
     try:
+        # Check workflow feature access
+        check_workflow_feature_access(current_user, db)
+        
         workflow_service = WorkflowService(db)
         
         # Delete workflow

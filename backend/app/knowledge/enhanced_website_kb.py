@@ -20,12 +20,15 @@ from typing import Any, Dict, Iterator, List, Optional
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from queue import Queue
+import threading
 
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
 from agno.embedder import Embedder
 from app.core.logger import get_logger
 from app.core.config import settings
+from app.models.knowledge_queue import ProcessingStage, QueueStatus
 from pydantic import model_validator
 
 from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
@@ -49,6 +52,30 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     max_workers: int = settings.KB_MAX_WORKERS
     batch_size: int = settings.KB_BATCH_SIZE
     optimize_on: Optional[int] = settings.KB_OPTIMIZE_ON
+    
+    # These are not part of the model schema, but added as instance attributes
+    _queue_item = None
+    _queue_repo = None
+    _embedding_queue = None
+    _embedding_executor = None
+    _embedding_results = None
+    _embedding_lock = None
+    
+    @property
+    def queue_item(self):
+        return self._queue_item
+        
+    @queue_item.setter
+    def queue_item(self, value):
+        self._queue_item = value
+        
+    @property
+    def queue_repo(self):
+        return self._queue_repo
+        
+    @queue_repo.setter
+    def queue_repo(self, value):
+        self._queue_repo = value
 
     @model_validator(mode="after")
     def set_reader(self) -> "EnhancedWebsiteKnowledgeBase":
@@ -65,39 +92,142 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
             )
         return self
 
+    def _init_embedding_system(self):
+        """Initialize the embedding queue and thread pool system"""
+        if (settings.ENABLE_IMMEDIATE_EMBEDDING and 
+            self.vector_db and 
+            hasattr(self.vector_db, 'embedder') and 
+            self.vector_db.embedder is not None):
+            
+            self._embedding_queue = Queue()
+            self._embedding_results = []
+            self._embedding_lock = threading.Lock()
+            self._embedding_executor = ThreadPoolExecutor(
+                max_workers=settings.EMBEDDING_MAX_WORKERS,
+                thread_name_prefix="EmbeddingWorker"
+            )
+
+
+    def _shutdown_embedding_system(self):
+        """Shutdown the embedding system and wait for completion"""
+        if not self._embedding_executor:
+            return
+            
+        try:
+            # Signal workers to stop by adding sentinel values
+            if self._embedding_queue:
+                for i in range(settings.EMBEDDING_MAX_WORKERS):
+                    self._embedding_queue.put(None)
+            
+            # Shutdown executor with timeout to prevent hanging
+            self._embedding_executor.shutdown(wait=True)
+            
+            # Clean up resources
+            self._embedding_queue = None
+            self._embedding_executor = None
+            self._embedding_results = None
+            self._embedding_lock = None
+            
+        except Exception as e:
+            logger.error(f"Error during embedding system shutdown: {type(e).__name__}: {str(e)}")
+            # Force shutdown if graceful shutdown fails
+            if self._embedding_executor:
+                self._embedding_executor.shutdown(wait=False)
+
+    def _embedding_worker(self):
+        """Worker function that processes documents from the embedding queue"""
+        worker_id = threading.current_thread().name
+        
+        while True:
+            document = None
+            try:
+                document = self._embedding_queue.get(timeout=2.0)  # Increased timeout slightly
+                
+                if document is None:  # Sentinel value to stop worker
+                    self._embedding_queue.task_done()
+                    break
+                
+                # Process the document
+                if hasattr(document, 'embedding') and document.embedding is None:
+                    document.embed(embedder=self.vector_db.embedder)
+                    with self._embedding_lock:
+                        self._embedding_results.append(document.id)
+                
+                self._embedding_queue.task_done()
+                
+            except Exception as e:
+                # Handle timeouts gracefully (expected when queue is empty)
+                error_msg = str(e).lower()
+                if "timeout" in error_msg or "empty" in error_msg:
+                    # Timeout is normal when waiting for work - continue looping
+                    continue
+                else:
+                    # Log actual errors with full details
+                    logger.error(f"Error in embedding worker {worker_id}: {type(e).__name__}: {str(e)}")
+                    if document and hasattr(document, 'id'):
+                        logger.error(f"Failed to embed document: {document.id}")
+                    
+                    # Mark task as done even if failed to prevent queue blocking
+                    if document is not None:
+                        try:
+                            self._embedding_queue.task_done()
+                        except ValueError:
+                            # task_done called too many times - ignore
+                            pass
+        
+
+
     def _process_url(self, url: str) -> List[Document]:
-        """Process a single URL and return its documents"""
+        """Process a single URL and return its documents with immediate embedding"""
         try:
             url_start_time = time.time()
             logger.info(f"Crawling URL: {url}")
             
-            # Get documents from the reader without embedding
-            documents = self.reader.read(url=url)
+            # Create a callback for URL crawling progress tracking
+            def on_url_crawled_callback(crawled_url: str):
+                """Callback to track each URL as it's crawled"""
+                try:
+                    if self.queue_item and self.queue_repo:
+                        logger.debug(f"🌐 Tracking crawled URL: {crawled_url}")
+                        # Only add the crawled URL, don't update the processing stage
+                        success = self.queue_repo.update_progress(
+                            self.queue_item.id,
+                            crawled_url=crawled_url
+                        )
+                        if success:
+                            logger.debug(f"✅ Successfully tracked crawled URL: {crawled_url}")
+                        else:
+                            logger.warning(f"❌ Failed to track crawled URL: {crawled_url}")
+                except Exception as e:
+                    logger.error(f"Error tracking crawled URL {crawled_url}: {str(e)}")
             
-            # Now embed documents in parallel if possible
-            if self.vector_db and hasattr(self.vector_db, 'embedder') and documents:
-                unembedded_docs = [doc for doc in documents if doc.embedding is None]
-                if unembedded_docs:
-                    # Use ThreadPoolExecutor for parallel embedding
-                    with ThreadPoolExecutor(max_workers=min(len(unembedded_docs), self.max_workers)) as executor:
-                        # Create a list of future tasks
-                        futures = []
-                        for doc in unembedded_docs:
-                            futures.append(executor.submit(self._embed_document, doc, self.vector_db.embedder))
+            # Create a callback for immediate document processing
+            def on_document_callback(document: Document):
+                """Callback to queue documents for embedding"""
+                try:
+                    # Queue document for embedding if immediate embedding is enabled
+                    if (settings.ENABLE_IMMEDIATE_EMBEDDING and 
+                        self._embedding_queue is not None and 
+                        document.embedding is None):
+                        self._embedding_queue.put(document)
                         
-                        # Wait for all embeddings to complete
-                        for future in as_completed(futures):
-                            try:
-                                future.result()  # Get any exceptions that occurred
-                            except Exception as e:
-                                logger.error(f"Error during parallel embedding: {str(e)}")
+                except Exception as e:
+                    logger.error(f"Error in document callback for {document.id}: {str(e)}")
+            
+            # Get documents from the reader with both callbacks
+            documents = self.reader.read(
+                url=url, 
+                vector_db_callback=on_document_callback,
+                url_crawled_callback=on_url_crawled_callback
+            )
             
             url_end_time = time.time()
             url_duration = url_end_time - url_start_time
             
             # Log document details
             page_count = len(set(doc.meta_data.get('url', '') for doc in documents))
-            logger.info(f"Completed {url} - Extracted {len(documents)} documents from {page_count} pages ({url_duration:.2f}s)")
+            embedded_count = sum(1 for doc in documents if doc.embedding is not None)
+            logger.info(f"Completed {url} - Extracted {len(documents)} documents ({embedded_count} embedded) from {page_count} pages ({url_duration:.2f}s)")
             
             return documents
         except Exception as e:
@@ -132,15 +262,16 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     @property
     def document_lists(self) -> Iterator[List[Document]]:
         """
-        Iterate over urls and yield lists of documents.
-        Each object yielded by the iterator is a list of documents.
+        Iterate over urls and yield lists of documents with queue-based parallel embedding.
+        Each object yielded by the iterator is a list of documents that are embedded via
+        a dedicated embedding thread pool for optimal performance.
 
         Returns:
             Iterator[List[Document]]: Iterator yielding list of documents
         """
         if self.reader is not None:
             total_start_time = time.time()
-            logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting to process {len(self.urls)} URLs")
+            logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting to process {len(self.urls)} URLs with queue-based parallel embedding")
             
             # Process URLs in parallel using ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
@@ -153,6 +284,9 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                     try:
                         documents = future.result()
                         if documents:
+                            # Documents should already be embedded from immediate processing
+                            embedded_count = sum(1 for doc in documents if doc.embedding is not None)
+                            logger.debug(f"Yielding {len(documents)} documents ({embedded_count} embedded) from {url}")
                             yield documents
                     except Exception as e:
                         logger.error(f"Error processing URL {url}: {str(e)}")
@@ -160,7 +294,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
             
             total_end_time = time.time()
             total_duration = total_end_time - total_start_time
-            logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Completed processing all {len(self.urls)} URLs (Total time: {total_duration:.2f}s)")
+            logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Completed processing all {len(self.urls)} URLs with immediate embedding (Total time: {total_duration:.2f}s)")
 
     def load(
         self,
@@ -196,6 +330,14 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
 
         logger.info(f"Starting knowledge base loading - {len(self.urls)} URLs")
 
+        # Initialize the embedding system
+        self._init_embedding_system()
+        
+        # Start embedding workers after initialization
+        if self._embedding_executor and self._embedding_queue is not None:
+            for i in range(settings.EMBEDDING_MAX_WORKERS):
+                self._embedding_executor.submit(self._embedding_worker)
+
         # Check if URLs exist in vector db
         urls_to_read = self.urls.copy()
         if not recreate and skip_existing:
@@ -210,6 +352,19 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
 
         # Process URLs in parallel with batched vector DB insertion
         total_documents = 0
+        completed_urls = 0
+        total_urls = len(urls_to_read)
+        
+        # Initialize progress tracking if we have queue context
+        if self.queue_item and self.queue_repo:
+            self.queue_repo.update_progress(
+                self.queue_item.id,
+                ProcessingStage.CRAWLING,
+                progress_percentage=10.0,
+                total_items=total_urls,
+                processed_items=0,
+                force_stage_update=True
+            )
         
         # Keep track of crawling vs upsert timing
         crawl_start_time = time.time()
@@ -225,45 +380,106 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                 try:
                     documents = future.result()
                     total_documents += len(documents)
+                    completed_urls += 1
+                    
+                    # Update progress after each URL completes
+                    if self.queue_item and self.queue_repo and total_urls > 0:
+                        # Calculate crawling progress (10% to 60% of total)
+                        crawling_progress = 10.0 + (completed_urls / total_urls) * 50.0
+                        self.queue_repo.update_progress(
+                            self.queue_item.id,
+                            ProcessingStage.CRAWLING,
+                            progress_percentage=min(crawling_progress, 60.0),
+                            total_items=total_urls,
+                            processed_items=completed_urls,
+                            force_stage_update=True
+                        )
+                        logger.debug(f"Crawling progress: {completed_urls}/{total_urls} URLs ({crawling_progress:.1f}%)")
                     
                     # Collect documents for batch processing
                     all_documents.extend(documents)
                         
                 except Exception as e:
                     logger.error(f"Error processing URL {url}: {str(e)}")
+                    completed_urls += 1  # Count failed URLs too
         
         crawl_end_time = time.time()
         crawl_duration = crawl_end_time - crawl_start_time
         logger.info(f"Crawling completed - {len(urls_to_read)} URLs, {total_documents} documents, {crawl_duration:.2f}s")
         
-        # Make sure all documents are embedded before upsert (final check for any that were missed)
+        # Update progress to embedding stage
+        if self.queue_item and self.queue_repo:
+            self.queue_repo.update_progress(
+                self.queue_item.id,
+                ProcessingStage.EMBEDDING,
+                progress_percentage=60.0,
+                force_stage_update=True
+            )
+        
+        # Get embedding results count before shutdown
+        embedded_count = 0
+        if self._embedding_results:
+            with self._embedding_lock:
+                embedded_count = len(self._embedding_results)
+        
+        # Shutdown the embedding system (includes waiting for completion)
+        self._shutdown_embedding_system()
+        
+        logger.info(f"Embedding completed - {embedded_count} documents embedded")
+        
+        # Update embedding progress
+        if self.queue_item and self.queue_repo:
+            self.queue_repo.update_progress(
+                self.queue_item.id,
+                ProcessingStage.EMBEDDING,
+                total_items=total_documents,
+                processed_items=embedded_count
+            )
+        
+        # Check if any documents missed embedding (should be rare with queue-based embedding)
         unembedded_count = sum(1 for doc in all_documents if doc.embedding is None)
-        if unembedded_count > 0 and self.vector_db and hasattr(self.vector_db, 'embedder'):
-            logger.info(f"Embedding remaining {unembedded_count} documents")
-            unembedded_docs = [doc for doc in all_documents if doc.embedding is None]
-            
-            # Use ThreadPoolExecutor for parallel embedding with a high worker count for best parallelism
-            with ThreadPoolExecutor(max_workers=min(32, len(unembedded_docs))) as executor:
-                # Create a list of future tasks
-                futures = []
-                for doc in unembedded_docs:
-                    futures.append(executor.submit(self._embed_document, doc, self.vector_db.embedder))
-                
-                # Wait for all embeddings to complete
-                for future in as_completed(futures):
-                    try:
-                        future.result()  # Get any exceptions that occurred
-                    except Exception as e:
-                        logger.error(f"Error during embedding: {str(e)}")
+        if unembedded_count > 0:
+            logger.warning(f"Found {unembedded_count} unembedded documents, embedding them now")
+            if self.vector_db and hasattr(self.vector_db, 'embedder'):
+                # Embed remaining documents immediately without parallel processing
+                # to avoid multiple model loading
+                for doc in all_documents:
+                    if doc.embedding is None:
+                        try:
+                            doc.embed(embedder=self.vector_db.embedder)
+                        except Exception as e:
+                            logger.error(f"Error embedding document {doc.id}: {str(e)}")
+            else:
+                logger.error(f"Cannot embed {unembedded_count} documents - no embedder available")
         
         # Process all documents in optimally sized batches
         if all_documents and upsert:
             logger.info(f"Inserting {len(all_documents)} documents into vector database")
             
+            # Update progress for DB operations
+            if self.queue_item and self.queue_repo:
+                self.queue_repo.update_progress(
+                    self.queue_item.id,
+                    ProcessingStage.EMBEDDING,
+                    total_items=total_documents,
+                    processed_items=min(total_documents, embedded_count)
+                )
+            
             # Process in larger batches for better DB performance
-            for i in range(0, len(all_documents), self.batch_size):
-                batch = all_documents[i:i + self.batch_size]
+            total_batches = (len(all_documents) + self.batch_size - 1) // self.batch_size
+            for i, batch_start in enumerate(range(0, len(all_documents), self.batch_size)):
+                batch = all_documents[batch_start:batch_start + self.batch_size]
                 self._process_document_batch(batch, filters)
+                
+                # Update progress during DB operations
+                if self.queue_item and self.queue_repo and total_batches > 1:
+                    processed_docs = min(total_documents, (i + 1) * self.batch_size)
+                    self.queue_repo.update_progress(
+                        self.queue_item.id,
+                        ProcessingStage.EMBEDDING,
+                        total_items=total_documents,
+                        processed_items=processed_docs
+                    )
             
         # Optimize vector db if needed
         if self.optimize_on is not None and total_documents > self.optimize_on and hasattr(self.vector_db, 'optimize'):
@@ -275,4 +491,21 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
 
         total_end_time = time.time()
         total_duration = total_end_time - total_start_time
-        logger.info(f"Completed loading {total_documents} documents from {len(urls_to_read)} URLs (Total time: {total_duration:.2f}s)") 
+        db_duration = total_duration - crawl_duration
+        
+        # Calculate embedding statistics
+        final_embedded_count = sum(1 for doc in all_documents if doc.embedding is not None)
+        embedding_rate = (final_embedded_count / len(all_documents) * 100) if all_documents else 0
+        
+        # Mark as completed after all processing is done
+        if self.queue_item and self.queue_repo:
+            self.queue_repo.update_status(
+                self.queue_item.id,
+                QueueStatus.COMPLETED
+            )
+            logger.info(f"✓ Marked queue item {self.queue_item.id} as completed")
+        
+        logger.info(f"✓ Completed loading {total_documents} documents from {len(urls_to_read)} URLs")
+        logger.info(f"✓ Embedding approach: {'Queue-based parallel' if settings.ENABLE_IMMEDIATE_EMBEDDING else 'Sequential batch'}")
+        logger.info(f"✓ Embedding success rate: {final_embedded_count}/{len(all_documents)} ({embedding_rate:.1f}%)")
+        logger.info(f"✓ Total processing time: {total_duration:.2f}s (Crawling+Embedding: {crawl_duration:.2f}s, DB operations: {db_duration:.2f}s)") 

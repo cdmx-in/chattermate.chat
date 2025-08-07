@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { useAgentEdit } from '@/composables/useAgentEdit'
+import { useSubscriptionStorage } from '@/utils/storage'
 
 interface UserGroup {
   id: string;
@@ -66,6 +67,32 @@ const emit = defineEmits([
 
 // Initialize agent edit composable
 const { generateInstructions, isLoading, error } = useAgentEdit(props.agent)
+
+// Subscription and rating feature checking
+const subscriptionStorage = useSubscriptionStorage()
+const isSubscriptionActive = computed(() => subscriptionStorage.isSubscriptionActive())
+
+// Check if rating feature is available
+const hasRatingFeature = computed(() => {
+  return subscriptionStorage.hasFeature('rating')
+})
+
+// Check if rating is locked
+const isRatingLocked = computed(() => {
+  return !hasRatingFeature.value || !isSubscriptionActive.value
+})
+
+// Upgrade modal state
+const showUpgradeModal = ref(false)
+
+// Modal functions
+const closeUpgradeModal = () => {
+  showUpgradeModal.value = false
+}
+
+const handleUpgrade = () => {
+  window.location.href = '/settings/subscription'
+}
 
 // Create local state for all editable fields
 const localInstructions = ref(props.instructions)
@@ -124,6 +151,21 @@ const handleGenerateWithAI = async () => {
   } catch (err) {
     console.error('Failed to generate instructions:', err)
   }
+}
+
+// Handle rating toggle with feature check
+const handleRatingToggle = (event: Event) => {
+  const newValue = (event.target as HTMLInputElement).checked
+  
+  if (newValue && isRatingLocked.value) {
+    // Prevent the toggle and show upgrade modal
+    event.preventDefault()
+    ;(event.target as HTMLInputElement).checked = false
+    showUpgradeModal.value = true
+    return
+  }
+  
+  localAskForRating.value = newValue
 }
 
 const handleSave = () => {
@@ -243,16 +285,26 @@ const handleSave = () => {
         <!-- Ask for Rating -->
         <div class="rating-toggle">
           <div class="toggle-header">
-            <h4 class="section-title">Ask for Rating</h4>
-            <label class="switch" v-tooltip="ratingTooltipContent">
+            <h4 class="section-title">
+              Ask for Rating
+              <font-awesome-icon v-if="isRatingLocked" icon="fa-solid fa-lock" class="lock-icon" />
+            </h4>
+            <label class="switch" :class="{ 'locked': isRatingLocked }" v-tooltip="ratingTooltipContent">
               <input type="checkbox" 
-                v-model="localAskForRating"
-                :disabled="!isEditing"
+                :checked="localAskForRating"
+                @change="handleRatingToggle"
+                :disabled="!isEditing || (isRatingLocked && !localAskForRating)"
               >
-              <span class="slider"></span>
+              <span class="slider" :class="{ 'locked': isRatingLocked }"></span>
             </label>
           </div>
-          <p class="helper-text">Request customer feedback when chats end</p>
+          <p class="helper-text">
+            <span v-if="!isRatingLocked">Request customer feedback when chats end</span>
+            <span v-else class="locked-text">
+              <font-awesome-icon icon="fa-solid fa-crown" class="premium-icon" />
+              Upgrade your plan to enable customer rating collection
+            </span>
+          </p>
         </div>
       </div>
     </section>
@@ -262,6 +314,51 @@ const handleSave = () => {
       <button class="save-button" @click="handleSave">
         Save Changes
       </button>
+    </div>
+
+    <!-- Rating Feature Upgrade Modal -->
+    <div v-if="showUpgradeModal" class="upgrade-modal-overlay">
+      <div class="upgrade-modal">
+        <div class="upgrade-modal-header">
+          <div class="upgrade-icon">
+            <font-awesome-icon icon="fa-solid fa-star" />
+          </div>
+          <h3>Unlock Customer Rating Feature</h3>
+          <button class="close-button" @click="closeUpgradeModal">×</button>
+        </div>
+        <div class="upgrade-modal-content">
+          <p class="upgrade-description">
+            Enable customer feedback collection to track satisfaction, gather insights, 
+            and improve your service quality with star ratings and comments.
+          </p>
+          <div class="upgrade-features">
+            <div class="feature-item">
+              <font-awesome-icon icon="fa-solid fa-check" class="feature-icon" />
+              <span>5-star rating system</span>
+            </div>
+            <div class="feature-item">
+              <font-awesome-icon icon="fa-solid fa-check" class="feature-icon" />
+              <span>Optional customer comments</span>
+            </div>
+            <div class="feature-item">
+              <font-awesome-icon icon="fa-solid fa-check" class="feature-icon" />
+              <span>Satisfaction analytics</span>
+            </div>
+            <div class="feature-item">
+              <font-awesome-icon icon="fa-solid fa-check" class="feature-icon" />
+              <span>Performance insights</span>
+            </div>
+          </div>
+        </div>
+        <div class="upgrade-modal-footer">
+          <button class="upgrade-button" @click="handleUpgrade">
+            <font-awesome-icon icon="fa-solid fa-crown" class="upgrade-icon" />
+            Upgrade to Unlock Ratings
+            <font-awesome-icon icon="fa-solid fa-arrow-right" class="arrow-icon" />
+          </button>
+          <button class="cancel-upgrade-button" @click="closeUpgradeModal">Maybe Later</button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -672,5 +769,241 @@ input:checked + .slider:before {
   background: var(--primary-dark);
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* Rating Feature Lock Styles */
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.lock-icon {
+  font-size: 0.875rem;
+  color: var(--warning-color);
+  opacity: 0.8;
+}
+
+.switch.locked {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.slider.locked {
+  cursor: not-allowed;
+  background-color: #ccc !important;
+}
+
+.slider.locked:before {
+  background-color: #f5f5f5 !important;
+}
+
+.locked-text {
+  color: var(--warning-color);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.premium-icon {
+  color: #ffd700;
+  font-size: 0.875rem;
+}
+
+/* Upgrade Modal Styles */
+.upgrade-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+}
+
+.upgrade-modal {
+  background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
+  border-radius: 16px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+  animation: modalSlideIn 0.3s ease-out;
+}
+
+@keyframes modalSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.upgrade-modal-header {
+  padding: var(--space-xl);
+  text-align: center;
+  position: relative;
+  background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+  color: white;
+}
+
+.upgrade-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto var(--space-md);
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.upgrade-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.upgrade-modal-header h3 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin: 0;
+  color: white;
+}
+
+.upgrade-modal-header .close-button {
+  position: absolute;
+  top: var(--space-md);
+  right: var(--space-md);
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  color: white;
+  cursor: pointer;
+  font-size: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.upgrade-modal-header .close-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.upgrade-modal-content {
+  padding: var(--space-xl);
+}
+
+.upgrade-description {
+  font-size: 1rem;
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: var(--space-xl);
+  text-align: center;
+}
+
+.upgrade-features {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.feature-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  padding: var(--space-sm);
+  background: var(--background-soft);
+  border-radius: var(--radius-md);
+  border-left: 3px solid var(--primary-color);
+}
+
+.feature-icon {
+  width: 18px;
+  height: 18px;
+  color: var(--success-color);
+  flex-shrink: 0;
+}
+
+.feature-item span {
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.upgrade-modal-footer {
+  padding: var(--space-lg) var(--space-xl);
+  background: var(--background-soft);
+  display: flex;
+  gap: var(--space-md);
+  justify-content: center;
+}
+
+.upgrade-button {
+  background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+  color: white;
+  border: none;
+  border-radius: var(--radius-full);
+  padding: var(--space-md) var(--space-xl);
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.upgrade-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  filter: brightness(1.1);
+}
+
+.upgrade-button .upgrade-icon {
+  font-size: 1rem;
+  color: #ffd700;
+  width: auto;
+  height: auto;
+  margin: 0;
+  background: none;
+  border-radius: 0;
+}
+
+.arrow-icon {
+  width: 16px;
+  height: 16px;
+  transition: transform 0.2s ease;
+}
+
+.upgrade-button:hover .arrow-icon {
+  transform: translateX(2px);
+}
+
+.cancel-upgrade-button {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: var(--space-md) var(--space-lg);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cancel-upgrade-button:hover {
+  background: var(--background-muted);
+  color: var(--text-color);
+  border-color: var(--text-muted);
 }
 </style> 

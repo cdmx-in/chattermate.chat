@@ -39,6 +39,10 @@ export const authService = {
       await api.post('/users/logout')
       userService.clearCurrentUser()
       localStorage.removeItem('agents')
+      localStorage.removeItem('current_subscription')
+      localStorage.removeItem('exploreView_customization')
+      localStorage.removeItem('exploreView_selectedColor')
+      localStorage.removeItem('exploreView_url')
     } catch (err) {
       const axiosError = err as AxiosError<ErrorResponse>
       throw new Error(axiosError.response?.data?.detail || 'Logout failed')

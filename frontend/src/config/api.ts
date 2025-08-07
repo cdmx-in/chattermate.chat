@@ -63,6 +63,11 @@ export function getHost(): string {
   return window.APP_CONFIG?.HOST || import.meta.env.HOST || '0.0.0.0';
 }
 
+// Explore Configuration - Dynamic function
+export function getDemoWidgetId(): string {
+  return (window.APP_CONFIG as any)?.DEMO_WIDGET_ID || import.meta.env.VITE_DEMO_WIDGET_ID || '397046dc-0093-4499-ab45-a0afe3c3ee14';
+}
+
 // Legacy exports for backward compatibility - using getters to ensure dynamic evaluation
 export const config = {
   get API_URL() {

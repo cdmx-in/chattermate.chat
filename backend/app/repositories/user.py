@@ -120,3 +120,14 @@ class UserRepository:
             logger.error(f"Error clearing FCM token: {str(e)}")
             self.db.rollback()
             return False
+            
+    def get_first_admin_by_org(self, organization_id: UUID) -> Optional[User]:
+        """Get the first admin user in an organization"""
+        try:
+            return self.db.query(User)\
+                .filter(User.organization_id == organization_id)\
+                .filter(User.is_admin == True)\
+                .first()
+        except Exception as e:
+            logger.error(f"Error getting admin user: {str(e)}")
+            return None

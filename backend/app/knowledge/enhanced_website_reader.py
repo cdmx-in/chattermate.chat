@@ -101,7 +101,7 @@ class EnhancedWebsiteReader(WebsiteReader):
         else:
             domain = '.'.join(parts[-2:] if len(parts) > 1 else parts)  # domain.com or just domain
         
-        logger.debug(f"Extracted domain '{domain}' from URL '{url}'")
+
         return domain
     
     def _extract_main_content(self, soup: BeautifulSoup) -> str:
@@ -257,20 +257,16 @@ class EnhancedWebsiteReader(WebsiteReader):
         
         # Skip if URL meets any skip conditions
         if current_url in self._visited:
-            logger.debug(f"Skipping already visited URL: {current_url}")
             return None
             
         if not urlparse(current_url).netloc.endswith(primary_domain):
-            logger.debug(f"Skipping URL with different domain: {current_url}")
             return None
             
         if current_depth > self.max_depth:
-            logger.debug(f"Skipping URL exceeding max depth: {current_url} (depth: {current_depth} > max: {self.max_depth})")
             return None
         
         # Mark as visited before processing
         self._visited.add(current_url)
-        logger.debug(f"Added to visited set: {current_url} (visited count: {len(self._visited)})")
         
         self.delay()
         
@@ -287,8 +283,6 @@ class EnhancedWebsiteReader(WebsiteReader):
         
         while retry_count < self.max_retries and content is None:
             try:
-                logger.debug(f"Request attempt {retry_count + 1} for: {current_url}")
-                
                 # Make the request
                 with httpx.Client(
                     timeout=self.timeout, 
@@ -304,10 +298,7 @@ class EnhancedWebsiteReader(WebsiteReader):
                 
                 # Check content quality
                 if not content or len(content) < self.min_content_length:
-                    logger.debug(f"✗ Content extraction failed or insufficient content length for {current_url}")
                     self._failed_crawls += 1
-                    page_end_time = time.time()
-                    logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Failed to get quality content from {current_url} (Time taken: {page_end_time - page_start_time:.2f}s)")
                     return None
                 
                 self._successful_crawls += 1
@@ -315,19 +306,15 @@ class EnhancedWebsiteReader(WebsiteReader):
                 
                 # Extract new links if not at max depth
                 if current_depth < self.max_depth:
-                    logger.debug(f"Extracting links from {current_url} at depth {current_depth}")
                     links = self._extract_links(soup, current_url)
                     
                     next_depth = current_depth + 1
                     new_links = [(link, next_depth) for link in links 
                                 if link not in self._visited]
                     
-                    logger.info(f"Found {len(new_links)} new URLs to crawl from {current_url}")
-                    
             except Exception as e:
                 retry_count += 1
                 last_error = str(e)
-                logger.debug(f"Error crawling {current_url}: {last_error}. Retry {retry_count}/{self.max_retries}")
                 # Exponential backoff
                 if retry_count < self.max_retries:
                     time.sleep(2 ** retry_count)
@@ -335,9 +322,6 @@ class EnhancedWebsiteReader(WebsiteReader):
         # Log failure if all retries failed
         if content is None:
             self._failed_crawls += 1
-            logger.info(f"✗ Failed to crawl {current_url} after {self.max_retries} attempts: {last_error}")
-            page_end_time = time.time()
-            logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Failed crawling page {self._crawled_pages_count} (Time taken: {page_end_time - page_start_time:.2f}s)")
             return None
         
         page_end_time = time.time()
@@ -346,13 +330,14 @@ class EnhancedWebsiteReader(WebsiteReader):
         
         return (current_url, content, new_links)
 
-    def crawl(self, url: str, starting_depth: int = 1, on_document_callback: Optional[Callable[[str, str], None]] = None) -> Dict[str, str]:
+    def crawl(self, url: str, starting_depth: int = 1, on_document_callback: Optional[Callable[[str, str], None]] = None, on_url_crawled_callback: Optional[Callable[[str], None]] = None) -> Dict[str, str]:
         """
         Enhanced crawl method with parallel processing and immediate vector DB insertion.
         
         :param url: The URL to crawl.
         :param starting_depth: The starting depth level for the crawl.
         :param on_document_callback: Callback function that receives (url, content) for immediate processing
+        :param on_url_crawled_callback: Callback function that receives (url) when a page is successfully crawled
         :return: Dictionary of URLs and their corresponding content.
         """
         # Reset visited and urls_to_crawl for fresh crawl
@@ -383,7 +368,7 @@ class EnhancedWebsiteReader(WebsiteReader):
                 current_batch = urls_to_process[:batch_size]
                 urls_to_process = urls_to_process[batch_size:]
                 
-                logger.debug(f"Processing batch of {len(current_batch)} URLs, {len(urls_to_process)} remaining in queue")
+
                 
                 # Submit all URLs in the current batch for parallel processing
                 future_to_url = {
@@ -401,6 +386,11 @@ class EnhancedWebsiteReader(WebsiteReader):
                             
                             # Add the content to our results
                             crawler_result[processed_url] = content
+                            
+                            # Call the URL crawled callback first (for progress tracking)
+                            if on_url_crawled_callback:
+                                logger.debug(f"📞 Calling URL crawled callback for: {processed_url}")
+                                on_url_crawled_callback(processed_url)
                             
                             # Call the callback for immediate processing if provided
                             if on_document_callback:
@@ -440,11 +430,7 @@ class EnhancedWebsiteReader(WebsiteReader):
         links = []
         primary_domain = self._get_primary_domain(base_url)
         
-        # Log the primary domain for debugging
-        logger.debug(f"Extracting links from {base_url} (primary domain: {primary_domain})")
-        
         all_links = soup.find_all("a", href=True)
-        logger.debug(f"Found {len(all_links)} total links in {base_url}")
         
         for link in all_links:
             if not isinstance(link, Tag):
@@ -467,9 +453,6 @@ class EnhancedWebsiteReader(WebsiteReader):
             link_domain = parsed_url.netloc
             is_same_domain = link_domain.endswith(primary_domain)
             
-            # Log the potential link for debugging
-            logger.debug(f"Potential link: {full_url} - Same domain: {is_same_domain}")
-            
             if (
                 is_same_domain
                 and not any(parsed_url.path.endswith(ext) for ext in [
@@ -479,9 +462,6 @@ class EnhancedWebsiteReader(WebsiteReader):
                 and "?" not in full_url  # Skip query parameters for simplicity
             ):
                 links.append(full_url)
-                logger.debug(f"✓ Added link to crawl: {full_url}")
-            else:
-                logger.debug(f"✗ Filtered out link: {full_url}")
                 
         logger.info(f"Extracted {len(links)} valid links from {base_url}")
         return links
@@ -531,17 +511,18 @@ class EnhancedWebsiteReader(WebsiteReader):
         # Set name to full page URL for matching with knowledge_queue
         document.name = source_url
         
-        logger.debug(f"Created document {index}: ID={document.id}, Name={document.name}, URL={page_url}, Size={len(content)}")
+
         
         return document
 
-    def read(self, url: str, vector_db_callback: Optional[Callable[[Document], None]] = None) -> List[Document]:
+    def read(self, url: str, vector_db_callback: Optional[Callable[[Document], None]] = None, url_crawled_callback: Optional[Callable[[str], None]] = None) -> List[Document]:
         """
         Read content from a URL, crawl related pages, and convert the content into Documents.
         Optionally sends documents to vector DB as they are created.
         
         :param url: The URL to read from.
         :param vector_db_callback: Optional callback to send documents to vector DB as they're created
+        :param url_crawled_callback: Optional callback called when each URL is successfully crawled
         :return: A list of Document objects.
         """
         # Get timestamp for tracking
@@ -565,7 +546,7 @@ class EnhancedWebsiteReader(WebsiteReader):
                     logger.error(f"Error sending document {document.id} to vector DB: {str(e)}")
         
         # Crawl website with the callback for immediate document processing
-        self.crawl(url, on_document_callback=on_document_created)
+        self.crawl(url, on_document_callback=on_document_created, on_url_crawled_callback=url_crawled_callback)
         
         end_time = time.time()
         duration = end_time - start_time

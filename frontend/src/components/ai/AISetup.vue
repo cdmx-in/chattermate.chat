@@ -18,14 +18,18 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <script setup lang="ts">
 import { useAISetup } from '@/composables/useAISetup'
-import { computed, ref, watch } from 'vue'
+import { computed, ref, watch, onMounted } from 'vue'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
+import { useSubscriptionStorage } from '@/utils/storage'
+import { useSubscriptionStore } from '@/modules/enterprise/composables/useSubscriptionStore'
 
 const emit = defineEmits<{
   (e: 'ai-setup-complete'): void
 }>()
 
 const { hasEnterpriseModule } = useEnterpriseFeatures()
+const subscriptionStorage = useSubscriptionStorage()
+const { fetchPlans } = useSubscriptionStore()
 
 const {
   isLoading,
@@ -61,6 +65,132 @@ const modelOptions = computed(() => {
   }
 })
 
+// Subscription and plan computed properties
+const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
+const currentPlan = computed(() => currentSubscription.value?.plan)
+
+// Dynamic message limits based on current plan
+const currentPlanMessageLimit = computed(() => {
+  const plan = currentPlan.value
+  if (!plan || !plan.max_messages) {
+    return 'Unlimited messages/month'
+  }
+  
+  // Format the number with commas for better readability
+  const formattedLimit = plan.max_messages.toLocaleString()
+  
+  // Don't show "per seat" if max_agents is 1 (single agent plan)
+  const perSeatText = plan.max_agents === 1 ? '' : ' per seat'
+  return `${formattedLimit} messages/month${perSeatText}`
+})
+
+const currentPlanName = computed(() => {
+  const plan = currentPlan.value
+  return plan?.name || 'Current Plan'
+})
+
+// Check available plans and upgrade options
+const availablePlans = computed(() => {
+  const plans = subscriptionStorage.getAvailablePlans()
+  
+  // If plans are empty and we have enterprise module, trigger fetch
+  if (plans.length === 0 && hasEnterpriseModule) {
+    fetchPlans().catch(err => {
+      console.error('Failed to fetch plans:', err)
+    })
+  }
+  
+  return plans
+})
+
+// Determine if user can upgrade (not on the highest tier plan)
+const canUpgrade = computed(() => {
+  const current = currentPlan.value
+  const available = availablePlans.value
+  
+  if (!current || !available || available.length === 0) {
+    return false
+  }
+  
+  // Find plans with higher message limits
+  const higherPlans = available.filter(plan => {
+    const currentMessages = current.max_messages || 0
+    const planMessages = plan.max_messages || 0
+    
+    // If both plans have unlimited messages (0), no upgrade needed
+    if (currentMessages === 0 && planMessages === 0) {
+      return false
+    }
+    
+    // If current plan has unlimited (0) but checking plan has limit, not an upgrade
+    if (currentMessages === 0 && planMessages > 0) {
+      return false
+    }
+    
+    // If current plan has limit but checking plan has unlimited (0), that's an upgrade
+    if (currentMessages > 0 && planMessages === 0) {
+      return true
+    }
+    
+    // Both have limits, check if plan has higher limit
+    return planMessages > currentMessages
+  })
+  
+  return higherPlans.length > 0
+})
+
+// Get the next upgrade plan (plan with the next higher message limit)
+const nextUpgradePlan = computed(() => {
+  const current = currentPlan.value
+  const available = availablePlans.value
+  
+  if (!current || !available || !canUpgrade.value) {
+    return null
+  }
+  
+  const currentMessages = current.max_messages || 0
+  
+  // Find plans with higher message limits
+  const higherPlans = available.filter(plan => {
+    const planMessages = plan.max_messages || 0
+    
+    // If current plan has unlimited (0) but checking plan has limit, not an upgrade
+    if (currentMessages === 0 && planMessages > 0) {
+      return false
+    }
+    
+    // If current plan has limit but checking plan has unlimited (0), that's an upgrade
+    if (currentMessages > 0 && planMessages === 0) {
+      return true
+    }
+    
+    // Both have limits, check if plan has higher limit
+    return planMessages > currentMessages
+  })
+  
+  // Sort plans: unlimited plans (0) go last, limited plans sorted by message count
+  const sortedPlans = higherPlans.sort((a, b) => {
+    const aMessages = a.max_messages || 0
+    const bMessages = b.max_messages || 0
+    
+    // If one is unlimited (0) and other has limit, unlimited goes last
+    if (aMessages === 0 && bMessages > 0) return 1
+    if (bMessages === 0 && aMessages > 0) return -1
+    
+    // Both unlimited or both limited, sort by message count
+    return aMessages - bMessages
+  })
+  
+  return sortedPlans[0] || null
+})
+
+// Rate limit (using default value since it's not stored in plan yet)
+const rateLimitText = computed(() => {
+  // Default rate limit - this could be made dynamic in the future
+  const rateLimit = 100
+  return `Rate limit: ${rateLimit} messages/minute`
+})
+
 // Reset model when provider changes
 watch(() => setupConfig.value.provider, () => {
   setupConfig.value.model = ''
@@ -70,6 +200,22 @@ const selectTab = (tab: 'chattermate' | 'custom') => {
   if (tab === 'chattermate' && !hasEnterpriseModule) return
   activeTab.value = tab
 }
+
+const handleUpgrade = () => {
+  // Navigate to subscription settings page
+  window.location.href = '/settings/subscription'
+}
+
+// Ensure plans are available when component mounts
+onMounted(async () => {
+  if (hasEnterpriseModule && subscriptionStorage.getAvailablePlans().length === 0) {
+    try {
+      await fetchPlans()
+    } catch (err) {
+      console.error('Failed to fetch plans on mount:', err)
+    }
+  }
+})
 
 const handleSubmit = async () => {
   try {
@@ -171,17 +317,31 @@ const chatterMateButtonText = computed(() => {
               
               <div class="plan-table">
                 <div class="plan-row">
-                  <div class="plan-cell plan-label">Starter Plan:</div>
-                  <div class="plan-cell plan-value">1000 messages/month per seat</div>
-                </div>
-                <div class="plan-row">
-                  <div class="plan-cell plan-label">Pro Plan:</div>
-                  <div class="plan-cell plan-value">10,000 messages/month per seat</div>
+                  <div class="plan-cell plan-label">{{ currentPlanName }}:</div>
+                  <div class="plan-cell plan-value">{{ currentPlanMessageLimit }}</div>
                 </div>
                 <div class="plan-divider"></div>
                 <div class="plan-row rate-limit-row">
-                  <div class="plan-cell">Rate limit: 100 messages/minute</div>
+                  <div class="plan-cell">{{ rateLimitText }}</div>
                 </div>
+              </div>
+              
+              <!-- Upgrade prompt when not on highest plan -->
+              <div v-if="canUpgrade && nextUpgradePlan" class="upgrade-prompt">
+                <div class="upgrade-info">
+                  <div class="upgrade-icon">⚡</div>
+                  <div class="upgrade-text">
+                    <div class="upgrade-title">Want more messages?</div>
+                    <div class="upgrade-description">
+                      Upgrade to {{ nextUpgradePlan.name }} for 
+                      {{ nextUpgradePlan.max_messages ? nextUpgradePlan.max_messages.toLocaleString() : 'unlimited' }} 
+                      messages/month{{ nextUpgradePlan.max_agents === 1 ? '' : ' per seat' }}
+                    </div>
+                  </div>
+                </div>
+                <button class="upgrade-button" @click="handleUpgrade">
+                  Upgrade Plan
+                </button>
               </div>
               
               <div class="action-area">
@@ -478,5 +638,84 @@ const chatterMateButtonText = computed(() => {
 
 .continue-button:hover {
   background-color: var(--accent-color);
+}
+
+/* Upgrade Prompt Styles */
+.upgrade-prompt {
+  background: linear-gradient(135deg, var(--primary-color), var(--accent-color));
+  border-radius: var(--radius-md);
+  padding: var(--space-lg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-md);
+  color: white;
+  margin-top: var(--space-md);
+}
+
+.upgrade-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  flex: 1;
+}
+
+.upgrade-icon {
+  font-size: 1.5rem;
+  opacity: 0.9;
+}
+
+.upgrade-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.upgrade-title {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.upgrade-description {
+  font-size: 0.875rem;
+  opacity: 0.9;
+  line-height: 1.4;
+}
+
+.upgrade-button {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: var(--radius-md);
+  padding: var(--space-sm) var(--space-lg);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+
+.upgrade-button:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+  transform: translateY(-1px);
+}
+
+/* Responsive upgrade prompt */
+@media (max-width: 768px) {
+  .upgrade-prompt {
+    flex-direction: column;
+    align-items: stretch;
+    text-align: center;
+    gap: var(--space-md);
+  }
+  
+  .upgrade-info {
+    justify-content: center;
+    text-align: center;
+  }
+  
+  .upgrade-button {
+    width: 100%;
+  }
 }
 </style>

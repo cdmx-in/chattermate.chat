@@ -27,7 +27,7 @@ from app.repositories.ai_config import AIConfigRepository
 from app.core.security import decrypt_api_key
 from agno.knowledge.agent import AgentKnowledge
 from agno.vectordb.pgvector import PgVector, SearchType
-from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
+from agno.embedder.fastembed import FastEmbedEmbedder
 from uuid import UUID
 import os
 
@@ -73,11 +73,11 @@ class KnowledgeSearchByAgent(Toolkit):
                 if self.agent_knowledge is None:
                     # Use the first knowledge source's table and schema since they should all be in the same table
                     source = knowledge_sources[0]
-                    embedder = SentenceTransformerEmbedder(
-                        id=settings.EMBEDDING_MODEL_ID  # Use configurable model ID from settings
+                    embedder = FastEmbedEmbedder(
+                         # Use configurable model ID from settings
                     )
                     # Updated dimensions for the model (all-MiniLM-L6-v2 uses 384 dimensions)
-                    embedder.dimensions = 384
+                    
                     # Initialize vector db with simpler search type to avoid connection issues
                     vector_db = PgVector(
                         table_name=source.table_name,

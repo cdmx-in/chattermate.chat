@@ -64,7 +64,7 @@ class ChatAgent(ChatAgentMCPMixin):
                 agent_id=agent_id, org_id=org_id, source=source)
             tools.append(knowledge_tool)
             knowledge_tool_prompt = """
-            You have access to the knowledge search tool. You can use this tool to search for information about the customer's query. Only use the tool if required, dont use it for general greeting or general queries. Dont hallucinate information.
+            You have access to the knowledge search tool. You can use this tool to search for information about the customer's query on product, services, policies, etc. Only use the tool if required, dont use it for general greeting. Dont hallucinate information.
             """
             
 

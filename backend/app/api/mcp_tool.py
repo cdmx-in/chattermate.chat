@@ -24,6 +24,14 @@ from app.models.user import User
 from app.core.auth import get_current_user, require_permissions
 from app.repositories.mcp_tool import MCPToolRepository
 from app.repositories.agent import AgentRepository
+
+# Enterprise feature check
+try:
+    from app.enterprise.repositories.subscription import SubscriptionRepository
+    from app.enterprise.repositories.plan import PlanRepository
+    HAS_ENTERPRISE = True
+except ImportError:
+    HAS_ENTERPRISE = False
 from app.models.schemas.mcp_tool import (
     MCPToolCreate, MCPToolUpdate, MCPToolResponse,
     MCPToolToAgentCreate, MCPToolToAgentResponse,
@@ -36,6 +44,37 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 
+def check_mcp_feature_access(current_user: User, db: Session):
+    """Check if user has access to MCP tools feature"""
+    if not HAS_ENTERPRISE:
+        return  # Allow access in non-enterprise mode
+    
+    subscription_repo = SubscriptionRepository(db)
+    plan_repo = PlanRepository(db)
+    
+    # Get current subscription
+    subscription = subscription_repo.get_by_organization(str(current_user.organization_id))
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No active subscription found"
+        )
+    
+    # Check subscription status
+    if not subscription.is_active() and not subscription.is_trial():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Subscription is not active"
+        )
+    
+    # Check if MCP tools feature is available in the plan
+    if not plan_repo.check_feature_availability(str(subscription.plan_id), 'mcp_tools'):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="MCP Tools feature is not available in your current plan. Please upgrade to access this feature."
+        )
+
+
 @router.post("", response_model=MCPToolResponse)
 async def create_mcp_tool(
     mcp_tool_data: MCPToolCreate,
@@ -44,6 +83,9 @@ async def create_mcp_tool(
 ):
     """Create a new MCP tool"""
     try:
+        # Check MCP tools feature access
+        check_mcp_feature_access(current_user, db)
+        
         mcp_tool_repo = MCPToolRepository(db)
         
         # Set organization_id from current user
@@ -79,6 +121,9 @@ async def get_organization_mcp_tools(
 ):
     """Get all MCP tools for the current user's organization"""
     try:
+        # Check MCP tools feature access
+        check_mcp_feature_access(current_user, db)
+        
         mcp_tool_repo = MCPToolRepository(db)
         mcp_tools = mcp_tool_repo.get_org_mcp_tools(
             current_user.organization_id, 
@@ -223,6 +268,9 @@ async def add_mcp_tool_to_agent(
 ):
     """Add MCP tool to agent"""
     try:
+        # Check MCP tools feature access
+        check_mcp_feature_access(current_user, db)
+        
         mcp_tool_repo = MCPToolRepository(db)
         agent_repo = AgentRepository(db)
         

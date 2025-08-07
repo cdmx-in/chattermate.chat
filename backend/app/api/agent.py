@@ -122,6 +122,42 @@ async def create_agent(
     try:
         agent_repo = AgentRepository(db)
         
+        # Check enterprise subscription limits if enterprise module is available
+        try:
+            from app.enterprise.repositories.subscription import SubscriptionRepository
+            HAS_ENTERPRISE = True
+        except ImportError:
+            HAS_ENTERPRISE = False
+
+        if HAS_ENTERPRISE:
+            subscription_repo = SubscriptionRepository(db)
+
+            # Get current subscription
+            subscription = subscription_repo.get_by_organization(str(current_user.organization_id))
+            if not subscription:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="No active subscription found"
+                )
+
+            # Check subscription status
+            if not subscription.is_active() and not subscription.is_trial():
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Subscription is not active"
+                )
+
+            # Get current agents count
+            current_agents_count = agent_repo.count_by_organization(current_user.organization_id)
+
+            # Check if adding this agent would exceed the limit
+            if subscription.plan.max_agents is not None and (current_agents_count + 1) > subscription.plan.max_agents:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Cannot create agent: Maximum number of agents ({subscription.plan.max_agents}) exceeded for current plan , please upgrade your plan"
+                )
+
+        
         # Check if agent with the same name already exists in the organization
         existing_agent = agent_repo.get_by_name(agent_data.name, current_user.organization_id)
         if existing_agent:
@@ -139,6 +175,13 @@ async def create_agent(
         # Set display_name to name if not provided
         if "display_name" not in agent_dict or not agent_dict.get("display_name"):
             agent_dict["display_name"] = agent_dict["name"]
+        
+        # Check rating feature availability and override ask_for_rating if necessary
+        if HAS_ENTERPRISE:
+            from app.enterprise.repositories.plan import PlanRepository
+            plan_repo = PlanRepository(db)
+            if not plan_repo.check_feature_availability(str(subscription.plan_id), 'rating'):
+                agent_dict["ask_for_rating"] = False
         
         # Create the agent
         agent = agent_repo.create_agent(**agent_dict)
@@ -200,9 +243,30 @@ async def update_agent(
                 detail="Not authorized to update this agent"
             )
         logger.info(f"Updating agent {agent_id} with data: {update_data}")
+        
+        # Check enterprise subscription limits if enterprise module is available
+        try:
+            from app.enterprise.repositories.subscription import SubscriptionRepository
+            HAS_ENTERPRISE = True
+        except ImportError:
+            HAS_ENTERPRISE = False
+
         # Update agent with provided fields, excluding photo_url
         update_dict = update_data.model_dump(
             exclude={'photo_url'}, exclude_unset=True)
+        
+        # Check rating feature availability and override ask_for_rating if necessary
+        if HAS_ENTERPRISE:
+            from app.enterprise.repositories.plan import PlanRepository
+            subscription_repo = SubscriptionRepository(db)
+            subscription = subscription_repo.get_by_organization(str(current_user.organization_id))
+            
+            if subscription:
+                plan_repo = PlanRepository(db)
+                if not plan_repo.check_feature_availability(str(subscription.plan_id), 'rating'):
+                    # If rating feature is not available, force ask_for_rating to False
+                    update_dict["ask_for_rating"] = False
+        
         agent = agent_repo.update_agent(agent_id, **update_dict)
         # Get knowledge sources for response
         knowledge_items = knowledge_repo.get_by_agent(agent.id)
