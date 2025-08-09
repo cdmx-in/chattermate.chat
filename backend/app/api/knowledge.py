@@ -177,6 +177,7 @@ async def add_explore_url(
         # Get values from environment
         agent_id = settings.EXPLORE_AGENT_ID
         org_id = settings.EXPLORE_SOURCE_ORG_ID
+        user_id = settings.EXPLORE_USER_ID
         
         
         # Check if URL already exists in knowledge base
@@ -194,7 +195,7 @@ async def add_explore_url(
         queue_item = KnowledgeQueue(
             organization_id=UUID(org_id),
             agent_id=UUID(agent_id),
-            user_id='154540a3-6177-4b1b-aab2-f23f0ef74ac7',
+            user_id=user_id,
             source_type='website',
             source=request.url,
             status=QueueStatus.PENDING,
