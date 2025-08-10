@@ -24,7 +24,7 @@ from app.core.cors import get_cors_origins
 
 logger = get_logger(__name__)
 
-# Initialize Socket.IO server with basic config
+# Initialize Socket.IO server with ALB-optimized config
 sio: AsyncServer = socketio.AsyncServer(
     async_mode='asgi',
     logger=True,
@@ -32,6 +32,9 @@ sio: AsyncServer = socketio.AsyncServer(
     async_handlers=True,
     ping_timeout=60,
     ping_interval=25,
+    max_http_buffer_size=1e8,  # Increase buffer size for ALB
+    always_connect=False,  # Don't force connection if not needed
+    cookie=True,  # Enable cookies for session stickiness
     cors_allowed_origins=list(get_cors_origins())  # Use the same CORS origins as FastAPI
 )
 
