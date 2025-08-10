@@ -107,30 +107,40 @@ const setupDOMObserver = () => {
     
     domObserver = new MutationObserver((mutations) => {
         let shouldResetup = false
+        let hasNewInputFields = false
         
         mutations.forEach((mutation) => {
             // Check if input fields were added/removed
             if (mutation.type === 'childList') {
                 const addedInputs = Array.from(mutation.addedNodes).some(node => 
                     node.nodeType === Node.ELEMENT_NODE && 
-                    (node as Element).matches('input, textarea') ||
-                    (node as Element).querySelector?.('input, textarea')
+                    ((node as Element).matches('input, textarea') ||
+                    (node as Element).querySelector?.('input, textarea'))
                 )
                 
                 const removedInputs = Array.from(mutation.removedNodes).some(node => 
                     node.nodeType === Node.ELEMENT_NODE && 
-                    (node as Element).matches('input, textarea') ||
-                    (node as Element).querySelector?.('input, textarea')
+                    ((node as Element).matches('input, textarea') ||
+                    (node as Element).querySelector?.('input, textarea'))
                 )
                 
-                if (addedInputs || removedInputs) {
+                if (addedInputs) {
+                    hasNewInputFields = true
+                    shouldResetup = true
+                }
+                
+                if (removedInputs) {
                     shouldResetup = true
                 }
             }
         })
         
         if (shouldResetup) {
-            setTimeout(setupNativeEventListeners, 100)
+            // Debounce to avoid excessive calls
+            clearTimeout(setupDOMObserver.timeoutId)
+            setupDOMObserver.timeoutId = setTimeout(() => {
+                setupNativeEventListeners()
+            }, hasNewInputFields ? 50 : 100) // Faster setup for new inputs
         }
     })
     
@@ -142,8 +152,17 @@ const setupDOMObserver = () => {
     })
 }
 
+// Add timeout ID property to the function for debouncing
+setupDOMObserver.timeoutId = null
+
+// Keep track of current input fields for cleanup
+let currentInputFields: HTMLElement[] = []
+
 // Setup native DOM event listeners as fallback
 const setupNativeEventListeners = () => {
+    // Clean up existing listeners first
+    cleanupNativeEventListeners()
+    
     // Try multiple selectors to find input fields
     const selectors = [
         '.widget-container input[type="text"]',
@@ -153,8 +172,12 @@ const setupNativeEventListeners = () => {
         '.ask-anything-field',
         'input[placeholder*="message"]',
         'input[placeholder*="Type"]',
+        'input[placeholder*="Ask"]',
         'input.message-input',
         'textarea',
+        // More specific selectors for the widget context
+        '.widget-container input',
+        '.chat-input input',
         'input'
     ]
     
@@ -168,27 +191,56 @@ const setupNativeEventListeners = () => {
     }
     
     if (inputFields.length === 0) {
-        setTimeout(setupNativeEventListeners, 200)
         return
     }
     
+    // Store reference for cleanup
+    currentInputFields = inputFields
+    
     inputFields.forEach((input) => {
-        // Remove existing listeners to avoid duplicates
-        input.removeEventListener('input', handleNativeInput)
-        input.removeEventListener('keyup', handleNativeInput)
-        input.removeEventListener('change', handleNativeInput)
-        
         // Add native event listeners
         input.addEventListener('input', handleNativeInput, true)
         input.addEventListener('keyup', handleNativeInput, true)
         input.addEventListener('change', handleNativeInput, true)
+        input.addEventListener('keypress', handleNativeKeyPress, true)
+        input.addEventListener('keydown', handleNativeKeyDown, true)
     })
+}
+
+// Clean up native event listeners
+const cleanupNativeEventListeners = () => {
+    currentInputFields.forEach((input) => {
+        input.removeEventListener('input', handleNativeInput)
+        input.removeEventListener('keyup', handleNativeInput)
+        input.removeEventListener('change', handleNativeInput)
+        input.removeEventListener('keypress', handleNativeKeyPress)
+        input.removeEventListener('keydown', handleNativeKeyDown)
+    })
+    currentInputFields = []
 }
 
 // Native input handler that bypasses Vue
 const handleNativeInput = (event: Event) => {
     const target = event.target as HTMLInputElement
     newMessage.value = target.value
+}
+
+// Native keyboard event handlers
+const handleNativeKeyPress = (event: KeyboardEvent) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        sendMessage()
+    }
+}
+
+const handleNativeKeyDown = (event: KeyboardEvent) => {
+    // Also handle keydown as a fallback for some browsers/contexts
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        sendMessage()
+    }
 }
 
 
@@ -286,6 +338,7 @@ const sendMessage = async () => {
 const handleKeyPress = (event: KeyboardEvent) => {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
+        event.stopPropagation()
         sendMessage()
     }
 }
@@ -395,9 +448,24 @@ watch(() => messages.value, (newMessages) => {
     nextTick(() => {
         scrollToBottom()
     })
-    
-   
-    // Check for end chat in the last message
+}, { deep: true })
+
+// Watch for connection status changes to set up event listeners when needed
+watch(connectionStatus, (newStatus, oldStatus) => {
+    if (newStatus === 'connected' && oldStatus !== 'connected') {
+        setTimeout(setupNativeEventListeners, 100)
+    }
+})
+
+// Watch for messages to set up event listeners when chat becomes active
+watch(() => messages.value.length, (newLength, oldLength) => {
+    if (newLength > 0 && oldLength === 0) {
+        setTimeout(setupNativeEventListeners, 100)
+    }
+})
+
+// Check for end chat in the last message - existing functionality
+watch(() => messages.value, (newMessages) => {
     if (newMessages.length > 0) {
 
         const lastMessage = newMessages[newMessages.length - 1]
@@ -969,10 +1037,24 @@ onMounted(async () => {
     // Setup DOM observer to detect changes
     setupDOMObserver()
     
-    // Add native DOM event listeners as fallback for input synchronization
-    setTimeout(() => {
-        setupNativeEventListeners()
-    }, 500)
+    // Only set up native event listeners if we're in a state where input is expected
+    // This avoids unnecessary overhead during workflow navigation
+    const shouldSetupListeners = () => {
+        // Check if we're in a state where chat input is expected
+        const hasMessages = messages.value.length > 0
+        const isConnected = connectionStatus.value === 'connected'
+        const hasInputFields = document.querySelector('input[type="text"], textarea') !== null
+        
+        return hasMessages || isConnected || hasInputFields
+    }
+    
+    // Initial setup with intelligent timing
+    if (shouldSetupListeners()) {
+        setTimeout(setupNativeEventListeners, 100)
+    } else {
+        // If no immediate need, wait for DOM changes to trigger setup
+        // Event listeners will be set up when connection is established or messages arrive
+    }
 })
 
 onUnmounted(() => {
@@ -987,6 +1069,15 @@ onUnmounted(() => {
         domObserver.disconnect()
         domObserver = null
     }
+    
+    // Clear any pending timeouts
+    if (setupDOMObserver.timeoutId) {
+        clearTimeout(setupDOMObserver.timeoutId)
+        setupDOMObserver.timeoutId = null
+    }
+    
+    // Clean up native event listeners
+    cleanupNativeEventListeners()
     
     cleanup()
 })
