@@ -20,7 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from fastapi.staticfiles import StaticFiles
 import socketio
 from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, proxy
-from fastapi import FastAPI, BackgroundTasks, Request
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.services.firebase import initialize_firebase
@@ -214,25 +214,6 @@ async def head_health_check():
         "status": "healthy",
         "version": settings.VERSION
     }
-
-@app.get("/debug/socket")
-async def debug_socket_info(request: Request):
-    """Debug endpoint to check Socket.IO configuration and ALB headers"""
-    from app.core.cors import get_cors_origins
-    from datetime import datetime
-    
-    headers = dict(request.headers)
-    client_info = {
-        "client_host": request.client.host if request.client else None,
-        "headers": headers,
-        "cookies": request.cookies,
-        "url": str(request.url),
-        "method": request.method,
-        "socket_path": "/socket.io/",
-        "cors_origins": list(get_cors_origins()),
-        "timestamp": datetime.utcnow().isoformat()
-    }
-    return client_info
 
 # Create upload directories if they don't exist
 if not os.path.exists("uploads"):

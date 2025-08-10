@@ -24,7 +24,7 @@ from app.core.cors import get_cors_origins
 
 logger = get_logger(__name__)
 
-# Initialize Socket.IO server with ALB-optimized config and enhanced debugging
+# Initialize Socket.IO server with basic config
 sio: AsyncServer = socketio.AsyncServer(
     async_mode='asgi',
     logger=True,
@@ -32,42 +32,8 @@ sio: AsyncServer = socketio.AsyncServer(
     async_handlers=True,
     ping_timeout=60,
     ping_interval=25,
-    max_http_buffer_size=1e8,  # Increase buffer size for ALB
-    always_connect=False,  # Don't force connection if not needed
-    cookie=True,  # Enable cookies for session stickiness
     cors_allowed_origins=list(get_cors_origins())  # Use the same CORS origins as FastAPI
 )
-
-# Add connection debugging
-@sio.event
-async def connect(sid, environ, auth):
-    """Debug connection attempts"""
-    headers = dict(environ.get('HTTP_HEADERS', []))
-    client_info = {
-        'sid': sid,
-        'remote_addr': environ.get('REMOTE_ADDR'),
-        'user_agent': headers.get('user-agent'),
-        'origin': headers.get('origin'),
-        'referer': headers.get('referer'),
-        'cookies': headers.get('cookie'),
-        'x_forwarded_for': headers.get('x-forwarded-for'),
-        'x_real_ip': headers.get('x-real-ip'),
-        'auth': auth,
-        'transport': environ.get('REQUEST_METHOD', 'unknown')
-    }
-    logger.info(f"🔌 Socket.IO connection attempt: {client_info}")
-    return True
-
-@sio.event
-async def disconnect(sid):
-    """Debug disconnection"""
-    logger.info(f"🔌 Socket.IO client disconnected: {sid}")
-
-# Add error handling
-@sio.event
-async def connect_error(sid, data):
-    """Debug connection errors"""
-    logger.error(f"❌ Socket.IO connection error for {sid}: {data}")
 
 # Create ASGI app
 socket_app = socketio.ASGIApp(
