@@ -18,7 +18,7 @@ const Se = {}, _n = [], At = () => {
 (e.charCodeAt(2) > 122 || e.charCodeAt(2) < 97), kr = (e) => e.startsWith("onUpdate:"), Ke = Object.assign, xr = (e, t) => {
   const n = e.indexOf(t);
   n > -1 && e.splice(n, 1);
-}, jl = Object.prototype.hasOwnProperty, ye = (e, t) => jl.call(e, t), J = Array.isArray, yn = (e) => ws(e) === "[object Map]", no = (e) => ws(e) === "[object Set]", Q = (e) => typeof e == "function", Ne = (e) => typeof e == "string", tn = (e) => typeof e == "symbol", $e = (e) => e !== null && typeof e == "object", so = (e) => ($e(e) || Q(e)) && Q(e.then) && Q(e.catch), ro = Object.prototype.toString, ws = (e) => ro.call(e), zl = (e) => ws(e).slice(8, -1), io = (e) => ws(e) === "[object Object]", Sr = (e) => Ne(e) && e !== "NaN" && e[0] !== "-" && "" + parseInt(e, 10) === e, Ln = /* @__PURE__ */ wr(
+}, jl = Object.prototype.hasOwnProperty, ye = (e, t) => jl.call(e, t), J = Array.isArray, yn = (e) => ws(e) === "[object Map]", no = (e) => ws(e) === "[object Set]", Q = (e) => typeof e == "function", Be = (e) => typeof e == "string", tn = (e) => typeof e == "symbol", $e = (e) => e !== null && typeof e == "object", so = (e) => ($e(e) || Q(e)) && Q(e.then) && Q(e.catch), ro = Object.prototype.toString, ws = (e) => ro.call(e), zl = (e) => ws(e).slice(8, -1), io = (e) => ws(e) === "[object Object]", Sr = (e) => Be(e) && e !== "NaN" && e[0] !== "-" && "" + parseInt(e, 10) === e, Ln = /* @__PURE__ */ wr(
   // the leading comma is intentional so empty string "" is also included
   ",key,ref,ref_for,ref_key,onVnodeBeforeMount,onVnodeMounted,onVnodeBeforeUpdate,onVnodeUpdated,onVnodeBeforeUnmount,onVnodeUnmounted"
 ), ks = (e) => {
@@ -50,13 +50,13 @@ function Ee(e) {
   if (J(e)) {
     const t = {};
     for (let n = 0; n < e.length; n++) {
-      const s = e[n], r = Ne(s) ? Jl(s) : Ee(s);
+      const s = e[n], r = Be(s) ? Jl(s) : Ee(s);
       if (r)
         for (const i in r)
           t[i] = r[i];
     }
     return t;
-  } else if (Ne(e) || $e(e))
+  } else if (Be(e) || $e(e))
     return e;
 }
 const Zl = /;(?![^(]*\))/g, Gl = /:([^]+)/, Yl = /\/\*[^]*?\*\//g;
@@ -71,7 +71,7 @@ function Jl(e) {
 }
 function Le(e) {
   let t = "";
-  if (Ne(e))
+  if (Be(e))
     t = e;
   else if (J(e))
     for (let n = 0; n < e.length; n++) {
@@ -87,7 +87,7 @@ const Ql = "itemscope,allowfullscreen,formnovalidate,ismap,nomodule,novalidate,r
 function lo(e) {
   return !!e || e === "";
 }
-const ao = (e) => !!(e && e.__v_isRef === !0), ce = (e) => Ne(e) ? e : e == null ? "" : J(e) || $e(e) && (e.toString === ro || !Q(e.toString)) ? ao(e) ? ce(e.value) : JSON.stringify(e, co, 2) : String(e), co = (e, t) => ao(t) ? co(e, t.value) : yn(t) ? {
+const ao = (e) => !!(e && e.__v_isRef === !0), ce = (e) => Be(e) ? e : e == null ? "" : J(e) || $e(e) && (e.toString === ro || !Q(e.toString)) ? ao(e) ? ce(e.value) : JSON.stringify(e, co, 2) : String(e), co = (e, t) => ao(t) ? co(e, t.value) : yn(t) ? {
   [`Map(${t.size})`]: [...t.entries()].reduce(
     (n, [s, r], i) => (n[Ds(s, i) + " =>"] = r, n),
     {}
@@ -890,11 +890,11 @@ class xa {
     t = s ? t : _e(t), Yt(t, n) && (this._rawValue = t, this._value = s ? t : Ue(t), this.dep.trigger());
   }
 }
-function q(e) {
+function H(e) {
   return We(e) ? e.value : e;
 }
 const Sa = {
-  get: (e, t, n) => t === "__v_raw" ? e : q(Reflect.get(e, t, n)),
+  get: (e, t, n) => t === "__v_raw" ? e : H(Reflect.get(e, t, n)),
   set: (e, t, n, s) => {
     const r = e[t];
     return We(r) && !We(n) ? (r.value = n, !0) : Reflect.set(e, t, n, s);
@@ -936,15 +936,15 @@ function Ea(e, t = !1, n = cn) {
   }
 }
 function Aa(e, t, n = Se) {
-  const { immediate: s, deep: r, once: i, scheduler: o, augmentJob: l, call: a } = n, u = (V) => r ? V : dt(V) || r === !1 || r === 0 ? Bt(V, 1) : Bt(V);
-  let f, m, b, O, F = !1, D = !1;
-  if (We(e) ? (m = () => e.value, F = dt(e)) : bn(e) ? (m = () => u(e), F = !0) : J(e) ? (D = !0, F = e.some((V) => bn(V) || dt(V)), m = () => e.map((V) => {
-    if (We(V))
-      return V.value;
-    if (bn(V))
-      return u(V);
-    if (Q(V))
-      return a ? a(V, 2) : V();
+  const { immediate: s, deep: r, once: i, scheduler: o, augmentJob: l, call: a } = n, u = (q) => r ? q : dt(q) || r === !1 || r === 0 ? Nt(q, 1) : Nt(q);
+  let f, m, b, L, F = !1, D = !1;
+  if (We(e) ? (m = () => e.value, F = dt(e)) : bn(e) ? (m = () => u(e), F = !0) : J(e) ? (D = !0, F = e.some((q) => bn(q) || dt(q)), m = () => e.map((q) => {
+    if (We(q))
+      return q.value;
+    if (bn(q))
+      return u(q);
+    if (Q(q))
+      return a ? a(q, 2) : q();
   })) : Q(e) ? t ? m = a ? () => a(e, 2) : e : m = () => {
     if (b) {
       Dt();
@@ -954,29 +954,29 @@ function Aa(e, t, n = Se) {
         qt();
       }
     }
-    const V = cn;
+    const q = cn;
     cn = f;
     try {
-      return a ? a(e, 3, [O]) : e(O);
+      return a ? a(e, 3, [L]) : e(L);
     } finally {
-      cn = V;
+      cn = q;
     }
   } : m = At, t && r) {
-    const V = m, oe = r === !0 ? 1 / 0 : r;
-    m = () => Bt(V(), oe);
+    const q = m, oe = r === !0 ? 1 / 0 : r;
+    m = () => Nt(q(), oe);
   }
   const we = ta(), te = () => {
     f.stop(), we && we.active && xr(we.effects, f);
   };
   if (i && t) {
-    const V = t;
+    const q = t;
     t = (...oe) => {
-      V(...oe), te();
+      q(...oe), te();
     };
   }
   let pe = D ? new Array(e.length).fill(Yn) : Yn;
-  const ge = (V) => {
-    if (!(!(f.flags & 1) || !f.dirty && !V))
+  const ge = (q) => {
+    if (!(!(f.flags & 1) || !f.dirty && !q))
       if (t) {
         const oe = f.run();
         if (r || F || (D ? oe.some((Me, fe) => Yt(Me, pe[fe])) : Yt(oe, pe))) {
@@ -988,7 +988,7 @@ function Aa(e, t, n = Se) {
               oe,
               // pass undefined as the old value when it's changed for the first time
               pe === Yn ? void 0 : D && pe[0] === Yn ? [] : pe,
-              O
+              L
             ];
             pe = oe, a ? a(t, 3, fe) : (
               // @ts-expect-error
@@ -1001,34 +1001,34 @@ function Aa(e, t, n = Se) {
       } else
         f.run();
   };
-  return l && l(ge), f = new uo(m), f.scheduler = o ? () => o(ge, !1) : ge, O = (V) => Ea(V, !1, f), b = f.onStop = () => {
-    const V = fs.get(f);
-    if (V) {
+  return l && l(ge), f = new uo(m), f.scheduler = o ? () => o(ge, !1) : ge, L = (q) => Ea(q, !1, f), b = f.onStop = () => {
+    const q = fs.get(f);
+    if (q) {
       if (a)
-        a(V, 4);
+        a(q, 4);
       else
-        for (const oe of V) oe();
+        for (const oe of q) oe();
       fs.delete(f);
     }
   }, t ? s ? ge(!0) : pe = f.run() : o ? o(ge.bind(null, !0), !0) : f.run(), te.pause = f.pause.bind(f), te.resume = f.resume.bind(f), te.stop = te, te;
 }
-function Bt(e, t = 1 / 0, n) {
+function Nt(e, t = 1 / 0, n) {
   if (t <= 0 || !$e(e) || e.__v_skip || (n = n || /* @__PURE__ */ new Set(), n.has(e)))
     return e;
   if (n.add(e), t--, We(e))
-    Bt(e.value, t, n);
+    Nt(e.value, t, n);
   else if (J(e))
     for (let s = 0; s < e.length; s++)
-      Bt(e[s], t, n);
+      Nt(e[s], t, n);
   else if (no(e) || yn(e))
     e.forEach((s) => {
-      Bt(s, t, n);
+      Nt(s, t, n);
     });
   else if (io(e)) {
     for (const s in e)
-      Bt(e[s], t, n);
+      Nt(e[s], t, n);
     for (const s of Object.getOwnPropertySymbols(e))
-      Object.prototype.propertyIsEnumerable.call(e, s) && Bt(e[s], t, n);
+      Object.prototype.propertyIsEnumerable.call(e, s) && Nt(e[s], t, n);
   }
   return e;
 }
@@ -1194,7 +1194,7 @@ function rn(e, t) {
     i && (Q(i) && (i = {
       mounted: i,
       updated: i
-    }), i.deep && Bt(o), s.push({
+    }), i.deep && Nt(o), s.push({
       dir: i,
       instance: n,
       value: o,
@@ -1248,21 +1248,21 @@ function Fn(e, t, n, s, r = !1) {
     );
     return;
   }
-  if (Bn(s) && !r) {
+  if (Nn(s) && !r) {
     s.shapeFlag & 512 && s.type.__asyncResolved && s.component.subTree.component && Fn(e, t, n, s.component.subTree);
     return;
   }
-  const i = s.shapeFlag & 4 ? Rs(s.component) : s.el, o = r ? null : i, { i: l, r: a } = e, u = t && t.r, f = l.refs === Se ? l.refs = {} : l.refs, m = l.setupState, b = _e(m), O = m === Se ? () => !1 : (F) => ye(b, F);
-  if (u != null && u !== a && (Ne(u) ? (f[u] = null, O(u) && (m[u] = null)) : We(u) && (u.value = null)), Q(a))
+  const i = s.shapeFlag & 4 ? Rs(s.component) : s.el, o = r ? null : i, { i: l, r: a } = e, u = t && t.r, f = l.refs === Se ? l.refs = {} : l.refs, m = l.setupState, b = _e(m), L = m === Se ? () => !1 : (F) => ye(b, F);
+  if (u != null && u !== a && (Be(u) ? (f[u] = null, L(u) && (m[u] = null)) : We(u) && (u.value = null)), Q(a))
     zn(a, l, 12, [o, f]);
   else {
-    const F = Ne(a), D = We(a);
+    const F = Be(a), D = We(a);
     if (F || D) {
       const we = () => {
         if (e.f) {
-          const te = F ? O(a) ? m[a] : f[a] : a.value;
-          r ? J(te) && xr(te, i) : J(te) ? te.includes(i) || te.push(i) : F ? (f[a] = [i], O(a) && (m[a] = f[a])) : (a.value = [i], e.k && (f[e.k] = a.value));
-        } else F ? (f[a] = o, O(a) && (m[a] = o)) : D && (a.value = o, e.k && (f[e.k] = o));
+          const te = F ? L(a) ? m[a] : f[a] : a.value;
+          r ? J(te) && xr(te, i) : J(te) ? te.includes(i) || te.push(i) : F ? (f[a] = [i], L(a) && (m[a] = f[a])) : (a.value = [i], e.k && (f[e.k] = a.value));
+        } else F ? (f[a] = o, L(a) && (m[a] = o)) : D && (a.value = o, e.k && (f[e.k] = o));
       };
       o ? (we.id = -1, lt(we, n)) : we();
     }
@@ -1270,11 +1270,11 @@ function Fn(e, t, n, s, r = !1) {
 }
 xs().requestIdleCallback;
 xs().cancelIdleCallback;
-const Bn = (e) => !!e.type.__asyncLoader, $o = (e) => e.type.__isKeepAlive;
-function Ba(e, t) {
+const Nn = (e) => !!e.type.__asyncLoader, $o = (e) => e.type.__isKeepAlive;
+function Na(e, t) {
   Fo(e, "a", t);
 }
-function Na(e, t) {
+function Ba(e, t) {
   Fo(e, "da", t);
 }
 function Fo(e, t, n = Qe) {
@@ -1317,7 +1317,7 @@ function Ts(e, t, n = Qe, s = !1) {
 }
 const Vt = (e) => (t, n = Qe) => {
   (!jn || e === "sp") && Ts(e, (...s) => t(...s), n);
-}, Da = Vt("bm"), Bo = Vt("m"), qa = Vt(
+}, Da = Vt("bm"), No = Vt("m"), qa = Vt(
   "bu"
 ), Va = Vt("u"), Ha = Vt(
   "bum"
@@ -1331,7 +1331,7 @@ const Ka = Symbol.for("v-ndc");
 function xt(e, t, n, s) {
   let r;
   const i = n, o = J(e);
-  if (o || Ne(e)) {
+  if (o || Be(e)) {
     const l = o && bn(e);
     let a = !1, u = !1;
     l && (a = !dt(e), u = Xt(e), e = Ss(e)), r = new Array(e.length);
@@ -1364,7 +1364,7 @@ function xt(e, t, n, s) {
     r = [];
   return r;
 }
-const or = (e) => e ? sl(e) ? Rs(e) : or(e.parent) : null, Nn = (
+const or = (e) => e ? sl(e) ? Rs(e) : or(e.parent) : null, Bn = (
   // Move PURE marker to new line to workaround compiler discarding it
   // due to type annotation
   /* @__PURE__ */ Ke(/* @__PURE__ */ Object.create(null), {
@@ -1393,9 +1393,9 @@ const or = (e) => e ? sl(e) ? Rs(e) : or(e.parent) : null, Nn = (
     const { ctx: n, setupState: s, data: r, props: i, accessCache: o, type: l, appContext: a } = e;
     let u;
     if (t[0] !== "$") {
-      const O = o[t];
-      if (O !== void 0)
-        switch (O) {
+      const L = o[t];
+      if (L !== void 0)
+        switch (L) {
           case 1:
             return s[t];
           case 2:
@@ -1421,7 +1421,7 @@ const or = (e) => e ? sl(e) ? Rs(e) : or(e.parent) : null, Nn = (
         lr && (o[t] = 0);
       }
     }
-    const f = Nn[t];
+    const f = Bn[t];
     let m, b;
     if (f)
       return t === "$attrs" && ze(e.attrs, "get", ""), f(e);
@@ -1446,7 +1446,7 @@ const or = (e) => e ? sl(e) ? Rs(e) : or(e.parent) : null, Nn = (
     _: { data: e, setupState: t, accessCache: n, ctx: s, appContext: r, propsOptions: i }
   }, o) {
     let l;
-    return !!n[o] || e !== Se && ye(e, o) || Us(t, o) || (l = i[0]) && ye(l, o) || ye(s, o) || ye(Nn, o) || ye(r.config.globalProperties, o);
+    return !!n[o] || e !== Se && ye(e, o) || Us(t, o) || (l = i[0]) && ye(l, o) || ye(s, o) || ye(Bn, o) || ye(r.config.globalProperties, o);
   },
   defineProperty(e, t, n) {
     return n.get != null ? e._.accessCache[t] = 0 : ye(n, "value") && this.set(e, t, n.value, null), Reflect.defineProperty(e, t, n);
@@ -1474,14 +1474,14 @@ function Ga(e) {
     created: f,
     beforeMount: m,
     mounted: b,
-    beforeUpdate: O,
+    beforeUpdate: L,
     updated: F,
     activated: D,
     deactivated: we,
     beforeDestroy: te,
     beforeUnmount: pe,
     destroyed: ge,
-    unmounted: V,
+    unmounted: q,
     render: oe,
     renderTracked: Me,
     renderTriggered: fe,
@@ -1519,7 +1519,7 @@ function Ga(e) {
     }
   if (l)
     for (const ee in l)
-      No(l[ee], s, n, ee);
+      Bo(l[ee], s, n, ee);
   if (a) {
     const ee = Q(a) ? a.call(n) : a;
     Reflect.ownKeys(ee).forEach((se) => {
@@ -1530,7 +1530,7 @@ function Ga(e) {
   function ne(ee, se) {
     J(se) ? se.forEach((M) => ee(M.bind(n))) : se && ee(se.bind(n));
   }
-  if (ne(Da, m), ne(Bo, b), ne(qa, O), ne(Va, F), ne(Ba, D), ne(Na, we), ne(Wa, je), ne(za, Me), ne(ja, fe), ne(Ha, pe), ne(Fr, V), ne(Ua, pt), J(Ze))
+  if (ne(Da, m), ne(No, b), ne(qa, L), ne(Va, F), ne(Na, D), ne(Ba, we), ne(Wa, je), ne(za, Me), ne(ja, fe), ne(Ha, pe), ne(Fr, q), ne(Ua, pt), J(Ze))
     if (Ze.length) {
       const ee = e.exposed || (e.exposed = {});
       Ze.forEach((se) => {
@@ -1567,16 +1567,16 @@ function bi(e, t, n) {
     n
   );
 }
-function No(e, t, n, s) {
+function Bo(e, t, n, s) {
   let r = s.includes(".") ? Jo(n, s) : () => n[s];
-  if (Ne(e)) {
+  if (Be(e)) {
     const i = t[e];
     Q(i) && un(r, i);
   } else if (Q(e))
     un(r, e.bind(n));
   else if ($e(e))
     if (J(e))
-      e.forEach((i) => No(i, t, n, s));
+      e.forEach((i) => Bo(i, t, n, s));
     else {
       const i = Q(e.handler) ? e.handler.bind(n) : t[e.handler];
       Q(i) && un(r, i, e);
@@ -1731,8 +1731,8 @@ function tc(e, t) {
       },
       mount(f, m, b) {
         if (!a) {
-          const O = u._ceVNode || Rt(s, r);
-          return O.appContext = i, b === !0 ? b = "svg" : b === !1 && (b = void 0), e(O, f, b), a = !0, u._container = f, f.__vue_app__ = u, Rs(O.component);
+          const L = u._ceVNode || Rt(s, r);
+          return L.appContext = i, b === !0 ? b = "svg" : b === !1 && (b = void 0), e(L, f, b), a = !0, u._container = f, f.__vue_app__ = u, Rs(L.component);
         }
       },
       onUnmount(f) {
@@ -1806,23 +1806,23 @@ function rc(e, t, n, s) {
         let b = f[m];
         if (Es(e.emitsOptions, b))
           continue;
-        const O = t[b];
+        const L = t[b];
         if (a)
           if (ye(i, b))
-            O !== i[b] && (i[b] = O, u = !0);
+            L !== i[b] && (i[b] = L, u = !0);
           else {
             const F = Qt(b);
             r[F] = cr(
               a,
               l,
               F,
-              O,
+              L,
               e,
               !1
             );
           }
         else
-          O !== i[b] && (i[b] = O, u = !0);
+          L !== i[b] && (i[b] = L, u = !0);
       }
     }
   } else {
@@ -1916,8 +1916,8 @@ function jo(e, t, n = !1) {
   if (!Q(e)) {
     const f = (m) => {
       a = !0;
-      const [b, O] = jo(m, t, !0);
-      Ke(o, b), O && l.push(...O);
+      const [b, L] = jo(m, t, !0);
+      Ke(o, b), L && l.push(...L);
     };
     !n && t.mixins.length && t.mixins.forEach(f), e.extends && f(e.extends), e.mixins && e.mixins.forEach(f);
   }
@@ -1932,7 +1932,7 @@ function jo(e, t, n = !1) {
     for (const f in i) {
       const m = Qt(f);
       if (ki(m)) {
-        const b = i[f], O = o[m] = J(b) || Q(b) ? { type: b } : Ke({}, b), F = O.type;
+        const b = i[f], L = o[m] = J(b) || Q(b) ? { type: b } : Ke({}, b), F = L.type;
         let D = !1, we = !0;
         if (J(F))
           for (let te = 0; te < F.length; ++te) {
@@ -1944,13 +1944,13 @@ function jo(e, t, n = !1) {
           }
         else
           D = Q(F) && F.name === "Boolean";
-        O[
+        L[
           0
           /* shouldCast */
-        ] = D, O[
+        ] = D, L[
           1
           /* shouldCastTrue */
-        ] = we, (D || ye(O, "default")) && l.push(m);
+        ] = we, (D || ye(L, "default")) && l.push(m);
       }
     }
   const u = [o, l];
@@ -1959,29 +1959,29 @@ function jo(e, t, n = !1) {
 function ki(e) {
   return e[0] !== "$" && !Ln(e);
 }
-const Br = (e) => e === "_" || e === "__" || e === "_ctx" || e === "$stable", Nr = (e) => J(e) ? e.map(Et) : [Et(e)], oc = (e, t, n) => {
+const Nr = (e) => e === "_" || e === "__" || e === "_ctx" || e === "$stable", Br = (e) => J(e) ? e.map(Et) : [Et(e)], oc = (e, t, n) => {
   if (t._n)
     return t;
-  const s = La((...r) => Nr(t(...r)), n);
+  const s = La((...r) => Br(t(...r)), n);
   return s._c = !1, s;
 }, zo = (e, t, n) => {
   const s = e._ctx;
   for (const r in e) {
-    if (Br(r)) continue;
+    if (Nr(r)) continue;
     const i = e[r];
     if (Q(i))
       t[r] = oc(r, i, s);
     else if (i != null) {
-      const o = Nr(i);
+      const o = Br(i);
       t[r] = () => o;
     }
   }
 }, Wo = (e, t) => {
-  const n = Nr(t);
+  const n = Br(t);
   e.slots.default = () => n;
 }, Ko = (e, t, n) => {
   for (const s in t)
-    (n || !Br(s)) && (e[s] = t[s]);
+    (n || !Nr(s)) && (e[s] = t[s]);
 }, lc = (e, t, n) => {
   const s = e.slots = Vo();
   if (e.vnode.shapeFlag & 32) {
@@ -1999,7 +1999,7 @@ const Br = (e) => e === "_" || e === "__" || e === "_ctx" || e === "$stable", Nr
   } else t && (Wo(e, t), o = { default: 1 });
   if (i)
     for (const l in r)
-      !Br(l) && o[l] == null && delete r[l];
+      !Nr(l) && o[l] == null && delete r[l];
 }, lt = kc;
 function cc(e) {
   return uc(e);
@@ -2018,13 +2018,13 @@ function uc(e, t) {
     setElementText: f,
     parentNode: m,
     nextSibling: b,
-    setScopeId: O = At,
+    setScopeId: L = At,
     insertStaticContent: F
-  } = e, D = (h, g, w, T = null, S = null, C = null, B = void 0, L = null, I = !!g.dynamicChildren) => {
+  } = e, D = (h, g, w, T = null, S = null, C = null, N = void 0, I = null, O = !!g.dynamicChildren) => {
     if (h === g)
       return;
-    h && !Cn(h, g) && (T = ct(h), Ce(h, S, C, !0), h = null), g.patchFlag === -2 && (I = !1, g.dynamicChildren = null);
-    const { type: E, ref: j, shapeFlag: N } = g;
+    h && !Cn(h, g) && (T = ct(h), Ce(h, S, C, !0), h = null), g.patchFlag === -2 && (O = !1, g.dynamicChildren = null);
+    const { type: E, ref: j, shapeFlag: B } = g;
     switch (E) {
       case As:
         we(h, g, w, T);
@@ -2033,7 +2033,7 @@ function uc(e, t) {
         te(h, g, w, T);
         break;
       case ns:
-        h == null && pe(g, w, T, B);
+        h == null && pe(g, w, T, N);
         break;
       case Fe:
         wt(
@@ -2043,42 +2043,42 @@ function uc(e, t) {
           T,
           S,
           C,
-          B,
-          L,
-          I
+          N,
+          I,
+          O
         );
         break;
       default:
-        N & 1 ? oe(
+        B & 1 ? oe(
           h,
           g,
           w,
           T,
           S,
           C,
-          B,
-          L,
-          I
-        ) : N & 6 ? et(
-          h,
-          g,
-          w,
-          T,
-          S,
-          C,
-          B,
-          L,
-          I
-        ) : (N & 64 || N & 128) && E.process(
-          h,
-          g,
-          w,
-          T,
-          S,
-          C,
-          B,
-          L,
+          N,
           I,
+          O
+        ) : B & 6 ? et(
+          h,
+          g,
+          w,
+          T,
+          S,
+          C,
+          N,
+          I,
+          O
+        ) : (B & 64 || B & 128) && E.process(
+          h,
+          g,
+          w,
+          T,
+          S,
+          C,
+          N,
+          I,
+          O,
           it
         );
     }
@@ -2114,77 +2114,77 @@ function uc(e, t) {
     for (; h && h !== g; )
       S = b(h), s(h, w, T), h = S;
     s(g, w, T);
-  }, V = ({ el: h, anchor: g }) => {
+  }, q = ({ el: h, anchor: g }) => {
     let w;
     for (; h && h !== g; )
       w = b(h), r(h), h = w;
     r(g);
-  }, oe = (h, g, w, T, S, C, B, L, I) => {
-    g.type === "svg" ? B = "svg" : g.type === "math" && (B = "mathml"), h == null ? Me(
+  }, oe = (h, g, w, T, S, C, N, I, O) => {
+    g.type === "svg" ? N = "svg" : g.type === "math" && (N = "mathml"), h == null ? Me(
       g,
       w,
       T,
       S,
       C,
-      B,
-      L,
-      I
+      N,
+      I,
+      O
     ) : pt(
       h,
       g,
       S,
       C,
-      B,
-      L,
-      I
+      N,
+      I,
+      O
     );
-  }, Me = (h, g, w, T, S, C, B, L) => {
-    let I, E;
-    const { props: j, shapeFlag: N, transition: z, dirs: K } = h;
-    if (I = h.el = o(
+  }, Me = (h, g, w, T, S, C, N, I) => {
+    let O, E;
+    const { props: j, shapeFlag: B, transition: z, dirs: K } = h;
+    if (O = h.el = o(
       h.type,
       C,
       j && j.is,
       j
-    ), N & 8 ? f(I, h.children) : N & 16 && je(
+    ), B & 8 ? f(O, h.children) : B & 16 && je(
       h.children,
-      I,
+      O,
       null,
       T,
       S,
       js(h, C),
-      B,
-      L
-    ), K && on(h, null, T, "created"), fe(I, h, h.scopeId, B, T), j) {
+      N,
+      I
+    ), K && on(h, null, T, "created"), fe(O, h, h.scopeId, N, T), j) {
       for (const he in j)
-        he !== "value" && !Ln(he) && i(I, he, null, j[he], C, T);
-      "value" in j && i(I, "value", null, j.value, C), (E = j.onVnodeBeforeMount) && St(E, T, h);
+        he !== "value" && !Ln(he) && i(O, he, null, j[he], C, T);
+      "value" in j && i(O, "value", null, j.value, C), (E = j.onVnodeBeforeMount) && St(E, T, h);
     }
     K && on(h, null, T, "beforeMount");
     const X = fc(S, z);
-    X && z.beforeEnter(I), s(I, g, w), ((E = j && j.onVnodeMounted) || X || K) && lt(() => {
-      E && St(E, T, h), X && z.enter(I), K && on(h, null, T, "mounted");
+    X && z.beforeEnter(O), s(O, g, w), ((E = j && j.onVnodeMounted) || X || K) && lt(() => {
+      E && St(E, T, h), X && z.enter(O), K && on(h, null, T, "mounted");
     }, S);
   }, fe = (h, g, w, T, S) => {
-    if (w && O(h, w), T)
+    if (w && L(h, w), T)
       for (let C = 0; C < T.length; C++)
-        O(h, T[C]);
+        L(h, T[C]);
     if (S) {
       let C = S.subTree;
       if (g === C || Xo(C.type) && (C.ssContent === g || C.ssFallback === g)) {
-        const B = S.vnode;
+        const N = S.vnode;
         fe(
           h,
-          B,
-          B.scopeId,
-          B.slotScopeIds,
+          N,
+          N.scopeId,
+          N.slotScopeIds,
           S.parent
         );
       }
     }
-  }, je = (h, g, w, T, S, C, B, L, I = 0) => {
-    for (let E = I; E < h.length; E++) {
-      const j = h[E] = L ? Gt(h[E]) : Et(h[E]);
+  }, je = (h, g, w, T, S, C, N, I, O = 0) => {
+    for (let E = O; E < h.length; E++) {
+      const j = h[E] = I ? Gt(h[E]) : Et(h[E]);
       D(
         null,
         j,
@@ -2193,74 +2193,74 @@ function uc(e, t) {
         T,
         S,
         C,
-        B,
-        L
+        N,
+        I
       );
     }
-  }, pt = (h, g, w, T, S, C, B) => {
-    const L = g.el = h.el;
-    let { patchFlag: I, dynamicChildren: E, dirs: j } = g;
-    I |= h.patchFlag & 16;
-    const N = h.props || Se, z = g.props || Se;
+  }, pt = (h, g, w, T, S, C, N) => {
+    const I = g.el = h.el;
+    let { patchFlag: O, dynamicChildren: E, dirs: j } = g;
+    O |= h.patchFlag & 16;
+    const B = h.props || Se, z = g.props || Se;
     let K;
-    if (w && ln(w, !1), (K = z.onVnodeBeforeUpdate) && St(K, w, g, h), j && on(g, h, w, "beforeUpdate"), w && ln(w, !0), (N.innerHTML && z.innerHTML == null || N.textContent && z.textContent == null) && f(L, ""), E ? Ze(
+    if (w && ln(w, !1), (K = z.onVnodeBeforeUpdate) && St(K, w, g, h), j && on(g, h, w, "beforeUpdate"), w && ln(w, !0), (B.innerHTML && z.innerHTML == null || B.textContent && z.textContent == null) && f(I, ""), E ? Ze(
       h.dynamicChildren,
       E,
-      L,
+      I,
       w,
       T,
       js(g, S),
       C
-    ) : B || se(
+    ) : N || se(
       h,
       g,
-      L,
+      I,
       null,
       w,
       T,
       js(g, S),
       C,
       !1
-    ), I > 0) {
-      if (I & 16)
-        gt(L, N, z, w, S);
-      else if (I & 2 && N.class !== z.class && i(L, "class", null, z.class, S), I & 4 && i(L, "style", N.style, z.style, S), I & 8) {
+    ), O > 0) {
+      if (O & 16)
+        gt(I, B, z, w, S);
+      else if (O & 2 && B.class !== z.class && i(I, "class", null, z.class, S), O & 4 && i(I, "style", B.style, z.style, S), O & 8) {
         const X = g.dynamicProps;
         for (let he = 0; he < X.length; he++) {
-          const re = X[he], De = N[re], ae = z[re];
-          (ae !== De || re === "value") && i(L, re, De, ae, S, w);
+          const re = X[he], De = B[re], ae = z[re];
+          (ae !== De || re === "value") && i(I, re, De, ae, S, w);
         }
       }
-      I & 1 && h.children !== g.children && f(L, g.children);
-    } else !B && E == null && gt(L, N, z, w, S);
+      O & 1 && h.children !== g.children && f(I, g.children);
+    } else !N && E == null && gt(I, B, z, w, S);
     ((K = z.onVnodeUpdated) || j) && lt(() => {
       K && St(K, w, g, h), j && on(g, h, w, "updated");
     }, T);
-  }, Ze = (h, g, w, T, S, C, B) => {
-    for (let L = 0; L < g.length; L++) {
-      const I = h[L], E = g[L], j = (
+  }, Ze = (h, g, w, T, S, C, N) => {
+    for (let I = 0; I < g.length; I++) {
+      const O = h[I], E = g[I], j = (
         // oldVNode may be an errored async setup() component inside Suspense
         // which will not have a mounted element
-        I.el && // - In the case of a Fragment, we need to provide the actual parent
+        O.el && // - In the case of a Fragment, we need to provide the actual parent
         // of the Fragment itself so it can move its children.
-        (I.type === Fe || // - In the case of different nodes, there is going to be a replacement
+        (O.type === Fe || // - In the case of different nodes, there is going to be a replacement
         // which also requires the correct parent container
-        !Cn(I, E) || // - In the case of a component, it could contain anything.
-        I.shapeFlag & 198) ? m(I.el) : (
+        !Cn(O, E) || // - In the case of a component, it could contain anything.
+        O.shapeFlag & 198) ? m(O.el) : (
           // In other cases, the parent container is not actually used so we
           // just pass the block element here to avoid a DOM parentNode call.
           w
         )
       );
       D(
-        I,
+        O,
         E,
         j,
         null,
         T,
         S,
         C,
-        B,
+        N,
         !0
       );
     }
@@ -2278,15 +2278,15 @@ function uc(e, t) {
           );
       for (const C in w) {
         if (Ln(C)) continue;
-        const B = w[C], L = g[C];
-        B !== L && C !== "value" && i(h, C, L, B, S, T);
+        const N = w[C], I = g[C];
+        N !== I && C !== "value" && i(h, C, I, N, S, T);
       }
       "value" in w && i(h, "value", g.value, w.value, S);
     }
-  }, wt = (h, g, w, T, S, C, B, L, I) => {
+  }, wt = (h, g, w, T, S, C, N, I, O) => {
     const E = g.el = h ? h.el : l(""), j = g.anchor = h ? h.anchor : l("");
-    let { patchFlag: N, dynamicChildren: z, slotScopeIds: K } = g;
-    K && (L = L ? L.concat(K) : K), h == null ? (s(E, w, T), s(j, w, T), je(
+    let { patchFlag: B, dynamicChildren: z, slotScopeIds: K } = g;
+    K && (I = I ? I.concat(K) : K), h == null ? (s(E, w, T), s(j, w, T), je(
       // #10007
       // such fragment like `<></>` will be compiled into
       // a fragment which doesn't have a children.
@@ -2296,10 +2296,10 @@ function uc(e, t) {
       j,
       S,
       C,
-      B,
-      L,
-      I
-    )) : N > 0 && N & 64 && z && // #2715 the previous fragment could've been a BAILed one as a result
+      N,
+      I,
+      O
+    )) : B > 0 && B & 64 && z && // #2715 the previous fragment could've been a BAILed one as a result
     // of renderSlot() with no valid children
     h.dynamicChildren ? (Ze(
       h.dynamicChildren,
@@ -2307,8 +2307,8 @@ function uc(e, t) {
       w,
       S,
       C,
-      B,
-      L
+      N,
+      I
     ), // #2080 if the stable fragment has a key, it's a <template v-for> that may
     //  get moved around. Make sure all root level vnodes inherit el.
     // #2134 or if it's a component root, it may also get moved around
@@ -2325,46 +2325,46 @@ function uc(e, t) {
       j,
       S,
       C,
-      B,
-      L,
-      I
+      N,
+      I,
+      O
     );
-  }, et = (h, g, w, T, S, C, B, L, I) => {
-    g.slotScopeIds = L, h == null ? g.shapeFlag & 512 ? S.ctx.activate(
+  }, et = (h, g, w, T, S, C, N, I, O) => {
+    g.slotScopeIds = I, h == null ? g.shapeFlag & 512 ? S.ctx.activate(
       g,
       w,
       T,
-      B,
-      I
+      N,
+      O
     ) : Ve(
       g,
       w,
       T,
       S,
       C,
-      B,
-      I
-    ) : Ht(h, g, I);
-  }, Ve = (h, g, w, T, S, C, B) => {
-    const L = h.component = Oc(
+      N,
+      O
+    ) : Ht(h, g, O);
+  }, Ve = (h, g, w, T, S, C, N) => {
+    const I = h.component = Oc(
       h,
       T,
       S
     );
-    if ($o(h) && (L.ctx.renderer = it), Pc(L, !1, B), L.asyncDep) {
-      if (S && S.registerDep(L, ne, B), !h.el) {
-        const I = L.subTree = Rt(en);
-        te(null, I, g, w), h.placeholder = I.el;
+    if ($o(h) && (I.ctx.renderer = it), Pc(I, !1, N), I.asyncDep) {
+      if (S && S.registerDep(I, ne, N), !h.el) {
+        const O = I.subTree = Rt(en);
+        te(null, O, g, w), h.placeholder = O.el;
       }
     } else
       ne(
-        L,
+        I,
         h,
         g,
         w,
         S,
         C,
-        B
+        N
       );
   }, Ht = (h, g, w) => {
     const T = g.component = h.component;
@@ -2376,21 +2376,21 @@ function uc(e, t) {
         T.next = g, T.update();
     else
       g.el = h.el, T.vnode = g;
-  }, ne = (h, g, w, T, S, C, B) => {
-    const L = () => {
+  }, ne = (h, g, w, T, S, C, N) => {
+    const I = () => {
       if (h.isMounted) {
-        let { next: N, bu: z, u: K, parent: X, vnode: he } = h;
+        let { next: B, bu: z, u: K, parent: X, vnode: he } = h;
         {
           const c = Go(h);
           if (c) {
-            N && (N.el = he.el, ee(h, N, B)), c.asyncDep.then(() => {
-              h.isUnmounted || L();
+            B && (B.el = he.el, ee(h, B, N)), c.asyncDep.then(() => {
+              h.isUnmounted || I();
             });
             return;
           }
         }
-        let re = N, De;
-        ln(h, !1), N ? (N.el = he.el, ee(h, N, B)) : N = he, z && es(z), (De = N.props && N.props.onVnodeBeforeUpdate) && St(De, X, N, he), ln(h, !0);
+        let re = B, De;
+        ln(h, !1), B ? (B.el = he.el, ee(h, B, N)) : B = he, z && es(z), (De = B.props && B.props.onVnodeBeforeUpdate) && St(De, X, B, he), ln(h, !0);
         const ae = Si(h), Ie = h.subTree;
         h.subTree = ae, D(
           Ie,
@@ -2402,14 +2402,14 @@ function uc(e, t) {
           h,
           S,
           C
-        ), N.el = ae.el, re === null && wc(h, ae.el), K && lt(K, S), (De = N.props && N.props.onVnodeUpdated) && lt(
-          () => St(De, X, N, he),
+        ), B.el = ae.el, re === null && wc(h, ae.el), K && lt(K, S), (De = B.props && B.props.onVnodeUpdated) && lt(
+          () => St(De, X, B, he),
           S
         );
       } else {
-        let N;
-        const { el: z, props: K } = g, { bm: X, m: he, parent: re, root: De, type: ae } = h, Ie = Bn(g);
-        ln(h, !1), X && es(X), !Ie && (N = K && K.onVnodeBeforeMount) && St(N, re, g), ln(h, !0);
+        let B;
+        const { el: z, props: K } = g, { bm: X, m: he, parent: re, root: De, type: ae } = h, Ie = Nn(g);
+        ln(h, !1), X && es(X), !Ie && (B = K && K.onVnodeBeforeMount) && St(B, re, g), ln(h, !0);
         {
           De.ce && // @ts-expect-error _def is private
           De.ce._def.shadowRoot !== !1 && De.ce._injectChildStyle(ae);
@@ -2424,82 +2424,82 @@ function uc(e, t) {
             C
           ), g.el = c.el;
         }
-        if (he && lt(he, S), !Ie && (N = K && K.onVnodeMounted)) {
+        if (he && lt(he, S), !Ie && (B = K && K.onVnodeMounted)) {
           const c = g;
           lt(
-            () => St(N, re, c),
+            () => St(B, re, c),
             S
           );
         }
-        (g.shapeFlag & 256 || re && Bn(re.vnode) && re.vnode.shapeFlag & 256) && h.a && lt(h.a, S), h.isMounted = !0, g = w = T = null;
+        (g.shapeFlag & 256 || re && Nn(re.vnode) && re.vnode.shapeFlag & 256) && h.a && lt(h.a, S), h.isMounted = !0, g = w = T = null;
       }
     };
     h.scope.on();
-    const I = h.effect = new uo(L);
+    const O = h.effect = new uo(I);
     h.scope.off();
-    const E = h.update = I.run.bind(I), j = h.job = I.runIfDirty.bind(I);
-    j.i = h, j.id = h.uid, I.scheduler = () => Pr(j), ln(h, !0), E();
+    const E = h.update = O.run.bind(O), j = h.job = O.runIfDirty.bind(O);
+    j.i = h, j.id = h.uid, O.scheduler = () => Pr(j), ln(h, !0), E();
   }, ee = (h, g, w) => {
     g.component = h;
     const T = h.vnode.props;
     h.vnode = g, h.next = null, rc(h, g.props, T, w), ac(h, g.children, w), Dt(), _i(h), qt();
-  }, se = (h, g, w, T, S, C, B, L, I = !1) => {
-    const E = h && h.children, j = h ? h.shapeFlag : 0, N = g.children, { patchFlag: z, shapeFlag: K } = g;
+  }, se = (h, g, w, T, S, C, N, I, O = !1) => {
+    const E = h && h.children, j = h ? h.shapeFlag : 0, B = g.children, { patchFlag: z, shapeFlag: K } = g;
     if (z > 0) {
       if (z & 128) {
         ke(
           E,
-          N,
+          B,
           w,
           T,
           S,
           C,
-          B,
-          L,
-          I
+          N,
+          I,
+          O
         );
         return;
       } else if (z & 256) {
         M(
           E,
-          N,
+          B,
           w,
           T,
           S,
           C,
-          B,
-          L,
-          I
+          N,
+          I,
+          O
         );
         return;
       }
     }
-    K & 8 ? (j & 16 && kt(E, S, C), N !== E && f(w, N)) : j & 16 ? K & 16 ? ke(
+    K & 8 ? (j & 16 && kt(E, S, C), B !== E && f(w, B)) : j & 16 ? K & 16 ? ke(
       E,
-      N,
+      B,
       w,
       T,
       S,
       C,
-      B,
-      L,
-      I
+      N,
+      I,
+      O
     ) : kt(E, S, C, !0) : (j & 8 && f(w, ""), K & 16 && je(
-      N,
+      B,
       w,
       T,
       S,
       C,
-      B,
-      L,
-      I
+      N,
+      I,
+      O
     ));
-  }, M = (h, g, w, T, S, C, B, L, I) => {
+  }, M = (h, g, w, T, S, C, N, I, O) => {
     h = h || _n, g = g || _n;
-    const E = h.length, j = g.length, N = Math.min(E, j);
+    const E = h.length, j = g.length, B = Math.min(E, j);
     let z;
-    for (z = 0; z < N; z++) {
-      const K = g[z] = I ? Gt(g[z]) : Et(g[z]);
+    for (z = 0; z < B; z++) {
+      const K = g[z] = O ? Gt(g[z]) : Et(g[z]);
       D(
         h[z],
         K,
@@ -2507,9 +2507,9 @@ function uc(e, t) {
         null,
         S,
         C,
-        B,
-        L,
-        I
+        N,
+        I,
+        O
       );
     }
     E > j ? kt(
@@ -2518,24 +2518,24 @@ function uc(e, t) {
       C,
       !0,
       !1,
-      N
+      B
     ) : je(
       g,
       w,
       T,
       S,
       C,
-      B,
-      L,
+      N,
       I,
-      N
+      O,
+      B
     );
-  }, ke = (h, g, w, T, S, C, B, L, I) => {
+  }, ke = (h, g, w, T, S, C, N, I, O) => {
     let E = 0;
     const j = g.length;
-    let N = h.length - 1, z = j - 1;
-    for (; E <= N && E <= z; ) {
-      const K = h[E], X = g[E] = I ? Gt(g[E]) : Et(g[E]);
+    let B = h.length - 1, z = j - 1;
+    for (; E <= B && E <= z; ) {
+      const K = h[E], X = g[E] = O ? Gt(g[E]) : Et(g[E]);
       if (Cn(K, X))
         D(
           K,
@@ -2544,16 +2544,16 @@ function uc(e, t) {
           null,
           S,
           C,
-          B,
-          L,
-          I
+          N,
+          I,
+          O
         );
       else
         break;
       E++;
     }
-    for (; E <= N && E <= z; ) {
-      const K = h[N], X = g[z] = I ? Gt(g[z]) : Et(g[z]);
+    for (; E <= B && E <= z; ) {
+      const K = h[B], X = g[z] = O ? Gt(g[z]) : Et(g[z]);
       if (Cn(K, X))
         D(
           K,
@@ -2562,37 +2562,37 @@ function uc(e, t) {
           null,
           S,
           C,
-          B,
-          L,
-          I
+          N,
+          I,
+          O
         );
       else
         break;
-      N--, z--;
+      B--, z--;
     }
-    if (E > N) {
+    if (E > B) {
       if (E <= z) {
         const K = z + 1, X = K < j ? g[K].el : T;
         for (; E <= z; )
           D(
             null,
-            g[E] = I ? Gt(g[E]) : Et(g[E]),
+            g[E] = O ? Gt(g[E]) : Et(g[E]),
             w,
             X,
             S,
             C,
-            B,
-            L,
-            I
+            N,
+            I,
+            O
           ), E++;
       }
     } else if (E > z)
-      for (; E <= N; )
+      for (; E <= B; )
         Ce(h[E], S, C, !0), E++;
     else {
       const K = E, X = E, he = /* @__PURE__ */ new Map();
       for (E = X; E <= z; E++) {
-        const v = g[E] = I ? Gt(g[E]) : Et(g[E]);
+        const v = g[E] = O ? Gt(g[E]) : Et(g[E]);
         v.key != null && he.set(v.key, E);
       }
       let re, De = 0;
@@ -2600,7 +2600,7 @@ function uc(e, t) {
       let Ie = !1, c = 0;
       const p = new Array(ae);
       for (E = 0; E < ae; E++) p[E] = 0;
-      for (E = K; E <= N; E++) {
+      for (E = K; E <= B; E++) {
         const v = h[E];
         if (De >= ae) {
           Ce(v, S, C, !0);
@@ -2622,16 +2622,16 @@ function uc(e, t) {
           null,
           S,
           C,
-          B,
-          L,
-          I
+          N,
+          I,
+          O
         ), De++);
       }
       const k = Ie ? hc(p) : _n;
       for (re = k.length - 1, E = ae - 1; E >= 0; E--) {
-        const v = X + E, A = g[v], H = g[v + 1], U = v + 1 < j ? (
+        const v = X + E, A = g[v], V = g[v + 1], U = v + 1 < j ? (
           // #13559, fallback to el placeholder for unresolved async component
-          H.el || H.placeholder
+          V.el || V.placeholder
         ) : T;
         p[E] === 0 ? D(
           null,
@@ -2640,14 +2640,14 @@ function uc(e, t) {
           U,
           S,
           C,
-          B,
-          L,
-          I
+          N,
+          I,
+          O
         ) : Ie && (re < 0 || E !== k[re] ? W(A, w, U, 2) : re--);
       }
     }
   }, W = (h, g, w, T, S = null) => {
-    const { el: C, type: B, transition: L, children: I, shapeFlag: E } = h;
+    const { el: C, type: N, transition: I, children: O, shapeFlag: E } = h;
     if (E & 6) {
       W(h.component.subTree, g, w, T);
       return;
@@ -2657,28 +2657,28 @@ function uc(e, t) {
       return;
     }
     if (E & 64) {
-      B.move(h, g, w, it);
+      N.move(h, g, w, it);
       return;
     }
-    if (B === Fe) {
+    if (N === Fe) {
       s(C, g, w);
-      for (let N = 0; N < I.length; N++)
-        W(I[N], g, w, T);
+      for (let B = 0; B < O.length; B++)
+        W(O[B], g, w, T);
       s(h.anchor, g, w);
       return;
     }
-    if (B === ns) {
+    if (N === ns) {
       ge(h, g, w);
       return;
     }
-    if (T !== 2 && E & 1 && L)
+    if (T !== 2 && E & 1 && I)
       if (T === 0)
-        L.beforeEnter(C), s(C, g, w), lt(() => L.enter(C), S);
+        I.beforeEnter(C), s(C, g, w), lt(() => I.enter(C), S);
       else {
-        const { leave: N, delayLeave: z, afterLeave: K } = L, X = () => {
+        const { leave: B, delayLeave: z, afterLeave: K } = I, X = () => {
           h.ctx.isUnmounted ? r(C) : s(C, g, w);
         }, he = () => {
-          N(C, () => {
+          B(C, () => {
             X(), K && K();
           });
         };
@@ -2689,22 +2689,22 @@ function uc(e, t) {
   }, Ce = (h, g, w, T = !1, S = !1) => {
     const {
       type: C,
-      props: B,
-      ref: L,
-      children: I,
+      props: N,
+      ref: I,
+      children: O,
       dynamicChildren: E,
       shapeFlag: j,
-      patchFlag: N,
+      patchFlag: B,
       dirs: z,
       cacheIndex: K
     } = h;
-    if (N === -2 && (S = !1), L != null && (Dt(), Fn(L, null, w, h, !0), qt()), K != null && (g.renderCache[K] = void 0), j & 256) {
+    if (B === -2 && (S = !1), I != null && (Dt(), Fn(I, null, w, h, !0), qt()), K != null && (g.renderCache[K] = void 0), j & 256) {
       g.ctx.deactivate(h);
       return;
     }
-    const X = j & 1 && z, he = !Bn(h);
+    const X = j & 1 && z, he = !Nn(h);
     let re;
-    if (he && (re = B && B.onVnodeBeforeUnmount) && St(re, g, h), j & 6)
+    if (he && (re = N && N.onVnodeBeforeUnmount) && St(re, g, h), j & 6)
       sn(h.component, w, T);
     else {
       if (j & 128) {
@@ -2723,15 +2723,15 @@ function uc(e, t) {
       // so that it doesn't take the fast path during unmount - otherwise
       // components nested in v-once are never unmounted.
       !E.hasOnce && // #1153: fast path should not be taken for non-stable (v-for) fragments
-      (C !== Fe || N > 0 && N & 64) ? kt(
+      (C !== Fe || B > 0 && B & 64) ? kt(
         E,
         g,
         w,
         !1,
         !0
-      ) : (C === Fe && N & 384 || !S && j & 16) && kt(I, g, w), T && mt(h);
+      ) : (C === Fe && B & 384 || !S && j & 16) && kt(O, g, w), T && mt(h);
     }
-    (he && (re = B && B.onVnodeUnmounted) || X) && lt(() => {
+    (he && (re = N && N.onVnodeUnmounted) || X) && lt(() => {
       re && St(re, g, h), X && on(h, null, g, "unmounted");
     }, w);
   }, mt = (h) => {
@@ -2741,15 +2741,15 @@ function uc(e, t) {
       return;
     }
     if (g === ns) {
-      V(h);
+      q(h);
       return;
     }
     const C = () => {
       r(w), S && !S.persisted && S.afterLeave && S.afterLeave();
     };
     if (h.shapeFlag & 1 && S && !S.persisted) {
-      const { leave: B, delayLeave: L } = S, I = () => B(w, C);
-      L ? L(h.el, C, I) : I();
+      const { leave: N, delayLeave: I } = S, O = () => N(w, C);
+      I ? I(h.el, C, O) : O();
     } else
       C();
   }, _t = (h, g) => {
@@ -2762,21 +2762,21 @@ function uc(e, t) {
       bum: T,
       scope: S,
       job: C,
-      subTree: B,
-      um: L,
-      m: I,
+      subTree: N,
+      um: I,
+      m: O,
       a: E,
       parent: j,
-      slots: { __: N }
+      slots: { __: B }
     } = h;
-    xi(I), xi(E), T && es(T), j && J(N) && N.forEach((z) => {
+    xi(O), xi(E), T && es(T), j && J(B) && B.forEach((z) => {
       j.renderCache[z] = void 0;
-    }), S.stop(), C && (C.flags |= 8, Ce(B, h, g, w)), L && lt(L, g), lt(() => {
+    }), S.stop(), C && (C.flags |= 8, Ce(N, h, g, w)), I && lt(I, g), lt(() => {
       h.isUnmounted = !0;
     }, g), g && g.pendingBranch && !g.isUnmounted && h.asyncDep && !h.asyncResolved && h.suspenseId === g.pendingId && (g.deps--, g.deps === 0 && g.resolve());
   }, kt = (h, g, w, T = !1, S = !1, C = 0) => {
-    for (let B = C; B < h.length; B++)
-      Ce(h[B], g, w, T, S);
+    for (let N = C; N < h.length; N++)
+      Ce(h[N], g, w, T, S);
   }, ct = (h) => {
     if (h.shapeFlag & 6)
       return ct(h.component.subTree);
@@ -2871,29 +2871,29 @@ function Yo(e, t, n = Se) {
   let u;
   if (jn) {
     if (i === "sync") {
-      const O = pc();
-      u = O.__watcherHandles || (O.__watcherHandles = []);
+      const L = pc();
+      u = L.__watcherHandles || (L.__watcherHandles = []);
     } else if (!a) {
-      const O = () => {
+      const L = () => {
       };
-      return O.stop = At, O.resume = At, O.pause = At, O;
+      return L.stop = At, L.resume = At, L.pause = At, L;
     }
   }
   const f = Qe;
-  l.call = (O, F, D) => Ot(O, f, F, D);
+  l.call = (L, F, D) => Ot(L, f, F, D);
   let m = !1;
-  i === "post" ? l.scheduler = (O) => {
-    lt(O, f && f.suspense);
-  } : i !== "sync" && (m = !0, l.scheduler = (O, F) => {
-    F ? O() : Pr(O);
-  }), l.augmentJob = (O) => {
-    t && (O.flags |= 4), m && (O.flags |= 2, f && (O.id = f.uid, O.i = f));
+  i === "post" ? l.scheduler = (L) => {
+    lt(L, f && f.suspense);
+  } : i !== "sync" && (m = !0, l.scheduler = (L, F) => {
+    F ? L() : Pr(L);
+  }), l.augmentJob = (L) => {
+    t && (L.flags |= 4), m && (L.flags |= 2, f && (L.id = f.uid, L.i = f));
   };
   const b = Aa(e, t, l);
   return jn && (u ? u.push(b) : a && b()), b;
 }
 function gc(e, t, n) {
-  const s = this.proxy, r = Ne(e) ? e.includes(".") ? Jo(s, e) : () => s[e] : e.bind(s, s);
+  const s = this.proxy, r = Be(e) ? e.includes(".") ? Jo(s, e) : () => s[e] : e.bind(s, s);
   let i;
   Q(t) ? i = t : (i = t.handler, n = t);
   const o = Wn(this), l = Yo(r, i.bind(s), n);
@@ -2914,7 +2914,7 @@ function _c(e, t, ...n) {
   const s = e.vnode.props || Se;
   let r = n;
   const i = t.startsWith("update:"), o = i && mc(s, t.slice(7));
-  o && (o.trim && (r = n.map((f) => Ne(f) ? f.trim() : f)), o.number && (r = n.map(tr)));
+  o && (o.trim && (r = n.map((f) => Be(f) ? f.trim() : f)), o.number && (r = n.map(tr)));
   let l, a = s[l = Ms(t)] || // also try camelCase event handler (#2249)
   s[l = Ms(Qt(t))];
   !a && i && (a = s[l = Ms(nn(t))]), a && Ot(
@@ -2969,44 +2969,44 @@ function Si(e) {
     renderCache: f,
     props: m,
     data: b,
-    setupState: O,
+    setupState: L,
     ctx: F,
     inheritAttrs: D
   } = e, we = ds(e);
   let te, pe;
   try {
     if (n.shapeFlag & 4) {
-      const V = r || s, oe = V;
+      const q = r || s, oe = q;
       te = Et(
         u.call(
           oe,
-          V,
+          q,
           f,
           m,
-          O,
+          L,
           b,
           F
         )
       ), pe = l;
     } else {
-      const V = t;
+      const q = t;
       te = Et(
-        V.length > 1 ? V(
+        q.length > 1 ? q(
           m,
           { attrs: l, slots: o, emit: a }
-        ) : V(
+        ) : q(
           m,
           null
         )
       ), pe = t.props ? l : yc(l);
     }
-  } catch (V) {
-    Mn.length = 0, Cs(V, e, 1), te = Rt(en);
+  } catch (q) {
+    Mn.length = 0, Cs(q, e, 1), te = Rt(en);
   }
   let ge = te;
   if (pe && D !== !1) {
-    const V = Object.keys(pe), { shapeFlag: oe } = ge;
-    V.length && oe & 7 && (i && V.some(kr) && (pe = bc(
+    const q = Object.keys(pe), { shapeFlag: oe } = ge;
+    q.length && oe & 7 && (i && q.some(kr) && (pe = bc(
       pe,
       i
     )), ge = kn(ge, pe, !1, !0));
@@ -3119,7 +3119,7 @@ const nl = ({ key: e }) => e ?? null, ss = ({
   ref: e,
   ref_key: t,
   ref_for: n
-}) => (typeof e == "number" && (e = "" + e), e != null ? Ne(e) || We(e) || Q(e) ? { i: ht, r: e, k: t, f: !!n } : e : null);
+}) => (typeof e == "number" && (e = "" + e), e != null ? Be(e) || We(e) || Q(e) ? { i: ht, r: e, k: t, f: !!n } : e : null);
 function x(e, t = null, n = null, s = 0, r = null, i = e === Fe ? 0 : 1, o = !1, l = !1) {
   const a = {
     __v_isVNode: !0,
@@ -3150,7 +3150,7 @@ function x(e, t = null, n = null, s = 0, r = null, i = e === Fe ? 0 : 1, o = !1,
     appContext: null,
     ctx: ht
   };
-  return l ? (Mr(a, n), i & 128 && e.normalize(a)) : n && (a.shapeFlag |= Ne(n) ? 8 : 16), Un > 0 && // avoid a block node from tracking itself
+  return l ? (Mr(a, n), i & 128 && e.normalize(a)) : n && (a.shapeFlag |= Be(n) ? 8 : 16), Un > 0 && // avoid a block node from tracking itself
   !o && // has current parent block
   at && // presence of a patch flag indicates this node needs patching on updates.
   // component nodes also should always be patched, because even if the
@@ -3171,12 +3171,12 @@ function Cc(e, t = null, n = null, s = 0, r = null, i = !1) {
     );
     return n && Mr(l, n), Un > 0 && !i && at && (l.shapeFlag & 6 ? at[at.indexOf(e)] = l : at.push(l)), l.patchFlag = -2, l;
   }
-  if (Nc(e) && (e = e.__vccOpts), t) {
+  if (Bc(e) && (e = e.__vccOpts), t) {
     t = Tc(t);
     let { class: l, style: a } = t;
-    l && !Ne(l) && (t.class = Le(l)), $e(a) && (Lr(a) && !J(a) && (a = Ke({}, a)), t.style = Ee(a));
+    l && !Be(l) && (t.class = Le(l)), $e(a) && (Lr(a) && !J(a) && (a = Ke({}, a)), t.style = Ee(a));
   }
-  const o = Ne(e) ? 1 : Xo(e) ? 128 : $a(e) ? 64 : $e(e) ? 4 : Q(e) ? 2 : 0;
+  const o = Be(e) ? 1 : Xo(e) ? 128 : $a(e) ? 64 : $e(e) ? 4 : Q(e) ? 2 : 0;
   return x(
     e,
     t,
@@ -3428,7 +3428,7 @@ function $c(e, t) {
   const { setup: s } = n;
   if (s) {
     Dt();
-    const r = e.setupContext = s.length > 1 ? Bc(e) : null, i = Wn(e), o = zn(
+    const r = e.setupContext = s.length > 1 ? Nc(e) : null, i = Wn(e), o = zn(
       s,
       e,
       0,
@@ -3437,7 +3437,7 @@ function $c(e, t) {
         r
       ]
     ), l = so(o);
-    if (qt(), i(), (l || e.sp) && !Bn(e) && Po(e), l) {
+    if (qt(), i(), (l || e.sp) && !Nn(e) && Po(e), l) {
       if (o.then(Ei, Ei), t)
         return o.then((a) => {
           Ai(e, a);
@@ -3471,7 +3471,7 @@ const Fc = {
     return ze(e, "get", ""), e[t];
   }
 };
-function Bc(e) {
+function Nc(e) {
   const t = (n) => {
     e.exposed = n || {};
   };
@@ -3487,15 +3487,15 @@ function Rs(e) {
     get(t, n) {
       if (n in t)
         return t[n];
-      if (n in Nn)
-        return Nn[n](e);
+      if (n in Bn)
+        return Bn[n](e);
     },
     has(t, n) {
-      return n in t || n in Nn;
+      return n in t || n in Bn;
     }
   })) : e.proxy;
 }
-function Nc(e) {
+function Bc(e) {
   return Q(e) && "__vccOpts" in e;
 }
 const qe = (e, t) => Ta(e, t, jn), Mc = "3.5.18";
@@ -3575,11 +3575,11 @@ function Uc(e, t, n) {
 }
 const Oi = Symbol("_vod"), jc = Symbol("_vsh"), zc = Symbol(""), Wc = /(^|;)\s*display\s*:/;
 function Kc(e, t, n) {
-  const s = e.style, r = Ne(n);
+  const s = e.style, r = Be(n);
   let i = !1;
   if (n && !r) {
     if (t)
-      if (Ne(t))
+      if (Be(t))
         for (const o of t.split(";")) {
           const l = o.slice(0, o.indexOf(":")).trim();
           n[l] == null && rs(s, l, "");
@@ -3635,7 +3635,7 @@ function Fi(e, t, n, s, r, i = Xl(t)) {
     i ? "" : tn(n) ? String(n) : n
   );
 }
-function Bi(e, t, n, s, r) {
+function Ni(e, t, n, s, r) {
   if (t === "innerHTML" || t === "textContent") {
     n != null && (e[t] = t === "innerHTML" ? il(n) : n);
     return;
@@ -3668,9 +3668,9 @@ function mn(e, t, n, s) {
 function Gc(e, t, n, s) {
   e.removeEventListener(t, n, s);
 }
-const Ni = Symbol("_vei");
+const Bi = Symbol("_vei");
 function Yc(e, t, n, s, r = null) {
-  const i = e[Ni] || (e[Ni] = {}), o = i[t];
+  const i = e[Bi] || (e[Bi] = {}), o = i[t];
   if (s && o)
     o.value = s;
   else {
@@ -3726,7 +3726,7 @@ function tu(e, t) {
 const Di = (e) => e.charCodeAt(0) === 111 && e.charCodeAt(1) === 110 && // lowercase letter
 e.charCodeAt(2) > 96 && e.charCodeAt(2) < 123, nu = (e, t, n, s, r, i) => {
   const o = r === "svg";
-  t === "class" ? Uc(e, s, o) : t === "style" ? Kc(e, n, s) : vs(t) ? kr(t) || Yc(e, t, n, s, i) : (t[0] === "." ? (t = t.slice(1), !0) : t[0] === "^" ? (t = t.slice(1), !1) : su(e, t, s, o)) ? (Bi(e, t, s), !e.tagName.includes("-") && (t === "value" || t === "checked" || t === "selected") && Fi(e, t, s, o, i, t !== "value")) : /* #11081 force set props for possible async custom element */ e._isVueCE && (/[A-Z]/.test(t) || !Ne(s)) ? Bi(e, Qt(t), s, i, t) : (t === "true-value" ? e._trueValue = s : t === "false-value" && (e._falseValue = s), Fi(e, t, s, o));
+  t === "class" ? Uc(e, s, o) : t === "style" ? Kc(e, n, s) : vs(t) ? kr(t) || Yc(e, t, n, s, i) : (t[0] === "." ? (t = t.slice(1), !0) : t[0] === "^" ? (t = t.slice(1), !1) : su(e, t, s, o)) ? (Ni(e, t, s), !e.tagName.includes("-") && (t === "value" || t === "checked" || t === "selected") && Fi(e, t, s, o, i, t !== "value")) : /* #11081 force set props for possible async custom element */ e._isVueCE && (/[A-Z]/.test(t) || !Be(s)) ? Ni(e, Qt(t), s, i, t) : (t === "true-value" ? e._trueValue = s : t === "false-value" && (e._falseValue = s), Fi(e, t, s, o));
 };
 function su(e, t, n, s) {
   if (s)
@@ -3738,7 +3738,7 @@ function su(e, t, n, s) {
     if (r === "IMG" || r === "VIDEO" || r === "CANVAS" || r === "SOURCE")
       return !1;
   }
-  return Di(t) && Ne(n) ? !1 : t in e;
+  return Di(t) && Be(n) ? !1 : t in e;
 }
 const qi = (e) => {
   const t = e.props["onUpdate:modelValue"] || !1;
@@ -3835,7 +3835,7 @@ function fu(e) {
     return "mathml";
 }
 function hu(e) {
-  return Ne(e) ? document.querySelector(e) : e;
+  return Be(e) ? document.querySelector(e) : e;
 }
 const Kt = (e) => {
   const t = e.replace("#", ""), n = parseInt(t.substr(0, 2), 16), s = parseInt(t.substr(2, 2), 16), r = parseInt(t.substr(4, 2), 16);
@@ -3980,7 +3980,7 @@ var Xe = {
   lheading: /^(.+?)\n {0,3}(=+|-+) *(?:\n+|$)/,
   paragraph: be(Vr).replace("hr", Kn).replace("heading", ` *#{1,6} *[^
 ]`).replace("lheading", al).replace("|table", "").replace("blockquote", " {0,3}>").replace("|fences", "").replace("|list", "").replace("|html", "").replace("|tag", "").getRegex()
-}, Eu = /^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/, Au = /^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/, ul = /^( {2,}|\\)\n(?!\s*$)/, Ru = /^(`+|[^`])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*_]|\b_|$)|[^ ](?= {2,}\n)))/, Os = /[\p{P}\p{S}]/u, zr = /[\s\p{P}\p{S}]/u, fl = /[^\s\p{P}\p{S}]/u, Iu = be(/^((?![*_])punctSpace)/, "u").replace(/punctSpace/g, zr).getRegex(), hl = /(?!~)[\p{P}\p{S}]/u, Ou = /(?!~)[\s\p{P}\p{S}]/u, Lu = /(?:[^\s\p{P}\p{S}]|~)/u, Pu = /\[[^[\]]*?\]\((?:\\.|[^\\\(\)]|\((?:\\.|[^\\\(\)])*\))*\)|`[^`]*?`|<[^<>]*?>/g, dl = /^(?:\*+(?:((?!\*)punct)|[^\s*]))|^_+(?:((?!_)punct)|([^\s_]))/, $u = be(dl, "u").replace(/punct/g, Os).getRegex(), Fu = be(dl, "u").replace(/punct/g, hl).getRegex(), pl = "^[^_*]*?__[^_*]*?\\*[^_*]*?(?=__)|[^*]+(?=[^*])|(?!\\*)punct(\\*+)(?=[\\s]|$)|notPunctSpace(\\*+)(?!\\*)(?=punctSpace|$)|(?!\\*)punctSpace(\\*+)(?=notPunctSpace)|[\\s](\\*+)(?!\\*)(?=punct)|(?!\\*)punct(\\*+)(?!\\*)(?=punct)|notPunctSpace(\\*+)(?=notPunctSpace)", Bu = be(pl, "gu").replace(/notPunctSpace/g, fl).replace(/punctSpace/g, zr).replace(/punct/g, Os).getRegex(), Nu = be(pl, "gu").replace(/notPunctSpace/g, Lu).replace(/punctSpace/g, Ou).replace(/punct/g, hl).getRegex(), Mu = be(
+}, Eu = /^\\([!"#$%&'()*+,\-./:;<=>?@\[\]\\^_`{|}~])/, Au = /^(`+)([^`]|[^`][\s\S]*?[^`])\1(?!`)/, ul = /^( {2,}|\\)\n(?!\s*$)/, Ru = /^(`+|[^`])(?:(?= {2,}\n)|[\s\S]*?(?:(?=[\\<!\[`*_]|\b_|$)|[^ ](?= {2,}\n)))/, Os = /[\p{P}\p{S}]/u, zr = /[\s\p{P}\p{S}]/u, fl = /[^\s\p{P}\p{S}]/u, Iu = be(/^((?![*_])punctSpace)/, "u").replace(/punctSpace/g, zr).getRegex(), hl = /(?!~)[\p{P}\p{S}]/u, Ou = /(?!~)[\s\p{P}\p{S}]/u, Lu = /(?:[^\s\p{P}\p{S}]|~)/u, Pu = /\[[^[\]]*?\]\((?:\\.|[^\\\(\)]|\((?:\\.|[^\\\(\)])*\))*\)|`[^`]*?`|<[^<>]*?>/g, dl = /^(?:\*+(?:((?!\*)punct)|[^\s*]))|^_+(?:((?!_)punct)|([^\s_]))/, $u = be(dl, "u").replace(/punct/g, Os).getRegex(), Fu = be(dl, "u").replace(/punct/g, hl).getRegex(), pl = "^[^_*]*?__[^_*]*?\\*[^_*]*?(?=__)|[^*]+(?=[^*])|(?!\\*)punct(\\*+)(?=[\\s]|$)|notPunctSpace(\\*+)(?!\\*)(?=punctSpace|$)|(?!\\*)punctSpace(\\*+)(?=notPunctSpace)|[\\s](\\*+)(?!\\*)(?=punct)|(?!\\*)punct(\\*+)(?!\\*)(?=punct)|notPunctSpace(\\*+)(?=notPunctSpace)", Nu = be(pl, "gu").replace(/notPunctSpace/g, fl).replace(/punctSpace/g, zr).replace(/punct/g, Os).getRegex(), Bu = be(pl, "gu").replace(/notPunctSpace/g, Lu).replace(/punctSpace/g, Ou).replace(/punct/g, hl).getRegex(), Mu = be(
   "^[^_*]*?\\*\\*[^_*]*?_[^_*]*?(?=\\*\\*)|[^_]+(?=[^_])|(?!_)punct(_+)(?=[\\s]|$)|notPunctSpace(_+)(?!_)(?=punctSpace|$)|(?!_)punctSpace(_+)(?=notPunctSpace)|[\\s](_+)(?!_)(?=punct)|(?!_)punct(_+)(?!_)(?=punct)",
   "gu"
 ).replace(/notPunctSpace/g, fl).replace(/punctSpace/g, zr).replace(/punct/g, Os).getRegex(), Du = be(/\\(punct)/, "gu").replace(/punct/g, Os).getRegex(), qu = be(/^<(scheme:[^\s\x00-\x1f<>]*|email)>/).replace("scheme", /[a-zA-Z][a-zA-Z0-9+.-]{1,31}/).replace("email", /[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+(@)[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+(?![-_])/).getRegex(), Vu = be(Ur).replace("(?:-->|$)", "-->").getRegex(), Hu = be(
@@ -3995,7 +3995,7 @@ var Xe = {
   code: Au,
   del: Dn,
   emStrongLDelim: $u,
-  emStrongRDelimAst: Bu,
+  emStrongRDelimAst: Nu,
   emStrongRDelimUnd: Mu,
   escape: Eu,
   link: Uu,
@@ -4012,7 +4012,7 @@ var Xe = {
   reflink: be(/^!?\[(label)\]\s*\[([^\]]*)\]/).replace("label", ms).getRegex()
 }, hr = {
   ...Wr,
-  emStrongRDelimAst: Nu,
+  emStrongRDelimAst: Bu,
   emStrongLDelim: Fu,
   url: be(/^((?:ftp|https?):\/\/|www\.)(?:[a-zA-Z0-9\-]+\.?)+[^\s<]*|^email/, "i").replace("email", /[A-Za-z0-9._+-]+(@)[a-zA-Z0-9-_]+(?:\.[a-zA-Z0-9-_]*[a-zA-Z0-9])+(?![-_])/).getRegex(),
   _backpedal: /(?:[^?!.,:;*_'"~()&]+|\([^)]*\)|&(?![a-zA-Z0-9]+;$)|[?!.,:;*_'"~)]+(?!$))+/,
@@ -4221,16 +4221,16 @@ ${f}` : f;
         if ((b == null ? void 0 : b.type) === "code")
           break;
         if ((b == null ? void 0 : b.type) === "blockquote") {
-          const O = b, F = O.raw + `
+          const L = b, F = L.raw + `
 ` + n.join(`
 `), D = this.blockquote(F);
-          i[i.length - 1] = D, s = s.substring(0, s.length - O.raw.length) + D.raw, r = r.substring(0, r.length - O.text.length) + D.text;
+          i[i.length - 1] = D, s = s.substring(0, s.length - L.raw.length) + D.raw, r = r.substring(0, r.length - L.text.length) + D.text;
           break;
         } else if ((b == null ? void 0 : b.type) === "list") {
-          const O = b, F = O.raw + `
+          const L = b, F = L.raw + `
 ` + n.join(`
 `), D = this.list(F);
-          i[i.length - 1] = D, s = s.substring(0, s.length - b.raw.length) + D.raw, r = r.substring(0, r.length - O.raw.length) + D.raw, n = F.substring(i.at(-1).raw.length).split(`
+          i[i.length - 1] = D, s = s.substring(0, s.length - b.raw.length) + D.raw, r = r.substring(0, r.length - L.raw.length) + D.raw, n = F.substring(i.at(-1).raw.length).split(`
 `);
           continue;
         }
@@ -4265,26 +4265,26 @@ ${f}` : f;
         u = t[0], e = e.substring(u.length);
         let m = t[2].split(`
 `, 1)[0].replace(this.rules.other.listReplaceTabs, (te) => " ".repeat(3 * te.length)), b = e.split(`
-`, 1)[0], O = !m.trim(), F = 0;
-        if (this.options.pedantic ? (F = 2, f = m.trimStart()) : O ? F = t[1].length + 1 : (F = t[2].search(this.rules.other.nonSpaceChar), F = F > 4 ? 1 : F, f = m.slice(F), F += t[1].length), O && this.rules.other.blankLine.test(b) && (u += b + `
+`, 1)[0], L = !m.trim(), F = 0;
+        if (this.options.pedantic ? (F = 2, f = m.trimStart()) : L ? F = t[1].length + 1 : (F = t[2].search(this.rules.other.nonSpaceChar), F = F > 4 ? 1 : F, f = m.slice(F), F += t[1].length), L && this.rules.other.blankLine.test(b) && (u += b + `
 `, e = e.substring(b.length + 1), a = !0), !a) {
-          const te = this.rules.other.nextBulletRegex(F), pe = this.rules.other.hrRegex(F), ge = this.rules.other.fencesBeginRegex(F), V = this.rules.other.headingBeginRegex(F), oe = this.rules.other.htmlBeginRegex(F);
+          const te = this.rules.other.nextBulletRegex(F), pe = this.rules.other.hrRegex(F), ge = this.rules.other.fencesBeginRegex(F), q = this.rules.other.headingBeginRegex(F), oe = this.rules.other.htmlBeginRegex(F);
           for (; e; ) {
             const Me = e.split(`
 `, 1)[0];
             let fe;
-            if (b = Me, this.options.pedantic ? (b = b.replace(this.rules.other.listReplaceNesting, "  "), fe = b) : fe = b.replace(this.rules.other.tabCharGlobal, "    "), ge.test(b) || V.test(b) || oe.test(b) || te.test(b) || pe.test(b))
+            if (b = Me, this.options.pedantic ? (b = b.replace(this.rules.other.listReplaceNesting, "  "), fe = b) : fe = b.replace(this.rules.other.tabCharGlobal, "    "), ge.test(b) || q.test(b) || oe.test(b) || te.test(b) || pe.test(b))
               break;
             if (fe.search(this.rules.other.nonSpaceChar) >= F || !b.trim())
               f += `
 ` + fe.slice(F);
             else {
-              if (O || m.replace(this.rules.other.tabCharGlobal, "    ").search(this.rules.other.nonSpaceChar) >= 4 || ge.test(m) || V.test(m) || pe.test(m))
+              if (L || m.replace(this.rules.other.tabCharGlobal, "    ").search(this.rules.other.nonSpaceChar) >= 4 || ge.test(m) || q.test(m) || pe.test(m))
                 break;
               f += `
 ` + b;
             }
-            !O && !b.trim() && (O = !0), u += Me + `
+            !L && !b.trim() && (L = !0), u += Me + `
 `, e = e.substring(Me.length + 1), m = fe.slice(F);
           }
         }
@@ -4503,12 +4503,12 @@ ${f}` : f;
             tokens: this.lexer.inlineTokens(F)
           };
         }
-        const O = b.slice(2, -2);
+        const L = b.slice(2, -2);
         return {
           type: "strong",
           raw: b,
-          text: O,
-          tokens: this.lexer.inlineTokens(O)
+          text: L,
+          tokens: this.lexer.inlineTokens(L)
         };
       }
     }
@@ -4603,7 +4603,7 @@ ${f}` : f;
       };
     }
   }
-}, Nt = class dr {
+}, Bt = class dr {
   constructor(t) {
     xe(this, "tokens");
     xe(this, "options");
@@ -4824,10 +4824,10 @@ ${f}` : f;
       let m = t;
       if ((u = this.options.extensions) != null && u.startInline) {
         let b = 1 / 0;
-        const O = t.slice(1);
+        const L = t.slice(1);
         let F;
         this.options.extensions.startInline.forEach((D) => {
-          F = D.call({ lexer: this }, O), typeof F == "number" && F >= 0 && (b = Math.min(b, F));
+          F = D.call({ lexer: this }, L), typeof F == "number" && F >= 0 && (b = Math.min(b, F));
         }), b < 1 / 0 && b >= 0 && (m = t.substring(0, b + 1));
       }
       if (f = this.tokenizer.inlineText(m)) {
@@ -5201,7 +5201,7 @@ ${e}</tr>
    * Provide function to tokenize markdown
    */
   provideLexer() {
-    return this.block ? Nt.lex : Nt.lexInline;
+    return this.block ? Bt.lex : Bt.lexInline;
   }
   /**
    * Provide function to parse tokens
@@ -5222,7 +5222,7 @@ ${e}</tr>
     xe(this, "Parser", Mt);
     xe(this, "Renderer", ys);
     xe(this, "TextRenderer", Kr);
-    xe(this, "Lexer", Nt);
+    xe(this, "Lexer", Bt);
     xe(this, "Tokenizer", _s);
     xe(this, "Hooks", is);
     this.use(...e);
@@ -5344,7 +5344,7 @@ ${e}</tr>
     return this.defaults = { ...this.defaults, ...e }, this;
   }
   lexer(e, t) {
-    return Nt.lex(e, t ?? this.defaults);
+    return Bt.lex(e, t ?? this.defaults);
   }
   parser(e, t) {
     return Mt.parse(e, t ?? this.defaults);
@@ -5359,7 +5359,7 @@ ${e}</tr>
       if (typeof n != "string")
         return o(new Error("marked(): input parameter is of type " + Object.prototype.toString.call(n) + ", string expected"));
       i.hooks && (i.hooks.options = i, i.hooks.block = e);
-      const l = i.hooks ? i.hooks.provideLexer() : e ? Nt.lex : Nt.lexInline, a = i.hooks ? i.hooks.provideParser() : e ? Mt.parse : Mt.parseInline;
+      const l = i.hooks ? i.hooks.provideLexer() : e ? Bt.lex : Bt.lexInline, a = i.hooks ? i.hooks.provideParser() : e ? Mt.parse : Mt.parseInline;
       if (i.async)
         return Promise.resolve(i.hooks ? i.hooks.preprocess(n) : n).then((u) => l(u, i)).then((u) => i.hooks ? i.hooks.processAllTokens(u) : u).then((u) => i.walkTokens ? Promise.all(this.walkTokens(u, i.walkTokens)).then(() => u) : u).then((u) => a(u, i)).then((u) => i.hooks ? i.hooks.postprocess(u) : u).catch(o);
       try {
@@ -5405,8 +5405,8 @@ ue.Parser = Mt;
 ue.parser = Mt.parse;
 ue.Renderer = ys;
 ue.TextRenderer = Kr;
-ue.Lexer = Nt;
-ue.lexer = Nt.lex;
+ue.Lexer = Bt;
+ue.lexer = Bt.lex;
 ue.Tokenizer = _s;
 ue.Hooks = is;
 ue.parse = ue;
@@ -5416,7 +5416,7 @@ ue.use;
 ue.walkTokens;
 ue.parseInline;
 Mt.parse;
-Nt.lex;
+Bt.lex;
 const bs = {
   API_URL: "https://api.chattermate.chat/api/v1",
   WS_URL: "wss://api.chattermate.chat"
@@ -5623,24 +5623,24 @@ function of(e, t) {
   });
 }
 const kl = 4;
-function Be(e) {
+function Ne(e) {
   if (e) return lf(e);
 }
 function lf(e) {
-  for (var t in Be.prototype)
-    e[t] = Be.prototype[t];
+  for (var t in Ne.prototype)
+    e[t] = Ne.prototype[t];
   return e;
 }
-Be.prototype.on = Be.prototype.addEventListener = function(e, t) {
+Ne.prototype.on = Ne.prototype.addEventListener = function(e, t) {
   return this._callbacks = this._callbacks || {}, (this._callbacks["$" + e] = this._callbacks["$" + e] || []).push(t), this;
 };
-Be.prototype.once = function(e, t) {
+Ne.prototype.once = function(e, t) {
   function n() {
     this.off(e, n), t.apply(this, arguments);
   }
   return n.fn = t, this.on(e, n), this;
 };
-Be.prototype.off = Be.prototype.removeListener = Be.prototype.removeAllListeners = Be.prototype.removeEventListener = function(e, t) {
+Ne.prototype.off = Ne.prototype.removeListener = Ne.prototype.removeAllListeners = Ne.prototype.removeEventListener = function(e, t) {
   if (this._callbacks = this._callbacks || {}, arguments.length == 0)
     return this._callbacks = {}, this;
   var n = this._callbacks["$" + e];
@@ -5654,7 +5654,7 @@ Be.prototype.off = Be.prototype.removeListener = Be.prototype.removeAllListeners
     }
   return n.length === 0 && delete this._callbacks["$" + e], this;
 };
-Be.prototype.emit = function(e) {
+Ne.prototype.emit = function(e) {
   this._callbacks = this._callbacks || {};
   for (var t = new Array(arguments.length - 1), n = this._callbacks["$" + e], s = 1; s < arguments.length; s++)
     t[s - 1] = arguments[s];
@@ -5665,11 +5665,11 @@ Be.prototype.emit = function(e) {
   }
   return this;
 };
-Be.prototype.emitReserved = Be.prototype.emit;
-Be.prototype.listeners = function(e) {
+Ne.prototype.emitReserved = Ne.prototype.emit;
+Ne.prototype.listeners = function(e) {
   return this._callbacks = this._callbacks || {}, this._callbacks["$" + e] || [];
 };
-Be.prototype.hasListeners = function(e) {
+Ne.prototype.hasListeners = function(e) {
   return !!this.listeners(e).length;
 };
 const Ls = typeof Promise == "function" && typeof Promise.resolve == "function" ? (t) => Promise.resolve().then(t) : (t, n) => n(t, 0), ft = typeof self < "u" ? self : typeof window < "u" ? window : Function("return this")(), af = "arraybuffer";
@@ -5712,7 +5712,7 @@ class mf extends Error {
     super(t), this.description = n, this.context = s, this.type = "TransportError";
   }
 }
-class Yr extends Be {
+class Yr extends Ne {
   /**
    * Transport abstract constructor.
    *
@@ -5952,7 +5952,7 @@ class vf extends _f {
     }), this.pollXhr = t;
   }
 }
-class It extends Be {
+class It extends Ne {
   /**
    * Request constructor
    *
@@ -6248,7 +6248,7 @@ const _r = typeof addEventListener == "function" && typeof removeEventListener =
 _r && addEventListener("offline", () => {
   ls.forEach((e) => e());
 }, !1);
-class Jt extends Be {
+class Jt extends Ne {
   /**
    * Socket constructor.
    *
@@ -6603,9 +6603,9 @@ function Pf(e, t = "", n) {
   const i = s.host.indexOf(":") !== -1 ? "[" + s.host + "]" : s.host;
   return s.id = s.protocol + "://" + i + ":" + s.port + t, s.href = s.protocol + "://" + i + (n && n.port === s.port ? "" : ":" + s.port), s;
 }
-const $f = typeof ArrayBuffer == "function", Ff = (e) => typeof ArrayBuffer.isView == "function" ? ArrayBuffer.isView(e) : e.buffer instanceof ArrayBuffer, Al = Object.prototype.toString, Bf = typeof Blob == "function" || typeof Blob < "u" && Al.call(Blob) === "[object BlobConstructor]", Nf = typeof File == "function" || typeof File < "u" && Al.call(File) === "[object FileConstructor]";
+const $f = typeof ArrayBuffer == "function", Ff = (e) => typeof ArrayBuffer.isView == "function" ? ArrayBuffer.isView(e) : e.buffer instanceof ArrayBuffer, Al = Object.prototype.toString, Nf = typeof Blob == "function" || typeof Blob < "u" && Al.call(Blob) === "[object BlobConstructor]", Bf = typeof File == "function" || typeof File < "u" && Al.call(File) === "[object FileConstructor]";
 function Jr(e) {
-  return $f && (e instanceof ArrayBuffer || Ff(e)) || Bf && e instanceof Blob || Nf && e instanceof File;
+  return $f && (e instanceof ArrayBuffer || Ff(e)) || Nf && e instanceof Blob || Bf && e instanceof File;
 }
 function as(e, t) {
   if (!e || typeof e != "object")
@@ -6722,7 +6722,7 @@ class Hf {
 function eo(e) {
   return Object.prototype.toString.call(e) === "[object Object]";
 }
-class Qr extends Be {
+class Qr extends Ne {
   /**
    * Decoder constructor
    *
@@ -6883,7 +6883,7 @@ const zf = Object.freeze({
   newListener: 1,
   removeListener: 1
 });
-class Rl extends Be {
+class Rl extends Ne {
   /**
    * `Socket` constructor.
    */
@@ -7498,7 +7498,7 @@ xn.prototype.setMax = function(e) {
 xn.prototype.setJitter = function(e) {
   this.jitter = e;
 };
-class vr extends Be {
+class vr extends Ne {
   constructor(t, n) {
     var s;
     super(), this.nsps = {}, this.subs = [], t && typeof t == "object" && (n = t, t = void 0), n = n || {}, n.path = n.path || "/socket.io", this.opts = n, Ps(this, n), this.reconnection(n.reconnection !== !1), this.reconnectionAttempts(n.reconnectionAttempts || 1 / 0), this.reconnectionDelay(n.reconnectionDelay || 1e3), this.reconnectionDelayMax(n.reconnectionDelayMax || 5e3), this.randomizationFactor((s = n.randomizationFactor) !== null && s !== void 0 ? s : 0.5), this.backoff = new xn({
@@ -7751,7 +7751,7 @@ Object.assign(cs, {
 });
 function Wf() {
   const e = de([]), t = de(!1), n = de(""), s = de(!1), r = de(!1), i = de(!1), o = de("connecting"), l = de(0), a = 5, u = de({}), f = de(null);
-  let m = null, b = null, O = null, F = null;
+  let m = null, b = null, L = null, F = null;
   const D = (M) => {
     const ke = localStorage.getItem("ctid");
     return m = cs(`${bs.WS_URL}/widget`, {
@@ -7765,9 +7765,9 @@ function Wf() {
     }), m.on("connect", () => {
       o.value = "connected", l.value = 0;
     }), m.on("disconnect", () => {
-      o.value === "connected" && (o.value = "connecting");
+      o.value === "connected" && (console.log("Socket disconnected, setting connection status to connecting"), o.value = "connecting");
     }), m.on("connect_error", () => {
-      l.value++, console.error("Socket connection failed, attempt:", l.value), l.value >= a && (o.value = "failed");
+      l.value++, console.error("Socket connection failed, attempt:", l.value, "connection status:", o.value), l.value >= a && (o.value = "failed");
     }), m.on("chat_response", (W) => {
       t.value = !1, W.type === "agent_message" ? e.value.push({
         message: W.message,
@@ -7837,8 +7837,8 @@ function Wf() {
   }, te = () => (m && m.disconnect(), we()), pe = (M) => {
     b = M;
   }, ge = (M) => {
-    O = M;
-  }, V = (M) => {
+    L = M;
+  }, q = (M) => {
     F = M;
   }, oe = (M) => {
     t.value = !1, n.value = pu(M), s.value = !0, setTimeout(() => {
@@ -7881,7 +7881,7 @@ function Wf() {
     });
   }, je = (M) => {
     var ke;
-    console.log("Form display handler in composable:", M), t.value = !1, f.value = M.form_data, console.log("Set currentForm in handleDisplayForm:", f.value), ((ke = M.form_data) == null ? void 0 : ke.form_full_screen) === !0 ? (console.log("Full screen form detected, triggering workflow state callback"), O && O({
+    console.log("Form display handler in composable:", M), t.value = !1, f.value = M.form_data, console.log("Set currentForm in handleDisplayForm:", f.value), ((ke = M.form_data) == null ? void 0 : ke.form_full_screen) === !0 ? (console.log("Full screen form detected, triggering workflow state callback"), L && L({
       type: "form",
       form_data: M.form_data,
       session_id: M.session_id
@@ -7897,7 +7897,7 @@ function Wf() {
   }, pt = (M) => {
     console.log("Form submitted confirmation received, clearing currentForm"), f.value = null, M.success && console.log("Form submitted successfully");
   }, Ze = (M) => {
-    console.log("Workflow state received in composable:", M), (M.type === "form" || M.type === "display_form") && (console.log("Setting currentForm from workflow state:", M.form_data), f.value = M.form_data), O && O(M);
+    console.log("Workflow state received in composable:", M), (M.type === "form" || M.type === "display_form") && (console.log("Setting currentForm from workflow state:", M.form_data), f.value = M.form_data), L && L(M);
   }, gt = (M) => {
     console.log("Workflow proceeded in composable:", M), F && F(M);
   };
@@ -7933,7 +7933,7 @@ function Wf() {
     connect: we,
     reconnect: te,
     cleanup: () => {
-      m && (m.removeAllListeners(), m.disconnect(), m = null), b = null, O = null, F = null;
+      m && (m.removeAllListeners(), m.disconnect(), m = null), b = null, L = null, F = null;
     },
     humanAgent: u,
     onTakeover: pe,
@@ -7964,7 +7964,7 @@ function Wf() {
       m && m.emit("proceed_workflow", {});
     },
     onWorkflowState: ge,
-    onWorkflowProceeded: V
+    onWorkflowProceeded: q
   };
 }
 function Kf(e) {
@@ -8013,18 +8013,18 @@ function Zf() {
       function f(c, p, k) {
         p = p || [], k = k || [];
         for (var v = c.className.split(/\s+/), A = 0; A < p.length; A += 1) {
-          for (var H = !1, U = 0; U < v.length; U += 1) if (p[A] === v[U]) {
-            H = !0;
+          for (var V = !1, U = 0; U < v.length; U += 1) if (p[A] === v[U]) {
+            V = !0;
             break;
           }
-          H || v.push(p[A]);
+          V || v.push(p[A]);
         }
         for (p = [], A = 0; A < v.length; A += 1) {
-          for (H = !1, U = 0; U < k.length; U += 1) if (v[A] === k[U]) {
-            H = !0;
+          for (V = !1, U = 0; U < k.length; U += 1) if (v[A] === k[U]) {
+            V = !0;
             break;
           }
-          H || p.push(v[A]);
+          V || p.push(v[A]);
         }
         c.className = p.join(" ").replace(/\s+/g, " ").replace(/^\s+|\s+$/, "");
       }
@@ -8035,12 +8035,12 @@ function Zf() {
       function b(c) {
         return c.o.location.hostname || c.a.location.hostname;
       }
-      function O(c, p, k) {
+      function L(c, p, k) {
         function v() {
-          G && A && H && (G(U), G = null);
+          G && A && V && (G(U), G = null);
         }
         p = l(c, "link", { rel: "stylesheet", href: p, media: "all" });
-        var A = !1, H = !0, U = null, G = k || null;
+        var A = !1, V = !0, U = null, G = k || null;
         o ? (p.onload = function() {
           A = !0, v();
         }, p.onerror = function() {
@@ -8052,12 +8052,12 @@ function Zf() {
       function F(c, p, k, v) {
         var A = c.c.getElementsByTagName("head")[0];
         if (A) {
-          var H = l(c, "script", { src: p }), U = !1;
-          return H.onload = H.onreadystatechange = function() {
-            U || this.readyState && this.readyState != "loaded" && this.readyState != "complete" || (U = !0, k && k(null), H.onload = H.onreadystatechange = null, H.parentNode.tagName == "HEAD" && A.removeChild(H));
-          }, A.appendChild(H), setTimeout(function() {
+          var V = l(c, "script", { src: p }), U = !1;
+          return V.onload = V.onreadystatechange = function() {
+            U || this.readyState && this.readyState != "loaded" && this.readyState != "complete" || (U = !0, k && k(null), V.onload = V.onreadystatechange = null, V.parentNode.tagName == "HEAD" && A.removeChild(V));
+          }, A.appendChild(V), setTimeout(function() {
             U || (U = !0, k && k(Error("Script load timeout")));
-          }, v || 5e3), H;
+          }, v || 5e3), V;
         }
         return null;
       }
@@ -8082,7 +8082,7 @@ function Zf() {
         for (var p = [], k = 0; k < arguments.length; k++) p.push(arguments[k].replace(/[\W_]+/g, "").toLowerCase());
         return p.join(this.a);
       };
-      function V(c, p) {
+      function q(c, p) {
         this.c = c, this.f = 4, this.a = "n";
         var k = (p || "n4").match(/^([nio])([1-9])$/i);
         k && (this.a = k[1], this.f = parseInt(k[2], 10));
@@ -8132,8 +8132,8 @@ function Zf() {
       function Ht(c, p, k) {
         var v = [], A;
         for (A in p) if (p.hasOwnProperty(A)) {
-          var H = c.c[A];
-          H && v.push(H(p[A], k));
+          var V = c.c[A];
+          V && v.push(V(p[A], k));
         }
         return v;
       }
@@ -8146,8 +8146,8 @@ function Zf() {
       function se(c) {
         return "display:block;position:absolute;top:-9999px;left:-9999px;font-size:300px;width:auto;height:auto;line-height:normal;margin:0;padding:0;font-variant:normal;white-space:nowrap;font-family:" + Me(c.c) + ";" + ("font-style:" + je(c) + ";font-weight:" + (c.f + "00") + ";");
       }
-      function M(c, p, k, v, A, H) {
-        this.g = c, this.j = p, this.a = v, this.c = k, this.f = A || 3e3, this.h = H || void 0;
+      function M(c, p, k, v, A, V) {
+        this.g = c, this.j = p, this.a = v, this.c = k, this.f = A || 3e3, this.h = V || void 0;
       }
       M.prototype.start = function() {
         var c = this.c.o.document, p = this, k = r(), v = new Promise(function(U, G) {
@@ -8159,17 +8159,17 @@ function Zf() {
             });
           }
           me();
-        }), A = null, H = new Promise(function(U, G) {
+        }), A = null, V = new Promise(function(U, G) {
           A = setTimeout(G, p.f);
         });
-        Promise.race([H, v]).then(function() {
+        Promise.race([V, v]).then(function() {
           A && (clearTimeout(A), A = null), p.g(p.a);
         }, function() {
           p.j(p.a);
         });
       };
-      function ke(c, p, k, v, A, H, U) {
-        this.v = c, this.B = p, this.c = k, this.a = v, this.s = U || "BESbswy", this.f = {}, this.w = A || 3e3, this.u = H || null, this.m = this.j = this.h = this.g = null, this.g = new ne(this.c, this.s), this.h = new ne(this.c, this.s), this.j = new ne(this.c, this.s), this.m = new ne(this.c, this.s), c = new V(this.a.c + ",serif", fe(this.a)), c = se(c), this.g.a.style.cssText = c, c = new V(this.a.c + ",sans-serif", fe(this.a)), c = se(c), this.h.a.style.cssText = c, c = new V("serif", fe(this.a)), c = se(c), this.j.a.style.cssText = c, c = new V("sans-serif", fe(this.a)), c = se(c), this.m.a.style.cssText = c, ee(this.g), ee(this.h), ee(this.j), ee(this.m);
+      function ke(c, p, k, v, A, V, U) {
+        this.v = c, this.B = p, this.c = k, this.a = v, this.s = U || "BESbswy", this.f = {}, this.w = A || 3e3, this.u = V || null, this.m = this.j = this.h = this.g = null, this.g = new ne(this.c, this.s), this.h = new ne(this.c, this.s), this.j = new ne(this.c, this.s), this.m = new ne(this.c, this.s), c = new q(this.a.c + ",serif", fe(this.a)), c = se(c), this.g.a.style.cssText = c, c = new q(this.a.c + ",sans-serif", fe(this.a)), c = se(c), this.h.a.style.cssText = c, c = new q("serif", fe(this.a)), c = se(c), this.j.a.style.cssText = c, c = new q("sans-serif", fe(this.a)), c = se(c), this.m.a.style.cssText = c, ee(this.g), ee(this.h), ee(this.j), ee(this.m);
       }
       var W = { D: "serif", C: "sans-serif" }, Ce = null;
       function mt() {
@@ -8225,12 +8225,12 @@ function Zf() {
         this.c = new i(this.j, c.context || this.j), this.g = c.events !== !1, this.f = c.classes !== !1, g(this, new Ze(this.c, c), c);
       };
       function h(c, p, k, v, A) {
-        var H = --c.h == 0;
+        var V = --c.h == 0;
         (c.f || c.g) && setTimeout(function() {
           var U = A || null, G = v || null || {};
-          if (k.length === 0 && H) wt(p.a);
+          if (k.length === 0 && V) wt(p.a);
           else {
-            p.f += k.length, H && (p.j = H);
+            p.f += k.length, V && (p.j = V);
             var me, Re = [];
             for (me = 0; me < k.length; me++) {
               var Oe = k[me], He = G[Oe.c], ot = p.a, jt = Oe;
@@ -8247,9 +8247,9 @@ function Zf() {
       function g(c, p, k) {
         var A = [], v = k.timeout;
         gt(p);
-        var A = Ht(c.a, k, c.c), H = new rt(c.c, p, v);
+        var A = Ht(c.a, k, c.c), V = new rt(c.c, p, v);
         for (c.h = A.length, p = 0, k = A.length; p < k; p++) A[p].load(function(U, G, me) {
-          h(c, H, U, G, me);
+          h(c, V, U, G, me);
         });
       }
       function w(c, p) {
@@ -8257,11 +8257,11 @@ function Zf() {
       }
       w.prototype.load = function(c) {
         function p() {
-          if (H["__mti_fntLst" + v]) {
-            var U = H["__mti_fntLst" + v](), G = [], me;
+          if (V["__mti_fntLst" + v]) {
+            var U = V["__mti_fntLst" + v](), G = [], me;
             if (U) for (var Re = 0; Re < U.length; Re++) {
               var Oe = U[Re].fontfamily;
-              U[Re].fontStyle != null && U[Re].fontWeight != null ? (me = U[Re].fontStyle + U[Re].fontWeight, G.push(new V(Oe, me))) : G.push(new V(Oe));
+              U[Re].fontStyle != null && U[Re].fontWeight != null ? (me = U[Re].fontStyle + U[Re].fontWeight, G.push(new q(Oe, me))) : G.push(new q(Oe));
             }
             c(G);
           } else setTimeout(function() {
@@ -8270,9 +8270,9 @@ function Zf() {
         }
         var k = this, v = k.a.projectId, A = k.a.version;
         if (v) {
-          var H = k.c.o;
+          var V = k.c.o;
           F(this.c, (k.a.api || "https://fast.fonts.net/jsapi") + "/" + v + ".js" + (A ? "?v=" + A : ""), function(U) {
-            U ? c([]) : (H["__MonotypeConfiguration__" + v] = function() {
+            U ? c([]) : (V["__MonotypeConfiguration__" + v] = function() {
               return k.a;
             }, p());
           }).id = "__MonotypeAPIScript__" + v;
@@ -8282,40 +8282,40 @@ function Zf() {
         this.c = c, this.a = p;
       }
       T.prototype.load = function(c) {
-        var p, k, v = this.a.urls || [], A = this.a.families || [], H = this.a.testStrings || {}, U = new D();
-        for (p = 0, k = v.length; p < k; p++) O(this.c, v[p], we(U));
+        var p, k, v = this.a.urls || [], A = this.a.families || [], V = this.a.testStrings || {}, U = new D();
+        for (p = 0, k = v.length; p < k; p++) L(this.c, v[p], we(U));
         var G = [];
-        for (p = 0, k = A.length; p < k; p++) if (v = A[p].split(":"), v[1]) for (var me = v[1].split(","), Re = 0; Re < me.length; Re += 1) G.push(new V(v[0], me[Re]));
-        else G.push(new V(v[0]));
+        for (p = 0, k = A.length; p < k; p++) if (v = A[p].split(":"), v[1]) for (var me = v[1].split(","), Re = 0; Re < me.length; Re += 1) G.push(new q(v[0], me[Re]));
+        else G.push(new q(v[0]));
         te(U, function() {
-          c(G, H);
+          c(G, V);
         });
       };
       function S(c, p) {
         c ? this.c = c : this.c = C, this.a = [], this.f = [], this.g = p || "";
       }
       var C = "https://fonts.googleapis.com/css";
-      function B(c, p) {
+      function N(c, p) {
         for (var k = p.length, v = 0; v < k; v++) {
           var A = p[v].split(":");
           A.length == 3 && c.f.push(A.pop());
-          var H = "";
-          A.length == 2 && A[1] != "" && (H = ":"), c.a.push(A.join(H));
+          var V = "";
+          A.length == 2 && A[1] != "" && (V = ":"), c.a.push(A.join(V));
         }
       }
-      function L(c) {
+      function I(c) {
         if (c.a.length == 0) throw Error("No fonts to load!");
         if (c.c.indexOf("kit=") != -1) return c.c;
         for (var p = c.a.length, k = [], v = 0; v < p; v++) k.push(c.a[v].replace(/ /g, "+"));
         return p = c.c + "?family=" + k.join("%7C"), 0 < c.f.length && (p += "&subset=" + c.f.join(",")), 0 < c.g.length && (p += "&text=" + encodeURIComponent(c.g)), p;
       }
-      function I(c) {
+      function O(c) {
         this.f = c, this.a = [], this.c = {};
       }
-      var E = { latin: "BESbswy", "latin-ext": "çöüğş", cyrillic: "йяЖ", greek: "αβΣ", khmer: "កខគ", Hanuman: "កខគ" }, j = { thin: "1", extralight: "2", "extra-light": "2", ultralight: "2", "ultra-light": "2", light: "3", regular: "4", book: "4", medium: "5", "semi-bold": "6", semibold: "6", "demi-bold": "6", demibold: "6", bold: "7", "extra-bold": "8", extrabold: "8", "ultra-bold": "8", ultrabold: "8", black: "9", heavy: "9", l: "3", r: "4", b: "7" }, N = { i: "i", italic: "i", n: "n", normal: "n" }, z = /^(thin|(?:(?:extra|ultra)-?)?light|regular|book|medium|(?:(?:semi|demi|extra|ultra)-?)?bold|black|heavy|l|r|b|[1-9]00)?(n|i|normal|italic)?$/;
+      var E = { latin: "BESbswy", "latin-ext": "çöüğş", cyrillic: "йяЖ", greek: "αβΣ", khmer: "កខគ", Hanuman: "កខគ" }, j = { thin: "1", extralight: "2", "extra-light": "2", ultralight: "2", "ultra-light": "2", light: "3", regular: "4", book: "4", medium: "5", "semi-bold": "6", semibold: "6", "demi-bold": "6", demibold: "6", bold: "7", "extra-bold": "8", extrabold: "8", "ultra-bold": "8", ultrabold: "8", black: "9", heavy: "9", l: "3", r: "4", b: "7" }, B = { i: "i", italic: "i", n: "n", normal: "n" }, z = /^(thin|(?:(?:extra|ultra)-?)?light|regular|book|medium|(?:(?:semi|demi|extra|ultra)-?)?bold|black|heavy|l|r|b|[1-9]00)?(n|i|normal|italic)?$/;
       function K(c) {
         for (var p = c.f.length, k = 0; k < p; k++) {
-          var v = c.f[k].split(":"), A = v[0].replace(/\+/g, " "), H = ["n4"];
+          var v = c.f[k].split(":"), A = v[0].replace(/\+/g, " "), V = ["n4"];
           if (2 <= v.length) {
             var U, G = v[1];
             if (U = [], G) for (var G = G.split(","), me = G.length, Re = 0; Re < me; Re++) {
@@ -8324,16 +8324,16 @@ function Zf() {
                 var He = z.exec(Oe.toLowerCase());
                 if (He == null) Oe = "";
                 else {
-                  if (Oe = He[2], Oe = Oe == null || Oe == "" ? "n" : N[Oe], He = He[1], He == null || He == "") He = "4";
+                  if (Oe = He[2], Oe = Oe == null || Oe == "" ? "n" : B[Oe], He = He[1], He == null || He == "") He = "4";
                   else var ot = j[He], He = ot || (isNaN(He) ? "4" : He.substr(0, 1));
                   Oe = [Oe, He].join("");
                 }
               } else Oe = "";
               Oe && U.push(Oe);
             }
-            0 < U.length && (H = U), v.length == 3 && (v = v[2], U = [], v = v ? v.split(",") : U, 0 < v.length && (v = E[v[0]]) && (c.c[A] = v));
+            0 < U.length && (V = U), v.length == 3 && (v = v[2], U = [], v = v ? v.split(",") : U, 0 < v.length && (v = E[v[0]]) && (c.c[A] = v));
           }
-          for (c.c[A] || (v = E[A]) && (c.c[A] = v), v = 0; v < H.length; v += 1) c.a.push(new V(A, H[v]));
+          for (c.c[A] || (v = E[A]) && (c.c[A] = v), v = 0; v < V.length; v += 1) c.a.push(new q(A, V[v]));
         }
       }
       function X(c, p) {
@@ -8342,10 +8342,10 @@ function Zf() {
       var he = { Arimo: !0, Cousine: !0, Tinos: !0 };
       X.prototype.load = function(c) {
         var p = new D(), k = this.c, v = new S(this.a.api, this.a.text), A = this.a.families;
-        B(v, A);
-        var H = new I(A);
-        K(H), O(k, L(v), we(p)), te(p, function() {
-          c(H.a, H.c, he);
+        N(v, A);
+        var V = new O(A);
+        K(V), L(k, I(v), we(p)), te(p, function() {
+          c(V.a, V.c, he);
         });
       };
       function re(c, p) {
@@ -8357,7 +8357,7 @@ function Zf() {
           if (v) c([]);
           else if (k.Typekit && k.Typekit.config && k.Typekit.config.fn) {
             v = k.Typekit.config.fn;
-            for (var A = [], H = 0; H < v.length; H += 2) for (var U = v[H], G = v[H + 1], me = 0; me < G.length; me++) A.push(new V(U, G[me]));
+            for (var A = [], V = 0; V < v.length; V += 2) for (var U = v[V], G = v[V + 1], me = 0; me < G.length; me++) A.push(new q(U, G[me]));
             try {
               k.Typekit.load({ events: !1, classes: !1, async: !0 });
             } catch {
@@ -8371,10 +8371,10 @@ function Zf() {
       }
       De.prototype.load = function(c) {
         var p = this.f.id, k = this.c.o, v = this;
-        p ? (k.__webfontfontdeckmodule__ || (k.__webfontfontdeckmodule__ = {}), k.__webfontfontdeckmodule__[p] = function(A, H) {
-          for (var U = 0, G = H.fonts.length; U < G; ++U) {
-            var me = H.fonts[U];
-            v.a.push(new V(me.name, pt("font-weight:" + me.weight + ";font-style:" + me.style)));
+        p ? (k.__webfontfontdeckmodule__ || (k.__webfontfontdeckmodule__ = {}), k.__webfontfontdeckmodule__[p] = function(A, V) {
+          for (var U = 0, G = V.fonts.length; U < G; ++U) {
+            var me = V.fonts[U];
+            v.a.push(new q(me.name, pt("font-weight:" + me.weight + ";font-style:" + me.style)));
           }
           c(v.a);
         }, F(this.c, (this.f.api || "https://f.fontdeck.com/s/css/js/") + b(this.c) + "/" + p + ".js", function(A) {
@@ -8460,7 +8460,7 @@ const Qf = {
 }, Ph = ["name", "value", "required", "checked", "onChange"], $h = { class: "radio-label" }, Fh = {
   key: 6,
   class: "field-error"
-}, Bh = { class: "form-actions" }, Nh = ["disabled"], Mh = {
+}, Nh = { class: "form-actions" }, Bh = ["disabled"], Mh = {
   key: 0,
   class: "loading-spinner-inline"
 }, Dh = { key: 1 }, qh = { class: "header-content" }, Vh = ["src", "alt"], Hh = { class: "header-info" }, Uh = { class: "status" }, jh = {
@@ -8526,7 +8526,7 @@ const Qf = {
 }, $d = { class: "carousel-items" }, Fd = {
   key: 0,
   class: "product-image-compact"
-}, Bd = ["src", "alt"], Nd = { class: "product-info-compact" }, Md = { class: "product-text-area" }, Dd = { class: "product-title-compact" }, qd = {
+}, Nd = ["src", "alt"], Bd = { class: "product-info-compact" }, Md = { class: "product-text-area" }, Dd = { class: "product-title-compact" }, qd = {
   key: 0,
   class: "product-variant-compact"
 }, Vd = { class: "product-price-compact" }, Hd = { class: "product-actions-compact" }, Ud = ["onClick"], jd = {
@@ -8574,14 +8574,14 @@ const Qf = {
       loading: f,
       errorMessage: m,
       showError: b,
-      loadingHistory: O,
+      loadingHistory: L,
       hasStartedChat: F,
       connectionStatus: D,
       sendMessage: we,
       loadChatHistory: te,
       connect: pe,
       reconnect: ge,
-      cleanup: V,
+      cleanup: q,
       humanAgent: oe,
       onTakeover: Me,
       submitRating: fe,
@@ -8663,9 +8663,9 @@ const Qf = {
       const y = _.target;
       Ve.value = y.value;
     }, sn = (_) => {
-      _.key === "Enter" && !_.shiftKey && (_.preventDefault(), _.stopPropagation(), I());
+      _.key === "Enter" && !_.shiftKey && (_.preventDefault(), _.stopPropagation(), O());
     }, kt = (_) => {
-      _.key === "Enter" && !_.shiftKey && (_.preventDefault(), _.stopPropagation(), I());
+      _.key === "Enter" && !_.shiftKey && (_.preventDefault(), _.stopPropagation(), O());
     }, ct = de(!0), rt = de(((ti = window.__INITIAL_DATA__) == null ? void 0 : ti.initialToken) || localStorage.getItem(Qs));
     qe(() => !!rt.value), a();
     const tt = window.__INITIAL_DATA__;
@@ -8681,12 +8681,15 @@ const Qf = {
       messageNameStyles: T,
       headerBorderStyles: S,
       photoUrl: C,
-      shadowStyle: B
+      shadowStyle: N
     } = Ju(i);
     qe(() => u.value.some(
       (_) => _.message_type === "form" && (!_.isSubmitted || _.isSubmitted === !1)
     ));
-    const L = qe(() => F.value && ee.value || ut.value ? D.value === "connected" && !f.value : Tn(ne.value.trim()) && D.value === "connected" && !f.value), I = async () => {
+    const I = qe(() => {
+      var _;
+      return F.value && ee.value || ut.value ? D.value === "connected" && !f.value : Tn(ne.value.trim()) && D.value === "connected" && !f.value || ((_ = window.__INITIAL_DATA__) == null ? void 0 : _.workflow);
+    }), O = async () => {
       if (!Ve.value.trim()) return;
       !F.value && ne.value && await j(), await we(Ve.value, ne.value), Ve.value = "";
       const _ = document.querySelector('input[placeholder*="Type a message"]');
@@ -8694,7 +8697,7 @@ const Qf = {
         Ce();
       }, 500);
     }, E = (_) => {
-      _.key === "Enter" && !_.shiftKey && (_.preventDefault(), _.stopPropagation(), I());
+      _.key === "Enter" && !_.shiftKey && (_.preventDefault(), _.stopPropagation(), O());
     }, j = async () => {
       var _, y, d;
       try {
@@ -8713,13 +8716,13 @@ const Qf = {
         if (Y.status === 401)
           return ee.value = !1, !1;
         const Te = await Y.json();
-        return Te.token && (rt.value = Te.token, localStorage.setItem(Qs, Te.token), window.parent.postMessage({ type: "TOKEN_UPDATE", token: Te.token }, "*")), ee.value = !0, await pe() ? (await N(), (_ = Te.agent) != null && _.customization && l(Te.agent.customization), Te.agent && !(Te != null && Te.human_agent) && (o.value = Te.agent.name), Te != null && Te.human_agent && (oe.value = Te.human_agent), ((y = Te.agent) == null ? void 0 : y.workflow) !== void 0 && (window.__INITIAL_DATA__ = window.__INITIAL_DATA__ || {}, window.__INITIAL_DATA__.workflow = Te.agent.workflow), (d = Te.agent) != null && d.workflow && (console.log("Getting workflow state after authorization"), await Ze()), !0) : (console.error("Failed to connect to chat service"), !1);
+        return Te.token && (rt.value = Te.token, localStorage.setItem(Qs, Te.token), window.parent.postMessage({ type: "TOKEN_UPDATE", token: Te.token }, "*")), ee.value = !0, await pe() ? (await B(), (_ = Te.agent) != null && _.customization && l(Te.agent.customization), Te.agent && !(Te != null && Te.human_agent) && (o.value = Te.agent.name), Te != null && Te.human_agent && (oe.value = Te.human_agent), ((y = Te.agent) == null ? void 0 : y.workflow) !== void 0 && (window.__INITIAL_DATA__ = window.__INITIAL_DATA__ || {}, window.__INITIAL_DATA__.workflow = Te.agent.workflow), (d = Te.agent) != null && d.workflow && (console.log("Getting workflow state after authorization"), await Ze()), !0) : (console.error("Failed to connect to chat service"), !1);
       } catch (Z) {
         return console.error("Error checking authorization:", Z), ee.value = !1, !1;
       } finally {
         ct.value = !1;
       }
-    }, N = async () => {
+    }, B = async () => {
       !F.value && ee.value && (F.value = !0, await te());
     }, z = () => {
       it.value && (it.value.scrollTop = it.value.scrollHeight);
@@ -8740,7 +8743,7 @@ const Qf = {
     }, { deep: !0 });
     const K = async () => {
       await ge() && await j();
-    }, X = de(!1), he = de(0), re = de(""), De = de(""), ae = de(0), Ie = de(!1), c = de({}), p = de(!1), k = de({}), v = de(!1), A = de(null), H = de("Start Chat"), U = de(!1), G = de(null);
+    }, X = de(!1), he = de(0), re = de(""), De = de(""), ae = de(0), Ie = de(!1), c = de({}), p = de(!1), k = de({}), v = de(!1), A = de(null), V = de("Start Chat"), U = de(!1), G = de(null);
     qe(() => {
       var y;
       const _ = u.value[u.value.length - 1];
@@ -8880,13 +8883,13 @@ const Qf = {
         type: "VIEW_PRODUCT",
         productId: _
       }, "*");
-    }, Fl = (_) => _ ? _.replace(/https?:\/\/[^\s\)]+/g, "[link removed]") : "", Bl = async () => {
+    }, Fl = (_) => _ ? _.replace(/https?:\/\/[^\s\)]+/g, "[link removed]") : "", Nl = async () => {
       try {
         v.value = !1, A.value = null, await gt();
       } catch (_) {
         console.error("Failed to proceed workflow:", _);
       }
-    }, Bs = async (_) => {
+    }, Ns = async (_) => {
       try {
         if (!_.userInputValue || !_.userInputValue.trim())
           return;
@@ -8902,18 +8905,18 @@ const Qf = {
         const ve = 50;
         for (; !((_ = window.__INITIAL_DATA__) != null && _.widgetId) && Z < ve; )
           await new Promise((Te) => setTimeout(Te, 100)), Z++;
-        return (y = window.__INITIAL_DATA__) != null && y.widgetId ? await j() ? ((d = window.__INITIAL_DATA__) != null && d.workflow && ee.value && await Ze(), !0) : (D.value = "connected", !1) : (console.error("Widget data not available after waiting"), !1);
+        return (y = window.__INITIAL_DATA__) != null && y.widgetId ? await j() ? ((d = window.__INITIAL_DATA__) != null && d.workflow && ee.value && await Ze(), !0) : (console.log("$$$ isAuthorized false, setting connection status to connected"), D.value = "connected", !1) : (console.error("Widget data not available after waiting"), !1);
       } catch (Z) {
         return console.error("Failed to initialize widget:", Z), !1;
       }
-    }, Nl = () => {
+    }, Bl = () => {
       Me(async () => {
         await j();
       }), window.addEventListener("message", (_) => {
         _.data.type === "SCROLL_TO_BOTTOM" && z(), _.data.type === "TOKEN_RECEIVED" && localStorage.setItem(Qs, _.data.token);
       }), wt((_) => {
         var y, d;
-        if (console.log("Workflow state received in component:", _), console.log("Data type:", _.type), console.log("Form data:", _.form_data), H.value = _.button_text || "Start Chat", _.type === "landing_page")
+        if (console.log("Workflow state received in component:", _), console.log("Data type:", _.type), console.log("Form data:", _.form_data), V.value = _.button_text || "Start Chat", _.type === "landing_page")
           console.log("Setting landing page data:", _.landing_page_data), A.value = _.landing_page_data, v.value = !0, U.value = !1, console.log("Landing page state - show:", v.value, "data:", A.value);
         else if (_.type === "form" || _.type === "display_form")
           if (console.log("Form full screen flag:", (y = _.form_data) == null ? void 0 : y.form_full_screen), ((d = _.form_data) == null ? void 0 : d.form_full_screen) === !0)
@@ -8947,15 +8950,15 @@ const Qf = {
     }, Dl = async () => {
       me.value = !1, u.value = [], await Ml();
     };
-    Bo(async () => {
-      await Xr(), Nl(), ke(), (() => {
+    No(async () => {
+      await Xr(), Bl(), ke(), (() => {
         const y = u.value.length > 0, d = D.value === "connected", Z = document.querySelector('input[type="text"], textarea') !== null;
         return y || d || Z;
       })() && setTimeout(Ce, 100);
     }), Fr(() => {
       window.removeEventListener("message", (_) => {
         _.data.type === "SCROLL_TO_BOTTOM" && z();
-      }), M && (M.disconnect(), M = null), ke.timeoutId && (clearTimeout(ke.timeoutId), ke.timeoutId = null), mt(), V();
+      }), M && (M.disconnect(), M = null), ke.timeoutId && (clearTimeout(ke.timeoutId), ke.timeoutId = null), mt(), q();
     });
     const ut = qe(() => i.value.chat_style === "ASK_ANYTHING"), ql = qe(() => {
       const _ = {
@@ -8974,23 +8977,23 @@ const Qf = {
     }), ei = qe(() => ut.value && u.value.length === 0);
     return (_, y) => (P(), $("div", {
       class: Le(["chat-container", { collapsed: !Ht.value, "ask-anything-style": ut.value }]),
-      style: Ee({ ...q(B), ...ql.value })
+      style: Ee({ ...H(N), ...ql.value })
     }, [
       ct.value ? (P(), $("div", Qf, y[8] || (y[8] = [
-        Ec('<div class="loading-spinner" data-v-f684c83e><div class="dot" data-v-f684c83e></div><div class="dot" data-v-f684c83e></div><div class="dot" data-v-f684c83e></div></div><div class="loading-text" data-v-f684c83e>Initializing chat...</div>', 2)
+        Ec('<div class="loading-spinner" data-v-e9a5dbdc><div class="dot" data-v-e9a5dbdc></div><div class="dot" data-v-e9a5dbdc></div><div class="dot" data-v-e9a5dbdc></div></div><div class="loading-text" data-v-e9a5dbdc>Initializing chat...</div>', 2)
       ]))) : ie("", !0),
-      !ct.value && q(D) !== "connected" ? (P(), $("div", {
+      !ct.value && H(D) !== "connected" ? (P(), $("div", {
         key: 1,
-        class: Le(["connection-status", q(D)])
+        class: Le(["connection-status", H(D)])
       }, [
-        q(D) === "connecting" ? (P(), $("div", Xf, y[9] || (y[9] = [
+        H(D) === "connecting" ? (P(), $("div", Xf, y[9] || (y[9] = [
           yt(" Connecting to chat service... ", -1),
           x("div", { class: "loading-dots" }, [
             x("div", { class: "dot" }),
             x("div", { class: "dot" }),
             x("div", { class: "dot" })
           ], -1)
-        ]))) : q(D) === "failed" ? (P(), $("div", eh, [
+        ]))) : H(D) === "failed" ? (P(), $("div", eh, [
           y[10] || (y[10] = yt(" Connection failed. ", -1)),
           x("button", {
             onClick: K,
@@ -8998,38 +9001,38 @@ const Qf = {
           }, " Click here to reconnect ")
         ])) : ie("", !0)
       ], 2)) : ie("", !0),
-      q(b) ? (P(), $("div", {
+      H(b) ? (P(), $("div", {
         key: 2,
         class: "error-alert",
-        style: Ee(q(h))
-      }, ce(q(m)), 5)) : ie("", !0),
+        style: Ee(H(h))
+      }, ce(H(m)), 5)) : ie("", !0),
       ei.value ? (P(), $("div", {
         key: 3,
         class: "welcome-message-section",
-        style: Ee(q(Ut))
+        style: Ee(H(Ut))
       }, [
         x("div", th, [
           x("div", nh, [
-            q(C) ? (P(), $("img", {
+            H(C) ? (P(), $("img", {
               key: 0,
-              src: q(C),
-              alt: q(o),
+              src: H(C),
+              alt: H(o),
               class: "welcome-avatar"
             }, null, 8, sh)) : ie("", !0),
-            x("h1", rh, ce(q(i).welcome_title || `Welcome to ${q(o)}`), 1),
-            x("p", ih, ce(q(i).welcome_subtitle || "I'm here to help you with anything you need. What can I assist you with today?"), 1)
+            x("h1", rh, ce(H(i).welcome_title || `Welcome to ${H(o)}`), 1),
+            x("p", ih, ce(H(i).welcome_subtitle || "I'm here to help you with anything you need. What can I assist you with today?"), 1)
           ])
         ]),
         x("div", oh, [
-          !q(F) && !ee.value && !ut.value ? (P(), $("div", lh, [
+          !H(F) && !ee.value && !ut.value ? (P(), $("div", lh, [
             rn(x("input", {
               "onUpdate:modelValue": y[0] || (y[0] = (d) => ne.value = d),
               type: "email",
               placeholder: "Enter your email address",
-              disabled: q(f) || q(D) !== "connected",
+              disabled: H(f) || H(D) !== "connected",
               class: Le([{
-                invalid: ne.value.trim() && !q(Tn)(ne.value.trim()),
-                disabled: q(D) !== "connected"
+                invalid: ne.value.trim() && !H(Tn)(ne.value.trim()),
+                disabled: H(D) !== "connected"
               }, "welcome-email-input"])
             }, null, 10, ah), [
               [an, ne.value]
@@ -9039,20 +9042,20 @@ const Qf = {
             rn(x("input", {
               "onUpdate:modelValue": y[1] || (y[1] = (d) => Ve.value = d),
               type: "text",
-              placeholder: q(D) === "connected" ? "Ask me anything..." : "Connecting...",
+              placeholder: I.value ? "Ask me anything..." : "Connecting...",
               onKeypress: E,
               onInput: se,
               onChange: se,
-              disabled: !L.value,
-              class: Le([{ disabled: q(D) !== "connected" }, "welcome-message-field"])
+              disabled: !I.value,
+              class: Le([{ disabled: !I.value }, "welcome-message-field"])
             }, null, 42, uh), [
               [an, Ve.value]
             ]),
             x("button", {
               class: "welcome-send-button",
-              style: Ee(q(w)),
-              onClick: I,
-              disabled: !Ve.value.trim() || !L.value
+              style: Ee(H(w)),
+              onClick: O,
+              disabled: !Ve.value.trim() || !I.value
             }, y[11] || (y[11] = [
               x("svg", {
                 width: "20",
@@ -9074,7 +9077,7 @@ const Qf = {
         ]),
         x("div", {
           class: "powered-by-welcome",
-          style: Ee(q(T))
+          style: Ee(H(T))
         }, y[12] || (y[12] = [
           x("svg", {
             class: "chattermate-logo",
@@ -9100,7 +9103,7 @@ const Qf = {
       v.value && A.value ? (P(), $("div", {
         key: 4,
         class: "landing-page-fullscreen",
-        style: Ee(q(Ut))
+        style: Ee(H(Ut))
       }, [
         x("div", hh, [
           x("div", dh, [
@@ -9110,13 +9113,13 @@ const Qf = {
           x("div", mh, [
             x("button", {
               class: "landing-page-button",
-              onClick: Bl
-            }, ce(H.value), 1)
+              onClick: Nl
+            }, ce(V.value), 1)
           ])
         ]),
         x("div", {
           class: "powered-by-landing",
-          style: Ee(q(T))
+          style: Ee(H(T))
         }, y[13] || (y[13] = [
           x("svg", {
             class: "chattermate-logo",
@@ -9141,7 +9144,7 @@ const Qf = {
       ], 4)) : U.value && G.value ? (P(), $("div", {
         key: 5,
         class: "form-fullscreen",
-        style: Ee(q(Ut))
+        style: Ee(H(Ut))
       }, [
         x("div", _h, [
           G.value.title || G.value.description ? (P(), $("div", yh, [
@@ -9244,26 +9247,26 @@ const Qf = {
               ]);
             }), 128))
           ]),
-          x("div", Bh, [
+          x("div", Nh, [
             x("button", {
               onClick: y[2] || (y[2] = () => {
                 console.log("Submit button clicked!"), Pl();
               }),
               disabled: p.value,
               class: "submit-form-button",
-              style: Ee(q(w))
+              style: Ee(H(w))
             }, [
               p.value ? (P(), $("span", Mh, y[15] || (y[15] = [
                 x("div", { class: "dot" }, null, -1),
                 x("div", { class: "dot" }, null, -1),
                 x("div", { class: "dot" }, null, -1)
               ]))) : (P(), $("span", Dh, ce(G.value.submit_button_text || "Submit"), 1))
-            ], 12, Nh)
+            ], 12, Bh)
           ])
         ]),
         x("div", {
           class: "powered-by-landing",
-          style: Ee(q(T))
+          style: Ee(H(T))
         }, y[16] || (y[16] = [
           x("svg", {
             class: "chattermate-logo",
@@ -9289,35 +9292,35 @@ const Qf = {
         Ht.value ? (P(), $("div", {
           key: 0,
           class: Le(["chat-panel", { "ask-anything-chat": ut.value }]),
-          style: Ee(q(Ut))
+          style: Ee(H(Ut))
         }, [
           ut.value ? ie("", !0) : (P(), $("div", {
             key: 0,
             class: "chat-header",
-            style: Ee(q(S))
+            style: Ee(H(S))
           }, [
             x("div", qh, [
-              Re.value || q(C) ? (P(), $("img", {
+              Re.value || H(C) ? (P(), $("img", {
                 key: 0,
-                src: Re.value || q(C),
-                alt: q(oe).human_agent_name || q(o),
+                src: Re.value || H(C),
+                alt: H(oe).human_agent_name || H(o),
                 class: "header-avatar"
               }, null, 8, Vh)) : ie("", !0),
               x("div", Hh, [
                 x("h3", {
-                  style: Ee(q(T))
-                }, ce(q(oe).human_agent_name || q(o)), 5),
+                  style: Ee(H(T))
+                }, ce(H(oe).human_agent_name || H(o)), 5),
                 x("div", Uh, [
                   y[17] || (y[17] = x("span", { class: "status-indicator online" }, null, -1)),
                   x("span", {
                     class: "status-text",
-                    style: Ee(q(T))
+                    style: Ee(H(T))
                   }, "Online", 4)
                 ])
               ])
             ])
           ], 4)),
-          q(O) ? (P(), $("div", jh, y[18] || (y[18] = [
+          H(L) ? (P(), $("div", jh, y[18] || (y[18] = [
             x("div", { class: "loading-spinner" }, [
               x("div", { class: "dot" }),
               x("div", { class: "dot" }),
@@ -9329,7 +9332,7 @@ const Qf = {
             ref_key: "messagesContainer",
             ref: it
           }, [
-            (P(!0), $(Fe, null, xt(q(u), (d, Z) => {
+            (P(!0), $(Fe, null, xt(H(u), (d, Z) => {
               var ve, Y, Te, Ge, zt, ni, si, ri, ii, oi, li, ai, ci, ui, fi, hi, di;
               return P(), $("div", {
                 key: Z,
@@ -9340,10 +9343,10 @@ const Qf = {
               }, [
                 x("div", {
                   class: "message-bubble",
-                  style: Ee(d.message_type === "system" || d.message_type === "rating" || d.message_type === "product" || d.shopify_output ? {} : d.message_type === "user" ? q(w) : q(g))
+                  style: Ee(d.message_type === "system" || d.message_type === "rating" || d.message_type === "product" || d.shopify_output ? {} : d.message_type === "user" ? H(w) : H(g))
                 }, [
                   d.message_type === "rating" ? (P(), $("div", zh, [
-                    x("p", Wh, "Rate the chat session that you had with " + ce(d.agent_name || q(oe).human_agent_name || q(o) || "our agent"), 1),
+                    x("p", Wh, "Rate the chat session that you had with " + ce(d.agent_name || H(oe).human_agent_name || H(o) || "our agent"), 1),
                     x("div", {
                       class: Le(["star-rating", { submitted: Ie.value || d.isSubmitted }])
                     }, [
@@ -9377,7 +9380,7 @@ const Qf = {
                         onClick: (R) => $s(d.session_id, ae.value, d.feedback),
                         disabled: Ie.value || !ae.value,
                         class: "submit-rating-button",
-                        style: Ee({ backgroundColor: q(i).accent_color || "var(--primary-color)" })
+                        style: Ee({ backgroundColor: H(i).accent_color || "var(--primary-color)" })
                       }, ce(Ie.value ? "Submitting..." : "Submit Rating"), 13, Qh)
                     ])) : ie("", !0),
                     d.isSubmitted && d.finalFeedback ? (P(), $("div", Xh, [
@@ -9392,7 +9395,7 @@ const Qf = {
                     ])) : ie("", !0),
                     x("div", ld, [
                       (P(!0), $(Fe, null, xt((li = (oi = d.attributes) == null ? void 0 : oi.form_data) == null ? void 0 : li.fields, (R) => {
-                        var Wt, Ns;
+                        var Wt, Bs;
                         return P(), $("div", {
                           key: R.name,
                           class: "form-field"
@@ -9471,7 +9474,7 @@ const Qf = {
                               class: "checkbox-label"
                             }, ce(R.placeholder || R.label), 9, _d)
                           ])) : R.type === "radio" ? (P(), $("div", yd, [
-                            (P(!0), $(Fe, null, xt(((Ns = R.options) == null ? void 0 : Ns.split(",")) || [], (Pe) => (P(), $("div", {
+                            (P(!0), $(Fe, null, xt(((Bs = R.options) == null ? void 0 : Bs.split(",")) || [], (Pe) => (P(), $("div", {
                               key: Pe.trim(),
                               class: "radio-option"
                             }, [
@@ -9503,7 +9506,7 @@ const Qf = {
                         },
                         disabled: p.value,
                         class: "form-submit-button",
-                        style: Ee(q(w))
+                        style: Ee(H(w))
                       }, ce(p.value ? "Submitting..." : ((ci = (ai = d.attributes) == null ? void 0 : ai.form_data) == null ? void 0 : ci.submit_button_text) || "Submit"), 13, xd)
                     ])
                   ])) : d.message_type === "user_input" ? (P(), $("div", Sd, [
@@ -9519,22 +9522,22 @@ const Qf = {
                         placeholder: "Type your message here...",
                         rows: "3",
                         onKeydown: [
-                          Ui(Hi((R) => Bs(d), ["ctrl"]), ["enter"]),
-                          Ui(Hi((R) => Bs(d), ["meta"]), ["enter"])
+                          Ui(Hi((R) => Ns(d), ["ctrl"]), ["enter"]),
+                          Ui(Hi((R) => Ns(d), ["meta"]), ["enter"])
                         ]
                       }, null, 40, Ed), [
                         [an, d.userInputValue]
                       ]),
                       x("button", {
                         class: "user-input-submit-button",
-                        onClick: (R) => Bs(d),
+                        onClick: (R) => Ns(d),
                         disabled: !d.userInputValue || !d.userInputValue.trim()
                       }, " Submit ", 8, Ad)
                     ]))
                   ])) : d.shopify_output || d.message_type === "product" ? (P(), $("div", Od, [
                     d.message ? (P(), $("div", {
                       key: 0,
-                      innerHTML: q(ue)(Fl(d.message), { renderer: q(t) }),
+                      innerHTML: H(ue)(Fl(d.message), { renderer: H(t) }),
                       class: "product-message-text"
                     }, null, 8, Ld)) : ie("", !0),
                     (hi = d.shopify_output) != null && hi.products && d.shopify_output.products.length > 0 ? (P(), $("div", Pd, [
@@ -9551,9 +9554,9 @@ const Qf = {
                                 src: R.image.src,
                                 alt: R.title,
                                 class: "product-thumbnail"
-                              }, null, 8, Bd)
+                              }, null, 8, Nd)
                             ])) : ie("", !0),
-                            x("div", Nd, [
+                            x("div", Bd, [
                               x("div", Md, [
                                 x("div", Dd, ce(R.title), 1),
                                 R.variant_title && R.variant_title !== "Default Title" ? (P(), $("div", qd, ce(R.variant_title), 1)) : ie("", !0),
@@ -9562,7 +9565,7 @@ const Qf = {
                               x("div", Hd, [
                                 x("button", {
                                   class: "view-details-button-compact",
-                                  onClick: (Ns) => $l(R.id)
+                                  onClick: (Bs) => $l(R.id)
                                 }, y[21] || (y[21] = [
                                   yt(" View product ", -1),
                                   x("span", { class: "external-link-icon" }, "↗", -1)
@@ -9579,7 +9582,7 @@ const Qf = {
                     ]))) : ie("", !0)
                   ])) : (P(), $("div", {
                     key: 4,
-                    innerHTML: q(ue)(d.message, { renderer: q(t) })
+                    innerHTML: H(ue)(d.message, { renderer: H(t) })
                   }, null, 8, Wd))
                 ], 4),
                 x("div", Kd, [
@@ -9587,7 +9590,7 @@ const Qf = {
                 ])
               ], 2);
             }), 128)),
-            q(f) ? (P(), $("div", Gd, y[25] || (y[25] = [
+            H(f) ? (P(), $("div", Gd, y[25] || (y[25] = [
               x("div", { class: "dot" }, null, -1),
               x("div", { class: "dot" }, null, -1),
               x("div", { class: "dot" }, null, -1)
@@ -9596,30 +9599,30 @@ const Qf = {
           me.value ? (P(), $("div", {
             key: 3,
             class: "new-conversation-section",
-            style: Ee(q(g))
+            style: Ee(H(g))
           }, [
             x("div", tp, [
               y[27] || (y[27] = x("p", { class: "ended-text" }, "This chat has ended.", -1)),
               x("button", {
                 class: "start-new-conversation-button",
-                style: Ee(q(w)),
+                style: Ee(H(w)),
                 onClick: Dl
               }, " Click here to start a new conversation ", 4)
             ])
           ], 4)) : (P(), $("div", {
             key: 2,
             class: Le(["chat-input", { "ask-anything-input": ut.value }]),
-            style: Ee(q(g))
+            style: Ee(H(g))
           }, [
-            !q(F) && !ee.value && !ut.value ? (P(), $("div", Yd, [
+            !H(F) && !ee.value && !ut.value ? (P(), $("div", Yd, [
               rn(x("input", {
                 "onUpdate:modelValue": y[3] || (y[3] = (d) => ne.value = d),
                 type: "email",
                 placeholder: "Enter your email address to begin",
-                disabled: q(f) || q(D) !== "connected",
+                disabled: H(f) || H(D) !== "connected",
                 class: Le({
-                  invalid: ne.value.trim() && !q(Tn)(ne.value.trim()),
-                  disabled: q(D) !== "connected"
+                  invalid: ne.value.trim() && !H(Tn)(ne.value.trim()),
+                  disabled: H(D) !== "connected"
                 })
               }, null, 10, Jd), [
                 [an, ne.value]
@@ -9629,20 +9632,20 @@ const Qf = {
               rn(x("input", {
                 "onUpdate:modelValue": y[4] || (y[4] = (d) => Ve.value = d),
                 type: "text",
-                placeholder: q(D) === "connected" ? ut.value ? "Ask me anything..." : "Type a message..." : "Connecting...",
+                placeholder: I.value ? ut.value ? "Ask me anything..." : "Type a message..." : "Connecting...",
                 onKeypress: E,
                 onInput: se,
                 onChange: se,
-                disabled: !L.value,
-                class: Le({ disabled: q(D) !== "connected", "ask-anything-field": ut.value })
+                disabled: !I.value,
+                class: Le({ disabled: !I.value, "ask-anything-field": ut.value })
               }, null, 42, Xd), [
                 [an, Ve.value]
               ]),
               x("button", {
                 class: Le(["send-button", { "ask-anything-send": ut.value }]),
-                style: Ee(q(w)),
-                onClick: I,
-                disabled: !Ve.value.trim() || !L.value
+                style: Ee(H(w)),
+                onClick: O,
+                disabled: !Ve.value.trim() || !I.value
               }, y[26] || (y[26] = [
                 x("svg", {
                   width: "20",
@@ -9664,7 +9667,7 @@ const Qf = {
           ], 6)),
           x("div", {
             class: "powered-by",
-            style: Ee(q(T))
+            style: Ee(H(T))
           }, y[28] || (y[28] = [
             x("svg", {
               class: "chattermate-logo",
@@ -9710,7 +9713,7 @@ const Qf = {
               onClick: y[6] || (y[6] = (d) => _.submitRating(he.value, re.value)),
               disabled: !he.value,
               class: "submit-button",
-              style: Ee(q(w))
+              style: Ee(H(w))
             }, " Submit ", 12, lp),
             x("button", {
               onClick: y[7] || (y[7] = (d) => X.value = !1),
@@ -9726,7 +9729,7 @@ const Qf = {
   for (const [s, r] of t)
     n[s] = r;
   return n;
-}, up = /* @__PURE__ */ cp(ap, [["__scopeId", "data-v-f684c83e"]]);
+}, up = /* @__PURE__ */ cp(ap, [["__scopeId", "data-v-e9a5dbdc"]]);
 window.process || (window.process = { env: { NODE_ENV: "production" } });
 const fp = new URL(window.location.href), hp = fp.searchParams.get("widget_id"), dp = uu(up, {
   widgetId: hp

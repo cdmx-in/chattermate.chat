@@ -25,7 +25,7 @@ from app.core.logger import get_logger
 import json
 import os
 import asyncio
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import text
 from uuid import UUID
 from app.database import get_db
@@ -65,8 +65,118 @@ class UrlsRequest(BaseModel):
     websites: List[str] = []
     agent_id: Optional[str] = None
     
+    @field_validator('websites')
+    @classmethod
+    def validate_website_url_format(cls, v):
+        """Validate that each website URL is in https://domainname format"""
+        import re
+        validated_urls = []
+        
+        for url in v:
+            if not url:
+                raise ValueError('URL cannot be empty')
+            
+            # Remove trailing slashes and whitespace
+            url = url.strip().rstrip('/')
+            
+            # Check if URL starts with https://
+            if not url.startswith('https://'):
+                raise ValueError('URL must start with https://')
+            
+            # Extract domain part after https://
+            domain_part = url[8:]  # Remove 'https://'
+            
+            # Check if domain part is not empty
+            if not domain_part:
+                raise ValueError('URL must contain a domain name')
+            
+            # Allow alphanumeric, dots, hyphens, and forward slashes for paths
+            if not re.match(r'^[a-zA-Z0-9.-]+(/.*)?$', domain_part):
+                raise ValueError('Invalid URL format')
+            
+            # Ensure domain has at least one dot (for TLD)
+            domain_only = domain_part.split('/')[0]  # Get just the domain part before any path
+            if '.' not in domain_only:
+                raise ValueError('URL must contain a valid domain with TLD')
+            
+            validated_urls.append(url)
+        
+        return validated_urls
+    
+    @field_validator('pdf_urls')
+    @classmethod
+    def validate_pdf_url_format(cls, v):
+        """Validate that each PDF URL is in https://domainname format"""
+        import re
+        validated_urls = []
+        
+        for url in v:
+            if not url:
+                raise ValueError('URL cannot be empty')
+            
+            # Remove trailing slashes and whitespace
+            url = url.strip().rstrip('/')
+            
+            # Check if URL starts with https://
+            if not url.startswith('https://'):
+                raise ValueError('URL must start with https://')
+            
+            # Extract domain part after https://
+            domain_part = url[8:]  # Remove 'https://'
+            
+            # Check if domain part is not empty
+            if not domain_part:
+                raise ValueError('URL must contain a domain name')
+            
+            # Allow alphanumeric, dots, hyphens, and forward slashes for paths
+            if not re.match(r'^[a-zA-Z0-9.-]+(/.*)?$', domain_part):
+                raise ValueError('Invalid URL format')
+            
+            # Ensure domain has at least one dot (for TLD)
+            domain_only = domain_part.split('/')[0]  # Get just the domain part before any path
+            if '.' not in domain_only:
+                raise ValueError('URL must contain a valid domain with TLD')
+            
+            validated_urls.append(url)
+        
+        return validated_urls
+    
 class ExploreUrlRequest(BaseModel):
     url: str
+    
+    @field_validator('url')
+    @classmethod
+    def validate_url_format(cls, v):
+        """Validate that URL is in https://domainname format"""
+        if not v:
+            raise ValueError('URL cannot be empty')
+        
+        # Remove trailing slashes and whitespace
+        v = v.strip().rstrip('/')
+        
+        # Check if URL starts with https://
+        if not v.startswith('https://'):
+            raise ValueError('URL must start with https://')
+        
+        # Extract domain part after https://
+        domain_part = v[8:]  # Remove 'https://'
+        
+        # Check if domain part is not empty
+        if not domain_part:
+            raise ValueError('URL must contain a domain name')
+        
+        # Check if domain contains only valid characters and has at least one dot
+        import re
+        # Allow alphanumeric, dots, hyphens, and forward slashes for paths
+        if not re.match(r'^[a-zA-Z0-9.-]+(/.*)?$', domain_part):
+            raise ValueError('Invalid URL format')
+        
+        # Ensure domain has at least one dot (for TLD)
+        domain_only = domain_part.split('/')[0]  # Get just the domain part before any path
+        if '.' not in domain_only:
+            raise ValueError('URL must contain a valid domain with TLD')
+        
+        return v
 
 
 @router.post("/upload/pdf")

@@ -41,19 +41,23 @@ export function useWidgetSocket() {
         // Set up event listeners
         socket.on('connect', () => {
             connectionStatus.value = 'connected'
+            
             retryCount.value = 0
         })
 
         socket.on('disconnect', () => {
+          
             if (connectionStatus.value === 'connected') {
+                console.log('Socket disconnected, setting connection status to connecting')
                 connectionStatus.value = 'connecting'
             }
         })
 
         socket.on('connect_error', () => {
             retryCount.value++
-            console.error('Socket connection failed, attempt:', retryCount.value)
+            console.error('Socket connection failed, attempt:', retryCount.value, 'connection status:', connectionStatus.value)
             if (retryCount.value >= MAX_RETRIES) {
+               
                 connectionStatus.value = 'failed'
             }
         })
@@ -147,6 +151,7 @@ export function useWidgetSocket() {
 
     const connect = async (): Promise<boolean> => {
         try {
+           
             connectionStatus.value = 'connecting'
             retryCount.value = 0
 
@@ -172,6 +177,7 @@ export function useWidgetSocket() {
             })
         } catch (error) {
             console.error('Socket initialization failed:', error)
+           
             connectionStatus.value = 'failed'
             return false
         }

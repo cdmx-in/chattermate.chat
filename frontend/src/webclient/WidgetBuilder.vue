@@ -295,17 +295,20 @@ const hasActiveForm = computed(() => {
 const isMessageInputEnabled = computed(() => {
     // If we already have a conversation started, allow input
     if (hasStartedChat.value && hasConversationToken.value) {
+
         return connectionStatus.value === 'connected' && !loading.value
     }
     
     // For ASK_ANYTHING style, don't require email
     if (isAskAnythingStyle.value) {
+
         return connectionStatus.value === 'connected' && !loading.value
     }
     
-    // For new conversations with other styles, require a valid email
-    return isValidEmail(emailInput.value.trim()) && 
-           connectionStatus.value === 'connected' && !loading.value
+
+
+    return (isValidEmail(emailInput.value.trim()) && 
+           connectionStatus.value === 'connected' && !loading.value) || window.__INITIAL_DATA__?.workflow
 })
 
 // Update the sendMessage function
@@ -918,6 +921,7 @@ const initializeWidget = async () => {
         const isAuthorized = await checkAuthorization()
         
         if (!isAuthorized) {
+            console.log('$$$ isAuthorized false, setting connection status to connected')
             connectionStatus.value = 'connected'
             return false
         }
@@ -1180,12 +1184,12 @@ const shouldShowWelcomeMessage = computed(() => {
                     <input 
                         v-model="newMessage" 
                         type="text" 
-                        :placeholder="connectionStatus === 'connected' ? 'Ask me anything...' : 'Connecting...'" 
+                        :placeholder="isMessageInputEnabled ? 'Ask me anything...' : 'Connecting...'" 
                         @keypress="handleKeyPress"
                         @input="handleInputSync"
                         @change="handleInputSync"
                         :disabled="!isMessageInputEnabled"
-                        :class="{ 'disabled': connectionStatus !== 'connected' }"
+                        :class="{ 'disabled': !isMessageInputEnabled }"
                         class="welcome-message-field"
                     >
                     <button 
@@ -1780,12 +1784,12 @@ const shouldShowWelcomeMessage = computed(() => {
                     <input 
                         v-model="newMessage" 
                         type="text" 
-                        :placeholder="connectionStatus === 'connected' ? (isAskAnythingStyle ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'" 
+                        :placeholder="isMessageInputEnabled ? (isAskAnythingStyle ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'" 
                         @keypress="handleKeyPress"
                         @input="handleInputSync"
                         @change="handleInputSync"
                         :disabled="!isMessageInputEnabled"
-                        :class="{ 'disabled': connectionStatus !== 'connected', 'ask-anything-field': isAskAnythingStyle }"
+                        :class="{ 'disabled': !isMessageInputEnabled, 'ask-anything-field': isAskAnythingStyle }"
                     >
                     <button 
                         class="send-button" 
