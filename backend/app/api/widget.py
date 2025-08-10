@@ -98,7 +98,7 @@ async def get_widget_ui(
     # No valid token, create new one
     # Store source in token if widget_id matches and source is provided (prioritize new source, fallback to old)
     token_extra_data = {}
-    if widget_id == "397046dc-0093-4499-ab45-a0afe3c3ee14":
+    if widget_id == settings.EXPLORE_WIDGET_ID:
         if source:
             token_extra_data["source"] = source
 
@@ -273,7 +273,7 @@ async def get_widget_data(
             
             # Generate new token with customer_id and preserve source if applicable
             new_token_extra_data = {}
-            if widget_id == "397046dc-0093-4499-ab45-a0afe3c3ee14" and old_token_source:
+            if widget_id == settings.EXPLORE_WIDGET_ID and old_token_source:
                 new_token_extra_data["source"] = old_token_source
             
             new_token = create_conversation_token(
