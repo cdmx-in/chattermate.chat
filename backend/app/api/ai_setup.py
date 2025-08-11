@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 import traceback
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from app.core import config
 from app.core.logger import get_logger
 from app.database import get_db
@@ -36,12 +36,44 @@ from app.models.ai_config import AIModelType
 # Try to import enterprise modules
 try:
     from app.enterprise.repositories.subscription import SubscriptionRepository
+    from app.enterprise.repositories.plan import PlanRepository
     HAS_ENTERPRISE = True
 except ImportError:
     HAS_ENTERPRISE = False
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+
+def check_custom_models_feature_access(current_user: User, db: Session):
+    """Check if user has access to custom models feature"""
+    if not HAS_ENTERPRISE:
+        return  # Allow access in non-enterprise mode
+    
+    subscription_repo = SubscriptionRepository(db)
+    plan_repo = PlanRepository(db)
+    
+    # Get current subscription
+    subscription = subscription_repo.get_by_organization(str(current_user.organization_id))
+    if not subscription:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="No active subscription found"
+        )
+    
+    # Check subscription status
+    if not subscription.is_active() and not subscription.is_trial():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Subscription is not active"
+        )
+    
+    # Check if custom models feature is available in the plan
+    if not plan_repo.check_feature_availability(str(subscription.plan_id), 'custom_models'):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Custom Models feature is not available in your current plan. Please upgrade to access this feature."
+        )
 
 
 # Define allowed models as Enum to restrict choices
@@ -80,6 +112,13 @@ async def setup_ai(
         
         # Validate model selection based on provider
         validate_model_selection(config_data.model_type, config_data.model_name)
+        
+        # Check if this is a custom model setup (not ChatterMate)
+        is_custom_model = not (config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate')
+        
+        # Check feature access for custom models
+        if is_custom_model:
+            check_custom_models_feature_access(current_user, db)
         
         # Check if using ChatterMate model
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
@@ -239,6 +278,13 @@ async def update_ai_config(
         
         # Validate model selection based on provider
         validate_model_selection(config_data.model_type, config_data.model_name)
+        
+        # Check if this is a custom model setup (not ChatterMate)
+        is_custom_model = not (config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate')
+        
+        # Check feature access for custom models
+        if is_custom_model:
+            check_custom_models_feature_access(current_user, db)
         
         # Get current config
         ai_config_repo = AIConfigRepository(db)

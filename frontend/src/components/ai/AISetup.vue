@@ -31,6 +31,20 @@ const { hasEnterpriseModule } = useEnterpriseFeatures()
 const subscriptionStorage = useSubscriptionStorage()
 const { fetchPlans } = useSubscriptionStore()
 
+// Subscription feature checking
+const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
+const isSubscriptionActive = computed(() => subscriptionStorage.isSubscriptionActive())
+
+// Check if custom models feature is available
+const hasCustomModelsFeature = computed(() => {
+  return subscriptionStorage.hasFeature('custom_models')
+})
+
+// Check if custom models tab is locked
+const isCustomModelsLocked = computed(() => {
+  return !hasCustomModelsFeature.value || !isSubscriptionActive.value
+})
+
 const {
   isLoading,
   error,
@@ -65,8 +79,7 @@ const modelOptions = computed(() => {
   }
 })
 
-// Subscription and plan computed properties
-const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
+// Plan computed properties
 const currentPlan = computed(() => currentSubscription.value?.plan)
 
 // Dynamic message limits based on current plan
@@ -198,6 +211,7 @@ watch(() => setupConfig.value.provider, () => {
 
 const selectTab = (tab: 'chattermate' | 'custom') => {
   if (tab === 'chattermate' && !hasEnterpriseModule) return
+  // Allow clicking on custom tab even when locked to show upgrade option
   activeTab.value = tab
 }
 
@@ -296,7 +310,10 @@ const chatterMateButtonText = computed(() => {
           </div>
           <div 
             class="tab" 
-            :class="{ active: activeTab === 'custom' }"
+            :class="{ 
+              active: activeTab === 'custom',
+              locked: isCustomModelsLocked
+            }"
             @click="selectTab('custom')"
           >
             <span class="tab-icon">
@@ -305,6 +322,13 @@ const chatterMateButtonText = computed(() => {
               </svg>
             </span>
             <span class="tab-label">Bring Your Own Model</span>
+            <span v-if="isCustomModelsLocked" class="lock-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                <circle cx="12" cy="7" r="4"></circle>
+                <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+              </svg>
+            </span>
           </div>
         </div>
         
@@ -352,72 +376,172 @@ const chatterMateButtonText = computed(() => {
             </div>
           </div>
           
-          <div v-else class="custom-content">
-            <form @submit.prevent="handleSubmit" class="setup-form">
-              <p class="setup-description">
-                {{ hasExistingConfig ? 'Update your AI provider settings' : 'Set up your AI provider to start using ChatterMate\'s intelligent features' }}
-              </p>
+          <div v-if="activeTab === 'custom'" class="custom-content">
+            <!-- Custom Models Locked Overlay -->
+            <div v-if="isCustomModelsLocked" class="custom-models-locked-overlay">
+              <div class="locked-content">
+                <div class="locked-header">
+                  <div class="locked-icon-wrapper">
+                    <div class="locked-icon-bg">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="locked-icon">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path>
+                      </svg>
+                    </div>
+                  </div>
+                  <h3>Bring Your Own Model</h3>
+                  <div class="locked-badge">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="badge-icon">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
+                      <circle cx="12" cy="7" r="4"></circle>
+                      <path d="M7 11V7a5 5 0 0 1 10 0v4"></path>
+                    </svg>
+                    <span>Premium Feature</span>
+                  </div>
+                </div>
+                
+                <p class="locked-description">
+                  Unlock the ability to use your own AI models from providers like OpenAI, Groq, and more. 
+                  Configure custom API keys and select from a wide range of models to power your agents.
+                </p>
+                
+                <div class="locked-features">
+                  <div class="feature-item">
+                    <div class="feature-icon-wrapper">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feature-icon">
+                        <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
+                      </svg>
+                    </div>
+                    <div class="feature-content">
+                      <span class="feature-title">Multiple AI Providers</span>
+                      <span class="feature-desc">Support for OpenAI, Groq, and other leading AI providers</span>
+                    </div>
+                  </div>
+                  <div class="feature-item">
+                    <div class="feature-icon-wrapper">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feature-icon">
+                        <path d="M9 12l2 2 4-4"></path>
+                        <path d="M21 12c-1 0-3-1-3-3s2-3 3-3 3 1 3 3-2 3-3 3"></path>
+                        <path d="M3 12c1 0 3-1 3-3s-2-3-3-3-3 1-3 3 2 3 3 3"></path>
+                      </svg>
+                    </div>
+                    <div class="feature-content">
+                      <span class="feature-title">Custom API Keys</span>
+                      <span class="feature-desc">Use your own API keys for full control and cost management</span>
+                    </div>
+                  </div>
+                  <div class="feature-item">
+                    <div class="feature-icon-wrapper">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feature-icon">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14,2 14,8 20,8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                        <polyline points="10,9 9,9 8,9"></polyline>
+                      </svg>
+                    </div>
+                    <div class="feature-content">
+                      <span class="feature-title">Model Selection</span>
+                      <span class="feature-desc">Choose from the latest and most powerful AI models</span>
+                    </div>
+                  </div>
+                  <div class="feature-item">
+                    <div class="feature-icon-wrapper">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feature-icon">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+                        <path d="M21 15l-5-5L5 21"></path>
+                      </svg>
+                    </div>
+                    <div class="feature-content">
+                      <span class="feature-title">Advanced Configuration</span>
+                      <span class="feature-desc">Fine-tune model parameters and settings for optimal performance</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <div class="upgrade-section">
+                  <button class="upgrade-button" @click="handleUpgrade">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="upgrade-icon">
+                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"></path>
+                    </svg>
+                    <span>Upgrade to Unlock Custom Models</span>
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="arrow-icon">
+                      <line x1="5" y1="12" x2="19" y2="12"></line>
+                      <polyline points="12,5 19,12 12,19"></polyline>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
 
-              <div class="form-group">
-                <label for="provider">AI Provider</label>
-                <select 
-                  id="provider" 
-                  v-model="setupConfig.provider"
-                  required
-                  class="form-control"
-                >
-                  <option value="">Select Provider</option>
-                  <option 
-                    v-for="provider in providers" 
-                    :key="provider.value" 
-                    :value="provider.value"
+            <!-- Custom Models Form (when unlocked) -->
+            <div v-else>
+              <form @submit.prevent="handleSubmit" class="setup-form">
+                <p class="setup-description">
+                  {{ hasExistingConfig ? 'Update your AI provider settings' : 'Set up your AI provider to start using ChatterMate\'s intelligent features' }}
+                </p>
+
+                <div class="form-group">
+                  <label for="provider">AI Provider</label>
+                  <select 
+                    id="provider" 
+                    v-model="setupConfig.provider"
+                    required
+                    class="form-control"
                   >
-                    {{ provider.label }}
-                  </option>
-                </select>
-              </div>
+                    <option value="">Select Provider</option>
+                    <option 
+                      v-for="provider in providers" 
+                      :key="provider.value" 
+                      :value="provider.value"
+                    >
+                      {{ provider.label }}
+                    </option>
+                  </select>
+                </div>
 
-              <div class="form-group">
-                <label for="model">Model Name</label>
-                <select
-                  id="model"
-                  v-model="setupConfig.model"
-                  required
-                  class="form-control"
-                  :disabled="!setupConfig.provider || modelOptions.length === 0"
-                >
-                  <option value="" disabled>Select Model</option>
-                  <option 
-                    v-for="model in modelOptions" 
-                    :key="model.value" 
-                    :value="model.value"
+                <div class="form-group">
+                  <label for="model">Model Name</label>
+                  <select
+                    id="model"
+                    v-model="setupConfig.model"
+                    required
+                    class="form-control"
+                    :disabled="!setupConfig.provider || modelOptions.length === 0"
                   >
-                    {{ model.label }}
-                  </option>
-                </select>
-              </div>
+                    <option value="" disabled>Select Model</option>
+                    <option 
+                      v-for="model in modelOptions" 
+                      :key="model.value" 
+                      :value="model.value"
+                    >
+                      {{ model.label }}
+                    </option>
+                  </select>
+                </div>
 
-              <div v-if="showApiKey" class="form-group">
-                <label for="apiKey">API Key</label>
-                <input
-                  id="apiKey"
-                  type="password"
-                  v-model="setupConfig.apiKey"
-                  :required="showApiKey"
-                  placeholder="Enter your API key"
-                  class="form-control"
-                />
-                <p class="key-hint">Your API key will be encrypted and stored securely</p>
-              </div>
+                <div v-if="showApiKey" class="form-group">
+                  <label for="apiKey">API Key</label>
+                  <input
+                    id="apiKey"
+                    type="password"
+                    v-model="setupConfig.apiKey"
+                    :required="showApiKey"
+                    placeholder="Enter your API key"
+                    class="form-control"
+                  />
+                  <p class="key-hint">Your API key will be encrypted and stored securely</p>
+                </div>
 
-              <button 
-                type="submit" 
-                class="btn btn-primary"
-                :disabled="isLoading"
-              >
-                {{ submitButtonText }}
-              </button>
-            </form>
+                <button 
+                  type="submit" 
+                  class="btn btn-primary"
+                  :disabled="isLoading"
+                >
+                  {{ submitButtonText }}
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       </div>
@@ -498,9 +622,33 @@ const chatterMateButtonText = computed(() => {
   background-color: var(--background-color);
 }
 
+.tab.locked {
+  opacity: 0.8;
+  position: relative;
+}
+
+.tab.locked:hover {
+  color: var(--primary-color);
+  background-color: var(--background-mute);
+}
+
+.tab.locked.active {
+  color: var(--primary-color);
+  border-bottom: 2px solid var(--primary-color);
+  background-color: var(--background-color);
+  opacity: 1;
+}
+
 .tab-icon {
   display: flex;
   align-items: center;
+}
+
+.lock-icon {
+  display: flex;
+  align-items: center;
+  margin-left: var(--space-xs);
+  color: var(--text-muted);
 }
 
 .tab-content {
@@ -716,6 +864,272 @@ const chatterMateButtonText = computed(() => {
   
   .upgrade-button {
     width: 100%;
+  }
+}
+
+/* Custom Models Locked Overlay Styles */
+.custom-models-locked-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 50vh;
+  background: var(--background-soft);
+  border-radius: var(--radius-lg);
+  margin: var(--space-md) 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+}
+
+.custom-models-locked-overlay::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    radial-gradient(circle at 20% 80%, rgba(243, 70, 17, 0.05) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.custom-models-locked-overlay .locked-content {
+  text-align: center;
+  max-width: 700px;
+  padding: var(--space-xl) var(--space-lg);
+  position: relative;
+  z-index: 1;
+}
+
+.custom-models-locked-overlay .locked-header {
+  margin-bottom: var(--space-lg);
+}
+
+.custom-models-locked-overlay .locked-icon-wrapper {
+  margin-bottom: var(--space-md);
+}
+
+.custom-models-locked-overlay .locked-icon-bg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background: var(--primary-color);
+  border-radius: 50%;
+  box-shadow: var(--shadow-lg);
+  margin-bottom: var(--space-sm);
+}
+
+.custom-models-locked-overlay .locked-icon {
+  font-size: 1.25rem;
+  color: white;
+}
+
+.custom-models-locked-overlay h3 {
+  font-size: var(--text-2xl);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-sm);
+}
+
+.custom-models-locked-overlay .locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: var(--primary-color);
+  color: white;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.custom-models-locked-overlay .badge-icon {
+  font-size: 0.75rem;
+}
+
+.custom-models-locked-overlay .locked-description {
+  font-size: var(--text-base);
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: var(--space-lg);
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.custom-models-locked-overlay .locked-features {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-md);
+  margin-bottom: var(--space-lg);
+}
+
+.custom-models-locked-overlay .feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: var(--background-color);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+  text-align: left;
+  transition: all var(--transition-normal);
+}
+
+.custom-models-locked-overlay .feature-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-color-hover);
+}
+
+.custom-models-locked-overlay .feature-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: var(--success-color);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.custom-models-locked-overlay .feature-icon {
+  font-size: 0.875rem;
+  color: white;
+}
+
+.custom-models-locked-overlay .feature-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.custom-models-locked-overlay .feature-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.custom-models-locked-overlay .feature-desc {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.custom-models-locked-overlay .upgrade-section {
+  text-align: center;
+}
+
+.custom-models-locked-overlay .upgrade-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: var(--space-md) var(--space-lg);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  box-shadow: var(--shadow-md);
+  position: relative;
+  overflow: hidden;
+}
+
+.custom-models-locked-overlay .upgrade-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.custom-models-locked-overlay .upgrade-button:hover::before {
+  left: 100%;
+}
+
+.custom-models-locked-overlay .upgrade-button:hover {
+  background: var(--primary-dark);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.custom-models-locked-overlay .upgrade-icon {
+  font-size: 0.875rem;
+  color: #ffd700;
+}
+
+.custom-models-locked-overlay .arrow-icon {
+  font-size: 0.75rem;
+  transition: transform var(--transition-normal);
+}
+
+.custom-models-locked-overlay .upgrade-button:hover .arrow-icon {
+  transform: translateX(4px);
+}
+
+/* Responsive adjustments for custom models locked overlay */
+@media (max-width: 768px) {
+  .custom-models-locked-overlay {
+    min-height: 40vh;
+    margin: var(--space-sm) 0;
+  }
+  
+  .custom-models-locked-overlay .locked-content {
+    padding: var(--space-lg) var(--space-md);
+  }
+  
+  .custom-models-locked-overlay h3 {
+    font-size: var(--text-xl);
+  }
+  
+  .custom-models-locked-overlay .locked-description {
+    font-size: var(--text-sm);
+    margin-bottom: var(--space-md);
+  }
+  
+  .custom-models-locked-overlay .locked-features {
+    grid-template-columns: 1fr;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+  }
+  
+  .custom-models-locked-overlay .feature-item {
+    padding: var(--space-sm);
+  }
+  
+  .custom-models-locked-overlay .feature-icon-wrapper {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .custom-models-locked-overlay .feature-icon {
+    font-size: 0.75rem;
+  }
+  
+  .custom-models-locked-overlay .upgrade-button {
+    width: 100%;
+    padding: var(--space-sm) var(--space-md);
+    font-size: var(--text-xs);
+  }
+  
+  .custom-models-locked-overlay .locked-icon-bg {
+    width: 40px;
+    height: 40px;
+  }
+  
+  .custom-models-locked-overlay .locked-icon {
+    font-size: 1rem;
   }
 }
 </style>
