@@ -5418,7 +5418,7 @@ ue.parseInline;
 Mt.parse;
 Nt.lex;
 const bs = {
-  API_URL: "http://api.chattermate.chat/api/v1",
+  API_URL: "https://api.chattermate.chat/api/v1",
   WS_URL: "wss://api.chattermate.chat"
 };
 function Ju(e) {
