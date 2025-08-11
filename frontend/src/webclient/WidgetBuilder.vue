@@ -3827,15 +3827,16 @@ const shouldShowWelcomeMessage = computed(() => {
     .chat-container.ask-anything-style .chat-messages {
         padding: var(--space-lg) !important;
         max-width: 100% !important;
-        padding-top: var(--space-lg) !important;
-        height: calc(100vh - 120px) !important;
-        height: calc(100dvh - 120px) !important;
+        /* Add space for mobile top bar when present */
+        padding-top: calc(var(--space-lg) + 60px) !important;
+        height: calc(100vh - 60px - 120px) !important; /* topbar + input */
+        height: calc(100dvh - 60px - 120px) !important;
     }
     
     .chat-input.ask-anything-input {
         padding: var(--space-lg) !important;
         border-radius: 0 !important;
-        position: fixed !important;
+        /* position: fixed !important; */
         bottom: 0 !important;
         left: 0 !important;
         right: 0 !important;

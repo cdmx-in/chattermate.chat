@@ -1,3 +1,4 @@
+// @ts-nocheck
 // TypeScript declarations for global variables
 /** @type {string} */
 window.chattermateId;
@@ -10,9 +11,25 @@ window.ChatterMate;
     return /^#[0-9A-F]{6}$/i.test(color);
   }
 
+  // Get base URL - injected at build time or fallback to config
+  function getBaseUrl() {
+    // Use build-time injected API URL if available
+    if (typeof __CHATTERMATE_API_URL__ !== 'undefined') {
+      return __CHATTERMATE_API_URL__;
+    }
+    
+    // Fallback: Check if window.APP_CONFIG exists (from config.js)
+    if (typeof window !== 'undefined' && window.APP_CONFIG) {
+      return window.APP_CONFIG.API_URL;
+    }
+    
+    // Final fallback
+    return 'https://api.chattermate.chat';
+  }
+
   // Configuration object
   const config = {
-    baseUrl: 'https://api.chattermate.chat', // Replace with actual API URL
+    baseUrl: getBaseUrl(),
     containerId: 'chattermate-container',
     buttonId: 'chattermate-button',
     chatBubbleColor: '#f34611', // Default color
@@ -121,6 +138,34 @@ window.ChatterMate;
         transition: all 0.3s ease;
       }
 
+      #chattermate-mobile-topbar {
+        display: none;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 60px;
+        background: rgba(255, 255, 255, 0.95);
+        backdrop-filter: blur(10px);
+        border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+        z-index: 999999;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        box-sizing: border-box;
+      }
+
+      #chattermate-mobile-topbar.active {
+        display: flex;
+      }
+
+      #chattermate-mobile-topbar .topbar-title {
+        font-size: 16px;
+        font-weight: 600;
+        color: #333;
+        margin: 0;
+      }
+
       #chattermate-mobile-close.active {
         display: flex;
       }
@@ -170,6 +215,24 @@ window.ChatterMate;
 
         #chattermate-mobile-close:hover {
           opacity: 0.7;
+        }
+
+        /* ASK_ANYTHING style specific mobile topbar */
+        .ask-anything-mobile #chattermate-mobile-topbar.active {
+          display: flex !important;
+        }
+
+        .ask-anything-mobile #chattermate-mobile-close.active {
+          top: 15px !important;
+          right: 15px !important;
+          z-index: 1000001 !important;
+        }
+
+        /* When topbar is visible, push iframe down to avoid overlap */
+        .ask-anything-mobile .chattermate-iframe {
+          top: 60px !important;
+          height: calc(100vh - 60px) !important;
+          height: calc(100dvh - 60px) !important;
         }
       }
 
@@ -239,10 +302,19 @@ window.ChatterMate;
       </svg>
     `
 
+    // Create mobile topbar for ASK_ANYTHING style
+    const mobileTopbar = document.createElement('div')
+    mobileTopbar.id = 'chattermate-mobile-topbar'
+    mobileTopbar.innerHTML = `
+      <h3 class="topbar-title">Chat</h3>
+      <div style="width: 44px;"></div>
+    `
+
     // Add elements to document
     document.body.appendChild(button)
     document.body.appendChild(container)
     document.body.appendChild(mobileCloseButton)
+    document.body.appendChild(mobileTopbar)
 
     let isOpen = false
     let iframe = null
@@ -315,6 +387,9 @@ window.ChatterMate;
         } else {
           // When closing on mobile, show the button
           button.classList.add('mobile-closed')
+          // Hide topbar when closing
+          mobileTopbar.classList.remove('active')
+          document.body.classList.remove('ask-anything-mobile')
         }
       } else {
         // On desktop, ensure mobile close button is hidden when widget is open
@@ -389,6 +464,15 @@ window.ChatterMate;
           config.containerBottom = 100;
           config.containerRight = 20;
           config.containerWidth = 400;
+        }
+      } else {
+        // Handle mobile ASK_ANYTHING style
+        if (customData.chat_style === 'ASK_ANYTHING' && isOpen) {
+          document.body.classList.add('ask-anything-mobile')
+          mobileTopbar.classList.add('active')
+        } else {
+          document.body.classList.remove('ask-anything-mobile')
+          mobileTopbar.classList.remove('active')
         }
       }
       // Mobile positioning is handled by CSS media queries and should not be affected

@@ -1282,8 +1282,9 @@
     }
 
     .widget-container .chat-container {
-        height: 100vh !important;
-        height: 100dvh !important;
+        /* Deduct topbar height when present (ASK_ANYTHING) */
+        height: calc(100vh - 60px) !important;
+        height: calc(100dvh - 60px) !important;
         width: 100vw !important;
         border-radius: 0 !important;
     }
