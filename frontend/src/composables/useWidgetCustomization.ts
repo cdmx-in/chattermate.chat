@@ -1,12 +1,12 @@
 import { ref } from 'vue'
-import type { AgentCustomization } from '../types/widget'
+import type { AgentCustomization } from '../types/agent'
 import WebFont from 'webfontloader'
 
 export function useWidgetCustomization() {
-    const customization = ref<AgentCustomization>({})
+    const customization = ref<Partial<AgentCustomization>>({})
     const agentName = ref('')
 
-    const applyCustomization = (newCustomization: AgentCustomization) => {
+    const applyCustomization = (newCustomization: Partial<AgentCustomization>) => {
         customization.value = newCustomization
  
         
@@ -33,7 +33,8 @@ export function useWidgetCustomization() {
         window.parent.postMessage({
             type: 'CUSTOMIZATION_UPDATE',
             data: {
-                chat_bubble_color: newCustomization.chat_bubble_color || '#f34611'
+                chat_bubble_color: newCustomization.chat_bubble_color || '#f34611',
+                chat_style: newCustomization.chat_style
             }
         }, '*')
     }

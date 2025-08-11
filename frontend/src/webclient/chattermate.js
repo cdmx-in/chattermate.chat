@@ -12,12 +12,15 @@ window.ChatterMate;
 
   // Configuration object
   const config = {
-    baseUrl: 'http://localhost:8000', // Replace with actual API URL
+    baseUrl: 'https://api.chattermate.chat', // Replace with actual API URL
     containerId: 'chattermate-container',
     buttonId: 'chattermate-button',
     chatBubbleColor: '#f34611', // Default color
     loadingContainerId: 'chattermate-loading',
-    tokenKey: 'ctid' // Key for localStorage
+    tokenKey: 'ctid', // Key for localStorage
+    containerBottom: 100, // Default bottom position
+    containerRight: 20, // Default right position
+    containerWidth: 400 // Default width
   }
 
   // Create and inject styles
@@ -75,9 +78,9 @@ window.ChatterMate;
 
       #${config.containerId} {
         position: fixed;
-        bottom: 100px;
-        right: 20px;
-        width: 400px;
+        bottom: ${config.containerBottom || 100}px;
+        right: ${config.containerRight || 20}px;
+        width: ${config.containerWidth || 400}px;
         height: 600px;
         background: transparent;
         z-index: 999999;
@@ -251,8 +254,21 @@ window.ChatterMate;
   // Add message listener for customization updates
   window.addEventListener('message', function (event) {
     if (event.data.type === 'CUSTOMIZATION_UPDATE') {
-      const newColor = event.data.data.chat_bubble_color;
+      const customData = event.data.data;
+      const newColor = customData.chat_bubble_color;
       config.chatBubbleColor = isValidHexColor(newColor) ? newColor : config.chatBubbleColor;
+      // Handle ASK_ME_ANYTHING chat style positioning
+      if (customData.chat_style === 'ASK_ANYTHING') {
+        config.containerBottom = 90;
+        config.containerRight = 10;
+        config.containerWidth = 700;
+      } else {
+        // Reset to default values for other styles
+        config.containerBottom = 100;
+        config.containerRight = 20;
+        config.containerWidth = 400;
+      }
+      
       updateStyles()
       // Update the SVG fill color for the chat icon
       const chatIconPath = document.querySelector(`#${config.buttonId} .chat-icon path:last-child`)
