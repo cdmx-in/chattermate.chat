@@ -308,7 +308,7 @@ const isMessageInputEnabled = computed(() => {
 
 
     return (isValidEmail(emailInput.value.trim()) && 
-           connectionStatus.value === 'connected' && !loading.value) || window.__INITIAL_DATA__?.workflow
+           connectionStatus.value === 'connected' && !loading.value) 
 })
 
 // Update the sendMessage function
@@ -1098,12 +1098,50 @@ const containerStyles = computed(() => {
         borderRadius: 'var(--radius-lg)'
     }
     
+    // Override for mobile devices
+    if (window.innerWidth <= 768) {
+        baseStyles.width = '100vw'
+        baseStyles.height = '100vh'
+        baseStyles.borderRadius = '0'
+        baseStyles.position = 'fixed'
+        baseStyles.top = '0'
+        baseStyles.left = '0'
+        baseStyles.bottom = '0'
+        baseStyles.right = '0'
+        baseStyles.maxWidth = '100vw'
+        baseStyles.maxHeight = '100vh'
+    }
+    
     if (isAskAnythingStyle.value) {
-        return {
-            ...baseStyles,
-            width: '100%',
-            maxWidth: '800px',  // Increased width for ASK_ANYTHING style
-            minWidth: '600px'   // Ensure minimum width
+        // Mobile responsive adjustments for ASK_ANYTHING style
+        if (window.innerWidth <= 768) {
+            return {
+                ...baseStyles,
+                width: '100vw',
+                height: '100vh',
+                maxWidth: '100vw',
+                maxHeight: '100vh',
+                minWidth: 'unset',
+                borderRadius: '0'
+            }
+        } else if (window.innerWidth <= 1024) {
+            // Tablet adjustments
+            return {
+                ...baseStyles,
+                width: '95%',
+                maxWidth: '700px',
+                minWidth: '500px',
+                height: '650px'
+            }
+        } else {
+            // Desktop - same width as other chat styles
+            return {
+                ...baseStyles,
+                width: '100%',
+                maxWidth: '400px',
+                minWidth: '400px',
+                height: '580px'
+            }
         }
     }
     
@@ -2194,9 +2232,18 @@ const shouldShowWelcomeMessage = computed(() => {
 
     .chat-container,
     .chat-container.collapsed {
-        width: 100%;
-        height: 580px;
-        border-radius: var(--radius-lg);
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        border-radius: 0 !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        bottom: 0 !important;
+        right: 0 !important;
+        max-width: 100vw !important;
+        max-height: 100vh !important;
+        max-height: 100dvh !important;
     }
 
     .chat-panel {
@@ -3315,10 +3362,23 @@ const shouldShowWelcomeMessage = computed(() => {
 /* ========== ASK_ANYTHING CHAT STYLE - COMPLETE OVERRIDE ========== */
 
 .chat-container.ask-anything-style {
-    max-width: 800px;
-    min-width: 600px;
+    max-width: 400px;
+    min-width: 400px;
+    width: 400px;
     margin: 0 auto;
     box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+    border-radius: 24px;
+    background: white;
+}
+
+/* Tablet responsive for ASK_ANYTHING */
+@media (max-width: 1024px) and (min-width: 769px) {
+    .chat-container.ask-anything-style {
+        max-width: 700px;
+        min-width: 500px;
+        margin: 10px auto;
+        height: 650px;
+    }
 }
 
 /* ASK_ANYTHING: Complete chat messages container override */
@@ -3737,29 +3797,50 @@ const shouldShowWelcomeMessage = computed(() => {
     margin-top: auto;
 }
 
-/* Responsive styles for ASK_ANYTHING */
+/* Mobile responsive styles for ASK_ANYTHING */
 @media (max-width: 768px) {
     .chat-container.ask-anything-style {
-        min-width: 100%;
-        max-width: 100%;
-        margin: 0;
+        min-width: 100vw !important;
+        max-width: 100vw !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
     }
     
     .chat-panel.ask-anything-chat {
-        max-width: 100%;
-        margin: 0;
-        border-radius: 0;
+        max-width: 100% !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
     }
     
     .chat-container.ask-anything-style .chat-messages {
         padding: var(--space-lg) !important;
         max-width: 100% !important;
         padding-top: var(--space-lg) !important;
+        height: calc(100vh - 120px) !important;
+        height: calc(100dvh - 120px) !important;
     }
     
     .chat-input.ask-anything-input {
-        padding: var(--space-lg);
-        border-radius: 0;
+        padding: var(--space-lg) !important;
+        border-radius: 0 !important;
+        position: fixed !important;
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100vw !important;
+        box-sizing: border-box !important;
     }
     
     .chat-input.ask-anything-input .message-input,

@@ -105,21 +105,77 @@ window.ChatterMate;
         border-radius: 24px;
       }
 
+      #chattermate-mobile-close {
+        display: none;
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        width: 44px;
+        height: 44px;
+        background: transparent;
+        border: none;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        z-index: 1000000;
+        transition: all 0.3s ease;
+      }
+
+      #chattermate-mobile-close.active {
+        display: flex;
+      }
+
       @media (max-width: 768px) {
         #${config.containerId} {
-          width: 100%;
-          height: 100vh;
-          bottom: 0;
-          right: 0;
-          border-radius: 0;
+          width: 100vw !important;
+          height: 100vh !important;
+          height: 100dvh !important; /* Dynamic viewport height for mobile browsers */
+          top: 0 !important;
+          left: 0 !important;
+          bottom: 0 !important;
+          right: 0 !important;
+          border-radius: 0 !important;
+          position: fixed !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+
+        #${config.containerId}.active {
+          bottom: 0 !important;
         }
 
         .chattermate-iframe {
-          border-radius: 0;
+          border-radius: 0 !important;
+          width: 100vw !important;
+          height: 100vh !important;
+          height: 100dvh !important; /* Dynamic viewport height for mobile browsers */
+          position: absolute !important;
+          top: 0 !important;
+          left: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
         }
 
         #${config.buttonId} {
-          bottom: 40px;
+          display: none;
+        }
+
+        #${config.buttonId}.mobile-closed {
+          display: block !important;
+        }
+
+        #chattermate-mobile-close.active {
+          display: flex !important;
+        }
+
+        #chattermate-mobile-close:hover {
+          opacity: 0.7;
+        }
+      }
+
+      @media (min-width: 769px) {
+        #chattermate-mobile-close {
+          display: none !important;
         }
       }
     `
@@ -148,6 +204,11 @@ window.ChatterMate;
     localStorage.removeItem(config.tokenKey);
   }
 
+  // Check if device is mobile
+  function isMobileDevice() {
+    return window.innerWidth <= 768;
+  }
+
   // Initialize function to create and append elements
   function initialize() {
     updateStyles()
@@ -169,9 +230,19 @@ window.ChatterMate;
     const container = document.createElement('div')
     container.id = config.containerId
 
+    // Create mobile minimize button
+    const mobileCloseButton = document.createElement('div')
+    mobileCloseButton.id = 'chattermate-mobile-close'
+    mobileCloseButton.innerHTML = `
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M5 12H19" stroke="#666" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    `
+
     // Add elements to document
     document.body.appendChild(button)
     document.body.appendChild(container)
+    document.body.appendChild(mobileCloseButton)
 
     let isOpen = false
     let iframe = null
@@ -234,14 +305,62 @@ window.ChatterMate;
       isOpen = !isOpen
       container.classList.toggle('active')
       button.classList.toggle('active')
+      mobileCloseButton.classList.toggle('active')
+
+      // Handle mobile button visibility
+      if (isMobileDevice()) {
+        if (isOpen) {
+          // When opening on mobile, hide the button
+          button.classList.remove('mobile-closed')
+        } else {
+          // When closing on mobile, show the button
+          button.classList.add('mobile-closed')
+        }
+      } else {
+        // On desktop, ensure mobile close button is hidden when widget is open
+        if (isOpen) {
+          mobileCloseButton.classList.remove('active')
+        }
+      }
 
       if (isOpen && iframe) {
         iframe.contentWindow.postMessage({ type: 'SCROLL_TO_BOTTOM' }, '*')
       }
     }
 
-    // Add click event listener
+    // Don't auto-open on mobile devices - let user initiate
+    // Mobile users will see the chat button and can tap to open
+
+    // Add click event listeners
     button.addEventListener('click', toggleChat)
+    mobileCloseButton.addEventListener('click', toggleChat)
+
+    // Initialize mobile button visibility
+    if (isMobileDevice() && !isOpen) {
+      button.classList.add('mobile-closed')
+    }
+
+    // Handle window resize to update mobile behavior
+    window.addEventListener('resize', function() {
+      const isMobile = isMobileDevice()
+      
+      if (isMobile && !isOpen) {
+        // On mobile when closed, show the button
+        button.classList.add('mobile-closed')
+        // Ensure mobile close button is hidden when widget is closed
+        mobileCloseButton.classList.remove('active')
+      } else if (!isMobile) {
+        // On desktop, remove mobile-specific classes
+        button.classList.remove('mobile-closed')
+        // Ensure mobile close button is hidden on desktop
+        if (isOpen) {
+          mobileCloseButton.classList.remove('active')
+        }
+      }
+      
+      // Update styles to handle viewport changes
+      updateStyles()
+    })
   }
 
   // Wait for DOM to be fully loaded
@@ -257,17 +376,22 @@ window.ChatterMate;
       const customData = event.data.data;
       const newColor = customData.chat_bubble_color;
       config.chatBubbleColor = isValidHexColor(newColor) ? newColor : config.chatBubbleColor;
-      // Handle ASK_ME_ANYTHING chat style positioning
-      if (customData.chat_style === 'ASK_ANYTHING') {
-        config.containerBottom = 90;
-        config.containerRight = 10;
-        config.containerWidth = 700;
-      } else {
-        // Reset to default values for other styles
-        config.containerBottom = 100;
-        config.containerRight = 20;
-        config.containerWidth = 400;
+      
+      // Handle ASK_ANYTHING chat style positioning (desktop only)
+      if (!isMobileDevice()) {
+        if (customData.chat_style === 'ASK_ANYTHING') {
+          // Use same width as other chat styles for consistency
+          config.containerBottom = 90;
+          config.containerRight = 20;
+          config.containerWidth = 400;
+        } else {
+          // Reset to default values for other styles
+          config.containerBottom = 100;
+          config.containerRight = 20;
+          config.containerWidth = 400;
+        }
       }
+      // Mobile positioning is handled by CSS media queries and should not be affected
       
       updateStyles()
       // Update the SVG fill color for the chat icon

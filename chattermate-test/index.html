@@ -6,18 +6,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ChatterMate Widget Test</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             max-width: 800px;
             margin: 0 auto;
             padding: 20px;
             line-height: 1.6;
+            background: #ffffff;
+            color: #333;
         }
 
         h1 {
             color: #333;
             border-bottom: 2px solid #f34611;
             padding-bottom: 10px;
+            font-size: clamp(1.5rem, 4vw, 2.5rem);
+            margin: 0 0 20px 0;
+        }
+
+        h2 {
+            color: #444;
+            font-size: clamp(1.25rem, 3vw, 1.5rem);
+            margin: 20px 0 15px 0;
         }
 
         .content {
@@ -25,6 +39,7 @@
             padding: 20px;
             border-radius: 8px;
             margin: 20px 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
 
         code {
@@ -32,24 +47,185 @@
             padding: 2px 6px;
             border-radius: 4px;
             font-family: 'Courier New', Courier, monospace;
+            font-size: 0.9em;
+            word-break: break-word;
+        }
+
+        pre {
+            overflow-x: auto;
+            background: #f5f5f5;
+            padding: 15px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+
+        pre code {
+            background: none;
+            padding: 0;
+            font-size: 0.85em;
+            white-space: pre;
         }
 
         .demo-section {
             margin: 40px 0;
         }
 
+        .widget-controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            align-items: center;
+            margin-top: 15px;
+        }
+
+        .widget-input {
+            flex: 1;
+            min-width: 200px;
+            padding: 12px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .widget-input:focus {
+            outline: none;
+            border-color: #f34611;
+            box-shadow: 0 0 0 2px rgba(243, 70, 17, 0.1);
+        }
+
         .demo-button {
             background: #f34611;
             color: white;
             border: none;
-            padding: 10px 20px;
+            padding: 12px 20px;
             border-radius: 4px;
             cursor: pointer;
             font-size: 16px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            white-space: nowrap;
+            min-height: 44px;
         }
 
         .demo-button:hover {
             background: #d93d0c;
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(243, 70, 17, 0.3);
+        }
+
+        .demo-button:active {
+            transform: translateY(0);
+        }
+
+        .demo-button.clear-button {
+            background: #dc3545;
+        }
+
+        .demo-button.clear-button:hover {
+            background: #c82333;
+            box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+        }
+
+        /* Responsive styles */
+        @media (max-width: 768px) {
+            body {
+                padding: 15px;
+            }
+
+            .content {
+                padding: 15px;
+                margin: 15px 0;
+            }
+
+            .demo-section {
+                margin: 30px 0;
+            }
+
+            .widget-controls {
+                flex-direction: column;
+                align-items: stretch;
+            }
+
+            .widget-input {
+                min-width: 100%;
+                margin-bottom: 10px;
+            }
+
+            .demo-button {
+                width: 100%;
+                margin: 5px 0;
+            }
+
+            pre {
+                padding: 10px;
+                font-size: 0.8em;
+            }
+
+            h1 {
+                text-align: center;
+            }
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+
+            .content {
+                padding: 12px;
+            }
+
+            .demo-button {
+                padding: 14px 16px;
+                font-size: 16px;
+            }
+
+            .widget-input {
+                padding: 14px 12px;
+                font-size: 16px;
+            }
+        }
+
+        /* Dark mode support */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: #1a1a1a;
+                color: #e0e0e0;
+            }
+
+            h1, h2 {
+                color: #f0f0f0;
+            }
+
+            .content {
+                background: #2d2d2d;
+                color: #e0e0e0;
+            }
+
+            code, pre {
+                background: #333;
+                color: #e0e0e0;
+            }
+
+            .widget-input {
+                background: #333;
+                border-color: #555;
+                color: #e0e0e0;
+            }
+
+            .widget-input:focus {
+                border-color: #f34611;
+            }
+        }
+
+        /* Accessibility improvements */
+        @media (prefers-reduced-motion: reduce) {
+            * {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
         }
     </style>
 </head>
@@ -69,19 +245,21 @@
     <div class="demo-section">
         <h2>Widget Controls</h2>
         <p>Enter your widget ID and click initialize to load the chat widget.</p>
-        <input 
-            type="text" 
-            id="widgetIdInput" 
-            placeholder="Enter Widget ID"
-            value=""
-            style="padding: 10px; margin-right: 10px; border-radius: 4px; border: 1px solid #ccc;"
-        >
-        <button class="demo-button" id="widgetButton" onclick="initializeWidget()">
-            Initialize Widget
-        </button>
-        <button class="demo-button" id="clearButton" onclick="clearWidget()" style="margin-left: 10px; background: #dc3545;">
-            Clear Widget
-        </button>
+        <div class="widget-controls">
+            <input 
+                type="text" 
+                id="widgetIdInput" 
+                placeholder="Enter Widget ID"
+                value=""
+                class="widget-input"
+            >
+            <button class="demo-button" id="widgetButton" onclick="initializeWidget()">
+                Initialize Widget
+            </button>
+            <button class="demo-button clear-button" id="clearButton" onclick="clearWidget()">
+                Clear Widget
+            </button>
+        </div>
     </div>
 
     <div class="content">
