@@ -308,7 +308,11 @@ const isMessageInputEnabled = computed(() => {
 
 
     return (isValidEmail(emailInput.value.trim()) && 
-           connectionStatus.value === 'connected' && !loading.value) 
+           connectionStatus.value === 'connected' && !loading.value)  || window.__INITIAL_DATA__?.workflow
+})
+
+const placeholderText = computed(() => {
+    return connectionStatus.value === 'connected' ? (isAskAnythingStyle.value ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'
 })
 
 // Update the sendMessage function
@@ -1222,7 +1226,7 @@ const shouldShowWelcomeMessage = computed(() => {
                     <input 
                         v-model="newMessage" 
                         type="text" 
-                        :placeholder="isMessageInputEnabled ? 'Ask me anything...' : 'Connecting...'" 
+                        :placeholder=placeholderText
                         @keypress="handleKeyPress"
                         @input="handleInputSync"
                         @change="handleInputSync"
@@ -1822,7 +1826,7 @@ const shouldShowWelcomeMessage = computed(() => {
                     <input 
                         v-model="newMessage" 
                         type="text" 
-                        :placeholder="isMessageInputEnabled ? (isAskAnythingStyle ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'" 
+                        :placeholder="placeholderText" 
                         @keypress="handleKeyPress"
                         @input="handleInputSync"
                         @change="handleInputSync"

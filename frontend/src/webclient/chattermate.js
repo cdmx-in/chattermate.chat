@@ -334,7 +334,7 @@ window.ChatterMate;
         iframe.className = 'chattermate-iframe'
         
         // Fetch widget data with Authorization header if token exists
-        const url = `${config.baseUrl}/api/v1/widgets/${window.chattermateId}/data?widget_id=${window.chattermateId}`;
+        const url = `${config.baseUrl}/widgets/${window.chattermateId}/data?widget_id=${window.chattermateId}`;
         const options = token ? { headers: { 'Authorization': `Bearer ${token}` } } : {};
         
         fetch(url, options)
