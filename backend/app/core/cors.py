@@ -21,6 +21,8 @@ import os
 import time
 import asyncio
 import traceback
+import re
+from urllib.parse import urlparse
 from typing import Set, List
 from functools import lru_cache
 from fastapi import FastAPI
@@ -165,44 +167,61 @@ async def listen_for_cors_updates(app: FastAPI):
     """
     from app.core.redis import get_redis
     redis_client = get_redis()
-    
+
     if not redis_client:
         logger.warning("Redis not available, skipping CORS update listener")
         return
-    
-    # Use a dedicated Redis connection for PubSub to avoid blocking other operations
+
+    pubsub = None
     try:
-        pubsub = redis_client.pubsub()
+        # Use ignore_subscribe_messages to reduce noise
+        pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
         pubsub.subscribe("cors:update")
         logger.info("Started CORS update listener")
-        
-        # Use an event-driven approach instead of continuous polling
-        for message in pubsub.listen():
-            # Skip subscription confirmation messages
-            if message["type"] != "message":
-                continue
-                
+
+        # Apply any existing CORS config on startup
+        try:
+            cached = redis_client.get("cors:origins")
+            if cached:
+                cached_data = json.loads(cached)
+                if isinstance(cached_data, dict) and "origins" in cached_data:
+                    update_local_cors(app, cached_data["origins"])
+        except Exception:
+            # Best-effort; continue
+            pass
+
+        # Non-blocking loop using get_message without blocking the event loop
+        while True:
             try:
-                # Get updated origins from Redis
-                origins_data = redis_client.get("cors:origins")
-                if not origins_data:
-                    continue
-                    
-                origins_data = json.loads(origins_data)
-                if origins_data and "origins" in origins_data:
-                    logger.info("Received CORS update notification")
-                    update_local_cors(app, origins_data["origins"])
-            except Exception as e:
-                logger.error(f"Error processing CORS update: {str(e)}")
-                
+                # timeout=0.0 ensures this call is non-blocking in redis-py
+                message = pubsub.get_message(timeout=0.0)
+                if message:
+                    try:
+                        origins_data = redis_client.get("cors:origins")
+                        if origins_data:
+                            origins_data = json.loads(origins_data)
+                            if origins_data and "origins" in origins_data:
+                                logger.info("Received CORS update notification")
+                                update_local_cors(app, origins_data["origins"])
+                    except Exception as inner_e:
+                        logger.error(f"Error processing CORS update: {str(inner_e)}")
+                # Yield control to the event loop and poll at a light cadence
+                await asyncio.sleep(0.5)
+            except Exception as loop_e:
+                # TimeoutError or transient connection issues: log at warning and continue
+                logger.warning(f"CORS listener transient error: {str(loop_e)}")
+                await asyncio.sleep(1.0)
+
     except Exception as e:
         traceback.print_exc()
         logger.error(f"Error in CORS update listener: {str(e)}")
+    finally:
         # Try to clean up subscription
         try:
-            pubsub.unsubscribe("cors:update")
-            pubsub.close()
-        except:
+            if pubsub is not None:
+                pubsub.unsubscribe("cors:update")
+                pubsub.close()
+        except Exception:
             pass
 
 def start_cors_listener(app: FastAPI):

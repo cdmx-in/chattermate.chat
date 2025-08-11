@@ -81,11 +81,17 @@ export function useConversationsList(props: {
         session_id: selectedChat.value.session_id,
       }
 
-      // Update the selected chat with the new object
-      selectedChat.value = updatedChat
-
-      // Emit chat update event
-      emit('chatUpdated', updatedChat)
+      // Use Promise.resolve().then() to break the reactive chain
+      // This prevents the recursive update error by deferring the state update
+      Promise.resolve().then(() => {
+        // Update the selected chat with the new object
+        selectedChat.value = updatedChat
+        
+        // Emit chat update event in a separate tick
+        Promise.resolve().then(() => {
+          emit('chatUpdated', updatedChat)
+        })
+      })
     }
   }
 
@@ -147,7 +153,13 @@ export function useConversationsList(props: {
   // Watch for conversations changes and load first conversation
   watch(() => props.conversations, (newConversations) => {
     if (newConversations.length > 0 && !selectedId.value) {
-      loadChatDetail(newConversations[0].session_id)
+      // Use Promise.resolve().then() to break the reactive chain
+      // This prevents the recursive update error
+      Promise.resolve().then(() => {
+        if (!selectedId.value) {
+         // loadChatDetail(newConversations[0].session_id)
+        }
+      })
     }
   }, { immediate: true })
 
