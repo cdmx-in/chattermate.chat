@@ -370,236 +370,236 @@ async def update_organization(
         )
 
 
-@router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_organization(
-    org_id: UUID,
-    current_user: User = Depends(require_permissions("manage_organization")),
-    db: Session = Depends(get_db)
-):
-    """
-    Hard delete organization and all related data.
+# @router.delete("/{org_id}", status_code=status.HTTP_204_NO_CONTENT)
+# async def delete_organization(
+#     org_id: UUID,
+#     current_user: User = Depends(require_permissions("manage_organization")),
+#     db: Session = Depends(get_db)
+# ):
+#     """
+#     Hard delete organization and all related data.
     
-    This operation permanently removes:
-    - Users and their notifications, knowledge queue items, session assignments, ratings
-    - Customers and their ratings, chat histories
-    - Agents and their customizations, widgets, knowledge links, tool links, ratings, chat histories
-    - Workflows and workflow nodes
-    - Enterprise subscriptions and PayPal orders (if available)
-    - AI configurations
-    - Knowledge sources and knowledge-to-agent links
-    - MCP tools and their agent links
-    - User groups
-    - Roles and their permission associations
-    - Integration data (Shopify shops, Jira tokens)
-    - All remaining chat histories
-    - The organization itself
+#     This operation permanently removes:
+#     - Users and their notifications, knowledge queue items, session assignments, ratings
+#     - Customers and their ratings, chat histories
+#     - Agents and their customizations, widgets, knowledge links, tool links, ratings, chat histories
+#     - Workflows and workflow nodes
+#     - Enterprise subscriptions and PayPal orders (if available)
+#     - AI configurations
+#     - Knowledge sources and knowledge-to-agent links
+#     - MCP tools and their agent links
+#     - User groups
+#     - Roles and their permission associations
+#     - Integration data (Shopify shops, Jira tokens)
+#     - All remaining chat histories
+#     - The organization itself
     
-    WARNING: This operation cannot be undone.
-    """
-    try:
-        # Check if organization exists
-        org = db.query(Organization).filter(Organization.id == org_id).first()
-        if not org:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Organization not found"
-            )
+#     WARNING: This operation cannot be undone.
+#     """
+#     try:
+#         # Check if organization exists
+#         org = db.query(Organization).filter(Organization.id == org_id).first()
+#         if not org:
+#             raise HTTPException(
+#                 status_code=status.HTTP_404_NOT_FOUND,
+#                 detail="Organization not found"
+#             )
 
-        # Verify user belongs to this organization
-        if current_user.organization_id != org_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only delete your own organization"
-            )
+#         # Verify user belongs to this organization
+#         if current_user.organization_id != org_id:
+#             raise HTTPException(
+#                 status_code=status.HTTP_403_FORBIDDEN,
+#                 detail="You can only delete your own organization"
+#             )
 
-        logger.info(f"Starting hard delete for organization {org_id}")
+#         logger.info(f"Starting hard delete for organization {org_id}")
 
-        # Import models that might not be available in all environments
-        try:
-            from app.enterprise.models.subscription import Subscription
-            from app.enterprise.models.order import PayPalOrder
-            enterprise_available = True
-        except ImportError:
-            enterprise_available = False
-            logger.info("Enterprise models not available")
+#         # Import models that might not be available in all environments
+#         try:
+#             from app.enterprise.models.subscription import Subscription
+#             from app.enterprise.models.order import PayPalOrder
+#             enterprise_available = True
+#         except ImportError:
+#             enterprise_available = False
+#             logger.info("Enterprise models not available")
 
-        # Import all required models
-        from app.models.user import User, UserGroup
-        from app.models.role import Role
-        from app.models.permission import Permission
-        from app.models.agent import Agent, AgentCustomization
-        from app.models.widget import Widget
-        from app.models.ai_config import AIConfig
-        from app.models.knowledge import Knowledge
-        from app.models.knowledge_to_agent import KnowledgeToAgent
-        from app.models.knowledge_queue import KnowledgeQueue
-        from app.models.chat_history import ChatHistory
-        from app.models.customer import Customer
-        from app.models.session_to_agent import SessionToAgent
-        from app.models.rating import Rating
-        from app.models.workflow import Workflow
-        from app.models.workflow_node import WorkflowNode
-        from app.models.mcp_tool import MCPTool, MCPToolToAgent
-        from app.models.notification import Notification
-        from app.models.shopify.shopify_shop import ShopifyShop
-        from app.models.jira import JiraToken
+#         # Import all required models
+#         from app.models.user import User, UserGroup
+#         from app.models.role import Role
+#         from app.models.permission import Permission
+#         from app.models.agent import Agent, AgentCustomization
+#         from app.models.widget import Widget
+#         from app.models.ai_config import AIConfig
+#         from app.models.knowledge import Knowledge
+#         from app.models.knowledge_to_agent import KnowledgeToAgent
+#         from app.models.knowledge_queue import KnowledgeQueue
+#         from app.models.chat_history import ChatHistory
+#         from app.models.customer import Customer
+#         from app.models.session_to_agent import SessionToAgent
+#         from app.models.rating import Rating
+#         from app.models.workflow import Workflow
+#         from app.models.workflow_node import WorkflowNode
+#         from app.models.mcp_tool import MCPTool, MCPToolToAgent
+#         from app.models.notification import Notification
+#         from app.models.shopify.shopify_shop import ShopifyShop
+#         from app.models.jira import JiraToken
 
-        # 1. Delete users and their related data first
-        logger.info("Deleting users and related data...")
-        users = db.query(User).filter(User.organization_id == org_id).all()
-        for user in users:
-            # Delete user notifications
-            db.query(Notification).filter(Notification.user_id == user.id).delete()
-            # Delete user knowledge queue items
-            db.query(KnowledgeQueue).filter(KnowledgeQueue.user_id == user.id).delete()
-            # Delete user session assignments
-            db.query(SessionToAgent).filter(SessionToAgent.user_id == user.id).delete()
-            # Delete user ratings
-            db.query(Rating).filter(Rating.user_id == user.id).delete()
+#         # 1. Delete users and their related data first
+#         logger.info("Deleting users and related data...")
+#         users = db.query(User).filter(User.organization_id == org_id).all()
+#         for user in users:
+#             # Delete user notifications
+#             db.query(Notification).filter(Notification.user_id == user.id).delete()
+#             # Delete user knowledge queue items
+#             db.query(KnowledgeQueue).filter(KnowledgeQueue.user_id == user.id).delete()
+#             # Delete user session assignments
+#             db.query(SessionToAgent).filter(SessionToAgent.user_id == user.id).delete()
+#             # Delete user ratings
+#             db.query(Rating).filter(Rating.user_id == user.id).delete()
         
-        # Delete users themselves (this will cascade to user_groups via the association table)
-        db.query(User).filter(User.organization_id == org_id).delete()
+#         # Delete users themselves (this will cascade to user_groups via the association table)
+#         db.query(User).filter(User.organization_id == org_id).delete()
 
-        # 2. Delete customer-related data
-        logger.info("Deleting customer data...")
-        customers = db.query(Customer).filter(Customer.organization_id == org_id).all()
-        for customer in customers:
-            # Delete customer ratings
-            db.query(Rating).filter(Rating.customer_id == customer.id).delete()
-            # Delete customer chat histories
-            db.query(ChatHistory).filter(ChatHistory.customer_id == customer.id).delete()
+#         # 2. Delete customer-related data
+#         logger.info("Deleting customer data...")
+#         customers = db.query(Customer).filter(Customer.organization_id == org_id).all()
+#         for customer in customers:
+#             # Delete customer ratings
+#             db.query(Rating).filter(Rating.customer_id == customer.id).delete()
+#             # Delete customer chat histories
+#             db.query(ChatHistory).filter(ChatHistory.customer_id == customer.id).delete()
         
-        # Delete customers
-        db.query(Customer).filter(Customer.organization_id == org_id).delete()
+#         # Delete customers
+#         db.query(Customer).filter(Customer.organization_id == org_id).delete()
 
-        # 3. Delete agents and their related data
-        logger.info("Deleting agents and related data...")
-        agents = db.query(Agent).filter(Agent.organization_id == org_id).all()
-        for agent in agents:
-            # Delete agent customizations
-            db.query(AgentCustomization).filter(AgentCustomization.agent_id == agent.id).delete()
-            # Delete widgets for this agent
-            db.query(Widget).filter(Widget.agent_id == agent.id).delete()
-            # Delete knowledge-to-agent links
-            db.query(KnowledgeToAgent).filter(KnowledgeToAgent.agent_id == agent.id).delete()
-            # Delete MCP tool-to-agent links
-            db.query(MCPToolToAgent).filter(MCPToolToAgent.agent_id == agent.id).delete()
-            # Delete agent session assignments
-            db.query(SessionToAgent).filter(SessionToAgent.agent_id == agent.id).delete()
-            # Delete agent ratings
-            db.query(Rating).filter(Rating.agent_id == agent.id).delete()
-            # Delete agent chat histories
-            db.query(ChatHistory).filter(ChatHistory.agent_id == agent.id).delete()
+#         # 3. Delete agents and their related data
+#         logger.info("Deleting agents and related data...")
+#         agents = db.query(Agent).filter(Agent.organization_id == org_id).all()
+#         for agent in agents:
+#             # Delete agent customizations
+#             db.query(AgentCustomization).filter(AgentCustomization.agent_id == agent.id).delete()
+#             # Delete widgets for this agent
+#             db.query(Widget).filter(Widget.agent_id == agent.id).delete()
+#             # Delete knowledge-to-agent links
+#             db.query(KnowledgeToAgent).filter(KnowledgeToAgent.agent_id == agent.id).delete()
+#             # Delete MCP tool-to-agent links
+#             db.query(MCPToolToAgent).filter(MCPToolToAgent.agent_id == agent.id).delete()
+#             # Delete agent session assignments
+#             db.query(SessionToAgent).filter(SessionToAgent.agent_id == agent.id).delete()
+#             # Delete agent ratings
+#             db.query(Rating).filter(Rating.agent_id == agent.id).delete()
+#             # Delete agent chat histories
+#             db.query(ChatHistory).filter(ChatHistory.agent_id == agent.id).delete()
         
-        # Delete agents themselves
-        db.query(Agent).filter(Agent.organization_id == org_id).delete()
+#         # Delete agents themselves
+#         db.query(Agent).filter(Agent.organization_id == org_id).delete()
 
-        # 4. Delete workflows and workflow nodes
-        logger.info("Deleting workflows...")
-        workflows = db.query(Workflow).filter(Workflow.organization_id == org_id).all()
-        for workflow in workflows:
-            # Delete workflow nodes
-            db.query(WorkflowNode).filter(WorkflowNode.workflow_id == workflow.id).delete()
+#         # 4. Delete workflows and workflow nodes
+#         logger.info("Deleting workflows...")
+#         workflows = db.query(Workflow).filter(Workflow.organization_id == org_id).all()
+#         for workflow in workflows:
+#             # Delete workflow nodes
+#             db.query(WorkflowNode).filter(WorkflowNode.workflow_id == workflow.id).delete()
         
-        # Delete workflows
-        db.query(Workflow).filter(Workflow.organization_id == org_id).delete()
+#         # Delete workflows
+#         db.query(Workflow).filter(Workflow.organization_id == org_id).delete()
 
-        # 5. Delete remaining widgets (not associated with agents)
-        logger.info("Deleting remaining widgets...")
-        db.query(Widget).filter(Widget.organization_id == org_id).delete()
+#         # 5. Delete remaining widgets (not associated with agents)
+#         logger.info("Deleting remaining widgets...")
+#         db.query(Widget).filter(Widget.organization_id == org_id).delete()
 
-        # 6. Delete enterprise subscriptions and orders if available
-        if enterprise_available:
-            logger.info("Deleting enterprise subscriptions and orders...")
-            # Delete PayPal orders first (they reference subscriptions)
-            db.query(PayPalOrder).filter(PayPalOrder.organization_id == org_id).delete()
-            # Delete subscriptions
-            db.query(Subscription).filter(Subscription.organization_id == org_id).delete()
+#         # 6. Delete enterprise subscriptions and orders if available
+#         if enterprise_available:
+#             logger.info("Deleting enterprise subscriptions and orders...")
+#             # Delete PayPal orders first (they reference subscriptions)
+#             db.query(PayPalOrder).filter(PayPalOrder.organization_id == org_id).delete()
+#             # Delete subscriptions
+#             db.query(Subscription).filter(Subscription.organization_id == org_id).delete()
 
-        # 7. Delete AI configs
-        logger.info("Deleting AI configs...")
-        db.query(AIConfig).filter(AIConfig.organization_id == org_id).delete()
+#         # 7. Delete AI configs
+#         logger.info("Deleting AI configs...")
+#         db.query(AIConfig).filter(AIConfig.organization_id == org_id).delete()
 
-        # 8. Delete knowledge sources and related data
-        logger.info("Deleting knowledge sources...")
-        knowledge_sources = db.query(Knowledge).filter(Knowledge.organization_id == org_id).all()
-        for knowledge in knowledge_sources:
-            # Delete any remaining knowledge-to-agent links
-            db.query(KnowledgeToAgent).filter(KnowledgeToAgent.knowledge_id == knowledge.id).delete()
+#         # 8. Delete knowledge sources and related data
+#         logger.info("Deleting knowledge sources...")
+#         knowledge_sources = db.query(Knowledge).filter(Knowledge.organization_id == org_id).all()
+#         for knowledge in knowledge_sources:
+#             # Delete any remaining knowledge-to-agent links
+#             db.query(KnowledgeToAgent).filter(KnowledgeToAgent.knowledge_id == knowledge.id).delete()
         
-        # Delete knowledge sources
-        db.query(Knowledge).filter(Knowledge.organization_id == org_id).delete()
+#         # Delete knowledge sources
+#         db.query(Knowledge).filter(Knowledge.organization_id == org_id).delete()
 
-        # 9. Delete remaining knowledge queue items
-        logger.info("Deleting knowledge queue items...")
-        db.query(KnowledgeQueue).filter(KnowledgeQueue.organization_id == org_id).delete()
+#         # 9. Delete remaining knowledge queue items
+#         logger.info("Deleting knowledge queue items...")
+#         db.query(KnowledgeQueue).filter(KnowledgeQueue.organization_id == org_id).delete()
 
-        # 10. Delete MCP tools
-        logger.info("Deleting MCP tools...")
-        mcp_tools = db.query(MCPTool).filter(MCPTool.organization_id == org_id).all()
-        for tool in mcp_tools:
-            # Delete any remaining MCP tool-to-agent links
-            db.query(MCPToolToAgent).filter(MCPToolToAgent.mcp_tool_id == tool.id).delete()
+#         # 10. Delete MCP tools
+#         logger.info("Deleting MCP tools...")
+#         mcp_tools = db.query(MCPTool).filter(MCPTool.organization_id == org_id).all()
+#         for tool in mcp_tools:
+#             # Delete any remaining MCP tool-to-agent links
+#             db.query(MCPToolToAgent).filter(MCPToolToAgent.mcp_tool_id == tool.id).delete()
         
-        # Delete MCP tools
-        db.query(MCPTool).filter(MCPTool.organization_id == org_id).delete()
+#         # Delete MCP tools
+#         db.query(MCPTool).filter(MCPTool.organization_id == org_id).delete()
 
-        # 11. Delete user groups
-        logger.info("Deleting user groups...")
-        db.query(UserGroup).filter(UserGroup.organization_id == org_id).delete()
+#         # 11. Delete user groups
+#         logger.info("Deleting user groups...")
+#         db.query(UserGroup).filter(UserGroup.organization_id == org_id).delete()
 
-        # 12. Delete roles and their permission associations
-        logger.info("Deleting roles and their permissions...")
+#         # 12. Delete roles and their permission associations
+#         logger.info("Deleting roles and their permissions...")
         
-        # First, directly delete entries from the role_permissions association table
-        from app.models.permission import role_permissions
+#         # First, directly delete entries from the role_permissions association table
+#         from app.models.permission import role_permissions
         
-        # Get all role IDs for this organization
-        role_ids = [role_id for role_id, in db.query(Role.id).filter(Role.organization_id == org_id).all()]
+#         # Get all role IDs for this organization
+#         role_ids = [role_id for role_id, in db.query(Role.id).filter(Role.organization_id == org_id).all()]
         
-        if role_ids:
-            # Delete from the association table using raw SQL
-            # This is necessary because SQLAlchemy ORM doesn't directly support bulk deletion from association tables
-            delete_stmt = role_permissions.delete().where(role_permissions.c.role_id.in_(role_ids))
-            db.execute(delete_stmt)
-            db.flush()
+#         if role_ids:
+#             # Delete from the association table using raw SQL
+#             # This is necessary because SQLAlchemy ORM doesn't directly support bulk deletion from association tables
+#             delete_stmt = role_permissions.delete().where(role_permissions.c.role_id.in_(role_ids))
+#             db.execute(delete_stmt)
+#             db.flush()
         
-        # Now delete the roles
-        db.query(Role).filter(Role.organization_id == org_id).delete()
+#         # Now delete the roles
+#         db.query(Role).filter(Role.organization_id == org_id).delete()
 
-        # 13. Delete integration-specific data
-        logger.info("Deleting integration data...")
-        # Delete Shopify shops
-        db.query(ShopifyShop).filter(ShopifyShop.organization_id == org_id).delete()
-        # Delete Jira tokens
-        db.query(JiraToken).filter(JiraToken.organization_id == org_id).delete()
+#         # 13. Delete integration-specific data
+#         logger.info("Deleting integration data...")
+#         # Delete Shopify shops
+#         db.query(ShopifyShop).filter(ShopifyShop.organization_id == org_id).delete()
+#         # Delete Jira tokens
+#         db.query(JiraToken).filter(JiraToken.organization_id == org_id).delete()
 
-        # 14. Delete any remaining chat histories
-        logger.info("Deleting remaining chat histories...")
-        db.query(ChatHistory).filter(ChatHistory.organization_id == org_id).delete()
+#         # 14. Delete any remaining chat histories
+#         logger.info("Deleting remaining chat histories...")
+#         db.query(ChatHistory).filter(ChatHistory.organization_id == org_id).delete()
 
-        # 15. Finally, delete the organization itself
-        logger.info("Deleting organization...")
-        db.delete(org)
+#         # 15. Finally, delete the organization itself
+#         logger.info("Deleting organization...")
+#         db.delete(org)
 
-        # Commit all changes
-        db.commit()
-        logger.info(f"Successfully hard deleted organization {org_id}")
+#         # Commit all changes
+#         db.commit()
+#         logger.info(f"Successfully hard deleted organization {org_id}")
 
-        # Update CORS origins after deleting organization
-        update_cors_middleware(app)
+#         # Update CORS origins after deleting organization
+#         update_cors_middleware(app)
 
-        return None
-    except HTTPException as he:
-        db.rollback()
-        raise he
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Failed to delete organization {org_id}: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete organization. Please try again later."
-        )
+#         return None
+#     except HTTPException as he:
+#         db.rollback()
+#         raise he
+#     except Exception as e:
+#         db.rollback()
+#         logger.error(f"Failed to delete organization {org_id}: {str(e)}", exc_info=True)
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail="Failed to delete organization. Please try again later."
+#         )
 
 
 @router.get("/{org_id}/stats")

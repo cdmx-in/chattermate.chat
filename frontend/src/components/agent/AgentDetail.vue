@@ -38,11 +38,13 @@ import { useAgentDetail } from '@/composables/useAgentDetail'
 import { agentService } from '@/services/agent'
 import { toast } from 'vue-sonner'
 import { agentStorage, subscriptionStorage } from '@/utils/storage'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const props = defineProps<{
     agent: AgentWithCustomization
 }>()
 
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 const agentData = ref({ ...props.agent })
 const activeTab = ref(props.agent.use_workflow ? 'workflow-builder' : 'agent') // Track the active tab: 'agent', 'integrations', etc.
 const isEditingHeader = ref(false)
@@ -277,6 +279,10 @@ const isSubscriptionActive = computed(() => {
 
 // Determine if workflow is locked (feature not available or subscription not active)
 const isWorkflowLocked = computed(() => {
+    // Only lock if enterprise module exists
+    if (!hasEnterpriseModule) {
+        return false
+    }
     return !hasWorkflowFeature.value || !isSubscriptionActive.value
 })
 
@@ -287,6 +293,10 @@ const hasMCPFeature = computed(() => {
 
 // Determine if MCP tools is locked
 const isMCPLocked = computed(() => {
+    // Only lock if enterprise module exists
+    if (!hasEnterpriseModule) {
+        return false
+    }
     return !hasMCPFeature.value || !isSubscriptionActive.value
 })
 
@@ -297,6 +307,10 @@ const hasAdvancedFeature = computed(() => {
 
 // Determine if advanced tab is locked
 const isAdvancedLocked = computed(() => {
+    // Only lock if enterprise module exists
+    if (!hasEnterpriseModule) {
+        return false
+    }
     return !hasAdvancedFeature.value || !isSubscriptionActive.value
 })
 
@@ -369,8 +383,13 @@ const handleWorkflowFullscreenToggle = (isFullscreen: boolean) => {
 const handleToggleUseWorkflow = async () => {
     // Check if workflow feature is locked
     if (isWorkflowLocked.value) {
-        upgradeModalType.value = 'workflow'
-        showUpgradeModal.value = true
+        // Only show upgrade modal if enterprise module exists
+        if (hasEnterpriseModule) {
+            upgradeModalType.value = 'workflow'
+            showUpgradeModal.value = true
+            return
+        }
+        // If no enterprise module, just return without showing modal
         return
     }
 
@@ -682,7 +701,7 @@ onMounted(async () => {
                                             <path d="M12 15v-3"/>
                                         </svg>
                                         <span class="mode-label">Workflow</span>
-                                        <font-awesome-icon v-if="isWorkflowLocked" icon="fa-solid fa-lock" class="lock-icon" />
+                                        <font-awesome-icon v-if="hasEnterpriseModule && isWorkflowLocked" icon="fa-solid fa-lock" class="lock-icon" />
                                     </button>
                                 </div>
                             </div>
@@ -716,7 +735,7 @@ onMounted(async () => {
                             v-if="agentData.use_workflow || isWorkflowLocked"
                         >
                             Workflow Builder
-                            <font-awesome-icon v-if="isWorkflowLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
+                            <font-awesome-icon v-if="hasEnterpriseModule && isWorkflowLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
                         </button>
                         <button 
                             class="tab-button" 
@@ -754,7 +773,7 @@ onMounted(async () => {
                             :title="isMCPLocked ? 'Upgrade your plan to unlock MCP Tools' : 'MCP Tools'"
                         >
                             MCP Tools
-                            <font-awesome-icon v-if="isMCPLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
+                            <font-awesome-icon v-if="hasEnterpriseModule && isMCPLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
                         </button>
                         <button 
                             class="tab-button" 
@@ -771,7 +790,7 @@ onMounted(async () => {
                             :title="isAdvancedLocked ? 'Upgrade your plan to unlock Advanced Settings' : 'Advanced'"
                         >
                             Advanced
-                            <font-awesome-icon v-if="isAdvancedLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
+                            <font-awesome-icon v-if="hasEnterpriseModule && isAdvancedLocked" icon="fa-solid fa-lock" class="lock-icon-small" />
                         </button>
 
  
@@ -995,8 +1014,8 @@ onMounted(async () => {
             </div>
         </div>
 
-        <!-- Upgrade Modal -->
-        <div v-if="showUpgradeModal" class="upgrade-modal-overlay">
+        <!-- Upgrade Modal (only shown when enterprise module exists) -->
+        <div v-if="hasEnterpriseModule && showUpgradeModal" class="upgrade-modal-overlay">
             <div class="upgrade-modal">
                 <div class="upgrade-modal-header">
                     <div class="upgrade-icon">

@@ -18,8 +18,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <template>
   <div class="analytics-container">
-    <!-- Analytics Locked Overlay -->
-    <div v-if="isAnalyticsLocked" class="analytics-locked-overlay">
+    <!-- Analytics Locked Overlay (only shown when enterprise module exists) -->
+    <div v-if="hasEnterpriseModule && isAnalyticsLocked" class="analytics-locked-overlay">
       <div class="locked-content">
         <div class="locked-header">
           <div class="locked-icon-wrapper">
@@ -280,6 +280,7 @@ import api from '@/services/api'
 import AgentPerformance from './AgentPerformance.vue'
 import CustomerAnalytics from './CustomerAnalytics.vue'
 import { useSubscriptionStorage } from '@/utils/storage'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 interface AnalyticsMetric {
   data: number[]
@@ -318,6 +319,7 @@ const analyticsData = ref<AnalyticsData | null>(null)
 
 // Subscription and analytics feature checking
 const subscriptionStorage = useSubscriptionStorage()
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
 const isSubscriptionActive = computed(() => subscriptionStorage.isSubscriptionActive())
 
@@ -326,8 +328,12 @@ const hasAnalyticsFeature = computed(() => {
   return subscriptionStorage.hasFeature('analytics')
 })
 
-// Check if analytics is locked
+// Check if analytics is locked (only if enterprise module exists)
 const isAnalyticsLocked = computed(() => {
+  // Only lock if enterprise module exists
+  if (!hasEnterpriseModule) {
+    return false
+  }
   return !hasAnalyticsFeature.value || !isSubscriptionActive.value
 })
 
@@ -340,7 +346,10 @@ const closeUpgradeModal = () => {
 }
 
 const handleUpgrade = () => {
-  window.location.href = '/settings/subscription'
+  // Only redirect to subscription page if enterprise module exists
+  if (hasEnterpriseModule) {
+    window.location.href = '/settings/subscription'
+  }
 }
 
 const hasData = (metric: AnalyticsMetric | RatingMetrics | undefined): boolean => {

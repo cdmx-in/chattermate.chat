@@ -24,7 +24,7 @@ window.ChatterMate;
     }
     
     // Final fallback
-    return 'https://api.chattermate.chat';
+    return 'http://localhost:8000';
   }
 
   // Configuration object

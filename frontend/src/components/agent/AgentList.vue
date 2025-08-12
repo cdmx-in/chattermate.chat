@@ -27,9 +27,11 @@ import AgentDetail from './AgentDetail.vue'
 import CreateAgentModal from './CreateAgentModal.vue'
 import { widgetService } from '@/services/widget'
 import { toast } from 'vue-sonner'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const agentStorage = useAgentStorage()
 const subscriptionStorage = useSubscriptionStorage()
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 
 const agents = ref<Agent[]>([])
 const selectedAgent = ref<Agent | null>(null)
@@ -50,6 +52,11 @@ const currentAgentCount = computed(() => agents.value.length)
 
 // Check if agent creation is locked due to limits
 const isAgentCreationLocked = computed(() => {
+    // Only apply locking if enterprise module exists
+    if (!hasEnterpriseModule) {
+        return false
+    }
+    
     if (!currentSubscription.value || !isSubscriptionActive.value) {
         return true
     }
@@ -148,8 +155,11 @@ const handleAgentClose = async () => {
 
 const handleCreateAgent = () => {
     if (isAgentCreationLocked.value) {
-        showUpgradeModal.value = true
-        return
+        // Only show upgrade modal if enterprise module exists
+        if (hasEnterpriseModule) {
+            showUpgradeModal.value = true
+            return
+        }
     }
     showCreateModal.value = true
 }
@@ -217,7 +227,7 @@ const handleFullscreenToggle = (isFullscreen: boolean) => {
                 >
                     <span class="button-icon">+</span>
                     Create Agent
-                    <font-awesome-icon v-if="isAgentCreationLocked" icon="fa-solid fa-lock" class="lock-icon" />
+                    <font-awesome-icon v-if="hasEnterpriseModule && isAgentCreationLocked" icon="fa-solid fa-lock" class="lock-icon" />
                 </button>
             </div>
             <div class="agents-grid">
@@ -292,8 +302,8 @@ const handleFullscreenToggle = (isFullscreen: boolean) => {
             @created="handleAgentCreated"
         />
 
-        <!-- Agent Limit Upgrade Modal -->
-        <div v-if="showUpgradeModal" class="upgrade-modal-overlay" @click="closeUpgradeModal">
+        <!-- Agent Limit Upgrade Modal (only shown when enterprise module exists) -->
+        <div v-if="hasEnterpriseModule && showUpgradeModal" class="upgrade-modal-overlay" @click="closeUpgradeModal">
             <div class="upgrade-modal" @click.stop>
                 <div class="upgrade-modal-header">
                     <h3>Agent Limit Reached</h3>

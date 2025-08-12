@@ -28,6 +28,7 @@ import Modal from '@/components/common/Modal.vue'
 import { userService } from '@/services/user'
 import { useRouter } from 'vue-router'
 import { useSubscriptionStorage } from '@/utils/storage'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const getUserAvatar = (user: User) => {
   if (user.profile_pic) {
@@ -58,14 +59,20 @@ const {
 const currentUser = userService.getCurrentUser()
 const router = useRouter()
 const subscriptionStorage = useSubscriptionStorage()
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 
 // Subscription and user limits
 const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
 const isSubscriptionActive = computed(() => subscriptionStorage.isSubscriptionActive())
 const currentUserCount = computed(() => users.value.filter(user => user.is_active).length)
 
-// Check if user creation is locked due to limits
+// Check if user creation is locked due to limits (only if enterprise module exists)
 const isUserCreationLocked = computed(() => {
+  // Only lock if enterprise module exists
+  if (!hasEnterpriseModule) {
+    return false
+  }
+  
   if (!currentSubscription.value || !isSubscriptionActive.value) {
     return true
   }
@@ -94,7 +101,10 @@ const closeUpgradeModal = () => {
 }
 
 const handleUpgrade = () => {
-  window.location.href = '/settings/subscription'
+  // Only redirect to subscription page if enterprise module exists
+  if (hasEnterpriseModule) {
+    window.location.href = '/settings/subscription'
+  }
 }
 
 const handleUserAction = (user: User) => {
@@ -108,8 +118,11 @@ const handleUserAction = (user: User) => {
 
 const handleCreateUserClick = () => {
   if (isUserCreationLocked.value) {
-    showUpgradeModal.value = true
-    return
+    // Only show upgrade modal if enterprise module exists
+    if (hasEnterpriseModule) {
+      showUpgradeModal.value = true
+      return
+    }
   }
   showCreateModal.value = true
 }
@@ -132,7 +145,7 @@ onMounted(async () => {
       >
         <span>+</span>
         Add User
-        <font-awesome-icon v-if="isUserCreationLocked" icon="fa-solid fa-lock" class="lock-icon" />
+        <font-awesome-icon v-if="hasEnterpriseModule && isUserCreationLocked" icon="fa-solid fa-lock" class="lock-icon" />
       </button>
     </header>
 
@@ -247,8 +260,8 @@ onMounted(async () => {
       </template>
     </Modal>
 
-    <!-- User Limit Upgrade Modal -->
-    <div v-if="showUpgradeModal" class="upgrade-modal-overlay" @click="closeUpgradeModal">
+    <!-- User Limit Upgrade Modal (only shown when enterprise module exists) -->
+    <div v-if="hasEnterpriseModule && showUpgradeModal" class="upgrade-modal-overlay" @click="closeUpgradeModal">
       <div class="upgrade-modal" @click.stop>
         <div class="upgrade-modal-header">
           <h3>User Limit Reached</h3>

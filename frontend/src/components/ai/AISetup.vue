@@ -21,15 +21,31 @@ import { useAISetup } from '@/composables/useAISetup'
 import { computed, ref, watch, onMounted } from 'vue'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import { useSubscriptionStorage } from '@/utils/storage'
-import { useSubscriptionStore } from '@/modules/enterprise/composables/useSubscriptionStore'
 
 const emit = defineEmits<{
   (e: 'ai-setup-complete'): void
 }>()
 
-const { hasEnterpriseModule } = useEnterpriseFeatures()
+const { hasEnterpriseModule, moduleImports, loadModule } = useEnterpriseFeatures()
 const subscriptionStorage = useSubscriptionStorage()
-const { fetchPlans } = useSubscriptionStore()
+
+// Only import subscription store if enterprise module is available
+const subscriptionStore = ref<any>({ fetchPlans: async () => {} })
+
+// Initialize subscription store if enterprise module is available
+onMounted(async () => {
+  if (hasEnterpriseModule) {
+    try {
+      const module = await loadModule(moduleImports.subscriptionStore)
+      if (module?.default) {
+        // Access the subscriptionStore export directly
+        subscriptionStore.value = module.default
+      }
+    } catch (error) {
+      console.warn('Failed to load subscription store:', error)
+    }
+  }
+})
 
 // Subscription feature checking
 const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
@@ -42,7 +58,8 @@ const hasCustomModelsFeature = computed(() => {
 
 // Check if custom models tab is locked
 const isCustomModelsLocked = computed(() => {
-  return !hasCustomModelsFeature.value || !isSubscriptionActive.value
+  // Only lock if enterprise module exists and feature requirements aren't met
+  return hasEnterpriseModule && (!hasCustomModelsFeature.value || !isSubscriptionActive.value)
 })
 
 const {
@@ -108,7 +125,7 @@ const availablePlans = computed(() => {
   
   // If plans are empty and we have enterprise module, trigger fetch
   if (plans.length === 0 && hasEnterpriseModule) {
-    fetchPlans().catch(err => {
+    subscriptionStore.value.fetchPlans?.().catch((err: any) => {
       console.error('Failed to fetch plans:', err)
     })
   }
@@ -224,7 +241,15 @@ const handleUpgrade = () => {
 onMounted(async () => {
   if (hasEnterpriseModule && subscriptionStorage.getAvailablePlans().length === 0) {
     try {
-      await fetchPlans()
+      // Initialize the subscription store first
+      const module = await loadModule(moduleImports.subscriptionStore)
+      if (module?.default) {
+        // Access the subscriptionStore export directly
+        subscriptionStore.value = module.default
+        
+        // Then fetch plans
+        await subscriptionStore.value.fetchPlans?.()
+      }
     } catch (err) {
       console.error('Failed to fetch plans on mount:', err)
     }
@@ -322,7 +347,7 @@ const chatterMateButtonText = computed(() => {
               </svg>
             </span>
             <span class="tab-label">Bring Your Own Model</span>
-            <span v-if="isCustomModelsLocked" class="lock-icon">
+            <span v-if="hasEnterpriseModule && isCustomModelsLocked" class="lock-icon">
               <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect>
                 <circle cx="12" cy="7" r="4"></circle>
@@ -350,8 +375,8 @@ const chatterMateButtonText = computed(() => {
                 </div>
               </div>
               
-              <!-- Upgrade prompt when not on highest plan -->
-              <div v-if="canUpgrade && nextUpgradePlan" class="upgrade-prompt">
+              <!-- Upgrade prompt when not on highest plan (only shown when enterprise module exists) -->
+              <div v-if="hasEnterpriseModule && canUpgrade && nextUpgradePlan" class="upgrade-prompt">
                 <div class="upgrade-info">
                   <div class="upgrade-icon">⚡</div>
                   <div class="upgrade-text">
@@ -377,8 +402,8 @@ const chatterMateButtonText = computed(() => {
           </div>
           
           <div v-if="activeTab === 'custom'" class="custom-content">
-            <!-- Custom Models Locked Overlay -->
-            <div v-if="isCustomModelsLocked" class="custom-models-locked-overlay">
+            <!-- Custom Models Locked Overlay (only shown when enterprise module exists) -->
+            <div v-if="hasEnterpriseModule && isCustomModelsLocked" class="custom-models-locked-overlay">
               <div class="locked-content">
                 <div class="locked-header">
                   <div class="locked-icon-wrapper">

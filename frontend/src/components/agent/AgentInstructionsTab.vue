@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { computed, ref, watch } from 'vue'
 import { useAgentEdit } from '@/composables/useAgentEdit'
 import { useSubscriptionStorage } from '@/utils/storage'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 interface UserGroup {
   id: string;
@@ -70,6 +71,7 @@ const { generateInstructions, isLoading, error } = useAgentEdit(props.agent)
 
 // Subscription and rating feature checking
 const subscriptionStorage = useSubscriptionStorage()
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 const isSubscriptionActive = computed(() => subscriptionStorage.isSubscriptionActive())
 
 // Check if rating feature is available
@@ -79,6 +81,10 @@ const hasRatingFeature = computed(() => {
 
 // Check if rating is locked
 const isRatingLocked = computed(() => {
+  // Only lock if enterprise module exists
+  if (!hasEnterpriseModule) {
+    return false
+  }
   return !hasRatingFeature.value || !isSubscriptionActive.value
 })
 
@@ -157,8 +163,8 @@ const handleGenerateWithAI = async () => {
 const handleRatingToggle = (event: Event) => {
   const newValue = (event.target as HTMLInputElement).checked
   
-  if (newValue && isRatingLocked.value) {
-    // Prevent the toggle and show upgrade modal
+  if (newValue && isRatingLocked.value && hasEnterpriseModule) {
+    // Prevent the toggle and show upgrade modal only if enterprise module exists
     event.preventDefault()
     ;(event.target as HTMLInputElement).checked = false
     showUpgradeModal.value = true
@@ -287,7 +293,7 @@ const handleSave = () => {
           <div class="toggle-header">
             <h4 class="section-title">
               Ask for Rating
-              <font-awesome-icon v-if="isRatingLocked" icon="fa-solid fa-lock" class="lock-icon" />
+              <font-awesome-icon v-if="hasEnterpriseModule && isRatingLocked" icon="fa-solid fa-lock" class="lock-icon" />
             </h4>
             <label class="switch" :class="{ 'locked': isRatingLocked }" v-tooltip="ratingTooltipContent">
               <input type="checkbox" 
@@ -299,7 +305,7 @@ const handleSave = () => {
             </label>
           </div>
           <p class="helper-text">
-            <span v-if="!isRatingLocked">Request customer feedback when chats end</span>
+            <span v-if="!isRatingLocked || !hasEnterpriseModule">Request customer feedback when chats end</span>
             <span v-else class="locked-text">
               <font-awesome-icon icon="fa-solid fa-crown" class="premium-icon" />
               Upgrade your plan to enable customer rating collection
@@ -316,8 +322,8 @@ const handleSave = () => {
       </button>
     </div>
 
-    <!-- Rating Feature Upgrade Modal -->
-    <div v-if="showUpgradeModal" class="upgrade-modal-overlay">
+    <!-- Rating Feature Upgrade Modal (only shown when enterprise module exists) -->
+    <div v-if="hasEnterpriseModule && showUpgradeModal" class="upgrade-modal-overlay">
       <div class="upgrade-modal">
         <div class="upgrade-modal-header">
           <div class="upgrade-icon">
