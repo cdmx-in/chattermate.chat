@@ -126,6 +126,17 @@ class Message(BaseModel):
     end_chat_description: Optional[str] = None
     agent_name: Optional[str] = None
     user_name: Optional[str] = None
+    
+    @model_validator(mode='before')
+    @classmethod
+    def validate_end_chat_reason(cls, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate end_chat_reason field to ensure it's a valid enum value or None."""
+        if isinstance(data, dict) and 'end_chat_reason' in data and data['end_chat_reason'] is not None:
+            valid_reasons = [reason.value for reason in EndChatReasonType]
+            if data['end_chat_reason'] not in valid_reasons:
+                # If invalid value, set to None
+                data['end_chat_reason'] = None
+        return data
 
     class Config:
         from_attributes = True
@@ -227,16 +238,13 @@ class ChatResponse(BaseModel):
                 # Map incoming shopifyOutput/shopify_output to the new field name
                 'shopifyOutput': 'shopify_output',
                 'shopifyoutput': 'shopify_output',
-                
-
             }
             
             for key in list(normalized.keys()):
                 if key in key_mappings:
                     normalized[key_mappings[key]] = normalized.pop(key)
             
-
-                    
+            # Set default values for missing fields
             if 'message' not in normalized:
                 normalized['message'] = "No response generated"
             if 'transfer_to_human' not in normalized:
@@ -247,6 +255,21 @@ class ChatResponse(BaseModel):
                 normalized['request_rating'] = False
             if 'create_ticket' not in normalized:
                 normalized['create_ticket'] = False
+                
+            # Validate enum fields
+            # Validate end_chat_reason
+            if 'end_chat_reason' in normalized and normalized['end_chat_reason'] is not None:
+                valid_reasons = [reason.value for reason in EndChatReasonType]
+                if normalized['end_chat_reason'] not in valid_reasons:
+                    # If invalid value, set to None
+                    normalized['end_chat_reason'] = None
+                    
+            # Validate transfer_reason
+            if 'transfer_reason' in normalized and normalized['transfer_reason'] is not None:
+                valid_reasons = [reason.value for reason in TransferReasonType]
+                if normalized['transfer_reason'] not in valid_reasons:
+                    # If invalid value, set to None
+                    normalized['transfer_reason'] = None
             
             return normalized
         return data

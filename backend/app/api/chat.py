@@ -107,6 +107,7 @@ async def get_chat_detail(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    logger.info(f"Getting chat detail for session {session_id}")
     """Get detailed chat history for a session"""
     # Check permissions first
     user_permissions = {p.name for p in current_user.role.permissions}
@@ -145,7 +146,7 @@ async def get_chat_detail(
             session_id=session_id_uuid,
             org_id=current_user.organization_id
         )
-        
+        logger.debug(f"Chat detail: {chat_detail}")
         if not chat_detail:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -163,7 +164,22 @@ async def get_chat_detail(
                 # Keep other attributes that might be needed
                 if message.get('attributes'):
                     message['end_chat'] = message['attributes'].get('end_chat')
-                    message['end_chat_reason'] = message['attributes'].get('end_chat_reason')
+                    
+                    # Handle end_chat_reason - validate against enum values
+                    end_chat_reason = message['attributes'].get('end_chat_reason')
+                    if end_chat_reason is not None:
+                        # Check if value is in the enum
+                        from app.models.schemas.chat import EndChatReasonType
+                        valid_reasons = [reason.value for reason in EndChatReasonType]
+                        if end_chat_reason not in valid_reasons:
+                            # If invalid value, set to None
+                            logger.warning(f"Invalid end_chat_reason value: {end_chat_reason}. Setting to None.")
+                            message['end_chat_reason'] = None
+                        else:
+                            message['end_chat_reason'] = end_chat_reason
+                    else:
+                        message['end_chat_reason'] = None
+                        
                     message['end_chat_description'] = message['attributes'].get('end_chat_description')
         
         return chat_detail
