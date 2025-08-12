@@ -9,7 +9,7 @@ const __dirname = dirname(__filename)
 async function buildWebClient() {
   try {
     // Get API URL from environment or default to development
-    const apiUrl = process.env.VITE_API_URL || 'http://localhost:8000'
+    const apiUrl = process.env.VITE_API_URL || 'http://localhost:8000/api/v1'
     console.log('Using API URL:', apiUrl)
     
     // Read the source file and replace the placeholder
