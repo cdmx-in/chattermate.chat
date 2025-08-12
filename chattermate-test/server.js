@@ -15,6 +15,13 @@ app.use(cors());
 // Serve static files
 app.use(express.static(__dirname));
 
+// Serve chattermate.min.js with proper headers
+app.get("/chattermate.min.js", (req, res) => {
+  res.setHeader("Content-Type", "application/javascript");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.sendFile(join(__dirname, "chattermate.min.js"));
+});
+
 // Serve index.html
 app.get("/", (req, res) => {
   res.sendFile(join(__dirname, "index.html"));

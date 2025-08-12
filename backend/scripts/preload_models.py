@@ -61,15 +61,15 @@ def preload_sentence_transformer():
 def preload_agno_embedder():
     """Preload the Agno embedder to ensure it's working"""
     try:
-        from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
+        from agno.embedder.fastembed import FastEmbedEmbedder
         
         # Get model ID from environment or use default
-        model_id = os.getenv("EMBEDDING_MODEL_ID", "sentence-transformers/all-MiniLM-L6-v2")
+        model_id = os.getenv("FASTEMBED_MODEL", "BAAI/bge-small-en-v1.5")
         
-        logger.info(f"Preloading Agno SentenceTransformerEmbedder: {model_id}")
+        logger.info(f"Preloading Agno FastEmbedEmbedder: {model_id}")
         
         # Initialize the embedder
-        embedder = SentenceTransformerEmbedder(id=model_id)
+        embedder = FastEmbedEmbedder(id=model_id)
         
         # Test embedding using the correct API method
         test_text = "Test embedding for Agno embedder initialization."

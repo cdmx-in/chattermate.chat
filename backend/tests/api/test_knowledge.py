@@ -390,10 +390,16 @@ def test_add_invalid_urls(client: TestClient, test_organization):
     
     response = client.post("/api/v1/knowledge/add/urls", json=urls_data)
     
-    assert response.status_code == 200  # API accepts all URLs now
+    # The API now validates URL formats strictly and returns 422 for invalid inputs
+    assert response.status_code == 422
     data = response.json()
-    assert "queue_items" in data
-    assert len(data["queue_items"]) == 2
+    assert "detail" in data
+    # Ensure validation errors point to either pdf_urls or websites fields
+    errors = data.get("detail", [])
+    assert any(
+        any(part in ("websites", "pdf_urls") for part in err.get("loc", []))
+        for err in errors
+    )
 
 def test_link_nonexistent_knowledge(client: TestClient, test_agent):
     """Test linking nonexistent knowledge"""

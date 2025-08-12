@@ -40,6 +40,7 @@ from app.core.config import settings
 # Try to import enterprise modules
 try:
     from app.enterprise.repositories.subscription import SubscriptionRepository
+    from app.enterprise.repositories.plan import PlanRepository
 
     HAS_ENTERPRISE = True
 except ImportError:
@@ -119,15 +120,18 @@ async def create_user(
                     detail="Subscription is not active"
                 )
 
-            # Get current active users count
-            active_users = user_repo.get_active_users_count(str(current_user.organization_id))
+            # Check if max_users feature exists in plan
+            plan_repo = PlanRepository(db)
+            if plan_repo.check_feature_availability(subscription.plan_id, 'max_users'):
+                # Get current active users count
+                active_users = user_repo.get_active_users_count(str(current_user.organization_id))
 
-            # Check against plan limits
-            if subscription.quantity is not None and active_users >= subscription.quantity:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Maximum number of users ({subscription.quantity}) reached for your plan"
-                )
+                # Check against subscription quantity (user seats)
+                if subscription.quantity is not None and active_users >= subscription.quantity:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Maximum number of users ({subscription.quantity}) reached for your plan. Please upgrade your plan to add more users."
+                    )
         
         # Hash the password
         hashed_password = User.get_password_hash(user_data.password)
@@ -629,14 +633,16 @@ async def update_user(
                     detail="Cannot activate user: Subscription is not active"
                 )
 
-            # When activating a user, check against subscription limit
+            # When activating a user, check against subscription limit if max_users feature exists
             if user_data.is_active:
-                active_users = user_repo.get_active_users_count(str(user.organization_id))
-                if subscription.quantity is not None and active_users >= subscription.quantity:
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Cannot activate user: Maximum number of users ({subscription.quantity}) reached for your plan"
-                    )
+                plan_repo = PlanRepository(db)
+                if plan_repo.check_feature_availability(subscription.plan_id, 'max_users'):
+                    active_users = user_repo.get_active_users_count(str(user.organization_id))
+                    if subscription.quantity is not None and active_users >= subscription.quantity:
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail=f"Cannot activate user: Maximum number of users ({subscription.quantity}) reached for your plan. Please upgrade your plan to add more users."
+                        )
     
     try:
         updated_user = user_repo.update_user(user_id, **user_data.dict(exclude_unset=True))

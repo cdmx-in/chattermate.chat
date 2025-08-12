@@ -58,7 +58,8 @@ const moduleImports = {
   subscriptionView: '/src/modules/enterprise/views/SubscriptionView.vue',
   billingSetupView: '/src/modules/enterprise/views/BillingSetupView.vue',
   subscriptionStore: '/src/modules/enterprise/composables/useSubscriptionStore.ts',
-  subscriptionGuard: '/src/modules/enterprise/router/guards/subscription.ts'
+  subscriptionGuard: '/src/modules/enterprise/router/guards/subscription.ts',
+  exploreView: '/src/modules/enterprise/views/ExploreView.vue'
 }
 
 // Default subscription state

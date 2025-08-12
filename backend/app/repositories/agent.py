@@ -163,3 +163,10 @@ class AgentRepository:
         return self.db.query(Agent)\
             .filter(Agent.organization_id == org_id)\
             .all()
+
+    def count_by_organization(self, org_id: UUID) -> int:
+        """Count agents for an organization"""
+        from sqlalchemy import func
+        return self.db.query(func.count(Agent.id))\
+            .filter(Agent.organization_id == org_id)\
+            .scalar() or 0

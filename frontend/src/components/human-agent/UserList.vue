@@ -27,6 +27,8 @@ import UserForm from './UserForm.vue'
 import Modal from '@/components/common/Modal.vue'
 import { userService } from '@/services/user'
 import { useRouter } from 'vue-router'
+import { useSubscriptionStorage } from '@/utils/storage'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const getUserAvatar = (user: User) => {
   if (user.profile_pic) {
@@ -56,6 +58,54 @@ const {
 
 const currentUser = userService.getCurrentUser()
 const router = useRouter()
+const subscriptionStorage = useSubscriptionStorage()
+const { hasEnterpriseModule } = useEnterpriseFeatures()
+
+// Subscription and user limits
+const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
+const isSubscriptionActive = computed(() => subscriptionStorage.isSubscriptionActive())
+const currentUserCount = computed(() => users.value.filter(user => user.is_active).length)
+
+// Check if user creation is locked due to limits (only if enterprise module exists)
+const isUserCreationLocked = computed(() => {
+  // Only lock if enterprise module exists
+  if (!hasEnterpriseModule) {
+    return false
+  }
+  
+  if (!currentSubscription.value || !isSubscriptionActive.value) {
+    return true
+  }
+  
+  // Check if max_users feature exists in subscription
+  const hasMaxUsersFeature = subscriptionStorage.hasFeature('max_users')
+  if (!hasMaxUsersFeature) {
+    return false // No user limits if feature doesn't exist
+  }
+  
+  // Get max users from subscription quantity (this is the user seat limit)
+  const maxUsers = currentSubscription.value.quantity
+  if (maxUsers === null || maxUsers === undefined) {
+    return false // Unlimited users
+  }
+  
+  return currentUserCount.value >= maxUsers
+})
+
+// Show upgrade modal state
+const showUpgradeModal = ref(false)
+
+// Modal functions
+const closeUpgradeModal = () => {
+  showUpgradeModal.value = false
+}
+
+const handleUpgrade = () => {
+  // Only redirect to subscription page if enterprise module exists
+  if (hasEnterpriseModule) {
+    window.location.href = '/settings/subscription'
+  }
+}
 
 const handleUserAction = (user: User) => {
   // If user is editing their own profile, navigate to user settings instead
@@ -64,6 +114,17 @@ const handleUserAction = (user: User) => {
     return
   }
   handleEditUser(user)
+}
+
+const handleCreateUserClick = () => {
+  if (isUserCreationLocked.value) {
+    // Only show upgrade modal if enterprise module exists
+    if (hasEnterpriseModule) {
+      showUpgradeModal.value = true
+      return
+    }
+  }
+  showCreateModal.value = true
 }
 
 onMounted(async () => {
@@ -75,9 +136,16 @@ onMounted(async () => {
   <div class="user-list">
     <header class="page-header">
       <h1>Users</h1>
-      <button class="btn btn-primary"  @click="showCreateModal = true">
+      <button 
+        class="btn btn-primary" 
+        :class="{ 'locked': isUserCreationLocked }"
+        :disabled="isUserCreationLocked"
+        @click="handleCreateUserClick"
+        :title="isUserCreationLocked ? `User limit reached (${currentUserCount}/${currentSubscription?.quantity}). Upgrade your plan to add more users.` : 'Add a new user'"
+      >
         <span>+</span>
         Add User
+        <font-awesome-icon v-if="hasEnterpriseModule && isUserCreationLocked" icon="fa-solid fa-lock" class="lock-icon" />
       </button>
     </header>
 
@@ -191,6 +259,48 @@ onMounted(async () => {
         />
       </template>
     </Modal>
+
+    <!-- User Limit Upgrade Modal (only shown when enterprise module exists) -->
+    <div v-if="hasEnterpriseModule && showUpgradeModal" class="upgrade-modal-overlay" @click="closeUpgradeModal">
+      <div class="upgrade-modal" @click.stop>
+        <div class="upgrade-modal-header">
+          <h3>User Limit Reached</h3>
+          <button class="close-button" @click="closeUpgradeModal">×</button>
+        </div>
+        <div class="upgrade-modal-content">
+          <p class="upgrade-description">
+            You've reached your plan's user limit ({{ currentUserCount }}/{{ currentSubscription?.quantity }}). 
+            Upgrade your plan to add more users and unlock additional features.
+          </p>
+          <div class="upgrade-features">
+            <div class="feature-item">
+              <font-awesome-icon icon="fa-solid fa-check" class="feature-icon" />
+              <span>More user seats for your team</span>
+            </div>
+            <div class="feature-item">
+              <font-awesome-icon icon="fa-solid fa-check" class="feature-icon" />
+              <span>Advanced user management features</span>
+            </div>
+            <div class="feature-item">
+              <font-awesome-icon icon="fa-solid fa-check" class="feature-icon" />
+              <span>Enhanced collaboration tools</span>
+            </div>
+            <div class="feature-item">
+              <font-awesome-icon icon="fa-solid fa-check" class="feature-icon" />
+              <span>Priority support</span>
+            </div>
+          </div>
+        </div>
+        <div class="upgrade-modal-footer">
+          <button class="upgrade-button primary" @click="handleUpgrade">
+            Upgrade Plan
+          </button>
+          <button class="upgrade-button secondary" @click="closeUpgradeModal">
+            Maybe Later
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -402,5 +512,149 @@ onMounted(async () => {
 
 .status-indicator.online {
   background-color: #22c55e;
+}
+
+/* Locked button styles */
+.btn.locked {
+  background: var(--background-mute);
+  color: var(--text-muted);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.btn.locked:hover {
+  background: var(--background-mute);
+  transform: none;
+}
+
+.lock-icon {
+  font-size: 12px;
+  margin-left: var(--space-xs);
+  color: var(--warning-color);
+}
+
+/* Upgrade Modal Styles */
+.upgrade-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+.upgrade-modal {
+  background: var(--background-soft);
+  border-radius: var(--radius-lg);
+  padding: 0;
+  max-width: 500px;
+  width: 90%;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+.upgrade-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.upgrade-modal-header h3 {
+  margin: 0;
+  color: var(--text-color);
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.close-button {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  transition: all 0.2s ease;
+}
+
+.close-button:hover {
+  background: var(--background-mute);
+  color: var(--text-color);
+}
+
+.upgrade-modal-content {
+  padding: var(--space-lg);
+}
+
+.upgrade-description {
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: var(--space-lg);
+}
+
+.upgrade-features {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+}
+
+.feature-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.feature-icon {
+  color: var(--success-color);
+  font-size: 0.875rem;
+}
+
+.upgrade-modal-footer {
+  display: flex;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  border-top: 1px solid var(--border-color);
+}
+
+.upgrade-button {
+  flex: 1;
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+}
+
+.upgrade-button.primary {
+  background: var(--primary-color);
+  color: white;
+}
+
+.upgrade-button.primary:hover {
+  background: var(--primary-dark);
+  transform: translateY(-1px);
+}
+
+.upgrade-button.secondary {
+  background: var(--background-mute);
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+}
+
+.upgrade-button.secondary:hover {
+  background: var(--background-soft);
 }
 </style> 

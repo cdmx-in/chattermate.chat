@@ -54,6 +54,7 @@ const {
   sendMessage,
   handleTakeover,
   updateChat,
+  replaceChatFromProps,
   handledByAI,
   endChat
 } = useConversationChat(props.chat, emit)
@@ -162,11 +163,9 @@ const onTakeover = async () => {
 // Watch for chat changes and update the internal state
 watch(() => props.chat, (newChat) => {
   if (newChat) {
+    // Only sync local state to avoid emitting events back to parent
     currentChat.value = newChat
-    updateChat(newChat)
-    nextTick(() => {
-      scrollToBottom()
-    })
+    replaceChatFromProps(newChat)
   }
 }, { immediate: true })
 

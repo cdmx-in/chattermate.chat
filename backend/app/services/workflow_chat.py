@@ -46,7 +46,8 @@ class WorkflowChatService:
         customer_id: str,
         session: dict,
         sio,
-        namespace: str = '/widget'
+        namespace: str = '/widget',
+        source: str = None
     ) -> ChatResponse:
         """
         Handle chat processing for workflow-enabled agents
@@ -87,7 +88,8 @@ class WorkflowChatService:
             model_type=session['ai_config'].model_type,
             org_id=org_id,
             agent_id=session['agent_id'],
-            customer_id=customer_id
+            customer_id=customer_id,
+            source=source
         )
         
         if workflow_result.success:

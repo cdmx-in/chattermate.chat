@@ -800,4 +800,74 @@ const layoutClasses = computed(() => ({
     height: 100vh;
     overflow: hidden;
 }
+
+/* Responsive Design - 13 inch laptops */
+@media (max-width: 1366px) {
+    .header-content {
+        padding: var(--space-md) var(--space-lg);
+    }
+    
+    .content {
+        padding: var(--space-lg);
+    }
+    
+    .banner-content {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-sm);
+    }
+    
+    .banner-actions {
+        width: 100%;
+        justify-content: flex-start;
+    }
+    
+    .action-button {
+        padding: var(--space-xs) var(--space-md);
+        font-size: 0.8rem;
+    }
+}
+
+/* Responsive Design - Small laptops and tablets */
+@media (max-width: 1280px) {
+    .dashboard-layout {
+        grid-template-columns: 1fr;
+    }
+    
+    .dashboard-layout.sidebar-collapsed {
+        grid-template-columns: 1fr;
+    }
+    
+    .header-content {
+        padding: var(--space-sm) var(--space-md);
+    }
+    
+    .content {
+        padding: var(--space-md);
+    }
+    
+    .right-section {
+        gap: var(--space-md);
+    }
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .header-content {
+        padding: var(--space-sm);
+    }
+    
+    .content {
+        padding: var(--space-sm);
+    }
+    
+    .banner-actions {
+        flex-direction: column;
+    }
+    
+    .action-button {
+        width: 100%;
+        text-align: center;
+    }
+}
 </style>

@@ -106,13 +106,17 @@ def decrypt_api_key(encrypted_key: str) -> str:
         raise ValueError("Failed to decrypt API key")
 
 
-def create_conversation_token(widget_id: str, customer_id: Optional[str] = None) -> str:
+def create_conversation_token(widget_id: str, customer_id: Optional[str] = None, **extra_data) -> str:
     """Create a JWT token for widget conversations"""
     data = {
         "sub": str(customer_id),
         "widget_id": widget_id,
         "type": "conversation"
     }
+    
+    # Add any extra data to the token
+    data.update(extra_data)
+    
     # Set expiration to 30 days
     expire = datetime.utcnow() + timedelta(days=30)
     data.update({"exp": expire})

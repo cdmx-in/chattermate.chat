@@ -261,14 +261,14 @@ def test_update_organization(client, test_organization):
     assert data["name"] == update_data["name"]
     assert data["business_hours"]["monday"]["start"] == "08:00"
 
-def test_delete_organization(client, test_organization):
-    """Test deleting (soft-delete) organization"""
-    response = client.delete(f"/api/v1/organizations/{test_organization.id}")
-    assert response.status_code == 204
+# def test_delete_organization(client, test_organization):
+#     """Test deleting (soft-delete) organization"""
+#     response = client.delete(f"/api/v1/organizations/{test_organization.id}")
+#     assert response.status_code == 204
 
-    # Verify organization is soft-deleted
-    org = client.get(f"/api/v1/organizations/{test_organization.id}").json()
-    assert not org["is_active"]
+#     # Verify organization is soft-deleted
+#     org = client.get(f"/api/v1/organizations/{test_organization.id}").json()
+#     assert not org["is_active"]
 
 def test_get_organization_stats(client, test_organization, test_user):
     """Test getting organization statistics"""

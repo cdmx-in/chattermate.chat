@@ -89,6 +89,162 @@ const isExpanded = ref(true)
 const emailInput = ref('')
 const hasConversationToken = ref(false)
 
+// Handle input synchronization
+const handleInputSync = (event: Event) => {
+    const target = event.target as HTMLInputElement
+    newMessage.value = target.value
+}
+
+
+
+// MutationObserver to detect DOM changes and re-setup listeners
+let domObserver: MutationObserver | null = null
+
+const setupDOMObserver = () => {
+    if (domObserver) {
+        domObserver.disconnect()
+    }
+    
+    domObserver = new MutationObserver((mutations) => {
+        let shouldResetup = false
+        let hasNewInputFields = false
+        
+        mutations.forEach((mutation) => {
+            // Check if input fields were added/removed
+            if (mutation.type === 'childList') {
+                const addedInputs = Array.from(mutation.addedNodes).some(node => 
+                    node.nodeType === Node.ELEMENT_NODE && 
+                    ((node as Element).matches('input, textarea') ||
+                    (node as Element).querySelector?.('input, textarea'))
+                )
+                
+                const removedInputs = Array.from(mutation.removedNodes).some(node => 
+                    node.nodeType === Node.ELEMENT_NODE && 
+                    ((node as Element).matches('input, textarea') ||
+                    (node as Element).querySelector?.('input, textarea'))
+                )
+                
+                if (addedInputs) {
+                    hasNewInputFields = true
+                    shouldResetup = true
+                }
+                
+                if (removedInputs) {
+                    shouldResetup = true
+                }
+            }
+        })
+        
+        if (shouldResetup) {
+            // Debounce to avoid excessive calls
+            clearTimeout(setupDOMObserver.timeoutId)
+            setupDOMObserver.timeoutId = setTimeout(() => {
+                setupNativeEventListeners()
+            }, hasNewInputFields ? 50 : 100) // Faster setup for new inputs
+        }
+    })
+    
+    // Observe the widget container for changes
+    const widgetContainer = document.querySelector('.widget-container') || document.body
+    domObserver.observe(widgetContainer, {
+        childList: true,
+        subtree: true
+    })
+}
+
+// Add timeout ID property to the function for debouncing
+setupDOMObserver.timeoutId = null
+
+// Keep track of current input fields for cleanup
+let currentInputFields: HTMLElement[] = []
+
+// Setup native DOM event listeners as fallback
+const setupNativeEventListeners = () => {
+    // Clean up existing listeners first
+    cleanupNativeEventListeners()
+    
+    // Try multiple selectors to find input fields
+    const selectors = [
+        '.widget-container input[type="text"]',
+        '.chat-container input[type="text"]',
+        '.message-input input',
+        '.welcome-message-field',
+        '.ask-anything-field',
+        'input[placeholder*="message"]',
+        'input[placeholder*="Type"]',
+        'input[placeholder*="Ask"]',
+        'input.message-input',
+        'textarea',
+        // More specific selectors for the widget context
+        '.widget-container input',
+        '.chat-input input',
+        'input'
+    ]
+    
+    let inputFields = []
+    for (const selector of selectors) {
+        const fields = document.querySelectorAll(selector)
+        if (fields.length > 0) {
+            inputFields = Array.from(fields)
+            break
+        }
+    }
+    
+    if (inputFields.length === 0) {
+        return
+    }
+    
+    // Store reference for cleanup
+    currentInputFields = inputFields
+    
+    inputFields.forEach((input) => {
+        // Add native event listeners
+        input.addEventListener('input', handleNativeInput, true)
+        input.addEventListener('keyup', handleNativeInput, true)
+        input.addEventListener('change', handleNativeInput, true)
+        input.addEventListener('keypress', handleNativeKeyPress, true)
+        input.addEventListener('keydown', handleNativeKeyDown, true)
+    })
+}
+
+// Clean up native event listeners
+const cleanupNativeEventListeners = () => {
+    currentInputFields.forEach((input) => {
+        input.removeEventListener('input', handleNativeInput)
+        input.removeEventListener('keyup', handleNativeInput)
+        input.removeEventListener('change', handleNativeInput)
+        input.removeEventListener('keypress', handleNativeKeyPress)
+        input.removeEventListener('keydown', handleNativeKeyDown)
+    })
+    currentInputFields = []
+}
+
+// Native input handler that bypasses Vue
+const handleNativeInput = (event: Event) => {
+    const target = event.target as HTMLInputElement
+    newMessage.value = target.value
+}
+
+// Native keyboard event handlers
+const handleNativeKeyPress = (event: KeyboardEvent) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        sendMessage()
+    }
+}
+
+const handleNativeKeyDown = (event: KeyboardEvent) => {
+    // Also handle keydown as a fallback for some browsers/contexts
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault()
+        event.stopPropagation()
+        sendMessage()
+    }
+}
+
+
+
 // Add loading state
 const isInitializing = ref(true)
 
@@ -101,7 +257,7 @@ const hasToken = computed(() => !!token.value)
 // Initialize from initial data
 initializeFromData()
 const initialData = window.__INITIAL_DATA__
-
+console.log('Initial data:', initialData)
 if (initialData?.initialToken) {
     token.value = initialData.initialToken
     // Notify parent window to store token
@@ -139,36 +295,57 @@ const hasActiveForm = computed(() => {
 const isMessageInputEnabled = computed(() => {
     // If we already have a conversation started, allow input
     if (hasStartedChat.value && hasConversationToken.value) {
+
         return connectionStatus.value === 'connected' && !loading.value
     }
     
     // For ASK_ANYTHING style, don't require email
     if (isAskAnythingStyle.value) {
+
         return connectionStatus.value === 'connected' && !loading.value
     }
     
-    // For new conversations with other styles, require a valid email
-    return isValidEmail(emailInput.value.trim()) && 
-           connectionStatus.value === 'connected' && !loading.value
+
+
+    return (isValidEmail(emailInput.value.trim()) && 
+           connectionStatus.value === 'connected' && !loading.value)  || window.__INITIAL_DATA__?.workflow
+})
+
+const placeholderText = computed(() => {
+    return connectionStatus.value === 'connected' ? (isAskAnythingStyle.value ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'
 })
 
 // Update the sendMessage function
 const sendMessage = async () => {
     if (!newMessage.value.trim()) return
-
+    
     // If first message, fetch customization with email first
     if (!hasStartedChat.value && emailInput.value) {
         await checkAuthorization()
     }
 
     await socketSendMessage(newMessage.value, emailInput.value)
+    
     newMessage.value = ''
+    
+    // Also clear the actual DOM input field to ensure it's visually cleared
+    const inputField = document.querySelector('input[placeholder*="Type a message"]') as HTMLInputElement
+    if (inputField) {
+        inputField.value = ''
+    }
+    
+    // Re-setup native event listeners after message is sent
+    // The DOM might have changed, so we need to reattach listeners
+    setTimeout(() => {
+        setupNativeEventListeners()
+    }, 500)
 }
 
 // Handle enter key
 const handleKeyPress = (event: KeyboardEvent) => {
     if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault()
+        event.stopPropagation()
         sendMessage()
     }
 }
@@ -278,9 +455,24 @@ watch(() => messages.value, (newMessages) => {
     nextTick(() => {
         scrollToBottom()
     })
-    
-   
-    // Check for end chat in the last message
+}, { deep: true })
+
+// Watch for connection status changes to set up event listeners when needed
+watch(connectionStatus, (newStatus, oldStatus) => {
+    if (newStatus === 'connected' && oldStatus !== 'connected') {
+        setTimeout(setupNativeEventListeners, 100)
+    }
+})
+
+// Watch for messages to set up event listeners when chat becomes active
+watch(() => messages.value.length, (newLength, oldLength) => {
+    if (newLength > 0 && oldLength === 0) {
+        setTimeout(setupNativeEventListeners, 100)
+    }
+})
+
+// Check for end chat in the last message - existing functionality
+watch(() => messages.value, (newMessages) => {
     if (newMessages.length > 0) {
 
         const lastMessage = newMessages[newMessages.length - 1]
@@ -717,15 +909,29 @@ const handleUserInputSubmit = async (message: any) => {
 // Initialize widget - main initialization logic
 const initializeWidget = async () => {
     try {
+        // Wait for window.__INITIAL_DATA__ to be available
+        let attempts = 0
+        const maxAttempts = 50 // 5 seconds max wait
+        while (!window.__INITIAL_DATA__?.widgetId && attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 100))
+            attempts++
+        }
+        
+        if (!window.__INITIAL_DATA__?.widgetId) {
+            console.error('Widget data not available after waiting')
+            return false
+        }
+
         const isAuthorized = await checkAuthorization()
+        
         if (!isAuthorized) {
+            console.log('$$$ isAuthorized false, setting connection status to connected')
             connectionStatus.value = 'connected'
             return false
         }
 
         // For refresh cases, also check if we need to get workflow state
         if (window.__INITIAL_DATA__?.workflow && hasConversationToken.value) {
-            console.log('Getting workflow state on refresh/reload')
             await getWorkflowState()
         }
 
@@ -835,6 +1041,28 @@ const handleStartNewConversation = async () => {
 onMounted(async () => {
     await initializeWidget()
     setupEventListeners()
+    
+    // Setup DOM observer to detect changes
+    setupDOMObserver()
+    
+    // Only set up native event listeners if we're in a state where input is expected
+    // This avoids unnecessary overhead during workflow navigation
+    const shouldSetupListeners = () => {
+        // Check if we're in a state where chat input is expected
+        const hasMessages = messages.value.length > 0
+        const isConnected = connectionStatus.value === 'connected'
+        const hasInputFields = document.querySelector('input[type="text"], textarea') !== null
+        
+        return hasMessages || isConnected || hasInputFields
+    }
+    
+    // Initial setup with intelligent timing
+    if (shouldSetupListeners()) {
+        setTimeout(setupNativeEventListeners, 100)
+    } else {
+        // If no immediate need, wait for DOM changes to trigger setup
+        // Event listeners will be set up when connection is established or messages arrive
+    }
 })
 
 onUnmounted(() => {
@@ -843,12 +1071,27 @@ onUnmounted(() => {
             scrollToBottom()
         }
     })
+    
+    // Clean up DOM observer
+    if (domObserver) {
+        domObserver.disconnect()
+        domObserver = null
+    }
+    
+    // Clear any pending timeouts
+    if (setupDOMObserver.timeoutId) {
+        clearTimeout(setupDOMObserver.timeoutId)
+        setupDOMObserver.timeoutId = null
+    }
+    
+    // Clean up native event listeners
+    cleanupNativeEventListeners()
+    
     cleanup()
 })
 
 // Add after the existing computed properties, around line 120
 const isAskAnythingStyle = computed(() => {
-    console.log('isAskAnythingStyle', customization.value.chat_style)
     return customization.value.chat_style === 'ASK_ANYTHING'
 })
 
@@ -859,12 +1102,50 @@ const containerStyles = computed(() => {
         borderRadius: 'var(--radius-lg)'
     }
     
+    // Override for mobile devices
+    if (window.innerWidth <= 768) {
+        baseStyles.width = '100vw'
+        baseStyles.height = '100vh'
+        baseStyles.borderRadius = '0'
+        baseStyles.position = 'fixed'
+        baseStyles.top = '0'
+        baseStyles.left = '0'
+        baseStyles.bottom = '0'
+        baseStyles.right = '0'
+        baseStyles.maxWidth = '100vw'
+        baseStyles.maxHeight = '100vh'
+    }
+    
     if (isAskAnythingStyle.value) {
-        return {
-            ...baseStyles,
-            width: '100%',
-            maxWidth: '800px',  // Increased width for ASK_ANYTHING style
-            minWidth: '600px'   // Ensure minimum width
+        // Mobile responsive adjustments for ASK_ANYTHING style
+        if (window.innerWidth <= 768) {
+            return {
+                ...baseStyles,
+                width: '100vw',
+                height: '100vh',
+                maxWidth: '100vw',
+                maxHeight: '100vh',
+                minWidth: 'unset',
+                borderRadius: '0'
+            }
+        } else if (window.innerWidth <= 1024) {
+            // Tablet adjustments
+            return {
+                ...baseStyles,
+                width: '95%',
+                maxWidth: '700px',
+                minWidth: '500px',
+                height: '650px'
+            }
+        } else {
+            // Desktop - same width as other chat styles
+            return {
+                ...baseStyles,
+                width: '100%',
+                maxWidth: '400px',
+                minWidth: '400px',
+                height: '580px'
+            }
         }
     }
     
@@ -872,8 +1153,6 @@ const containerStyles = computed(() => {
 })
 
 const shouldShowWelcomeMessage = computed(() => {
-    console.log("isAskAnythingStyle.value", isAskAnythingStyle.value)
-    console.log("messages.value.length", messages.value.length)
     return isAskAnythingStyle.value && messages.value.length === 0
 })
 </script>
@@ -947,10 +1226,12 @@ const shouldShowWelcomeMessage = computed(() => {
                     <input 
                         v-model="newMessage" 
                         type="text" 
-                        :placeholder="connectionStatus === 'connected' ? 'Ask me anything...' : 'Connecting...'" 
+                        :placeholder=placeholderText
                         @keypress="handleKeyPress"
+                        @input="handleInputSync"
+                        @change="handleInputSync"
                         :disabled="!isMessageInputEnabled"
-                        :class="{ 'disabled': connectionStatus !== 'connected' }"
+                        :class="{ 'disabled': !isMessageInputEnabled }"
                         class="welcome-message-field"
                     >
                     <button 
@@ -1545,10 +1826,12 @@ const shouldShowWelcomeMessage = computed(() => {
                     <input 
                         v-model="newMessage" 
                         type="text" 
-                        :placeholder="connectionStatus === 'connected' ? (isAskAnythingStyle ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'" 
+                        :placeholder="placeholderText" 
                         @keypress="handleKeyPress"
+                        @input="handleInputSync"
+                        @change="handleInputSync"
                         :disabled="!isMessageInputEnabled"
-                        :class="{ 'disabled': connectionStatus !== 'connected', 'ask-anything-field': isAskAnythingStyle }"
+                        :class="{ 'disabled': !isMessageInputEnabled, 'ask-anything-field': isAskAnythingStyle }"
                     >
                     <button 
                         class="send-button" 
@@ -1953,9 +2236,18 @@ const shouldShowWelcomeMessage = computed(() => {
 
     .chat-container,
     .chat-container.collapsed {
-        width: 100%;
-        height: 580px;
-        border-radius: var(--radius-lg);
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        border-radius: 0 !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        bottom: 0 !important;
+        right: 0 !important;
+        max-width: 100vw !important;
+        max-height: 100vh !important;
+        max-height: 100dvh !important;
     }
 
     .chat-panel {
@@ -2914,276 +3206,13 @@ const shouldShowWelcomeMessage = computed(() => {
     opacity: 0.8;
 }
 
-.form-fields {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-lg);
-}
 
-.form-field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    position: relative;
-}
 
-.field-label {
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text-primary);
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-    margin-bottom: var(--space-xs);
-    letter-spacing: 0.02em;
-}
 
-.required-indicator {
-    color: #ff4757;
-    font-weight: 700;
-    font-size: 16px;
-}
 
-.form-input,
-.form-textarea,
-.form-select {
-    padding: 16px 20px;
-    border: 2px solid transparent;
-    background: rgba(248, 249, 250, 0.8);
-    border-radius: 16px;
-    font-size: var(--text-base);
-    font-weight: 500;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    font-family: inherit;
-    position: relative;
-    box-shadow: 
-        0 1px 3px rgba(0, 0, 0, 0.1),
-        inset 0 1px 2px rgba(0, 0, 0, 0.1);
-}
 
-.form-input::placeholder,
-.form-textarea::placeholder {
-    color: #9ca3af;
-    font-weight: 400;
-    transition: all 0.3s ease;
-}
 
-.form-input:hover,
-.form-textarea:hover,
-.form-select:hover {
-    background: rgba(248, 249, 250, 1);
-    box-shadow: 
-        0 4px 6px -1px rgba(0, 0, 0, 0.1),
-        0 2px 4px -1px rgba(0, 0, 0, 0.06);
-    transform: translateY(-1px);
-}
 
-.form-input:focus,
-.form-textarea:focus,
-.form-select:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    background: #ffffff;
-    box-shadow: 
-        0 0 0 4px rgba(243, 70, 17, 0.1),
-        0 8px 16px -4px rgba(0, 0, 0, 0.1);
-    transform: translateY(-2px);
-}
-
-.form-input:focus::placeholder,
-.form-textarea:focus::placeholder {
-    color: transparent;
-    transform: translateY(-2px);
-}
-
-.form-input.error,
-.form-textarea.error,
-.form-select.error {
-    border-color: #ff4757;
-    background: rgba(255, 71, 87, 0.05);
-    animation: shake 0.5s ease-in-out;
-}
-
-@keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-5px); }
-    75% { transform: translateX(5px); }
-}
-
-.form-input.error:focus,
-.form-textarea.error:focus,
-.form-select.error:focus {
-    box-shadow: 
-        0 0 0 4px rgba(255, 71, 87, 0.2),
-        0 8px 16px -4px rgba(255, 71, 87, 0.1);
-}
-
-.form-input:disabled,
-.form-textarea:disabled,
-.form-select:disabled {
-    background-color: rgba(0, 0, 0, 0.05);
-    cursor: not-allowed;
-    opacity: 0.6;
-    transform: none;
-}
-
-.form-textarea {
-    resize: vertical;
-    min-height: 100px;
-    line-height: 1.6;
-}
-
-.checkbox-field,
-.radio-field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-    padding: var(--space-sm);
-    background: rgba(248, 249, 250, 0.5);
-    border-radius: 12px;
-    border: 1px solid rgba(0, 0, 0, 0.08);
-}
-
-.checkbox-field {
-    flex-direction: row;
-    align-items: center;
-    padding: var(--space-md);
-}
-
-.radio-option {
-    display: flex;
-    align-items: center;
-    gap: var(--space-sm);
-    padding: var(--space-sm) var(--space-md);
-    border-radius: 8px;
-    transition: all 0.2s ease;
-    cursor: pointer;
-}
-
-.radio-option:hover {
-    background: rgba(243, 70, 17, 0.05);
-}
-
-.form-checkbox,
-.form-radio {
-    width: 20px;
-    height: 20px;
-    accent-color: var(--primary-color);
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.form-checkbox:checked,
-.form-radio:checked {
-    transform: scale(1.1);
-}
-
-.checkbox-label,
-.radio-label {
-    font-size: var(--text-base);
-    color: var(--text-primary);
-    cursor: pointer;
-    user-select: none;
-    font-weight: 500;
-    transition: color 0.2s ease;
-}
-
-.radio-option:hover .radio-label {
-    color: var(--primary-color);
-}
-
-.field-error {
-    font-size: var(--text-sm);
-    color: #ff4757;
-    margin-top: var(--space-xs);
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-    padding: var(--space-xs) var(--space-sm);
-    background: rgba(255, 71, 87, 0.1);
-    border-radius: 8px;
-    border-left: 3px solid #ff4757;
-    font-weight: 500;
-}
-
-.field-error::before {
-    content: "⚠";
-    font-size: 16px;
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-.form-actions {
-    margin-top: var(--space-xl);
-    display: flex;
-    justify-content: center;
-    gap: var(--space-md);
-}
-
-.form-submit-button {
-    padding: 16px 32px;
-    background: linear-gradient(135deg, var(--primary-color) 0%, #ff6b47 100%);
-    color: white;
-    border: none;
-    border-radius: 16px;
-    font-size: var(--text-base);
-    font-weight: 700;
-    cursor: pointer;
-    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    min-width: 140px;
-    box-shadow: 
-        0 4px 14px 0 rgba(243, 70, 17, 0.3),
-        0 2px 4px 0 rgba(0, 0, 0, 0.1);
-    position: relative;
-    overflow: hidden;
-    letter-spacing: 0.02em;
-}
-
-.form-submit-button::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-    transition: left 0.5s ease;
-}
-
-.form-submit-button:hover:not(:disabled) {
-    transform: translateY(-3px);
-    box-shadow: 
-        0 8px 25px 0 rgba(243, 70, 17, 0.4),
-        0 4px 8px 0 rgba(0, 0, 0, 0.15);
-    background: linear-gradient(135deg, #ff6b47 0%, var(--primary-color) 100%);
-}
-
-.form-submit-button:hover:not(:disabled)::before {
-    left: 100%;
-}
-
-.form-submit-button:active:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: 
-        0 4px 14px 0 rgba(243, 70, 17, 0.3),
-        0 2px 4px 0 rgba(0, 0, 0, 0.1);
-}
-
-.form-submit-button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-    transform: none;
-    background: #9ca3af;
-    box-shadow: none;
-}
-
-.form-submit-button:disabled::before {
-    display: none;
-}
 
 
 
@@ -3209,391 +3238,10 @@ const shouldShowWelcomeMessage = computed(() => {
         font-size: var(--text-sm);
     }
     
-    .form-fields {
-        gap: var(--space-md);
-    }
-    
-    .form-input,
-    .form-textarea,
-    .form-select {
-        padding: 14px 16px;
-        border-radius: 12px;
-        font-size: var(--text-sm);
-    }
-    
-    .form-submit-button {
-        padding: 14px 28px;
-        font-size: var(--text-sm);
-        min-width: 120px;
-        border-radius: 12px;
-    }
-    
-    .checkbox-field,
-    .radio-field {
-        padding: var(--space-sm);
-    }
-    
-    .radio-option {
-        padding: var(--space-xs) var(--space-sm);
-    }
-    
-    .form-checkbox,
-    .form-radio {
-        width: 18px;
-        height: 18px;
-    }
-/* Landing Page Fullscreen Styles */
-.landing-page-fullscreen {
-    width: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    background: white;
-    border-radius: var(--radius-lg);
-    position: relative;
-    overflow: hidden;
-}
-
-.landing-page-fullscreen .landing-page-content {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    width: 100%;
-    height: 100%;
-    padding: 48px;
-    box-sizing: border-box;
-}
-
-.landing-page-fullscreen .landing-page-header {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-    text-align: left;
-    align-items: flex-start;
-}
-
-.landing-page-fullscreen .landing-page-heading {
-    font-size: 40px;
-    font-weight: 700;
-    margin: 0;
-    line-height: 1.2;
-    color: #1f2937;
-    letter-spacing: -0.02em;
-}
-
-.landing-page-fullscreen .landing-page-text {
-    font-size: 16px;
-    line-height: 1.6;
-    margin: 0;
-    color: #6b7280;
-    font-weight: 400;
-    max-width: 400px;
-}
-
-.landing-page-fullscreen .landing-page-actions {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-md);
-}
 
 
 
-.landing-page-fullscreen .landing-page-button {
-    background: none;
-    border: none;
-    color: #dc2626;
-    font-size: 16px;
-    font-weight: 600;
-    cursor: pointer;
-    padding: 0;
-    text-decoration: none;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-xs);
-    transition: all 0.2s ease;
-}
 
-.landing-page-fullscreen .landing-page-button:hover {
-    color: #b91c1c;
-    text-decoration: underline;
-}
-
-.landing-page-fullscreen .landing-page-button::after {
-    content: '→';
-    font-size: 16px;
-    transition: transform 0.2s ease;
-}
-
-.landing-page-fullscreen .landing-page-button:hover::after {
-    transform: translateX(2px);
-}
-
-/* Powered by footer for landing page */
-.powered-by-landing {
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    text-align: center;
-    font-size: 0.75rem;
-    opacity: 0.6;
-    color: #9ca3af;
-    padding: 12px 16px;
-    background: transparent;
-    border: none;
-    backdrop-filter: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-}
-
-.chattermate-logo {
-    flex-shrink: 0;
-    opacity: 0.8;
-}
-
-/* Responsive landing page styles */
-@media (max-width: 768px) {
-    .landing-page-fullscreen .landing-page-heading {
-        font-size: 28px;
-    }
-    
-    .landing-page-fullscreen .landing-page-text {
-        font-size: 15px;
-    }
-    
-    .landing-page-fullscreen .landing-page-content {
-        padding: 32px;
-    }
-    
-    .landing-page-fullscreen .landing-page-header {
-        gap: 20px;
-    }
-    
-    .powered-by-landing {
-        font-size: 0.7rem;
-        padding: 8px 12px;
-    }
-}
-
-/* Full Screen Form Styles */
-.form-fullscreen {
-    width: 100%;
-    height: 100%;
-    background: white;
-    border-radius: var(--radius-lg);
-    position: relative;
-    overflow: hidden;
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    overflow-y: auto;
-}
-
-.form-fullscreen-content {
-    width: 100%;
-    max-width: 600px;
-    padding: 48px 32px 80px;
-    display: flex;
-    flex-direction: column;
-    gap: 32px;
-    min-height: 100%;
-    box-sizing: border-box;
-}
-
-.form-fullscreen .form-header {
-    text-align: left;
-    margin-bottom: 24px;
-}
-
-.form-fullscreen .form-title {
-    font-size: 28px;
-    font-weight: 700;
-    color: var(--text-primary);
-    margin: 0 0 16px 0;
-    line-height: 1.3;
-}
-
-.form-fullscreen .form-description {
-    font-size: 16px;
-    color: var(--text-secondary);
-    margin: 0;
-    line-height: 1.5;
-}
-
-.form-fullscreen .form-fields {
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
-}
-
-.form-fullscreen .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.form-fullscreen .field-label {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin: 0;
-}
-
-.form-fullscreen .required-indicator {
-    color: #dc2626;
-    margin-left: 4px;
-}
-
-.form-fullscreen .form-input,
-.form-fullscreen .form-textarea,
-.form-fullscreen .form-select {
-    padding: 12px 16px;
-    border: 2px solid var(--border-color);
-    border-radius: 8px;
-    font-size: 16px;
-    color: var(--text-primary);
-    background: var(--background-base);
-    transition: all 0.2s ease;
-}
-
-.form-fullscreen .form-input:focus,
-.form-fullscreen .form-textarea:focus,
-.form-fullscreen .form-select:focus {
-    outline: none;
-    border-color: var(--primary-color);
-    box-shadow: 0 0 0 3px rgba(243, 70, 17, 0.1);
-}
-
-.form-fullscreen .form-input.error,
-.form-fullscreen .form-textarea.error,
-.form-fullscreen .form-select.error {
-    border-color: #dc2626;
-    box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1);
-}
-
-.form-fullscreen .form-textarea {
-    resize: vertical;
-    min-height: 100px;
-}
-
-.form-fullscreen .checkbox-field,
-.form-fullscreen .radio-field {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    cursor: pointer;
-}
-
-.form-fullscreen .form-checkbox,
-.form-fullscreen .form-radio {
-    width: 20px;
-    height: 20px;
-    cursor: pointer;
-}
-
-.form-fullscreen .checkbox-label,
-.form-fullscreen .radio-label {
-    font-size: 16px;
-    color: var(--text-primary);
-    cursor: pointer;
-}
-
-.form-fullscreen .radio-group {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.form-fullscreen .field-error {
-    color: #dc2626;
-    font-size: 14px;
-    margin-top: 4px;
-}
-
-.form-fullscreen .form-actions {
-    display: flex;
-    justify-content: center;
-    margin-top: 24px;
-}
-
-.form-fullscreen .submit-form-button {
-    padding: 16px 32px;
-    background: var(--primary-color);
-    color: white;
-    border: none;
-    border-radius: 8px;
-    font-size: 16px;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    min-width: 160px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-}
-
-.form-fullscreen .submit-form-button:hover:not(:disabled) {
-    background: var(--primary-dark);
-    transform: translateY(-1px);
-}
-
-.form-fullscreen .submit-form-button:disabled {
-    opacity: 0.7;
-    cursor: not-allowed;
-    transform: none;
-}
-
-.form-fullscreen .loading-spinner-inline {
-    display: flex;
-    gap: 4px;
-}
-
-.form-fullscreen .loading-spinner-inline .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-    animation: pulse 1.5s ease-in-out infinite;
-}
-
-.form-fullscreen .loading-spinner-inline .dot:nth-child(2) {
-    animation-delay: 0.3s;
-}
-
-.form-fullscreen .loading-spinner-inline .dot:nth-child(3) {
-    animation-delay: 0.6s;
-}
-
-/* Mobile responsive styles for full screen form */
-@media (max-width: 768px) {
-    .form-fullscreen-content {
-        padding: 24px 20px;
-        gap: 24px;
-    }
-    
-    .form-fullscreen .form-title {
-        font-size: 24px;
-    }
-    
-    .form-fullscreen .form-description {
-        font-size: 15px;
-    }
-    
-    .form-fullscreen .form-fields {
-        gap: 20px;
-    }
-    
-    .form-fullscreen .submit-form-button {
-        width: 100%;
-        padding: 14px 24px;
-    }
-}
 
 }
 
@@ -3718,10 +3366,23 @@ const shouldShowWelcomeMessage = computed(() => {
 /* ========== ASK_ANYTHING CHAT STYLE - COMPLETE OVERRIDE ========== */
 
 .chat-container.ask-anything-style {
-    max-width: 800px;
-    min-width: 600px;
+    max-width: 400px;
+    min-width: 400px;
+    width: 400px;
     margin: 0 auto;
     box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
+    border-radius: 24px;
+    background: white;
+}
+
+/* Tablet responsive for ASK_ANYTHING */
+@media (max-width: 1024px) and (min-width: 769px) {
+    .chat-container.ask-anything-style {
+        max-width: 700px;
+        min-width: 500px;
+        margin: 10px auto;
+        height: 650px;
+    }
 }
 
 /* ASK_ANYTHING: Complete chat messages container override */
@@ -4140,29 +3801,51 @@ const shouldShowWelcomeMessage = computed(() => {
     margin-top: auto;
 }
 
-/* Responsive styles for ASK_ANYTHING */
+/* Mobile responsive styles for ASK_ANYTHING */
 @media (max-width: 768px) {
     .chat-container.ask-anything-style {
-        min-width: 100%;
-        max-width: 100%;
-        margin: 0;
+        min-width: 100vw !important;
+        max-width: 100vw !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        box-shadow: none !important;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
     }
     
     .chat-panel.ask-anything-chat {
-        max-width: 100%;
-        margin: 0;
-        border-radius: 0;
+        max-width: 100% !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        height: 100dvh !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
     }
     
     .chat-container.ask-anything-style .chat-messages {
         padding: var(--space-lg) !important;
         max-width: 100% !important;
-        padding-top: var(--space-lg) !important;
+        /* Add space for mobile top bar when present */
+        padding-top: calc(var(--space-lg) + 60px) !important;
+        height: calc(100vh - 60px - 120px) !important; /* topbar + input */
+        height: calc(100dvh - 60px - 120px) !important;
     }
     
     .chat-input.ask-anything-input {
-        padding: var(--space-lg);
-        border-radius: 0;
+        padding: var(--space-lg) !important;
+        border-radius: 0 !important;
+        /* position: fixed !important; */
+        bottom: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        width: 100vw !important;
+        box-sizing: border-box !important;
     }
     
     .chat-input.ask-anything-input .message-input,

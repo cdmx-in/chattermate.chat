@@ -112,9 +112,13 @@ class TestEnhancedWebsiteKnowledgeBase:
         assert all(docs == TEST_DOCUMENTS for docs in doc_lists)
         assert mock_reader.read.call_count == len(TEST_URLS)
         
-        # Verify read was called with correct URLs
+        # Verify read was called with correct URLs and new callback args
         for url in TEST_URLS:
-            mock_reader.read.assert_any_call(url=url)
+            mock_reader.read.assert_any_call(
+                url=url,
+                vector_db_callback=ANY,
+                url_crawled_callback=ANY
+            )
     
     def test_load_without_vector_db(self, mock_reader):
         """Test load method when no vector db is provided"""
@@ -143,8 +147,8 @@ class TestEnhancedWebsiteKnowledgeBase:
         # Verify reader operations
         assert mock_reader.read.call_count == len(TEST_URLS)
         mock_reader.read.assert_has_calls([
-            call(url=TEST_URLS[0]),
-            call(url=TEST_URLS[1])
+            call(url=TEST_URLS[0], vector_db_callback=ANY, url_crawled_callback=ANY),
+            call(url=TEST_URLS[1], vector_db_callback=ANY, url_crawled_callback=ANY)
         ], any_order=True)
         
         # Verify batch upsert was called with combined documents
@@ -167,7 +171,11 @@ class TestEnhancedWebsiteKnowledgeBase:
         
         # Should only process second URL
         assert mock_reader.read.call_count == 1
-        mock_reader.read.assert_called_once_with(url=TEST_URLS[1])
+        mock_reader.read.assert_called_once_with(
+            url=TEST_URLS[1],
+            vector_db_callback=ANY,
+            url_crawled_callback=ANY
+        )
         
         # Verify upsert was called once with the documents
         mock_vector_db.upsert.assert_called_once()

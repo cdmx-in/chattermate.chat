@@ -18,19 +18,91 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 <template>
   <div class="analytics-container">
-    <div class="analytics-header">
-      <h1>Analytics Dashboard</h1>
-      <div class="time-range-selector">
-        <button 
-          v-for="range in ['24h', '7d', '30d', '90d']" 
-          :key="range"
-          :class="{ active: timeRange === range }"
-          @click="handleTimeRangeChange(range)"
-        >
-          {{ range }}
-        </button>
+    <!-- Analytics Locked Overlay (only shown when enterprise module exists) -->
+    <div v-if="hasEnterpriseModule && isAnalyticsLocked" class="analytics-locked-overlay">
+      <div class="locked-content">
+        <div class="locked-header">
+          <div class="locked-icon-wrapper">
+            <div class="locked-icon-bg">
+              <font-awesome-icon icon="fa-solid fa-chart-line" class="locked-icon" />
+            </div>
+          </div>
+          <h2>Analytics Dashboard</h2>
+          <div class="locked-badge">
+            <font-awesome-icon icon="fa-solid fa-lock" class="badge-icon" />
+            <span>Premium Feature</span>
+          </div>
+        </div>
+        
+        <p class="locked-description">
+          Unlock powerful analytics and insights to track your team's performance, 
+          customer satisfaction, and conversation trends with detailed reports and visualizations.
+        </p>
+        
+        <div class="locked-features">
+          <div class="feature-item">
+            <div class="feature-icon-wrapper">
+              <font-awesome-icon icon="fa-solid fa-chart-bar" class="feature-icon" />
+            </div>
+            <div class="feature-content">
+              <span class="feature-title">Real-time Analytics</span>
+              <span class="feature-desc">Live conversation metrics and performance tracking</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon-wrapper">
+              <font-awesome-icon icon="fa-solid fa-users" class="feature-icon" />
+            </div>
+            <div class="feature-content">
+              <span class="feature-title">Agent Performance</span>
+              <span class="feature-desc">Individual and team performance insights</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon-wrapper">
+              <font-awesome-icon icon="fa-solid fa-heart" class="feature-icon" />
+            </div>
+            <div class="feature-content">
+              <span class="feature-title">Customer Satisfaction</span>
+              <span class="feature-desc">Rating trends and satisfaction metrics</span>
+            </div>
+          </div>
+          <div class="feature-item">
+            <div class="feature-icon-wrapper">
+              <font-awesome-icon icon="fa-solid fa-file-export" class="feature-icon" />
+            </div>
+            <div class="feature-content">
+              <span class="feature-title">Advanced Reports</span>
+              <span class="feature-desc">Detailed insights and export capabilities</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="upgrade-section">
+          <button class="upgrade-button" @click="handleUpgrade">
+            <font-awesome-icon icon="fa-solid fa-crown" class="upgrade-icon" />
+            <span>Upgrade to Unlock Analytics</span>
+            <font-awesome-icon icon="fa-solid fa-arrow-right" class="arrow-icon" />
+          </button>
+        </div>
       </div>
     </div>
+
+    <!-- Analytics Content (when unlocked) -->
+    <div v-else>
+      <div class="analytics-header">
+        <h1>Analytics Dashboard</h1>
+        <div class="time-range-selector">
+          <button 
+            v-for="range in ['24h', '7d', '30d', '90d']" 
+            :key="range"
+            :class="{ active: timeRange === range }"
+            @click="handleTimeRangeChange(range)"
+          >
+            {{ range }}
+          </button>
+        </div>
+      </div>
 
     <div class="analytics-tabs">
       <div class="tab-buttons">
@@ -193,9 +265,10 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
       <AgentPerformance :time-range="timeRange" @time-range-change="handleTimeRangeChange" />
     </div>
 
-    <!-- Customer Analytics Tab -->
-    <div v-if="activeTab === 'customers'">
-      <CustomerAnalytics :time-range="timeRange" @time-range-change="handleTimeRangeChange" />
+      <!-- Customer Analytics Tab -->
+      <div v-if="activeTab === 'customers'">
+        <CustomerAnalytics :time-range="timeRange" @time-range-change="handleTimeRangeChange" />
+      </div>
     </div>
   </div>
 </template>
@@ -206,6 +279,8 @@ import VueApexCharts from 'vue3-apexcharts'
 import api from '@/services/api'
 import AgentPerformance from './AgentPerformance.vue'
 import CustomerAnalytics from './CustomerAnalytics.vue'
+import { useSubscriptionStorage } from '@/utils/storage'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 interface AnalyticsMetric {
   data: number[]
@@ -241,6 +316,41 @@ const activeTab = ref('overview')
 const isLoading = ref(true)
 const error = ref<string | null>(null)
 const analyticsData = ref<AnalyticsData | null>(null)
+
+// Subscription and analytics feature checking
+const subscriptionStorage = useSubscriptionStorage()
+const { hasEnterpriseModule } = useEnterpriseFeatures()
+const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
+const isSubscriptionActive = computed(() => subscriptionStorage.isSubscriptionActive())
+
+// Check if analytics feature is available
+const hasAnalyticsFeature = computed(() => {
+  return subscriptionStorage.hasFeature('analytics')
+})
+
+// Check if analytics is locked (only if enterprise module exists)
+const isAnalyticsLocked = computed(() => {
+  // Only lock if enterprise module exists
+  if (!hasEnterpriseModule) {
+    return false
+  }
+  return !hasAnalyticsFeature.value || !isSubscriptionActive.value
+})
+
+// Upgrade modal state
+const showUpgradeModal = ref(false)
+
+// Modal functions
+const closeUpgradeModal = () => {
+  showUpgradeModal.value = false
+}
+
+const handleUpgrade = () => {
+  // Only redirect to subscription page if enterprise module exists
+  if (hasEnterpriseModule) {
+    window.location.href = '/settings/subscription'
+  }
+}
 
 const hasData = (metric: AnalyticsMetric | RatingMetrics | undefined): boolean => {
   if (!metric) return false
@@ -395,6 +505,12 @@ const getComparisonChartOptions = () => ({
 })
 
 const fetchAnalytics = async () => {
+  // Don't fetch if analytics is locked
+  if (isAnalyticsLocked.value) {
+    isLoading.value = false
+    return
+  }
+
   try {
     isLoading.value = true
     error.value = null
@@ -592,5 +708,282 @@ fetchAnalytics()
   font-size: var(--text-xs);
   color: var(--text-muted);
   margin-top: var(--space-xs);
+}
+
+/* Analytics Locked Overlay Styles */
+.analytics-locked-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60vh;
+  background: var(--background-soft);
+  border-radius: var(--radius-lg);
+  margin: var(--space-lg) 0;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+}
+
+.analytics-locked-overlay::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: 
+    radial-gradient(circle at 20% 80%, rgba(243, 70, 17, 0.05) 0%, transparent 50%),
+    radial-gradient(circle at 80% 20%, rgba(16, 185, 129, 0.05) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.locked-content {
+  text-align: center;
+  max-width: 800px;
+  padding: var(--space-2xl) var(--space-lg);
+  position: relative;
+  z-index: 1;
+}
+
+.locked-header {
+  margin-bottom: var(--space-xl);
+}
+
+.locked-icon-wrapper {
+  margin-bottom: var(--space-md);
+}
+
+.locked-icon-bg {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  background: var(--primary-color);
+  border-radius: 50%;
+  box-shadow: var(--shadow-lg);
+  margin-bottom: var(--space-sm);
+}
+
+.locked-icon {
+  font-size: 1.5rem;
+  color: white;
+}
+
+.locked-content h2 {
+  font-size: var(--text-3xl);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-sm);
+}
+
+.locked-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  background: var(--primary-color);
+  color: white;
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+}
+
+.badge-icon {
+  font-size: 0.75rem;
+}
+
+.locked-description {
+  font-size: var(--text-lg);
+  color: var(--text-muted);
+  line-height: 1.6;
+  margin-bottom: var(--space-xl);
+  max-width: 700px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.locked-features {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-md);
+  margin-bottom: var(--space-xl);
+}
+
+.feature-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-lg);
+  background: var(--background-color);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  box-shadow: var(--shadow-sm);
+  text-align: left;
+  transition: all var(--transition-normal);
+}
+
+.feature-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--border-color-hover);
+}
+
+.feature-icon-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: var(--success-color);
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.feature-icon {
+  font-size: 1rem;
+  color: white;
+}
+
+.feature-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.feature-title {
+  font-size: var(--text-base);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.feature-desc {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.upgrade-section {
+  text-align: center;
+}
+
+.upgrade-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-sm);
+  background: var(--primary-color);
+  color: white;
+  border: none;
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg) var(--space-xl);
+  font-size: var(--text-base);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  box-shadow: var(--shadow-md);
+  position: relative;
+  overflow: hidden;
+}
+
+.upgrade-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.5s;
+}
+
+.upgrade-button:hover::before {
+  left: 100%;
+}
+
+.upgrade-button:hover {
+  background: var(--primary-dark);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+
+.upgrade-icon {
+  font-size: 1rem;
+  color: #ffd700;
+}
+
+.arrow-icon {
+  font-size: 0.875rem;
+  transition: transform var(--transition-normal);
+}
+
+.upgrade-button:hover .arrow-icon {
+  transform: translateX(4px);
+}
+
+/* Responsive adjustments for locked overlay */
+@media (max-width: 1024px) {
+  .locked-features {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-sm);
+  }
+}
+
+@media (max-width: 768px) {
+  .analytics-locked-overlay {
+    min-height: 50vh;
+    margin: var(--space-md) 0;
+  }
+  
+  .locked-content {
+    padding: var(--space-xl) var(--space-md);
+  }
+  
+  .locked-content h2 {
+    font-size: var(--text-2xl);
+  }
+  
+  .locked-description {
+    font-size: var(--text-base);
+    margin-bottom: var(--space-lg);
+  }
+  
+  .locked-features {
+    grid-template-columns: 1fr;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-lg);
+  }
+  
+  .feature-item {
+    padding: var(--space-md);
+  }
+  
+  .feature-icon-wrapper {
+    width: 32px;
+    height: 32px;
+  }
+  
+  .feature-icon {
+    font-size: 0.875rem;
+  }
+  
+  .upgrade-button {
+    width: 100%;
+    padding: var(--space-md) var(--space-lg);
+    font-size: var(--text-sm);
+  }
+  
+  .locked-icon-bg {
+    width: 48px;
+    height: 48px;
+  }
+  
+  .locked-icon {
+    font-size: 1.25rem;
+  }
+  
+  .locked-header {
+    margin-bottom: var(--space-lg);
+  }
 }
 </style> 

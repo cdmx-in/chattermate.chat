@@ -54,13 +54,19 @@ def remove_urls_from_message(message: str) -> str:
     return re.sub(url_pattern, '[link removed]', message)
 
 class ChatAgent(ChatAgentMCPMixin):
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None, source: str = None):
         # Initialize knowledge search tool if org_id and agent_id provided
+        logger.debug(f"Initializing chat agent for agent_id: {agent_id} and org_id: {org_id} and source: {source}")
         tools = []
         if org_id and agent_id:
+            logger.debug(f"Initializing knowledge search tool for agent_id: {agent_id} and org_id: {org_id} and source: {source}")
             knowledge_tool = KnowledgeSearchByAgent(
-                agent_id=agent_id, org_id=org_id)
+                agent_id=agent_id, org_id=org_id, source=source)
             tools.append(knowledge_tool)
+            knowledge_tool_prompt = """
+            You have access to the knowledge search tool. You can use this tool to search for information about the customer's query on product, services, policies, etc. Only use the tool if required, dont use it for general greeting. Dont hallucinate information.
+            """
+            
 
         # Get template instructions and Jira config in a single optimized query
         # Use context manager for database operations
@@ -163,7 +169,7 @@ class ChatAgent(ChatAgentMCPMixin):
                 # Use custom system prompt from workflow
                 system_message = custom_system_prompt
             elif self.agent_data.instructions:
-                system_message = "\n".join(self.agent_data.instructions) + "Use the knowledge search tool to provide accurate company information. Only use the tool if required, dont use it for general greeting or general queries"
+                system_message = "\n".join(self.agent_data.instructions) +  knowledge_tool_prompt
 
             
             # Add transfer instructions if enabled

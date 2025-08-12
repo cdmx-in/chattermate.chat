@@ -25,15 +25,6 @@ from app.models.agent import AgentType
 from app.models.schemas.agent_customization import CustomizationResponse
 from app.models.schemas.user_group import UserGroupResponse
 
-
-class AgentType(str, Enum):
-    CUSTOMER_SUPPORT = "customer_support"
-    SALES = "sales"
-    TECH_SUPPORT = "tech_support"
-    GENERAL = "general"
-    CUSTOM = "custom"
-
-
 class KnowledgeItem(BaseModel):
     id: int
     name: str

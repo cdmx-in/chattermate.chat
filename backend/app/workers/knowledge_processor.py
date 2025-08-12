@@ -20,10 +20,10 @@ import asyncio
 from app.database import SessionLocal
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.knowledge.knowledge_base import KnowledgeManager
-from app.models.knowledge_queue import QueueStatus
+from app.models.knowledge_queue import QueueStatus, ProcessingStage
 from app.core.logger import get_logger
 import os
-from app.api.knowledge import PROCESSOR_STATUS
+from app.core.processor import PROCESSOR_STATUS
 from datetime import datetime
 from app.models.notification import Notification, NotificationType
 from app.services.user import send_fcm_notification
@@ -53,6 +53,8 @@ async def process_queue_item(queue_item_id: int):
         if queue_item.status == QueueStatus.PENDING:
             # Update to processing
             queue_item.status = QueueStatus.PROCESSING
+            queue_item.processing_stage = ProcessingStage.NOT_STARTED
+            queue_item.progress_percentage = 0.0
             db.commit()
 
             await knowledge.process_knowledge(queue_item)

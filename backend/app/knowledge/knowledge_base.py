@@ -25,17 +25,20 @@ from app.core.logger import get_logger
 from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
+from app.models.knowledge_queue import ProcessingStage, QueueStatus
 from app.repositories.ai_config import AIConfigRepository
 from app.database import SessionLocal
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.knowledge import KnowledgeRepository
+from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from typing import List, Optional, Dict, Union
 import os
 import tempfile
 import requests
+import asyncio
 from urllib.parse import urlparse
 from uuid import UUID
-from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
+from agno.embedder.fastembed import FastEmbedEmbedder
 
 # Try to import enterprise modules
 try:
@@ -61,20 +64,20 @@ class KnowledgeManager:
         embedder = None
         table_name = f"d_{org_id}"
         
-        # Use the configured embedding model with reduced parallelism
-        embedder = SentenceTransformerEmbedder(
-            id=settings.EMBEDDING_MODEL_ID  # Use configurable model ID
+        # Use FastEmbedEmbedder instead of SentenceTransformerEmbedder
+        embedder = FastEmbedEmbedder(
+            id=settings.FASTEMBED_MODEL
         )
-
-        # Update dimensions for the model (all-MiniLM-L6-v2 uses 384 dimensions)
-        embedder.dimensions = 384
+        
+        # Dimensions will be automatically set by the model
 
         self.vector_db = OptimizedPgVector(
             table_name=table_name,
             db_url=settings.DATABASE_URL,
             schema="ai",
             search_type=SearchType.vector,
-            embedder=embedder
+            embedder=embedder,
+            auto_upgrade_schema=True
         )
 
     def _add_knowledge_source(self, source: str, source_type: SourceType):
@@ -122,11 +125,18 @@ class KnowledgeManager:
                     )
                     # Extract filename from URL and remove extension
                     filename = os.path.splitext(os.path.basename(url))[0]
-                    knowledge_base.load(recreate=False, upsert=True, filters={
+                    filters = {
                         "name": filename,
                         "agent_id": agent_id_filter,
                         "org_id": str(self.org_id)
-                    })
+                    }
+                    # Run PDF URL processing in thread pool to avoid blocking other APIs
+                    await asyncio.to_thread(
+                        knowledge_base.load,
+                        recreate=False,
+                        upsert=True,
+                        filters=filters
+                    )
                     self._add_knowledge_source(filename, SourceType.FILE)
                 else:
                     # For non-PDF URLs, download to temp file and process with add_pdf_files
@@ -162,14 +172,18 @@ class KnowledgeManager:
                         temp_file = open(temp_path, 'wb')
                         temp_file.close()
                         
-                        # Download content
-                        response = requests.get(url, stream=True)
-                        response.raise_for_status()
+                        # Download content in thread pool to avoid blocking other APIs
+                        def download_file():
+                            response = requests.get(url, stream=True)
+                            response.raise_for_status()
+                            
+                            # Write content to the temporary file
+                            with open(temp_path, 'wb') as f:
+                                for chunk in response.iter_content(chunk_size=8192):
+                                    f.write(chunk)
+                            return temp_path
                         
-                        # Write content to the temporary file
-                        with open(temp_path, 'wb') as f:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                f.write(chunk)
+                        downloaded_path = await asyncio.to_thread(download_file)
                         
                         logger.info(f"Downloaded URL to temporary file: {temp_path}, will process as: {filename}")
                         
@@ -280,12 +294,19 @@ class KnowledgeManager:
                             
                         # Convert agent_id to string if it exists
                         agent_id_filter = [str(self.agent_id)] if self.agent_id else []
-                        logger.info(f"Adding knowledge source: {filename}")
-                        knowledge_base.load(recreate=False, upsert=True, filters={
+                        logger.info(f"Adding PDF knowledge source: {filename}")
+                        filters = {
                             "name": filename,
                             "agent_id": agent_id_filter,
                             "org_id": str(self.org_id)
-                        })
+                        }
+                        # Run PDF processing in thread pool to avoid blocking other APIs
+                        await asyncio.to_thread(
+                            knowledge_base.load,
+                            recreate=False,
+                            upsert=True,
+                            filters=filters
+                        )
                     except Exception as e:
                         logger.warning(f"Regular PDFReader failed for {path_to_use}, trying PDFImageReader: {str(e)}")
                         # Fallback to PDFImageReader if PDFReader fails
@@ -299,11 +320,18 @@ class KnowledgeManager:
                         
                         # Convert agent_id to string if it exists
                         agent_id_filter = [str(self.agent_id)] if self.agent_id else []
-                        knowledge_base.load(recreate=False, upsert=True, filters={
+                        filters = {
                             "name": filename,
                             "agent_id": agent_id_filter,
                             "org_id": str(self.org_id)
-                        })
+                        }
+                        # Run PDF processing in thread pool to avoid blocking other APIs
+                        await asyncio.to_thread(
+                            knowledge_base.load,
+                            recreate=False,
+                            upsert=True,
+                            filters=filters
+                        )
                     
                     self._add_knowledge_source(filename, SourceType.FILE)
                 finally:
@@ -341,28 +369,121 @@ class KnowledgeManager:
     async def process_knowledge(self, queue_item):
         """Process knowledge based on source type"""
         try:
-            # Process based on source type
-            if queue_item.source_type == 'pdf_file':
-                success = await self.add_pdf_files([queue_item.source])
-                # Clean up temp file after processing if it's a local file
-                if not queue_item.source.startswith('http') and os.path.exists(queue_item.source):
-                    os.remove(queue_item.source)
+            # Get DB session for progress updates
+            with SessionLocal() as db:
+                queue_repo = KnowledgeQueueRepository(db)
+                
+                # Process based on source type
+                if queue_item.source_type == 'pdf_file':
+                    # Update to crawling stage (PDF extraction)
+                    queue_repo.update_progress(
+                        queue_item.id, 
+                        ProcessingStage.CRAWLING, 
+                        total_items=1,
+                        processed_items=0,
+                        force_stage_update=True
+                    )
+                    
+                    # Process the PDF (already async, but contains blocking operations)
+                    success = await self.add_pdf_files([queue_item.source])
+                    
+                    # Update to embedding/training stage
+                    queue_repo.update_progress(
+                        queue_item.id, 
+                        ProcessingStage.EMBEDDING, 
+                        total_items=1,
+                        processed_items=1,
+                        force_stage_update=True
+                    )
+                    
+                    # Clean up temp file after processing if it's a local file
+                    if not queue_item.source.startswith('http') and os.path.exists(queue_item.source):
+                        os.remove(queue_item.source)
+                    
+                    # Mark as completed
+                    queue_repo.update_status(
+                        queue_item.id, 
+                        QueueStatus.COMPLETED
+                    )
 
-            elif queue_item.source_type == 'pdf_url':
-                success = await self.add_pdf_urls([queue_item.source])
+                elif queue_item.source_type == 'pdf_url':
+                    # Update to crawling stage (downloading PDF)
+                    queue_repo.update_progress(
+                        queue_item.id, 
+                        ProcessingStage.CRAWLING, 
+                        total_items=1,
+                        processed_items=0,
+                        force_stage_update=True
+                    )
+                    
+                    # Process the PDF URL (already async, but contains blocking operations)
+                    success = await self.add_pdf_urls([queue_item.source])
+                    
+                    # Update to embedding/training stage
+                    queue_repo.update_progress(
+                        queue_item.id, 
+                        ProcessingStage.EMBEDDING, 
+                        total_items=1,
+                        processed_items=1,
+                        force_stage_update=True
+                    )
+                    
+                    # Mark as completed
+                    queue_repo.update_status(
+                        queue_item.id, 
+                        QueueStatus.COMPLETED
+                    )
 
-            elif queue_item.source_type == 'website':
-                max_links = queue_item.queue_metadata.get(
-                    'max_links', 10) if queue_item.queue_metadata else 10
-                success = await self.add_websites([queue_item.source], max_links=max_links)
-            else:
-                raise ValueError(f"Unsupported source type: {
-                                 queue_item.source_type}")
+                elif queue_item.source_type == 'website':
+                    # Update to crawling stage (don't add main URL here, let the crawler handle it)
+                    queue_repo.update_progress(
+                        queue_item.id, 
+                        ProcessingStage.CRAWLING
+                    )
+                    
+                    max_links = queue_item.queue_metadata.get(
+                        'max_links', 10) if queue_item.queue_metadata else 10
+                    
+                    # Process the website - pass queue item and repo for URL tracking
+                    knowledge_base = EnhancedWebsiteKnowledgeBase(
+                        urls=[queue_item.source],
+                        max_links=max_links,
+                        vector_db=self.vector_db
+                    )
+                    # Add queue_item and repo for URL tracking
+                    knowledge_base.queue_item = queue_item
+                    knowledge_base.queue_repo = queue_repo
+                    
+                    # Process the website in a thread pool to avoid blocking other APIs
+                    logger.info(f"Starting website processing in background thread for {queue_item.source}")
+                    agent_id_filter = [str(self.agent_id)] if self.agent_id else []
+                    filters = {
+                        "name": queue_item.source,
+                        "agent_id": agent_id_filter,
+                        "org_id": str(self.org_id)
+                    }
+                    
+                    # Run the heavy synchronous operation in a thread pool
+                    await asyncio.to_thread(
+                        knowledge_base.load,
+                        recreate=False,
+                        upsert=True,
+                        filters=filters
+                    )
+                    
+                    logger.info(f"Completed website processing for {queue_item.source}")
+                    self._add_knowledge_source(queue_item.source, SourceType.WEBSITE)
+                    success = True
+                    
+                    # Completion status is handled internally by EnhancedWebsiteKnowledgeBase
+                else:
+                    raise ValueError(f"Unsupported source type: {
+                                     queue_item.source_type}")
 
-            if not success:
-                raise Exception("Failed to process knowledge source")
+                if not success:
+                    raise Exception("Failed to process knowledge source")
 
-            return success
+                return success
 
         except Exception as e:
             logger.error(f"Error processing knowledge: {str(e)}")

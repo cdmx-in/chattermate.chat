@@ -127,6 +127,8 @@ app.include_router(
     tags=["mcp-tools"]
 )
 
+# Proxy router moved to enterprise module
+
 app.include_router(
     notification.router,
     prefix=f"{settings.API_V1_STR}/notifications",

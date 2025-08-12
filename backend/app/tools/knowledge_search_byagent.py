@@ -27,18 +27,19 @@ from app.repositories.ai_config import AIConfigRepository
 from app.core.security import decrypt_api_key
 from agno.knowledge.agent import AgentKnowledge
 from agno.vectordb.pgvector import PgVector, SearchType
-from agno.embedder.sentence_transformer import SentenceTransformerEmbedder
+from agno.embedder.fastembed import FastEmbedEmbedder
 from uuid import UUID
 import os
 
 class KnowledgeSearchByAgent(Toolkit):
-    def __init__(self, agent_id: str, org_id: UUID):
+    def __init__(self, agent_id: str, org_id: UUID, source: str = None):
         super().__init__(name="knowledge_search_by_agent")
         self.name = "knowledge_search_by_agent"
         self.description = "Search the knowledge base for information about a query"
         self.function = self.search_knowledge_base
         self.agent_id = agent_id
         self.org_id = org_id
+        self.source = source
         
         # Get API key from AI config - use context manager for database session
         with SessionLocal() as db:
@@ -72,11 +73,11 @@ class KnowledgeSearchByAgent(Toolkit):
                 if self.agent_knowledge is None:
                     # Use the first knowledge source's table and schema since they should all be in the same table
                     source = knowledge_sources[0]
-                    embedder = SentenceTransformerEmbedder(
-                        id=settings.EMBEDDING_MODEL_ID  # Use configurable model ID from settings
+                    embedder = FastEmbedEmbedder(
+                         # Use configurable model ID from settings
                     )
                     # Updated dimensions for the model (all-MiniLM-L6-v2 uses 384 dimensions)
-                    embedder.dimensions = 384
+                    
                     # Initialize vector db with simpler search type to avoid connection issues
                     vector_db = PgVector(
                         table_name=source.table_name,
@@ -92,9 +93,11 @@ class KnowledgeSearchByAgent(Toolkit):
 
                 # Convert UUID to string in filters
                 filters = {"agent_id": [str(self.agent_id)]}
+                if self.source:
+                    filters["name"] = self.source
                 logger.debug(f"Search filters: {filters}")
 
-                # Search with agent_id filter
+                # Search with filters
                 documents = self.agent_knowledge.search(
                     query=query,
                     num_documents=5,

@@ -80,7 +80,8 @@ class WorkflowExecutionService:
         org_id: str = None,
         agent_id: str = None,
         customer_id: str = None,
-        is_initial_execution: bool = False
+        is_initial_execution: bool = False,
+        source: str = None
     ) -> WorkflowExecutionResult:
         """
         Execute workflow for a chat session
@@ -171,7 +172,8 @@ class WorkflowExecutionService:
                     org_id,
                     agent_id,
                     customer_id,
-                    session_id
+                    session_id,
+                    source
                 )
                 
                 # Collect messages from MESSAGE nodes during automatic execution
@@ -280,7 +282,8 @@ class WorkflowExecutionService:
         customer_id: str = None,
         api_key: str = None,
         model_name: str = None,
-        model_type: str = None
+        model_type: str = None,
+        source: str = None
     ) -> WorkflowExecutionResult:
         """
         Handle form submission and continue workflow
@@ -347,7 +350,8 @@ class WorkflowExecutionService:
                 model_type=model_type,
                 org_id=org_id,
                 agent_id=agent_id,
-                customer_id=customer_id
+                customer_id=customer_id,
+                source=source
             )
             
         except Exception as e:
@@ -387,7 +391,8 @@ class WorkflowExecutionService:
         org_id: str,
         agent_id: str,
         customer_id: str,
-        session_id: str
+        session_id: str,
+        source: str = None
     ) -> WorkflowExecutionResult:
         """Execute a specific node based on its type"""
         
@@ -400,7 +405,7 @@ class WorkflowExecutionService:
             elif node.node_type == NodeType.LLM:
                 return await self._execute_llm_node(
                     node, workflow, workflow_state, user_message, api_key, model_name, 
-                    model_type, org_id, agent_id, customer_id, session_id
+                    model_type, org_id, agent_id, customer_id, session_id, source
                 )
             
             elif node.node_type == NodeType.CONDITION:
@@ -472,7 +477,8 @@ class WorkflowExecutionService:
         org_id: str,
         agent_id: str,
         customer_id: str,
-        session_id: str
+        session_id: str,
+        source: str = None
     ) -> WorkflowExecutionResult:
         """Execute an LLM node"""
         try:
@@ -552,7 +558,8 @@ class WorkflowExecutionService:
                 customer_id=customer_id,
                 session_id=session_id,
                 custom_system_prompt=system_prompt,
-                transfer_to_human=auto_transfer
+                transfer_to_human=auto_transfer,
+                source=source
             )
             
             try:
@@ -1077,13 +1084,9 @@ class WorkflowExecutionService:
             
             # Build structured context message
             context_parts = []
-            
+            context_parts.append("CONTEXT on previous workflow messages, you can use this along with instructions for understanding context")
             # Add instruction header
-            context_parts.append("CONTEXT ANALYSIS REQUEST")
-            context_parts.append("=" * 50)
-            context_parts.append("")
-            context_parts.append("Please analyze the following conversation and workflow context to provide an appropriate response:")
-            context_parts.append("")
+
             
             # Add chat history section
             if chat_history:
@@ -1146,15 +1149,7 @@ class WorkflowExecutionService:
                 context_parts.append("")
             
             # Add analysis instructions
-            context_parts.append("ANALYSIS INSTRUCTIONS:")
-            context_parts.append("-" * 23)
-            context_parts.append("1. Review the conversation flow and user interactions")
-            context_parts.append("2. Consider any form submissions or workflow progress")
-            context_parts.append("3. Analyze the current context and user's likely intent")
-            context_parts.append("4. Provide an appropriate response or next action")
-            context_parts.append("5. If transferring to human or ending chat is appropriate, indicate so")
-            context_parts.append("")
-            context_parts.append("Please provide your analysis and recommended response:")
+
             
             return "\n".join(context_parts)
             

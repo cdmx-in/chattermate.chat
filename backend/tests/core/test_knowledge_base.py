@@ -220,15 +220,21 @@ async def test_process_knowledge_pdf_file(knowledge_manager):
     """Test processing PDF file knowledge"""
     # Setup
     queue_item = MagicMock()
+    queue_item.id = 123  # ensure a real integer ID to avoid DB adapter issues
     queue_item.source_type = "pdf_file"
     queue_item.source = "/path/to/test.pdf"
     
     with patch.object(knowledge_manager, 'add_pdf_files') as mock_add_pdf_files, \
          patch('os.path.exists') as mock_exists, \
-         patch('os.remove') as mock_remove:
+         patch('os.remove') as mock_remove, \
+         patch('app.knowledge.knowledge_base.KnowledgeQueueRepository') as mock_queue_repo_cls:
         # Configure mocks
         mock_add_pdf_files.return_value = True
         mock_exists.return_value = True
+        mock_queue_repo = MagicMock()
+        mock_queue_repo.update_progress.return_value = True
+        mock_queue_repo.update_status.return_value = True
+        mock_queue_repo_cls.return_value = mock_queue_repo
         
         # Execute
         result = await knowledge_manager.process_knowledge(queue_item)

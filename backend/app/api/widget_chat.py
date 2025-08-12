@@ -211,6 +211,16 @@ async def widget_connect(sid, environ, auth):
         overall_limit_per_ip = agent.overall_limit_per_ip if agent else 100
         requests_per_sec = agent.requests_per_sec if agent else 1.0
         
+        # Extract source from conversation token if available
+        source = None
+        try:
+            from app.core.security import verify_conversation_token
+            token_data = verify_conversation_token(conversation_token)
+            if token_data:
+                source = token_data.get("source")
+        except Exception:
+            pass
+        
         session_data = {
             'widget_id': widget_id,
             'org_id': org_id,
@@ -225,7 +235,8 @@ async def widget_connect(sid, environ, auth):
             'requests_per_sec': requests_per_sec,
             'message_limit_reached': message_limit_reached,
             'use_workflow': agent.use_workflow if agent else False,
-            'active_workflow_id': agent.active_workflow_id if agent else None
+            'active_workflow_id': agent.active_workflow_id if agent else None,
+            'source': source
         }
 
         # Log rate limiting settings
@@ -330,7 +341,8 @@ async def handle_widget_chat(sid, data):
                 customer_id=customer_id,
                 session=session,
                 sio=sio,
-                namespace='/widget'
+                namespace='/widget',
+                source=session.get('source')
             )
             
             # If response is None, it means a form was displayed and no regular response should be sent
@@ -359,7 +371,8 @@ async def handle_widget_chat(sid, data):
                 org_id=org_id,
                 agent_id=session['agent_id'],
                 customer_id=customer_id,
-                session_id=session_id
+                session_id=session_id,
+                source=session.get('source')
             )
             try:
                 # Get response from ai agent (this already handles end chat internally)
@@ -965,11 +978,46 @@ async def handle_get_workflow_state(sid):
                     org_id=org_id,
                     agent_id=session['agent_id'],
                     customer_id=customer_id,
-                    is_initial_execution=True
+                    is_initial_execution=True,
+                    source=session.get('source')
                 )
                 
                 if workflow_result.success:
                     logger.debug(f"Initial workflow result: {workflow_result}")
+                    
+                    # Handle intermediate messages from MESSAGE nodes during automatic execution
+                    if workflow_result.intermediate_messages:
+                        logger.info(f"Found {len(workflow_result.intermediate_messages)} intermediate messages from MESSAGE nodes in initial execution")
+                        for intermediate_message in workflow_result.intermediate_messages:
+                            logger.debug(f"Emitting intermediate message: {intermediate_message}")
+                            
+                            # Store intermediate message in chat history
+                            chat_repo.create_message({
+                                "message": intermediate_message,
+                                "message_type": "bot",
+                                "session_id": session_id,
+                                "organization_id": org_id,
+                                "agent_id": session['agent_id'],
+                                "customer_id": customer_id,
+                                "attributes": {
+                                    "workflow_execution": True,
+                                    "workflow_id": str(active_session.workflow_id),
+                                    "intermediate_message": True,
+                                    "message_node": True,
+                                    "initial_execution": True
+                                }
+                            })
+                            
+                            # Emit intermediate message to client immediately
+                            await sio.emit('chat_response', {
+                                'message': intermediate_message,
+                                'type': 'chat_response',
+                                'transfer_to_human': False,
+                                'end_chat': False,
+                                'request_rating': False,
+                                'shopify_output': None
+                            }, room=session_id, namespace='/widget')
+                    
                     # Handle different node types
                     if workflow_result.form_data:
                         await sio.emit('workflow_state', {
@@ -1216,11 +1264,45 @@ async def handle_proceed_workflow(sid, data):
             customer_id=customer_id,
             api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
             model_name=session['ai_config'].model_name,
-            model_type=session['ai_config'].model_type
+            model_type=session['ai_config'].model_type,
+            source=session.get('source')
         )
         
         if workflow_result.success:
             logger.debug(f"Workflow result: {workflow_result}")
+            
+            # Handle intermediate messages from MESSAGE nodes during automatic execution
+            if workflow_result.intermediate_messages:
+                logger.info(f"Found {len(workflow_result.intermediate_messages)} intermediate messages from MESSAGE nodes")
+                for intermediate_message in workflow_result.intermediate_messages:
+                    logger.debug(f"Emitting intermediate message: {intermediate_message}")
+                    
+                    # Store intermediate message in chat history
+                    chat_repo.create_message({
+                        "message": intermediate_message,
+                        "message_type": "bot",
+                        "session_id": session_id,
+                        "organization_id": org_id,
+                        "agent_id": session['agent_id'],
+                        "customer_id": customer_id,
+                        "attributes": {
+                            "workflow_execution": True,
+                            "workflow_id": str(active_session.workflow_id),
+                            "intermediate_message": True,
+                            "message_node": True
+                        }
+                    })
+                    
+                    # Emit intermediate message to client immediately
+                    await sio.emit('chat_response', {
+                        'message': intermediate_message,
+                        'type': 'chat_response',
+                        'transfer_to_human': False,
+                        'end_chat': False,
+                        'request_rating': False,
+                        'shopify_output': None
+                    }, room=session_id, namespace='/widget')
+            
             # Handle the next node type
             if workflow_result.form_data:
                 # It's a form node - emit form display
@@ -1360,7 +1442,8 @@ async def handle_form_submission(sid, data):
             customer_id=customer_id,
             api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
             model_name=session['ai_config'].model_name,
-            model_type=session['ai_config'].model_type
+            model_type=session['ai_config'].model_type,
+            source=session.get('source')
         )
 
         if workflow_result.success:

@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from sqlalchemy import Column, Integer, String, JSON, DateTime, Enum, ForeignKey
+from sqlalchemy import Column, Integer, String, JSON, DateTime, Enum, ForeignKey, Float
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from app.database import Base
@@ -28,6 +28,12 @@ class QueueStatus(str, enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+
+class ProcessingStage(str, enum.Enum):
+    NOT_STARTED = "not_started"
+    CRAWLING = "crawling"
+    EMBEDDING = "embedding"
+    COMPLETED = "completed"
 
 
 class KnowledgeQueue(Base):
@@ -44,6 +50,12 @@ class KnowledgeQueue(Base):
     error = Column(String, nullable=True)
     # Renamed from metadata to queue_metadata
     queue_metadata = Column(JSON, nullable=True)
+    # Progress tracking
+    processing_stage = Column(String, default=ProcessingStage.NOT_STARTED)
+    progress_percentage = Column(Float, default=0.0)
+    total_items = Column(Integer, default=0)
+    processed_items = Column(Integer, default=0)
+    crawled_urls = Column(JSON, default=lambda: [])
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

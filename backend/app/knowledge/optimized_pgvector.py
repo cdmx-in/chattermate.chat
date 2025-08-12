@@ -98,9 +98,14 @@ class OptimizedPgVector(PgVector):
                         batch_records = []
                         for doc in batch_docs:
                             try:
-                                # Skip embedding if the document already has an embedding
+                                # Embed document only if not already embedded (should be rare)
                                 if doc.embedding is None:
-                                    doc.embed(embedder=self.embedder)
+                                    if self.embedder is not None:
+                                        doc.embed(embedder=self.embedder)
+                                        logger.debug(f"Document embedding done for {doc.name}")
+                                    else:
+                                        logger.warning(f"Document '{doc.name}' has no embedding and no embedder available - skipping")
+                                        continue
                                 
                                 # Merge filters into document metadata for searchability
                                 merged_meta_data = doc.meta_data.copy() if doc.meta_data else {}

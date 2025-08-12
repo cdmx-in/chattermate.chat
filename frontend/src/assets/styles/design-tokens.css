@@ -70,4 +70,13 @@
 
   /* Primary Color Filter */
   --primary-color-filter: invert(45%) sepia(75%) saturate(3529%) hue-rotate(353deg) brightness(99%) contrast(95%);
+
+  /* Responsive Breakpoints */
+  --breakpoint-xs: 480px;
+  --breakpoint-sm: 768px;
+  --breakpoint-md: 1024px;
+  --breakpoint-lg: 1280px;
+  --breakpoint-xl: 1366px; /* 13-inch laptops */
+  --breakpoint-xxl: 1440px; /* 14-15 inch laptops */
+  --breakpoint-xxxl: 1600px; /* Large screens */
 } 

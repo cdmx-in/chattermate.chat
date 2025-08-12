@@ -1,3 +1,5 @@
+import type { ChatStyle, WidgetPosition } from './agent'
+
 export interface Widget {
   id: string
   name: string
@@ -29,6 +31,8 @@ export interface AgentCustomization {
     font_family?: string;
     custom_css?: string;
     customization_metadata?: Record<string, any>;
+    chat_style?: ChatStyle;
+    widget_position?: WidgetPosition;
     welcome_title?: string;
     welcome_subtitle?: string;
 }
