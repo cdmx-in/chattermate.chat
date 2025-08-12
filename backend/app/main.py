@@ -19,7 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, proxy
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -127,11 +127,7 @@ app.include_router(
     tags=["mcp-tools"]
 )
 
-app.include_router(
-    proxy.router,
-    prefix=f"{settings.API_V1_STR}/proxy",
-    tags=["proxy"]
-)
+# Proxy router moved to enterprise module
 
 app.include_router(
     notification.router,

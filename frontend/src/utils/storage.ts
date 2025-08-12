@@ -1,6 +1,31 @@
 import type { Agent } from '@/types/agent'
 import type { UserGroup } from '@/types/user'
-import type { CurrentSubscription, Plan } from '@/modules/enterprise/composables/useSubscriptionStore'
+
+// Define interfaces locally to avoid direct imports from enterprise module
+// These will be used as fallbacks when enterprise module isn't available
+interface BasePlan {
+  id?: string
+  name?: string
+  max_agents?: number
+  max_messages?: number
+  max_knowledge_sources?: number
+  max_sub_pages?: number
+  data_retention_days?: number
+  features?: Record<string, boolean>
+}
+
+interface BaseSubscription {
+  id?: string
+  status?: string
+  plan?: BasePlan
+  quantity?: number
+  current_period_end?: string
+  trial_end?: string
+}
+
+// Use these types throughout the file
+type Plan = BasePlan
+type CurrentSubscription = BaseSubscription
 
 const STORAGE_KEYS = {
   ACTIVE_AGENT: 'active_agent',
@@ -180,7 +205,7 @@ export const subscriptionStorage = {
     }
     
     // If trial, check if trial is still active
-    if (subscription.status === 'trial') {
+    if (subscription.status === 'trial' && subscription.trial_end) {
       const trialEnd = new Date(subscription.trial_end)
       return now <= trialEnd
     }
@@ -207,10 +232,10 @@ export const subscriptionStorage = {
     }
 
     return {
-      maxAgents: subscription.plan.max_agents,
-      maxKnowledgeSources: subscription.plan.max_knowledge_sources,
-      maxSubPages: subscription.plan.max_sub_pages,
-      dataRetentionDays: subscription.plan.data_retention_days
+      maxAgents: subscription.plan.max_agents ?? 0,
+      maxKnowledgeSources: subscription.plan.max_knowledge_sources ?? 0,
+      maxSubPages: subscription.plan.max_sub_pages ?? 0,
+      dataRetentionDays: subscription.plan.data_retention_days ?? 0
     }
   },
 }
@@ -332,7 +357,17 @@ export function useWorkflowCacheStorage() {
 
 // Create a composable for subscription storage
 export function useSubscriptionStorage() {
-  return {
-    ...subscriptionStorage,
+  // Import enterprise types if available
+  try {
+    // This will be a dynamic import in the future when needed
+    
+    return {
+      ...subscriptionStorage,
+    }
+  } catch (error) {
+    console.warn('Enterprise module not available, using basic subscription storage')
+    return {
+      ...subscriptionStorage,
+    }
   }
 }
