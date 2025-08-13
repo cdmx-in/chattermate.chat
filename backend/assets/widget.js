@@ -107,10 +107,10 @@ const ao = (e) => !!(e && e.__v_isRef === !0), ce = (e) => De(e) ? e : e == null
 * (c) 2018-present Yuxi (Evan) You and Vue contributors
 * @license MIT
 **/
-let st;
+let nt;
 class ta {
   constructor(t = !1) {
-    this.detached = t, this._active = !0, this._on = 0, this.effects = [], this.cleanups = [], this._isPaused = !1, this.parent = st, !t && st && (this.index = (st.scopes || (st.scopes = [])).push(
+    this.detached = t, this._active = !0, this._on = 0, this.effects = [], this.cleanups = [], this._isPaused = !1, this.parent = nt, !t && nt && (this.index = (nt.scopes || (nt.scopes = [])).push(
       this
     ) - 1);
   }
@@ -144,11 +144,11 @@ class ta {
   }
   run(t) {
     if (this._active) {
-      const n = st;
+      const n = nt;
       try {
-        return st = this, t();
+        return nt = this, t();
       } finally {
-        st = n;
+        nt = n;
       }
     }
   }
@@ -157,14 +157,14 @@ class ta {
    * @internal
    */
   on() {
-    ++this._on === 1 && (this.prevScope = st, st = this);
+    ++this._on === 1 && (this.prevScope = nt, nt = this);
   }
   /**
    * This should only be called on non-detached scopes
    * @internal
    */
   off() {
-    this._on > 0 && --this._on === 0 && (st = this.prevScope, this.prevScope = void 0);
+    this._on > 0 && --this._on === 0 && (nt = this.prevScope, this.prevScope = void 0);
   }
   stop(t) {
     if (this._active) {
@@ -188,13 +188,13 @@ class ta {
   }
 }
 function na() {
-  return st;
+  return nt;
 }
 let Ee;
 const qs = /* @__PURE__ */ new WeakSet();
 class uo {
   constructor(t) {
-    this.fn = t, this.deps = void 0, this.depsTail = void 0, this.flags = 5, this.next = void 0, this.cleanup = void 0, this.scheduler = void 0, st && st.active && st.effects.push(this);
+    this.fn = t, this.deps = void 0, this.depsTail = void 0, this.flags = 5, this.next = void 0, this.cleanup = void 0, this.scheduler = void 0, nt && nt.active && nt.effects.push(this);
   }
   pause() {
     this.flags |= 64;
@@ -2785,8 +2785,8 @@ function fc(e, t) {
     const g = b(h.anchor || h.el), w = g && g[$a];
     return w ? b(w) : g;
   };
-  let rt = !1;
-  const tt = (h, g, w) => {
+  let st = !1;
+  const rt = (h, g, w) => {
     h == null ? g._vnode && Se(g._vnode, null, null, !0) : D(
       g._vnode || null,
       h,
@@ -2795,7 +2795,7 @@ function fc(e, t) {
       null,
       null,
       w
-    ), g._vnode = h, rt || (rt = !0, _i(), Io(), rt = !1);
+    ), g._vnode = h, st || (st = !0, _i(), Io(), st = !1);
   }, it = {
     p: D,
     um: Se,
@@ -2809,9 +2809,9 @@ function fc(e, t) {
     o: e
   };
   return {
-    render: tt,
+    render: rt,
     hydrate: void 0,
-    createApp: nc(tt)
+    createApp: nc(rt)
   };
 }
 function js({ type: e, props: t }, n) {
@@ -8200,14 +8200,14 @@ function Gf() {
           u(this.g.a), u(this.h.a), u(this.j.a), u(this.m.a), d(this.a);
         }, c), 0);
       }
-      function rt(c, d, k) {
+      function st(c, d, k) {
         this.c = c, this.a = d, this.f = 0, this.m = this.j = !1, this.s = k;
       }
-      var tt = null;
-      rt.prototype.g = function(c) {
+      var rt = null;
+      st.prototype.g = function(c) {
         var d = this.a;
         d.g && f(d.f, [d.a.c("wf", c.c, fe(c).toString(), "active")], [d.a.c("wf", c.c, fe(c).toString(), "loading"), d.a.c("wf", c.c, fe(c).toString(), "inactive")]), et(d, "fontactive", c), this.m = !0, it(this);
-      }, rt.prototype.h = function(c) {
+      }, st.prototype.h = function(c) {
         var d = this.a;
         if (d.g) {
           var k = _(d.f, d.a.c("wf", c.c, fe(c).toString(), "active")), y = [], A = [d.a.c("wf", c.c, fe(c).toString(), "loading")];
@@ -8234,11 +8234,11 @@ function Gf() {
             var G, Re = [];
             for (G = 0; G < k.length; G++) {
               var Ie = k[G], He = te[Ie.c], ot = d.a, jt = Ie;
-              if (ot.g && f(ot.f, [ot.a.c("wf", jt.c, fe(jt).toString(), "loading")]), et(ot, "fontloading", jt), ot = null, tt === null) if (window.FontFace) {
+              if (ot.g && f(ot.f, [ot.a.c("wf", jt.c, fe(jt).toString(), "loading")]), et(ot, "fontloading", jt), ot = null, rt === null) if (window.FontFace) {
                 var jt = /Gecko.*Firefox\/(\d+)/.exec(window.navigator.userAgent), $s = /OS X.*Version\/10\..*Safari/.exec(window.navigator.userAgent) && /Apple/.exec(window.navigator.vendor);
-                tt = jt ? 42 < parseInt(jt[1], 10) : !$s;
-              } else tt = !1;
-              tt ? ot = new M(s(d.g, d), s(d.h, d), d.c, Ie, d.s, He) : ot = new we(s(d.g, d), s(d.h, d), d.c, Ie, d.s, z, He), Re.push(ot);
+                rt = jt ? 42 < parseInt(jt[1], 10) : !$s;
+              } else rt = !1;
+              rt ? ot = new M(s(d.g, d), s(d.h, d), d.c, Ie, d.s, He) : ot = new we(s(d.g, d), s(d.h, d), d.c, Ie, d.s, z, He), Re.push(ot);
             }
             for (G = 0; G < Re.length; G++) Re[G].start();
           }
@@ -8247,7 +8247,7 @@ function Gf() {
       function g(c, d, k) {
         var A = [], y = k.timeout;
         gt(d);
-        var A = Ht(c.a, k, c.c), q = new rt(c.c, d, y);
+        var A = Ht(c.a, k, c.c), q = new st(c.c, d, y);
         for (c.h = A.length, d = 0, k = A.length; d < k; d++) A[d].load(function(z, te, G) {
           h(c, q, z, te, G);
         });
@@ -8667,12 +8667,12 @@ const Xf = {
       m.key === "Enter" && !m.shiftKey && (m.preventDefault(), m.stopPropagation(), E());
     }, kt = (m) => {
       m.key === "Enter" && !m.shiftKey && (m.preventDefault(), m.stopPropagation(), E());
-    }, ct = he(!0), rt = he(((ti = window.__INITIAL_DATA__) == null ? void 0 : ti.initialToken) || localStorage.getItem(Qs));
-    Be(() => !!rt.value), a();
-    const tt = window.__INITIAL_DATA__;
-    console.log("Initial data:", tt), tt != null && tt.initialToken && (rt.value = tt.initialToken, window.parent.postMessage({
+    }, ct = he(!0), st = he(((ti = window.__INITIAL_DATA__) == null ? void 0 : ti.initialToken) || localStorage.getItem(Qs));
+    Be(() => !!st.value), a();
+    const rt = window.__INITIAL_DATA__;
+    rt != null && rt.initialToken && (st.value = rt.initialToken, window.parent.postMessage({
       type: "TOKEN_UPDATE",
-      token: tt.initialToken
+      token: rt.initialToken
     }, "*"), X.value = !0);
     const it = he(null), {
       chatStyles: Ut,
@@ -8710,14 +8710,14 @@ const Xf = {
           Accept: "application/json",
           "Content-Type": "application/json"
         };
-        rt.value && (ve.Authorization = `Bearer ${rt.value}`);
+        st.value && (ve.Authorization = `Bearer ${st.value}`);
         const Y = await fetch(Z, {
           headers: ve
         });
         if (Y.status === 401)
           return X.value = !1, !1;
         const Ce = await Y.json();
-        return Ce.token && (rt.value = Ce.token, localStorage.setItem(Qs, Ce.token), window.parent.postMessage({ type: "TOKEN_UPDATE", token: Ce.token }, "*")), X.value = !0, await de() ? (await j(), (m = Ce.agent) != null && m.customization && l(Ce.agent.customization), Ce.agent && !(Ce != null && Ce.human_agent) && (o.value = Ce.agent.name), Ce != null && Ce.human_agent && (le.value = Ce.human_agent), ((v = Ce.agent) == null ? void 0 : v.workflow) !== void 0 && (window.__INITIAL_DATA__ = window.__INITIAL_DATA__ || {}, window.__INITIAL_DATA__.workflow = Ce.agent.workflow), (p = Ce.agent) != null && p.workflow && (console.log("Getting workflow state after authorization"), await Ze()), !0) : (console.error("Failed to connect to chat service"), !1);
+        return Ce.token && (st.value = Ce.token, localStorage.setItem(Qs, Ce.token), window.parent.postMessage({ type: "TOKEN_UPDATE", token: Ce.token }, "*")), X.value = !0, await de() ? (await j(), (m = Ce.agent) != null && m.customization && l(Ce.agent.customization), Ce.agent && !(Ce != null && Ce.human_agent) && (o.value = Ce.agent.name), Ce != null && Ce.human_agent && (le.value = Ce.human_agent), ((v = Ce.agent) == null ? void 0 : v.workflow) !== void 0 && (window.__INITIAL_DATA__ = window.__INITIAL_DATA__ || {}, window.__INITIAL_DATA__.workflow = Ce.agent.workflow), (p = Ce.agent) != null && p.workflow && (console.log("Getting workflow state after authorization"), await Ze()), !0) : (console.error("Failed to connect to chat service"), !1);
       } catch (Z) {
         return console.error("Error checking authorization:", Z), X.value = !1, !1;
       } finally {
@@ -8821,7 +8821,7 @@ const Xf = {
       } finally {
         k.value = !1, console.log("Form submission completed");
       }
-    }, nt = (m, v) => {
+    }, tt = (m, v) => {
       var p, Z;
       if (console.log(`Field change: ${m} = `, v), d.value[m] = v, console.log("Updated formData:", d.value), v && v.toString().trim() !== "") {
         let ve = null;
@@ -8994,7 +8994,7 @@ const Xf = {
       style: Te({ ...H(B), ...Vl.value })
     }, [
       ct.value ? (P(), $("div", Xf, v[8] || (v[8] = [
-        Ac('<div class="loading-spinner" data-v-e15ae11b><div class="dot" data-v-e15ae11b></div><div class="dot" data-v-e15ae11b></div><div class="dot" data-v-e15ae11b></div></div><div class="loading-text" data-v-e15ae11b>Initializing chat...</div>', 2)
+        Ac('<div class="loading-spinner" data-v-c251ece1><div class="dot" data-v-c251ece1></div><div class="dot" data-v-c251ece1></div><div class="dot" data-v-c251ece1></div></div><div class="loading-text" data-v-c251ece1>Initializing chat...</div>', 2)
       ]))) : oe("", !0),
       !ct.value && H(D) !== "connected" ? (P(), $("div", {
         key: 1,
@@ -9188,8 +9188,8 @@ const Xf = {
                   minlength: p.minLength,
                   maxlength: p.maxLength,
                   value: d.value[p.name] || "",
-                  onInput: (Y) => nt(p.name, Y.target.value),
-                  onBlur: (Y) => nt(p.name, Y.target.value),
+                  onInput: (Y) => tt(p.name, Y.target.value),
+                  onBlur: (Y) => tt(p.name, Y.target.value),
                   class: Le(["form-input", { error: y.value[p.name] }]),
                   autocomplete: p.type === "email" ? "email" : p.type === "tel" ? "tel" : "off",
                   inputmode: p.type === "tel" ? "tel" : p.type === "email" ? "email" : "text"
@@ -9202,7 +9202,7 @@ const Xf = {
                   min: p.minLength,
                   max: p.maxLength,
                   value: d.value[p.name] || "",
-                  onInput: (Y) => nt(p.name, Y.target.value),
+                  onInput: (Y) => tt(p.name, Y.target.value),
                   class: Le(["form-input", { error: y.value[p.name] }])
                 }, null, 42, Th)) : p.type === "textarea" ? (P(), $("textarea", {
                   key: 2,
@@ -9212,7 +9212,7 @@ const Xf = {
                   minlength: p.minLength,
                   maxlength: p.maxLength,
                   value: d.value[p.name] || "",
-                  onInput: (Y) => nt(p.name, Y.target.value),
+                  onInput: (Y) => tt(p.name, Y.target.value),
                   class: Le(["form-textarea", { error: y.value[p.name] }]),
                   rows: "4"
                 }, null, 42, Eh)) : p.type === "select" ? (P(), $("select", {
@@ -9220,7 +9220,7 @@ const Xf = {
                   id: `fullscreen-form-${p.name}`,
                   required: p.required,
                   value: d.value[p.name] || "",
-                  onChange: (Y) => nt(p.name, Y.target.value),
+                  onChange: (Y) => tt(p.name, Y.target.value),
                   class: Le(["form-select", { error: y.value[p.name] }])
                 }, [
                   v[14] || (v[14] = x("option", { value: "" }, "Please select...", -1)),
@@ -9235,7 +9235,7 @@ const Xf = {
                     type: "checkbox",
                     required: p.required,
                     checked: d.value[p.name] || !1,
-                    onChange: (Y) => nt(p.name, Y.target.checked),
+                    onChange: (Y) => tt(p.name, Y.target.checked),
                     class: "form-checkbox"
                   }, null, 40, Oh),
                   x("span", Lh, ce(p.label), 1)
@@ -9251,7 +9251,7 @@ const Xf = {
                       value: Y.trim(),
                       required: p.required,
                       checked: d.value[p.name] === Y.trim(),
-                      onChange: (Ce) => nt(p.name, Y.trim()),
+                      onChange: (Ce) => tt(p.name, Y.trim()),
                       class: "form-radio"
                     }, null, 40, $h),
                     x("span", Fh, ce(Y.trim()), 1)
@@ -9430,8 +9430,8 @@ const Xf = {
                             minlength: R.minLength,
                             maxlength: R.maxLength,
                             value: d.value[R.name] || "",
-                            onInput: (Pe) => nt(R.name, Pe.target.value),
-                            onBlur: (Pe) => nt(R.name, Pe.target.value),
+                            onInput: (Pe) => tt(R.name, Pe.target.value),
+                            onBlur: (Pe) => tt(R.name, Pe.target.value),
                             class: Le(["form-input", { error: y.value[R.name] }]),
                             disabled: k.value,
                             autocomplete: R.type === "email" ? "email" : R.type === "tel" ? "tel" : "off",
@@ -9445,7 +9445,7 @@ const Xf = {
                             min: R.min,
                             max: R.max,
                             value: d.value[R.name] || "",
-                            onInput: (Pe) => nt(R.name, Pe.target.value),
+                            onInput: (Pe) => tt(R.name, Pe.target.value),
                             class: Le(["form-input", { error: y.value[R.name] }]),
                             disabled: k.value
                           }, null, 42, hd)) : R.type === "textarea" ? (P(), $("textarea", {
@@ -9456,7 +9456,7 @@ const Xf = {
                             minlength: R.minLength,
                             maxlength: R.maxLength,
                             value: d.value[R.name] || "",
-                            onInput: (Pe) => nt(R.name, Pe.target.value),
+                            onInput: (Pe) => tt(R.name, Pe.target.value),
                             class: Le(["form-textarea", { error: y.value[R.name] }]),
                             disabled: k.value,
                             rows: "3"
@@ -9465,7 +9465,7 @@ const Xf = {
                             id: `form-${R.name}`,
                             required: R.required,
                             value: d.value[R.name] || "",
-                            onChange: (Pe) => nt(R.name, Pe.target.value),
+                            onChange: (Pe) => tt(R.name, Pe.target.value),
                             class: Le(["form-select", { error: y.value[R.name] }]),
                             disabled: k.value
                           }, [
@@ -9479,7 +9479,7 @@ const Xf = {
                               id: `form-${R.name}`,
                               type: "checkbox",
                               checked: d.value[R.name] || !1,
-                              onChange: (Pe) => nt(R.name, Pe.target.checked),
+                              onChange: (Pe) => tt(R.name, Pe.target.checked),
                               class: "form-checkbox",
                               disabled: k.value
                             }, null, 40, _d),
@@ -9498,7 +9498,7 @@ const Xf = {
                                 type: "radio",
                                 value: Pe.trim(),
                                 checked: d.value[R.name] === Pe.trim(),
-                                onChange: (gp) => nt(R.name, Pe.trim()),
+                                onChange: (gp) => tt(R.name, Pe.trim()),
                                 class: "form-radio",
                                 disabled: k.value
                               }, null, 40, bd),
@@ -9743,7 +9743,7 @@ const Xf = {
   for (const [s, r] of t)
     n[s] = r;
   return n;
-}, fp = /* @__PURE__ */ up(cp, [["__scopeId", "data-v-e15ae11b"]]);
+}, fp = /* @__PURE__ */ up(cp, [["__scopeId", "data-v-c251ece1"]]);
 window.process || (window.process = { env: { NODE_ENV: "production" } });
 const hp = new URL(window.location.href), dp = hp.searchParams.get("widget_id"), pp = fu(fp, {
   widgetId: dp

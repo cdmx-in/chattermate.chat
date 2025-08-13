@@ -257,7 +257,7 @@ const hasToken = computed(() => !!token.value)
 // Initialize from initial data
 initializeFromData()
 const initialData = window.__INITIAL_DATA__
-console.log('Initial data:', initialData)
+
 if (initialData?.initialToken) {
     token.value = initialData.initialToken
     // Notify parent window to store token
