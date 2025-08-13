@@ -1468,6 +1468,20 @@ const shouldShowWelcomeMessage = computed(() => {
                     </div>
                 </div>
             </div>
+            <div v-else class="ask-anything-top" :style="headerBorderStyles">
+                <div class="ask-anything-header">
+                    <img 
+                        v-if="humanAgentPhotoUrl || photoUrl" 
+                        :src="humanAgentPhotoUrl || photoUrl" 
+                        :alt="humanAgent.human_agent_name || agentName" 
+                        class="header-avatar"
+                    >
+                    <div class="header-info">
+                        <h3 :style="messageNameStyles">{{ agentName }}</h3>
+                        <p class="ask-anything-subtitle" :style="messageNameStyles">{{ customization.welcome_subtitle || 'Ask me anything. I\'m here to help.' }}</p>
+                    </div>
+                </div>
+            </div>
 
             <!-- Loading indicator for history -->
             <div v-if="loadingHistory" class="loading-history">
@@ -1925,6 +1939,23 @@ const shouldShowWelcomeMessage = computed(() => {
     overflow: hidden;
     position: relative;
     border-radius: var(--radius-lg);
+    /* Subtle solid border around chat window */
+    border: none;
+    box-shadow: none;
+    /* Open/close transition used when container toggles in embed */
+    transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.chat-container::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    border-radius: var(--radius-lg);
+    border: 1px solid #e5e7eb;
 }
 
 .chat-container.collapsed {
@@ -3942,5 +3973,23 @@ const shouldShowWelcomeMessage = computed(() => {
         min-width: 48px !important;
         height: 48px !important;
     }
+}
+
+/* ASK ANYTHING header */
+.ask-anything-top {
+    padding: var(--space-md);
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid var(--border-color);
+}
+.ask-anything-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+}
+.ask-anything-subtitle {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--text-secondary);
 }
 </style>
