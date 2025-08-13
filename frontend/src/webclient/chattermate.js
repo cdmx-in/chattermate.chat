@@ -93,6 +93,12 @@ window.ChatterMate;
         to {transform: rotate(360deg);}
       }
 
+      /* Subtle idle bounce for the chat button when closed */
+      @keyframes chattermate-bounce {
+        0%, 100% { transform: translateY(0); }
+        50% { transform: translateY(-3px); }
+      }
+
       #${config.containerId} {
         position: fixed;
         bottom: ${config.containerBottom || 100}px;
@@ -102,24 +108,48 @@ window.ChatterMate;
         background: transparent;
         z-index: 999999;
         overflow: hidden;
-        display: none;
+        /* Animated open/close with slide + fade */
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(16px) scale(0.98);
+        transition: opacity 360ms cubic-bezier(0.22, 1, 0.36, 1), transform 360ms cubic-bezier(0.22, 1, 0.36, 1), visibility 0s linear 360ms;
         border: none;
         padding: 0;
         margin: 0;
+        pointer-events: none;
       }
 
       #${config.containerId}.active {
-        display: block;
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0) scale(1);
+        transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), transform 420ms cubic-bezier(0.22, 1, 0.36, 1);
+        pointer-events: auto;
       }
 
-      .chattermate-iframe {
-        width: 100%;
+      /* Clean border around the widget container */
+      #${config.containerId}::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        border-radius: 24px;
+        pointer-events: none;
+        border: 1px solid #e5e7eb;
+      }
+
+        .chattermate-iframe {
+                width: 100%;
         height: 100%;
         border: none;
         padding: 0;
         margin: 0;
         display: block;
         border-radius: 24px;
+        /* Rely on corner shadows from container */
+        box-shadow: none;
       }
 
       #chattermate-mobile-close {
@@ -384,9 +414,13 @@ window.ChatterMate;
         if (isOpen) {
           // When opening on mobile, hide the button
           button.classList.remove('mobile-closed')
+          // Stop bouncing when open
+          button.style.animation = ''
         } else {
           // When closing on mobile, show the button
           button.classList.add('mobile-closed')
+          // Add subtle idle bounce when closed
+          button.style.animation = 'chattermate-bounce 2.2s ease-in-out infinite'
           // Hide topbar when closing
           mobileTopbar.classList.remove('active')
           document.body.classList.remove('ask-anything-mobile')
@@ -413,6 +447,8 @@ window.ChatterMate;
     // Initialize mobile button visibility
     if (isMobileDevice() && !isOpen) {
       button.classList.add('mobile-closed')
+      // Idle bounce animation when initially closed
+      button.style.animation = 'chattermate-bounce 2.2s ease-in-out infinite'
     }
 
     // Handle window resize to update mobile behavior
@@ -422,11 +458,13 @@ window.ChatterMate;
       if (isMobile && !isOpen) {
         // On mobile when closed, show the button
         button.classList.add('mobile-closed')
+        button.style.animation = 'chattermate-bounce 2.2s ease-in-out infinite'
         // Ensure mobile close button is hidden when widget is closed
         mobileCloseButton.classList.remove('active')
       } else if (!isMobile) {
         // On desktop, remove mobile-specific classes
         button.classList.remove('mobile-closed')
+        button.style.animation = ''
         // Ensure mobile close button is hidden on desktop
         if (isOpen) {
           mobileCloseButton.classList.remove('active')
