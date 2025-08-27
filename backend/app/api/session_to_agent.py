@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.repositories.chat import ChatRepository
 from app.models.schemas.chat import ChatDetailResponse
+from app.core.socketio import sio
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from app.core.logger import get_logger
@@ -94,3 +95,73 @@ async def takeover_chat(
             detail="Failed to take over chat"
         )
 
+
+@router.post("/{session_id}/reassign", response_model=ChatDetailResponse)
+async def reassign_chat(
+    session_id: str,
+    to_user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Reassign a chat session to a different user"""
+    try:
+        # Permission: need manage_chats
+        user_permissions = {p.name for p in current_user.role.permissions}
+        if not ("manage_chats" in user_permissions or "manage_assigned_chats" in user_permissions):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not enough permissions"
+            )
+
+        session_repo = SessionToAgentRepository(db)
+        session = session_repo.get_session(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Chat session not found")
+
+        # Only allow reassignment for open sessions handled by a user (not AI)
+        if str(session.status.name).lower() != 'open':
+            raise HTTPException(status_code=400, detail="Only open sessions can be reassigned")
+        if session.user_id is None:
+            raise HTTPException(status_code=400, detail="Chat must be handled by a user to reassign")
+
+        # Update session owner
+        success = session_repo.reassign_session(session_id=session_id, to_user_id=to_user_id)
+        if not success:
+            raise HTTPException(status_code=400, detail="Failed to reassign chat")
+
+        # Fetch updated chat detail
+        chat_repo = ChatRepository(db)
+        chat = await chat_repo.get_chat_detail(
+            session_id=session_id,
+            org_id=current_user.organization_id
+        )
+        if not chat:
+            raise HTTPException(status_code=500, detail="Failed to get chat details after reassignment")
+
+        # Notify widget room (customer)
+        await sio.emit('room_event', {
+            'type': 'reassigned',
+            'session_id': session_id,
+            'message': 'Your conversation has been reassigned to another agent.'
+        }, room=session_id, namespace='/widget')
+
+        # Notify agent rooms (convention: user_{id})
+        await sio.emit('room_event', {
+            'type': 'reassigned',
+            'session_id': session_id,
+            'assigned_to': to_user_id
+        }, room=f"user_{to_user_id}")
+
+        # Also notify previous assignee if exists
+        if session.user_id:
+            await sio.emit('room_event', {
+                'type': 'reassigned_from_you',
+                'session_id': session_id
+            }, room=f"user_{session.user_id}")
+
+        return ChatDetailResponse(**chat)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reassigning chat: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to reassign chat")

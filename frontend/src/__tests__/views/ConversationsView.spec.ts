@@ -7,7 +7,10 @@ import { createPinia, setActivePinia } from 'pinia'
 // Mock the chat service
 vi.mock('@/services/chat', () => ({
   chatService: {
-    getRecentChats: vi.fn()
+    getRecentChats: vi.fn(),
+    getChatDetail: vi.fn(),
+    takeoverChat: vi.fn(),
+    reassignChat: vi.fn()
   }
 }))
 
@@ -23,24 +26,45 @@ vi.mock('@/components/conversations/ConversationsList.vue', () => ({
   default: {
     name: 'ConversationsList',
     template: '<div class="conversations-list"></div>',
-    props: ['conversations', 'loading', 'error', 'loadedCount', 'totalCount', 'hasMore', 'statusFilter']
+    props: ['conversations', 'loading', 'error', 'loadedCount', 'totalCount', 'hasMore', 'statusFilter', 'showChatInfo'],
+    emits: ['refresh', 'update-filter', 'load-more', 'chat-updated', 'chat-selected', 'clear-unread']
   }
 }))
 
-// Mock the computed property for loadedCount
-vi.mock('vue', async () => {
-  const actual = await vi.importActual('vue')
-  return {
-    ...actual,
-    computed: (fn) => {
-      // Return 0 for loadedCount to avoid the error
-      if (fn.toString().includes('conversations.value.length')) {
-        return { value: 0 }
-      }
-      return actual.computed(fn)
-    }
+vi.mock('@/components/conversations/ConversationFilters.vue', () => ({
+  default: {
+    name: 'ConversationFilters',
+    template: '<div class="conversation-filters"></div>',
+    props: ['showFilters', 'filterValues', 'users', 'agents', 'loadingUsers', 'loadingAgents'],
+    emits: ['toggle', 'apply', 'clear', 'update:filterValues']
   }
-})
+}))
+
+vi.mock('@/components/conversations/ChatInfoPanel.vue', () => ({
+  default: {
+    name: 'ChatInfoPanel',
+    template: '<div class="chat-info-panel"></div>',
+    props: ['chatInfo', 'users'],
+    emits: ['close', 'refresh', 'chatUpdated', 'chatClosed']
+  }
+}))
+
+// Mock API service
+vi.mock('@/services/api', () => ({
+  default: {
+    get: vi.fn().mockResolvedValue({ data: [] }),
+    post: vi.fn().mockResolvedValue({ data: {} }),
+    put: vi.fn().mockResolvedValue({ data: {} }),
+    delete: vi.fn().mockResolvedValue({ data: {} })
+  }
+}))
+
+// Mock agent service
+vi.mock('@/services/agent', () => ({
+  agentService: {
+    getOrganizationAgents: vi.fn().mockResolvedValue([])
+  }
+}))
 
 // Import the mocked modules
 import { chatService } from '@/services/chat'
@@ -55,7 +79,7 @@ describe('ConversationsView', () => {
 
   it('renders properly', () => {
     wrapper = mount(ConversationsView)
-    expect(wrapper.find('.conversations-view').exists()).toBe(true)
+    expect(wrapper.find('.page-header').exists()).toBe(true)
     expect(wrapper.find('h1').text()).toBe('Conversations')
   })
 

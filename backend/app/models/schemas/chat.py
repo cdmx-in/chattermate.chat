@@ -26,7 +26,7 @@ from app.models.session_to_agent import SessionStatus
 
 class CustomerInfo(BaseModel):
     id: UUID
-    email: str
+    email: Optional[str]
     full_name: Optional[str]
 class AgentInfo(BaseModel):
     id: UUID

@@ -185,7 +185,10 @@ class ChatAgent(ChatAgentMCPMixin):
                 
                 To transfer to a human, set transfer_to_human to true in your response and provide a transfer_reason and transfer_description.
                 """
-            
+            else:
+                system_message += """
+                Transfer to human is disabled for this agent. You should not transfer the conversation to a human.
+                """
             # Add end chat instructions
             if self.agent_data.ask_for_rating:
                 system_message += f"\n{end_chat_with_rating}"

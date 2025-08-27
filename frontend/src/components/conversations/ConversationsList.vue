@@ -29,11 +29,13 @@ const props = defineProps<{
   statusFilter: 'open' | 'closed'
   hasMore: boolean
   loadingMore: boolean
+  showChatInfo?: boolean
 }>()
 
 const emit = defineEmits<{
   (e: 'refresh'): void
   (e: 'chatUpdated', data: ChatDetail): void
+  (e: 'chatSelected', data: ChatDetail): void
   (e: 'clearUnread', sessionId: string): void
   (e: 'updateFilter', status: 'open' | 'closed'): void
   (e: 'loadMore'): void
@@ -48,6 +50,35 @@ const {
   unreadMessages,
   clearUnread
 } = useConversationsList(props, emit)
+
+// Enhanced loadChatDetail to also emit chat-selected event
+const loadChatDetailWithSelection = async (sessionId: string) => {
+  await loadChatDetail(sessionId)
+  // Emit the chat-selected event with the loaded chat detail
+  if (selectedChat.value) {
+    emit('chatSelected', selectedChat.value)
+  }
+}
+
+// Function to update the selected chat from parent
+const updateSelectedChat = (updatedChat: ChatDetail) => {
+  console.log('updateSelectedChat', updatedChat)
+  if (selectedChat.value && selectedChat.value.session_id === updatedChat.session_id) {
+    selectedChat.value = updatedChat
+  }
+}
+
+// Function to clear the selected chat from parent
+const clearSelectedChat = () => {
+  selectedChat.value = null
+  selectedId.value = null
+}
+
+// Expose the function to parent component
+defineExpose({
+  updateSelectedChat,
+  clearSelectedChat
+})
 
 // Intersection observer for infinite scrolling
 const listContainer = ref<HTMLElement | null>(null)
@@ -92,7 +123,7 @@ watch(() => props.loading, (isLoading, prevLoading) => {
     
     // When loading completes after filter change, select the first conversation if available
     if (props.conversations.length > 0) {
-      loadChatDetail(props.conversations[0].session_id)
+      loadChatDetailWithSelection(props.conversations[0].session_id)
     } else {
       // If no conversations available, clear the selected chat
       selectedChat.value = null
@@ -161,7 +192,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="conversations-container">
+  <div class="conversations-container" :class="{ 'with-chat-info': showChatInfo }">
     <!-- Sidebar with conversation list -->
     <div class="conversations-sidebar">
       <!-- Filter controls -->
@@ -201,14 +232,14 @@ onBeforeUnmount(() => {
           :key="conv.session_id"
           class="conversation-item"
           :class="{ active: selectedId === conv.session_id }"
-          @click="loadChatDetail(conv.session_id)"
+          @click="loadChatDetailWithSelection(conv.session_id)"
         >
           <div class="conversation-item-header">
             <h3>{{ conv.customer.full_name || conv.customer.email }}</h3>
             <span class="timestamp">{{ conv.timeAgo }}</span>
           </div>
           <div class="conversation-preview">
-            <span class="agent-name">{{ conv.agent_name }}:</span>
+            <span class="agent-name">{{ conv.agent.name }}:</span>
             <!-- Product message preview -->
             <template v-if="conv.message_type === 'product' && conv.shopify_output?.products?.length">
               <p class="last-message product-preview">
@@ -295,6 +326,10 @@ onBeforeUnmount(() => {
   background: var(--background-color);
   color: var(--text-primary);
   position: relative;
+}
+
+.conversations-container.with-chat-info {
+  grid-template-columns: 320px 1fr;
 }
 
 .conversations-sidebar {

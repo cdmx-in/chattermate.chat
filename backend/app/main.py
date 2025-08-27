@@ -75,6 +75,10 @@ async def startup_event():
     
     # Start CORS listener for multi-worker synchronization
     initialize_cors_listener()
+    
+    # Start chat auto-closer background task, AI chat will auto close after 1 day
+    from app.workers.chat_auto_closer import run_auto_closer_loop
+    asyncio.create_task(run_auto_closer_loop())
 
 # Include routers
 app.include_router(

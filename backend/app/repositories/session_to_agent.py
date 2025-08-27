@@ -18,13 +18,14 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.models.session_to_agent import SessionToAgent, SessionStatus
+from app.models.session_to_agent import SessionToAgent, SessionStatus, EndChatReasonType
 from uuid import UUID
-from datetime import datetime
+from datetime import datetime, timedelta
 from app.core.logger import get_logger
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from app.models.user import User
+from app.models.chat_history import ChatHistory
 
 logger = get_logger(__name__)
 
@@ -294,6 +295,26 @@ class SessionToAgentRepository:
             self.db.rollback()
             return False
 
+    def reassign_session(self, session_id: str, to_user_id: str) -> bool:
+        """Reassign a chat session to another user regardless of current assignee"""
+        try:
+            session = self.get_session(session_id)
+            if not session:
+                return False
+
+            # Update assignment
+            session.user_id = UUID(to_user_id)
+            session.group_id = None
+            session.status = SessionStatus.OPEN
+            session.updated_at = datetime.utcnow()
+
+            self.db.commit()
+            return True
+        except Exception as e:
+            logger.error(f"Error reassigning session: {str(e)}")
+            self.db.rollback()
+            return False
+
     def update_workflow_state(self, session_id: UUID | str, current_node_id: Optional[UUID], workflow_state: dict) -> bool:
         """Update workflow state and current node for a session"""
         try:
@@ -409,3 +430,60 @@ class SessionToAgentRepository:
         except Exception as e:
             logger.error(f"Error getting workflow history: {str(e)}")
             return []
+    
+    def auto_close_inactive_agent_chats(self) -> int:
+        """
+        Auto-close chats that are handled by agents (not users) and have been inactive for more than 1 day.
+        Returns the number of chats that were closed.
+        """
+        try:
+            # Calculate the cutoff time (24 hours ago)
+            cutoff_time = datetime.utcnow() - timedelta(days=1)
+            
+            # Find open sessions handled by agents (user_id is None) where the last message is older than 1 day
+            sessions_to_close = (
+                self.db.query(SessionToAgent)
+                .join(
+                    ChatHistory,
+                    SessionToAgent.session_id == ChatHistory.session_id
+                )
+                .filter(
+                    SessionToAgent.status == SessionStatus.OPEN,
+                    SessionToAgent.user_id.is_(None),  # Handled by agent, not user
+                    SessionToAgent.agent_id.is_not(None)  # Must have an agent assigned
+                )
+                .group_by(SessionToAgent.session_id)
+                .having(
+                    func.max(ChatHistory.created_at) < cutoff_time
+                )
+                .all()
+            )
+            
+            closed_count = 0
+            
+            for session in sessions_to_close:
+                try:
+                    # Update session status to closed
+                    session.status = SessionStatus.CLOSED
+                    session.end_chat_reason = EndChatReasonType.ISSUE_RESOLVED
+                    session.end_chat_description = "Inactive for more than one day"
+                    session.updated_at = datetime.utcnow()
+                    
+                    closed_count += 1
+                    logger.info(f"Auto-closed inactive chat session {session.session_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error closing session {session.session_id}: {str(e)}")
+                    continue
+            
+            # Commit all changes
+            if closed_count > 0:
+                self.db.commit()
+                logger.info(f"Auto-closed {closed_count} inactive agent chats")
+            
+            return closed_count
+            
+        except Exception as e:
+            logger.error(f"Error in auto_close_inactive_agent_chats: {str(e)}")
+            self.db.rollback()
+            return 0

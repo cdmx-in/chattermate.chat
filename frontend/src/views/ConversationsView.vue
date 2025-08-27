@@ -20,8 +20,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { ref, onMounted, computed } from 'vue'
 import DashboardLayout from '@/layouts/DashboardLayout.vue'
 import ConversationsList from '@/components/conversations/ConversationsList.vue'
+import ConversationFilters from '@/components/conversations/ConversationFilters.vue'
+import ChatInfoPanel from '@/components/conversations/ChatInfoPanel.vue'
 import type { Conversation, ChatDetail } from '@/types/chat'
 import { chatService } from '@/services/chat'
+import { agentService } from '@/services/agent'
+import api from '@/services/api'
 
 const conversations = ref<Conversation[]>([])
 const loading = ref(true)
@@ -31,6 +35,27 @@ const currentPage = ref(1)
 const pageSize = ref(20)
 const hasMore = ref(true)
 const totalCount = ref<number | null>(null)
+
+// Filter states
+const filterValues = ref({
+  customerEmailFilter: '',
+  dateFromFilter: '',
+  dateToFilter: '',
+  agentFilter: '',
+  userFilter: ''
+})
+const showFilters = ref(false)
+const users = ref<Array<{id: string, full_name: string, email: string}>>([])
+const loadingUsers = ref(false)
+const agents = ref<Array<{id: string, name: string, display_name: string | null}>>([])
+const loadingAgents = ref(false)
+
+// Chat info states
+const selectedChatInfo = ref<ChatDetail | null>(null)
+const showChatInfo = ref(false)
+
+// Ref for ConversationsList component
+const conversationsListRef = ref<InstanceType<typeof ConversationsList> | null>(null)
 
 // Computed property to show how many conversations are loaded
 const loadedCount = computed(() => conversations.value?.length || 0)
@@ -48,19 +73,30 @@ const loadConversations = async (page = 1, loadMore = false) => {
   let newConversations: Conversation[] = []
   
   try {
-    if (statusFilter.value === 'open') {
-      newConversations = await chatService.getRecentChats({
-        status: 'open,transferred',
-        skip,
-        limit: pageSize.value
-      })
-    } else {
-      newConversations = await chatService.getRecentChats({
-        status: statusFilter.value,
-        skip,
-        limit: pageSize.value
-      })
+    const params: any = {
+      skip,
+      limit: pageSize.value,
+      status: statusFilter.value === 'open' ? 'open,transferred' : statusFilter.value
     }
+    
+    // Add filters if they have values
+    if (filterValues.value.customerEmailFilter.trim()) {
+      params.customer_email = filterValues.value.customerEmailFilter.trim()
+    }
+    if (filterValues.value.agentFilter.trim()) {
+      params.agent_id = filterValues.value.agentFilter.trim()
+    }
+    if (filterValues.value.userFilter.trim()) {
+      params.user_id = filterValues.value.userFilter.trim()
+    }
+    if (filterValues.value.dateFromFilter) {
+      params.date_from = new Date(filterValues.value.dateFromFilter).toISOString()
+    }
+    if (filterValues.value.dateToFilter) {
+      params.date_to = new Date(filterValues.value.dateToFilter).toISOString()
+    }
+    
+    newConversations = await chatService.getRecentChats(params)
     
     // If we're loading more, append to existing conversations
     if (loadMore && page > 1) {
@@ -100,6 +136,65 @@ const updateFilter = (status: 'open' | 'closed') => {
   loadConversations(1)
 }
 
+// Filter handlers
+const handleApplyFilters = () => {
+  currentPage.value = 1
+  hasMore.value = true
+  totalCount.value = null
+  loadConversations(1)
+  // Auto-close filter panel after applying
+  showFilters.value = false
+}
+
+const handleClearFilters = () => {
+  filterValues.value = {
+    customerEmailFilter: '',
+    dateFromFilter: '',
+    dateToFilter: '',
+    agentFilter: '',
+    userFilter: ''
+  }
+  handleApplyFilters()
+}
+
+const toggleFilters = () => {
+  showFilters.value = !showFilters.value
+}
+
+const loadUsers = async () => {
+  if (loadingUsers.value) return
+  
+  loadingUsers.value = true
+  try {
+    const response = await api.get('/users')
+    users.value = response.data
+  } catch (error) {
+    console.error('Failed to load users:', error)
+  } finally {
+    loadingUsers.value = false
+  }
+}
+
+const loadAgents = async () => {
+  if (loadingAgents.value) return
+  
+  loadingAgents.value = true
+  try {
+    const agentsList = await agentService.getOrganizationAgents()
+    agents.value = agentsList
+  } catch (error) {
+    console.error('Failed to load agents:', error)
+  } finally {
+    loadingAgents.value = false
+  }
+}
+
+onMounted(() => {
+  loadConversations(1)
+  loadUsers()
+  loadAgents()
+})
+
 const handleChatUpdated = (chatDetail: ChatDetail) => {
   // Update the conversation in the list if it exists
   const index = conversations.value.findIndex(c => c.session_id === chatDetail.session_id)
@@ -118,18 +213,88 @@ const handleChatUpdated = (chatDetail: ChatDetail) => {
     updatedConversations[index] = updatedConversation
     conversations.value = updatedConversations
   }
+  
+  // Update chat info panel if this is the selected chat
+  if (selectedChatInfo.value && selectedChatInfo.value.session_id === chatDetail.session_id) {
+    selectedChatInfo.value = chatDetail
+  }
+  
+  // Update the selected chat in ConversationsList to refresh ConversationChat
+  if (conversationsListRef.value) {
+    conversationsListRef.value.updateSelectedChat(chatDetail)
+  }
 }
 
-onMounted(() => loadConversations(1))
+const handleChatSelected = (chatDetail: ChatDetail) => {
+  selectedChatInfo.value = chatDetail
+  // Only auto-show if not already visible
+  if (!showChatInfo.value) {
+    showChatInfo.value = true
+  }
+}
+
+const closeChatInfo = () => {
+  showChatInfo.value = false
+  // Don't clear selectedChatInfo so we can reopen it
+}
+
+const toggleChatInfo = () => {
+  if (selectedChatInfo.value) {
+    showChatInfo.value = !showChatInfo.value
+  }
+}
+
+// Handle chat closed from ChatInfoPanel
+const handleChatClosed = (_sessionId?: string) => {
+  showChatInfo.value = false
+  selectedChatInfo.value = null
+  if (conversationsListRef.value) {
+    conversationsListRef.value.clearSelectedChat()
+  }
+}
+
+
 </script>
 
 <template>
-  <DashboardLayout>
-    <header class="page-header" style="padding: var(--space-lg);">
+  <DashboardLayout :hideHeader="true">
+    <header class="page-header">
+      <div class="header-content">
         <h1>Conversations</h1>
+        <div class="header-actions">
+          <ConversationFilters
+            :showFilters="showFilters"
+            :filterValues="filterValues"
+            :users="users"
+            :agents="agents"
+            :loadingUsers="loadingUsers"
+            :loadingAgents="loadingAgents"
+            @toggle="toggleFilters"
+            @apply="handleApplyFilters"
+            @clear="handleClearFilters"
+            @update:filterValues="filterValues = $event"
+          />
+          
+          <button 
+            @click="toggleChatInfo" 
+            class="info-toggle-btn"
+            :class="{ active: showChatInfo }"
+            aria-label="Toggle chat information"
+            :disabled="!selectedChatInfo"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="16" x2="12" y2="12"/>
+              <line x1="12" y1="8" x2="12.01" y2="8"/>
+            </svg>
+          </button>
+        </div>
+      </div>
     </header>
-    <div class="conversations-view">
+    
+    <div class="main-content">
       <ConversationsList 
+        ref="conversationsListRef"
         :conversations="conversations"
         :loading="loading"
         :error="error"
@@ -138,23 +303,135 @@ onMounted(() => loadConversations(1))
         :loading-more="loading && currentPage > 1"
         :loaded-count="loadedCount"
         :total-count="totalItems"
+        :show-chat-info="showChatInfo && !!selectedChatInfo"
         @refresh="loadConversations(1)"
         @update-filter="updateFilter"
         @load-more="loadMoreConversations"
         @chat-updated="handleChatUpdated"
+        @chat-selected="handleChatSelected"
         @clear-unread="() => {}"
+      />
+      
+      <ChatInfoPanel
+        v-if="showChatInfo"
+        :chatInfo="selectedChatInfo"
+        :users="users"
+        @close="closeChatInfo"
+        @refresh="loadConversations(1)"
+        @chatUpdated="handleChatUpdated"
+        @chatClosed="handleChatClosed"
       />
     </div>
   </DashboardLayout>
 </template>
 
 <style scoped>
-.conversations-view {
-  height: calc(100vh - 64px); /* Adjust based on header height */
+.main-content {
+  display: grid;
+  grid-template-columns: 1fr 350px;
+  height: calc(100vh - 80px); /* Adjust for page header only */
   width: 100%;
-  display: flex;
   overflow: hidden;
   position: relative;
-  background: #1a1a1a;
+  background: var(--background-color);
+  transition: all 0.3s ease;
+}
+
+.main-content:not(:has(.chat-info-sidebar)) {
+  grid-template-columns: 1fr;
+}
+
+.page-header {
+  padding: var(--space-lg);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--background-color);
+}
+
+.header-content {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.header-content h1 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.header-actions {
+  display: flex;
+  gap: var(--space-sm);
+  align-items: center;
+}
+
+.info-toggle-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--background-color);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.info-toggle-btn:hover {
+  background: var(--background-soft);
+  color: var(--text-primary);
+  border-color: var(--primary-color-soft);
+}
+
+.info-toggle-btn.active {
+  background: var(--primary-color);
+  color: white;
+  border-color: var(--primary-color);
+}
+
+.info-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--background-color);
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+
+.info-toggle-btn:disabled:hover {
+  background: var(--background-color);
+  color: var(--text-muted);
+  border-color: var(--border-color);
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .header-content {
+    flex-direction: column;
+    gap: var(--space-sm);
+    align-items: flex-start;
+  }
+  
+  .header-actions {
+    align-self: flex-end;
+  }
+  
+  .main-content {
+    height: calc(100vh - 120px);
+    grid-template-columns: 1fr !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .page-header {
+    padding: var(--space-md);
+  }
+  
+  .header-content h1 {
+    font-size: 20px;
+  }
 }
 </style> 

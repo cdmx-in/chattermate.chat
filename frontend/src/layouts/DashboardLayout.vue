@@ -36,7 +36,9 @@ const props = defineProps<{
     hideHeader?: boolean
 }>()
 
-const isSidebarOpen = ref(true)
+// Initialize sidebar state based on current route
+const route = useRoute()
+const isSidebarOpen = ref(route.path !== '/conversations')
 const showUserMenu = ref(false)
 const showNotifications = ref(false)
 const currentUser = ref<User>(userService.getCurrentUser() as User)
@@ -46,7 +48,6 @@ const unreadCount = ref(0)
 const statusUpdating = ref(false)
 const { logout } = useAuth()
 useNotifications()
-const route = useRoute()
 const router = useRouter()
 
 // Initialize enterprise features
@@ -94,12 +95,19 @@ const toggleOnlineStatus = async () => {
   }
 }
 
-// Add this watch to close settings when route changes
+// Watch for route changes to update sidebar state and close menus
 watch(
   () => route.path,
-  () => {
+  (newPath) => {
     showUserMenu.value = false
     showNotifications.value = false
+    
+    // Set sidebar state based on route
+    if (newPath === '/conversations') {
+      isSidebarOpen.value = false // Collapsed for conversations
+    } else {
+      isSidebarOpen.value = true // Expanded for all other routes
+    }
   }
 )
 
@@ -454,6 +462,11 @@ const layoutClasses = computed(() => ({
 .content {
     padding: var(--space-xl);
     min-height: calc(100vh - 180px);
+}
+
+/* Remove padding when header is hidden (for full-page layouts like ConversationsView) */
+.dashboard-layout.header-hidden .content {
+    padding: 0;
 }
 
 /* Footer Styles */
