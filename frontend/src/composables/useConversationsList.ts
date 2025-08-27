@@ -74,7 +74,7 @@ export function useConversationsList(props: {
         messages: [...(selectedChat.value.messages || []), newMessage],
         updated_at: created_at,
         customer: { ...selectedChat.value.customer },
-        agent_name: selectedChat.value.agent_name,
+        agent: { ...selectedChat.value.agent },
         status: selectedChat.value.status,
         user_id: selectedChat.value.user_id,
         user_name: selectedChat.value.user_name,

@@ -146,7 +146,12 @@ class ChatRepository:
         status: Optional[str] = None,
         user_id: Optional[str | UUID] = None,
         user_groups: Optional[List[str]] = None,
-        organization_id: Optional[str | UUID] = None
+        organization_id: Optional[str | UUID] = None,
+        user_name: Optional[str] = None,
+        filter_user_id: Optional[str | UUID] = None,
+        customer_email: Optional[str] = None,
+        date_from: Optional[datetime] = None,
+        date_to: Optional[datetime] = None
     ) -> List[dict]:
         """Get recent chat overviews grouped by conversation"""
         # Convert string IDs to UUID if needed
@@ -178,6 +183,8 @@ class ChatRepository:
             Customer, ChatHistory.customer_id == Customer.id
         ).join(
             SessionToAgent, ChatHistory.session_id == SessionToAgent.session_id
+        ).outerjoin(
+            User, SessionToAgent.user_id == User.id
         )
 
         # Filter conditions
@@ -196,6 +203,26 @@ class ChatRepository:
         # Filter by organization
         if organization_id:
             query = query.filter(SessionToAgent.organization_id == organization_id)
+        
+        # Filter by user name
+        if user_name:
+            query = query.filter(User.full_name.ilike(f'%{user_name}%'))
+        
+        # Filter by specific user ID (for agent dropdown)
+        if filter_user_id:
+            if isinstance(filter_user_id, str):
+                filter_user_id = UUID(filter_user_id)
+            query = query.filter(SessionToAgent.user_id == filter_user_id)
+        
+        # Filter by customer email
+        if customer_email:
+            query = query.filter(Customer.email.ilike(f'%{customer_email}%'))
+        
+        # Filter by date range
+        if date_from:
+            query = query.filter(ChatHistory.created_at >= date_from)
+        if date_to:
+            query = query.filter(ChatHistory.created_at <= date_to)
         
         # Use OR condition for user_id and user_groups
         if user_id and user_groups:

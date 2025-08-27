@@ -19,6 +19,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from datetime import datetime
 from app.models.schemas.chat import ChatOverviewResponse, ChatDetailResponse
 from app.core.auth import get_current_user
 from app.models.user import User
@@ -45,6 +46,11 @@ async def get_recent_chats(
     limit: int = Query(20, ge=1, le=100),
     agent_id: Optional[str] = None,
     status: Optional[str] = Query(None, description="Filter by status: 'open', 'closed', or 'transferred'"),
+    user_name: Optional[str] = Query(None, description="Filter by user name"),
+    user_id: Optional[str] = Query(None, description="Filter by specific user ID"),
+    customer_email: Optional[str] = Query(None, description="Filter by customer email"),
+    date_from: Optional[datetime] = Query(None, description="Filter conversations from this date"),
+    date_to: Optional[datetime] = Query(None, description="Filter conversations to this date"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -77,7 +83,12 @@ async def get_recent_chats(
                 status=status,
                 user_id=current_user.id,  # Pass UUID directly
                 user_groups=user_group_ids,
-                organization_id=current_user.organization_id
+                organization_id=current_user.organization_id,
+                user_name=user_name,
+                filter_user_id=user_id,  # New parameter for filtering by specific user
+                customer_email=customer_email,
+                date_from=date_from,
+                date_to=date_to
             )
         
         # For users with view_all_chats permission
@@ -86,7 +97,12 @@ async def get_recent_chats(
             limit=limit,
             agent_id=agent_id,
             status=status,
-            organization_id=current_user.organization_id
+            organization_id=current_user.organization_id,
+            user_name=user_name,
+            filter_user_id=user_id,  # New parameter for filtering by specific user
+            customer_email=customer_email,
+            date_from=date_from,
+            date_to=date_to
         )
     except ValueError as e:
         logger.error(f"Invalid UUID format: {str(e)}")

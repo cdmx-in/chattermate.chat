@@ -75,7 +75,7 @@ const navItems = computed(() => [
     {
         to: '/conversations',
         iconSrc: conversationIcon,
-        label: 'Conversations',
+        label: 'Inbox',
         show: permissionChecks.canViewChats()
     },
     {
