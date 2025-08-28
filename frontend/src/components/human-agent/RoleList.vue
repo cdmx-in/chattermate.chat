@@ -24,6 +24,7 @@ import { Menu, MenuButton, MenuItems, MenuItem } from '@headlessui/vue'
 import { EllipsisVerticalIcon } from '@heroicons/vue/24/outline'
 import { useRoles } from '@/composables/useRoles'
 import { useSubscriptionStorage } from '@/utils/storage'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const {
   roles,
@@ -45,22 +46,36 @@ const {
 
 // Subscription and role feature checking
 const subscriptionStorage = useSubscriptionStorage()
+const { hasEnterpriseModule } = useEnterpriseFeatures()
 const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
 const isSubscriptionActive = computed(() => subscriptionStorage.isSubscriptionActive())
 
-// Check if role feature is available
-const hasRoleFeature = computed(() => {
-  return subscriptionStorage.hasFeature('role')
-})
-
-// Check if roles is locked
+// Check if roles is locked (only if enterprise module exists)
 const isRolesLocked = computed(() => {
-  return !hasRoleFeature.value || !isSubscriptionActive.value
+  // Only lock if enterprise module exists
+  if (!hasEnterpriseModule) {
+    return false
+  }
+  
+  if (!currentSubscription.value || !isSubscriptionActive.value) {
+    return true
+  }
+  
+  // Check if role feature exists in subscription
+  const hasRoleFeature = subscriptionStorage.hasFeature('role')
+  if (!hasRoleFeature) {
+    return true // Lock roles if feature doesn't exist
+  }
+  
+  return false
 })
 
 // Upgrade modal functions
 const handleUpgrade = () => {
-  window.location.href = '/settings/subscription'
+  // Only redirect to subscription page if enterprise module exists
+  if (hasEnterpriseModule) {
+    window.location.href = '/settings/subscription'
+  }
 }
 
 onMounted(() => {
