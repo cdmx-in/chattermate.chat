@@ -416,6 +416,13 @@ const autoConnectToLastNode = (newNode: Node) => {
     : otherNodes[otherNodes.length - 1]
 
   if (lastNode) {
+    // Check if the new node already has an incoming connection
+    const existingIncomingConnection = edges.find(edge => edge.target === newNode.id)
+    if (existingIncomingConnection) {
+      // Skip auto-connect if the new node already has an incoming connection
+      return
+    }
+    
     // Check if the last node is an LLM with continuous execution
     if (isLLMNodeWithContinuousExecution(lastNode)) {
       toast.error('Cannot connect nodes after an LLM node with continuous execution. Continuous execution LLM nodes must be terminal nodes.', {
@@ -466,10 +473,22 @@ const handleNodeClick = (event: NodeMouseEvent) => {
 onConnect((params) => {
   // Get the source and target nodes
   const nodes = getNodes.value
+  const edges = getEdges.value
   const sourceNode = nodes.find(n => n.id === params.source)
   const targetNode = nodes.find(n => n.id === params.target)
   
   if (!sourceNode || !targetNode) return
+  
+  // Check if target node already has an incoming connection
+  const existingIncomingConnection = edges.find(edge => edge.target === params.target)
+  if (existingIncomingConnection) {
+    toast.error('Each node can only accept one incoming connection. Please remove the existing connection first.', {
+      position: 'top-center',
+      duration: 5000,
+      closeButton: true
+    })
+    return
+  }
   
   // Check if source is an LLM node with continuous execution
   if (isLLMNodeWithContinuousExecution(sourceNode)) {
