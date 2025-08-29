@@ -1367,7 +1367,7 @@ const shouldShowWelcomeMessage = computed(() => {
                             class="form-select"
                             :class="{ 'error': formErrors[field.name] }"
                         >
-                            <option value="">Please select...</option>
+                            <option value="">{{ field.placeholder || 'Please select...' }}</option>
                             <option 
                                 v-for="option in field.options?.split('\n').filter(o => o.trim())" 
                                 :key="option" 
@@ -1652,9 +1652,9 @@ const shouldShowWelcomeMessage = computed(() => {
                                                 :class="{ 'error': formErrors[field.name] }"
                                                 :disabled="isSubmittingForm"
                                             >
-                                                <option value="">Select an option</option>
+                                                <option value="">{{ field.placeholder || 'Select an option' }}</option>
                                                 <option 
-                                                    v-for="option in field.options?.split(',') || []" 
+                                                    v-for="option in field.options?.split('\n').filter(o => o.trim()) || []" 
                                                     :key="option.trim()" 
                                                     :value="option.trim()"
                                                 >
@@ -1680,7 +1680,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                             <!-- Radio buttons -->
                                             <div v-else-if="field.type === 'radio'" class="radio-field">
                                                 <div 
-                                                    v-for="option in field.options?.split(',') || []" 
+                                                    v-for="option in field.options?.split('\n').filter(o => o.trim()) || []" 
                                                     :key="option.trim()"
                                                     class="radio-option"
                                                 >

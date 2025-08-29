@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed } from 'vue'
 import type { Node, Edge } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
 import { workflowCacheStorage } from '@/utils/storage'
@@ -34,13 +34,15 @@ import UserInputNodeConfig from '@/components/workflow/nodes/UserInputNodeConfig
 import { ExitCondition } from '@/types/workflow'
 import { listGroups } from '@/services/groups'
 import type { UserGroup } from '@/types/user'
+import { toast } from 'vue-sonner'
 
 // Collapsible sections state
 const collapsedSections = ref({
   basic: false,
   nodeSettings: false,
   advanced: true, // Advanced settings collapsed by default
-  knowledge: true // Knowledge sources collapsed by default
+  knowledge: true, // Knowledge sources collapsed by default
+  variables: false // Variables expanded by default
 })
 
 // Define form field interface
@@ -69,6 +71,13 @@ const props = defineProps<{
   organizationId: string
   currentEdges: Edge[]
   currentNodes: Node[]
+  availableVariables: Array<{
+    nodeId: string
+    nodeName: string
+    fieldName: string
+    fieldType: string
+    fieldLabel: string
+  }>
 }>()
 
 const emit = defineEmits<{
@@ -151,6 +160,36 @@ const toggleSection = (section: keyof typeof collapsedSections.value | string) =
   }
 }
 
+// Variables functionality
+const shouldShowVariables = computed(() => {
+  // Show variables for nodes that can use them (message, llm, landingPage, userInput)
+  // Also show for userInput nodes to display what variables they will create
+  const nodeType = props.selectedNode.data.nodeType
+  return ['message', 'llm', 'landingPage', 'userInput'].includes(nodeType) && props.availableVariables.length > 0
+})
+
+const getVariableSyntax = (fieldName: string) => {
+  return `{{${fieldName}}}`
+}
+
+const copyVariableToClipboard = async (variable: any) => {
+  try {
+    const variableSyntax = getVariableSyntax(variable.fieldName)
+    await navigator.clipboard.writeText(variableSyntax)
+    
+    // Show success toast
+    toast.success(`Copied ${variableSyntax} to clipboard`, {
+      position: 'top-center',
+      duration: 2000
+    })
+  } catch (error) {
+    console.error('Failed to copy to clipboard:', error)
+    toast.error('Failed to copy to clipboard', {
+      position: 'top-center'
+    })
+  }
+}
+
 // Update LLM form data from child component
 const updateLLMFormData = (data: any) => {
   Object.assign(nodeForm.value, data)
@@ -221,6 +260,18 @@ const updateUserInputFormData = (data: any) => {
   autoSaveToCache()
 }
 
+// Helper function to check if node name is unique
+const isNodeNameUnique = (nodeName: string): boolean => {
+  const currentNodes = props.currentNodes
+  const currentNodeId = props.selectedNode.id
+  
+  return !currentNodes.some((node: any) => 
+    node.id !== currentNodeId && 
+    (node.data.cleanName?.toLowerCase() === nodeName.toLowerCase() || 
+     node.data.label?.toLowerCase() === nodeName.toLowerCase())
+  )
+}
+
 // Validation functions
 const validateField = (field: string, value: any, nodeType: string): string | null => {
   switch (field) {
@@ -230,6 +281,10 @@ const validateField = (field: string, value: any, nodeType: string): string | nu
       }
       if (value.length > 100) {
         return 'Node name must be less than 100 characters'
+      }
+      // Check for unique node name
+      if (!isNodeNameUnique(value.trim())) {
+        return 'Node name must be unique within the workflow'
       }
       break
     
@@ -1002,6 +1057,53 @@ const handleDelete = () => {
             />
           </template>
         </div>
+        
+        <!-- Form Variables Section -->
+        <div v-if="shouldShowVariables" class="collapsible-section">
+          <div class="section-header" @click="toggleSection('variables')">
+            <div class="section-title">
+              <svg class="section-icon" :class="{ 'rotated': collapsedSections.variables }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6,9 12,15 18,9"></polyline>
+              </svg>
+              <span>Available Variables</span>
+              <span v-if="availableVariables.length > 0" class="variables-count">{{ availableVariables.length }}</span>
+            </div>
+          </div>
+          
+          <div class="section-content" :class="{ 'collapsed': collapsedSections.variables }">
+            <div v-if="availableVariables.length === 0" class="no-variables">
+              <p>No variables available</p>
+              <small>Add form or user input nodes to create variables</small>
+            </div>
+            
+            <div v-else class="variables-list">
+              <div
+                v-for="variable in availableVariables"
+                :key="`${variable.nodeId}-${variable.fieldName}`"
+                class="variable-item"
+                @click="copyVariableToClipboard(variable)"
+                :title="`Click to copy {{${variable.fieldName}}} to clipboard`"
+              >
+                <div class="variable-info">
+                  <div class="variable-name">{{ variable.fieldName }}</div>
+                  <div class="variable-source">from {{ variable.nodeName }}</div>
+                  <div class="variable-type">{{ variable.fieldType }}</div>
+                </div>
+                <div class="variable-syntax">
+                  <code>{{ getVariableSyntax(variable.fieldName) }}</code>
+                </div>
+              </div>
+            </div>
+            
+            <div v-if="availableVariables.length > 0" class="variables-help">
+              <small>
+                <strong>Usage:</strong><br>
+                • <code>{{ getVariableSyntax('field_name') }}</code> - Latest value<br>
+                • <code>{{ getVariableSyntax('node_id.field_name') }}</code> - Specific node
+              </small>
+            </div>
+          </div>
+        </div>
         </div>
       </form>
     </div>
@@ -1701,4 +1803,115 @@ const handleDelete = () => {
     margin: 0 4px;
   }
 }
+
+/* Variables Section Styles */
+.variables-count {
+  background: var(--primary-color);
+  color: white;
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  margin-left: var(--space-xs);
+}
+
+.no-variables {
+  text-align: center;
+  padding: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.no-variables p {
+  margin: 0 0 var(--space-xs) 0;
+  font-size: var(--text-sm);
+}
+
+.no-variables small {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+.variables-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.variable-item {
+  padding: var(--space-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--background-color);
+}
+
+.variable-item:hover {
+  background: var(--background-alt);
+  border-color: var(--primary-color);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.variable-info {
+  margin-bottom: var(--space-xs);
+}
+
+.variable-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-color);
+}
+
+.variable-source {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 2px 0;
+}
+
+.variable-type {
+  font-size: 0.75rem;
+  color: var(--primary-color);
+  background: var(--primary-soft);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  display: inline-block;
+}
+
+.variable-syntax {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.variable-syntax code {
+  background: var(--background-soft);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  font-size: 0.75rem;
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+}
+
+.variables-help {
+  padding: var(--space-sm);
+  background: var(--background-soft);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  margin-top: var(--space-sm);
+}
+
+.variables-help small {
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.variables-help code {
+  background: var(--background-color);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  font-size: 0.7rem;
+  color: var(--primary-color);
+  border: 1px solid var(--border-color);
+}
+
 </style> 

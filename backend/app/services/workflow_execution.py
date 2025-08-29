@@ -189,6 +189,13 @@ class WorkflowExecutionService:
                     intermediate_messages.append(result.message)
                     logger.debug(f"Collected intermediate message from LLM node: {result.message}")
                 
+                # Also collect confirmation messages from USER_INPUT nodes that continue to next node
+                # This ensures confirmation messages are displayed to the user
+                if (current_node.node_type == NodeType.USER_INPUT and result.message and 
+                    result.should_continue and result.next_node_id is not None):
+                    intermediate_messages.append(result.message)
+                    logger.debug(f"Collected confirmation message from USER_INPUT node: {result.message}")
+                
                 final_result = result
                 
                 # Check if we should continue to next node automatically
@@ -735,6 +742,20 @@ class WorkflowExecutionService:
             # Form has been submitted, process and continue
             form_submission = workflow_state.get("form_data", {})
             logger.debug(f"Form submission: {form_submission}")
+            
+            # Store form variables for use in other nodes with node-based naming
+            node_based_variables = {}
+            node_name = node.name.lower().replace(' ', '_').replace('-', '_') if node.name else 'form'
+            # Remove non-alphanumeric characters except underscores
+            import re
+            node_name = re.sub(r'[^a-z0-9_]', '', node_name)
+            
+            for field_name, field_value in form_submission.items():
+                variable_name = f"{node_name}_{field_name}"
+                node_based_variables[variable_name] = field_value
+            
+            self._store_form_variables(workflow_state, node.id, node_based_variables)
+            
             # Clear form state after processing
             workflow_state.pop("form_state", None)
             workflow_state.pop("form_data", None)
@@ -917,6 +938,15 @@ class WorkflowExecutionService:
             user_input = user_message.strip()
             logger.debug(f"User input received: {user_input}")
             
+            # Store user input as a variable for use in other nodes with node-based naming
+            node_name = node.name.lower().replace(' ', '_').replace('-', '_') if node.name else 'user_input'
+            # Remove non-alphanumeric characters except underscores
+            node_name = re.sub(r'[^a-z0-9_]', '', node_name)
+            variable_name = f"{node_name}_input"
+            
+            user_input_data = {variable_name: user_input}
+            self._store_form_variables(workflow_state, node.id, user_input_data)
+            
             # Store user input in workflow state temporarily
             workflow_state["user_input_data"] = user_input
             workflow_state["user_input_state"] = "received"
@@ -1008,26 +1038,18 @@ class WorkflowExecutionService:
     
 
     
-    def _process_variables(self, text: str, variables: Dict[str, Any]) -> str:
+    def _process_variables(self, text: str, workflow_state: Dict[str, Any]) -> str:
         """Process variables in text using {{variable}} syntax"""
-        if not text or not variables:
-            return text
-        
-        # Replace {{variable}} with actual values
-        for key, value in variables.items():
-            placeholder = f"{{{{{key}}}}}"
-            text = text.replace(placeholder, str(value))
-        
-        return text
+        return self._interpolate_variables(text, workflow_state)
     
-    def _evaluate_condition(self, condition: str, variables: Dict[str, Any]) -> bool:
+    def _evaluate_condition(self, condition: str, workflow_state: Dict[str, Any]) -> bool:
         """Evaluate a condition expression"""
         # This is a simplified implementation
         # In a full implementation, you'd use a proper expression evaluator
         
         try:
             # Replace variables in condition
-            condition = self._process_variables(condition, variables)
+            condition = self._process_variables(condition, workflow_state)
             
             # Simple condition evaluation
             if "==" in condition:
@@ -1159,5 +1181,100 @@ class WorkflowExecutionService:
             return ("Please analyze the current conversation context and provide an appropriate response. "
                    "The user has not provided a new message, so please review the conversation history "
                    "and workflow progress to determine the next appropriate action.")
+    
+    def _store_form_variables(self, workflow_state: Dict[str, Any], node_id: UUID, form_data: Dict[str, Any]) -> None:
+        """
+        Store form variables in workflow state for use in other nodes
+        
+        Args:
+            workflow_state: Current workflow state
+            node_id: ID of the form node
+            form_data: Submitted form data
+        """
+        try:
+            # Initialize variables structure if it doesn't exist
+            if "variables" not in workflow_state:
+                workflow_state["variables"] = {}
+            
+            # Store variables namespaced by node ID
+            workflow_state["variables"][str(node_id)] = form_data.copy()
+            
+            logger.info(f"Stored form variables from node {node_id}: {list(form_data.keys())}")
+            logger.debug(f"Variable values: {form_data}")
+            
+        except Exception as e:
+            logger.error(f"Error storing form variables: {str(e)}")
+    
+    def _interpolate_variables(self, text: str, workflow_state: Dict[str, Any]) -> str:
+        """
+        Replace variable placeholders in text with actual values
+        
+        Supports syntax:
+        - {{field_name}} - Search all form nodes for field (latest value wins)
+        - {{node_id.field_name}} - Specific node's field value
+        
+        Args:
+            text: Text containing variable placeholders
+            workflow_state: Current workflow state with variables
+            
+        Returns:
+            Text with variables interpolated
+        """
+        if not text or not isinstance(text, str):
+            return text
+            
+        try:
+            variables = workflow_state.get("variables", {})
+            if not variables:
+                return text
+            
+            # Pattern to match {{variable}} or {{node_id.field_name}}
+            pattern = r'\{\{([^}]+)\}\}'
+            
+            def replace_variable(match):
+                var_expression = match.group(1).strip()
+                
+                try:
+                    # Check if it's a specific node reference (contains dot)
+                    if '.' in var_expression:
+                        node_id, field_name = var_expression.split('.', 1)
+                        node_id = node_id.strip()
+                        field_name = field_name.strip()
+                        
+                        # Look for the specific node's variables
+                        if node_id in variables and field_name in variables[node_id]:
+                            value = variables[node_id][field_name]
+                            logger.debug(f"Interpolated {{{{node_id.field_name}}}}: {node_id}.{field_name} = {value}")
+                            return str(value)
+                    else:
+                        # Search all nodes for the field (latest value wins)
+                        field_name = var_expression.strip()
+                        
+                        # Search through all node variables (reverse order for latest first)
+                        for node_id in reversed(list(variables.keys())):
+                            if field_name in variables[node_id]:
+                                value = variables[node_id][field_name]
+                                logger.debug(f"Interpolated {{{{field_name}}}}: {field_name} = {value} (from node {node_id})")
+                                return str(value)
+                    
+                    # Variable not found - return original placeholder
+                    logger.warning(f"Variable not found: {var_expression}")
+                    return match.group(0)  # Return original {{variable}}
+                    
+                except Exception as e:
+                    logger.error(f"Error processing variable {var_expression}: {str(e)}")
+                    return match.group(0)  # Return original on error
+            
+            # Replace all variable placeholders
+            result = re.sub(pattern, replace_variable, text)
+            
+            if result != text:
+                logger.debug(f"Variable interpolation: '{text}' -> '{result}'")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error interpolating variables: {str(e)}")
+            return text  # Return original text on error
 
  

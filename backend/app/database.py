@@ -22,7 +22,7 @@ from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from sqlalchemy.pool import QueuePool
 
-# Create SQLAlchemy engine
+# Create SQLAlchemy engine with Unicode support
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
@@ -30,7 +30,11 @@ engine = create_engine(
     pool_size=20,  # Increase from default 5
     max_overflow=30,  # Increase from default 10
     pool_timeout=60,  # Increase from default 30
-    pool_recycle=3600  # Recycle connections after 1 hour
+    pool_recycle=3600,  # Recycle connections after 1 hour
+    # Ensure proper Unicode handling
+    connect_args={"options": "-c client_encoding=utf8"} if "postgresql" in settings.DATABASE_URL else {},
+    json_serializer=lambda obj: __import__('json').dumps(obj, ensure_ascii=False),
+    json_deserializer=lambda s: __import__('json').loads(s)
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

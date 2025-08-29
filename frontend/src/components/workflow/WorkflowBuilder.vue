@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { VueFlow, useVueFlow, type Node, type Edge, type NodeMouseEvent } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -179,6 +179,20 @@ const selectedNode = ref<Node | null>(null)
 const workflowStatus = ref<WorkflowStatus>(props.workflow.status)
 const publishLoading = ref(false)
 
+// Variables state for PropertiesPanel
+const availableVariables = ref<Array<{
+  nodeId: string
+  nodeName: string
+  fieldName: string
+  fieldType: string
+  fieldLabel: string
+}>>([])
+
+// Watch for node changes to update available variables
+watch(() => getNodes.value, (newNodes) => {
+  updateAvailableVariables(newNodes)
+}, { deep: true })
+
 // Initialize workflow management composable
 const {
   loadWorkflowData,
@@ -219,6 +233,34 @@ const {
 // Helper function to generate UUID-like IDs
 const generateNodeId = (type: string) => {
   return `${type}-${nodeIdCounter.value++}`
+}
+
+// Helper function to generate unique node names
+const generateUniqueNodeName = (baseName: string) => {
+  const nodes = getNodes.value
+  const existingNames = new Set(
+    nodes.map(node => node.data.cleanName?.toLowerCase() || node.data.label?.toLowerCase()).filter(Boolean)
+  )
+  
+  // Check if base name is already unique
+  if (!existingNames.has(baseName.toLowerCase())) {
+    return baseName
+  }
+  
+  // Generate unique name with suffix
+  let counter = 1
+  while (true) {
+    const candidateName = `${baseName}_${counter.toString().padStart(3, '0')}`
+    if (!existingNames.has(candidateName.toLowerCase())) {
+      return candidateName
+    }
+    counter++
+    
+    // Safety check to prevent infinite loop
+    if (counter > 999) {
+      return `${baseName}_${Date.now()}`
+    }
+  }
 }
 
 // Handle node deletion
@@ -310,13 +352,14 @@ const handleDrop = (event: DragEvent) => {
   }
 
   const nodeType = availableNodeTypes.find(t => t.type === type)
+  const uniqueName = generateUniqueNodeName(nodeType?.label || 'Node')
   const newNode: Node = {
     id: generateNodeId(type),
     type: 'default', // Use default Vue Flow node type
     position,
     data: {
-      label: `${nodeType?.icon || '📄'} ${nodeType?.label || 'Node'}`, // Display with icon
-      cleanName: nodeType?.label || 'Node', // Store clean name for backend
+      label: `${nodeType?.icon || '📄'} ${uniqueName}`, // Display with icon and unique name
+      cleanName: uniqueName, // Store unique clean name for backend
       description: '',
       config: {},
       nodeType: type, // Store the original type for later use
@@ -336,7 +379,7 @@ const handleDrop = (event: DragEvent) => {
   const cacheNodeData = {
     id: newNode.id,
     node_type: mapNodeTypeToBackend(type),
-    name: nodeType?.label || 'Node',
+    name: uniqueName,
     description: '',
     position_x: newNode.position.x,
     position_y: newNode.position.y,
@@ -467,6 +510,55 @@ const closeBuilder = () => {
   emit('close')
 }
 
+// Variables methods
+const updateAvailableVariables = (nodes: Node[]) => {
+  const variables: Array<{
+    nodeId: string
+    nodeName: string
+    fieldName: string
+    fieldType: string
+    fieldLabel: string
+  }> = []
+  
+  // Find all form nodes and extract their field definitions
+  nodes.forEach(node => {
+    if (node.data.nodeType === 'form') {
+      // Get form fields from cache or node data
+      const nodeData = getNodeDataWithCache(node, props.workflow.id)
+      const formFields = nodeData?.config?.form_fields || node.data.config?.form_fields || []
+      
+      formFields.forEach((field: any) => {
+        if (field.name) {
+          const nodeName = node.data.cleanName || node.data.label || 'Form'
+          variables.push({
+            nodeId: node.id,
+            nodeName: nodeName,
+            fieldName: `${nodeName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${field.name}`,
+            fieldType: field.type || 'text',
+            fieldLabel: `${nodeName}: ${field.label || field.name}`
+          })
+        }
+      })
+    }
+    
+    // Find all user input nodes and add their input as a variable
+    if (node.data.nodeType === 'userInput') {
+      const nodeName = node.data.cleanName || node.data.label || 'User Input'
+      variables.push({
+        nodeId: node.id,
+        nodeName: nodeName,
+        fieldName: `${nodeName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_input`,
+        fieldType: 'text',
+        fieldLabel: `${nodeName}: User Input`
+      })
+    }
+  })
+  
+  availableVariables.value = variables
+}
+
+
+
 // Load data on mount
 onMounted(() => {
   loadWorkflowData()
@@ -576,6 +668,8 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+        
+
       </div>
 
       <!-- Canvas -->
@@ -631,6 +725,7 @@ onUnmounted(() => {
         :organization-id="workflow.organization_id"
         :current-edges="getEdges"
         :current-nodes="getNodes"
+        :available-variables="availableVariables"
         @save="saveNodeProperties"
         @close="closePropertiesPanel"
         @delete="deleteSelectedNode"
@@ -1036,5 +1131,7 @@ onUnmounted(() => {
   bottom: var(--space-md);
   right: var(--space-md);
 }
+
+
 
 </style> 
