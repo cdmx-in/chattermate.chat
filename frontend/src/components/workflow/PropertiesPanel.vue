@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue'
+import { ref, watch, computed, type Ref } from 'vue'
 import type { Node, Edge } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
 import { workflowCacheStorage } from '@/utils/storage'
@@ -69,8 +69,8 @@ const props = defineProps<{
   workflowId: string
   agentId: string
   organizationId: string
-  currentEdges: Edge[]
-  currentNodes: Node[]
+  currentEdges: Edge[] | Ref<Edge[]>
+  currentNodes: Node[] | Ref<Node[]>
   availableVariables: Array<{
     nodeId: string
     nodeName: string
@@ -103,6 +103,7 @@ const nodeForm = ref({
   ask_for_rating: false,
   // Condition node
   condition_expression: '',
+  condition_groups: [] as any[],
 
   // Form node
   form_fields: [] as FormField[],
@@ -162,10 +163,10 @@ const toggleSection = (section: keyof typeof collapsedSections.value | string) =
 
 // Variables functionality
 const shouldShowVariables = computed(() => {
-  // Show variables for nodes that can use them (message, llm, landingPage, userInput)
+  // Show variables for nodes that can use them (message, llm, landingPage, userInput, condition)
   // Also show for userInput nodes to display what variables they will create
   const nodeType = props.selectedNode.data.nodeType
-  return ['message', 'llm', 'landingPage', 'userInput'].includes(nodeType) && props.availableVariables.length > 0
+  return ['message', 'llm', 'landingPage', 'userInput', 'condition'].includes(nodeType) && props.availableVariables.length > 0
 })
 
 const getVariableSyntax = (fieldName: string) => {
@@ -262,7 +263,9 @@ const updateUserInputFormData = (data: any) => {
 
 // Helper function to check if node name is unique
 const isNodeNameUnique = (nodeName: string): boolean => {
-  const currentNodes = props.currentNodes
+  const currentNodes = Array.isArray(props.currentNodes)
+    ? props.currentNodes
+    : (props.currentNodes as Ref<Node[]>).value
   const currentNodeId = props.selectedNode.id
   
   return !currentNodes.some((node: any) => 
@@ -270,6 +273,42 @@ const isNodeNameUnique = (nodeName: string): boolean => {
     (node.data.cleanName?.toLowerCase() === nodeName.toLowerCase() || 
      node.data.label?.toLowerCase() === nodeName.toLowerCase())
   )
+}
+
+// Helper function to validate condition node connections
+const validateConditionConnections = (): string | null => {
+  if (props.selectedNode.data.nodeType !== 'condition') return null
+  
+  const edges = Array.isArray(props.currentEdges)
+    ? props.currentEdges
+    : (props.currentEdges as Ref<Edge[]>).value
+  const outgoingConnections = edges.filter((edge: any) => edge.source === props.selectedNode.id)
+  
+  if (outgoingConnections.length === 0) {
+    return 'Condition node must have both true and false connections'
+  }
+  
+  if (outgoingConnections.length === 1) {
+    const existingLabel = outgoingConnections[0].label
+    const missingLabel = existingLabel === 'true' ? 'false' : 'true'
+    return `Condition node is missing ${missingLabel} connection`
+  }
+  
+  if (outgoingConnections.length === 2) {
+    const labels = outgoingConnections.map((edge: any) => edge.label).filter(Boolean)
+    const hasTrue = labels.includes('true')
+    const hasFalse = labels.includes('false')
+    
+    if (!hasTrue && !hasFalse) {
+      return 'Condition connections must be labeled as true and false'
+    } else if (!hasTrue) {
+      return 'Condition node is missing true connection'
+    } else if (!hasFalse) {
+      return 'Condition node is missing false connection'
+    }
+  }
+  
+  return null
 }
 
 // Validation functions
@@ -315,6 +354,49 @@ const validateField = (field: string, value: any, nodeType: string): string | nu
     case 'condition_expression':
       if (nodeType === 'condition' && (!value || value.trim() === '')) {
         return 'Condition expression is required'
+      }
+      break
+    
+    case 'condition_groups':
+      if (nodeType === 'condition') {
+        if (!value || !Array.isArray(value) || value.length === 0) {
+          return 'At least one condition rule is required'
+        }
+        
+        let hasValidRule = false
+        for (let groupIndex = 0; groupIndex < value.length; groupIndex++) {
+          const group = value[groupIndex]
+          if (group.rules && Array.isArray(group.rules)) {
+            for (let ruleIndex = 0; ruleIndex < group.rules.length; ruleIndex++) {
+              const rule = group.rules[ruleIndex]
+              
+              // Check if rule has all required fields
+              if (rule.variable && rule.operator && rule.value) {
+                hasValidRule = true
+              } else {
+                // Only show error for incomplete rules if they have any field filled
+                if (rule.variable || rule.operator || rule.value) {
+                  const missingFields = []
+                  if (!rule.variable) missingFields.push('variable')
+                  if (!rule.operator) missingFields.push('operator')
+                  if (!rule.value) missingFields.push('value')
+                  
+                  return `Group ${groupIndex + 1}, rule ${ruleIndex + 1}: Missing ${missingFields.join(', ')}`
+                }
+              }
+            }
+          }
+        }
+        
+        if (!hasValidRule) {
+          return 'At least one complete condition rule is required (variable, operator, and value)'
+        }
+      }
+      break
+    
+    case 'condition_connections':
+      if (nodeType === 'condition') {
+        return validateConditionConnections()
       }
       break
     
@@ -407,7 +489,7 @@ const validateForm = (): boolean => {
   // Validate each field
   const fieldsToValidate = [
     'name', 'message_text', 'system_prompt', 'temperature', 'exit_condition',
-    'condition_expression', 'action_type', 'action_url',
+    'condition_expression', 'condition_groups', 'condition_connections', 'action_type', 'action_url',
     'transfer_department', 'wait_duration', 'wait_unit', 'form_fields',
     'landing_page_heading', 'landing_page_content', 'prompt_message', 'confirmation_message'
   ]
@@ -490,6 +572,19 @@ const getNodeDataForForm = (node: Node) => {
 // Load user groups on component mount
 loadUserGroups()
 
+// Watch for edge changes to validate condition connections
+watch(() => props.currentEdges, () => {
+  if (props.selectedNode && props.selectedNode.data.nodeType === 'condition') {
+    // Validate condition connections when edges change
+    const error = validateConditionConnections()
+    if (error) {
+      validationErrors.value.condition_connections = error
+    } else {
+      delete validationErrors.value.condition_connections
+    }
+  }
+}, { deep: true })
+
 watch(() => props.selectedNode, (newNode) => {
   if (newNode) {
     console.log('Node changed, loading form data for:', newNode.id)
@@ -544,6 +639,9 @@ watch(() => props.selectedNode, (newNode) => {
       condition_expression: nodeData.config?.condition_expression || 
                             nodeData.condition_expression || 
                             '',
+      condition_groups: nodeData.config?.condition_groups || 
+                        nodeData.condition_groups || 
+                        [],
       // Form node - prioritize config over outer fields
       form_fields: nodeData.config?.form_fields || 
                    nodeData.form_fields || 
@@ -672,6 +770,7 @@ const getNodeSpecificConfig = (nodeType: string) => {
     
     case 'condition':
       if (nodeForm.value.condition_expression) config.condition_expression = nodeForm.value.condition_expression
+      if (nodeForm.value.condition_groups) config.condition_groups = nodeForm.value.condition_groups
       break
     
     case 'form':
@@ -954,12 +1053,50 @@ const handleDelete = () => {
 
           <!-- Condition Node -->
           <template v-if="selectedNode.data.nodeType === 'condition'">
+            <!-- Connection Status -->
+            <div class="form-group">
+              <label>Connection Status</label>
+              <div class="connection-status">
+                <div class="connection-info" :class="{ 'error': validationErrors.condition_connections }">
+                  <div class="connection-item">
+                    <span class="connection-label true">True Path:</span>
+                    <span class="connection-value">
+                      {{ (() => {
+                        const edgesVal = Array.isArray(currentEdges) ? currentEdges : (currentEdges as any).value
+                        const trueConnection = edgesVal.find((edge: any) => edge.source === selectedNode.id && edge.label === 'true')
+                        return trueConnection ? '✓ Connected' : '✗ Not connected'
+                      })() }}
+                    </span>
+                  </div>
+                  <div class="connection-item">
+                    <span class="connection-label false">False Path:</span>
+                    <span class="connection-value">
+                      {{ (() => {
+                        const edgesVal = Array.isArray(currentEdges) ? currentEdges : (currentEdges as any).value
+                        const falseConnection = edgesVal.find((edge: any) => edge.source === selectedNode.id && edge.label === 'false')
+                        return falseConnection ? '✓ Connected' : '✗ Not connected'
+                      })() }}
+                    </span>
+                  </div>
+                </div>
+                <div v-if="validationErrors.condition_connections" class="error-message">
+                  {{ validationErrors.condition_connections }}
+                </div>
+                <div class="help-text">
+                  Drag connections from this node to other nodes. The first connection will be labeled "true" and the second "false".
+                </div>
+              </div>
+            </div>
+            
             <ConditionNodeConfig
+              :key="selectedNode.id"
               :model-value="{
-                condition_expression: nodeForm.condition_expression
+                condition_expression: nodeForm.condition_expression,
+                condition_groups: nodeForm.condition_groups
               }"
               @update:model-value="updateConditionFormData"
               :validation-errors="validationErrors"
+              :available-variables="availableVariables"
               @validate-field="validateFieldOnChange"
             />
           </template>
@@ -1912,6 +2049,63 @@ const handleDelete = () => {
   font-size: 0.7rem;
   color: var(--primary-color);
   border: 1px solid var(--border-color);
+}
+
+/* Connection Status Styles */
+.connection-status {
+  margin-top: var(--space-xs);
+}
+
+.connection-info {
+  padding: var(--space-sm);
+  background: var(--background-soft);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-xs);
+}
+
+.connection-info.error {
+  border-color: var(--error-color);
+  background-color: rgba(239, 68, 68, 0.05);
+}
+
+.connection-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-xs) 0;
+}
+
+.connection-item:not(:last-child) {
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: var(--space-xs);
+  padding-bottom: var(--space-xs);
+}
+
+.connection-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.connection-label.true {
+  color: var(--success-color, #10B981);
+}
+
+.connection-label.false {
+  color: var(--error-color, #EF4444);
+}
+
+.connection-value {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.connection-value:contains('✓') {
+  color: var(--success-color, #10B981);
+}
+
+.connection-value:contains('✗') {
+  color: var(--error-color, #EF4444);
 }
 
 </style> 

@@ -35,7 +35,7 @@ export interface WorkflowManagementOptions {
   nodeIdCounter: Ref<number>
   availableNodeTypes: NodeTypeInfo[]
   validateAllNodes: (nodes: Node[], workflowId: string, edges?: any[]) => ValidationResult
-  highlightNodesWithErrors: (nodes: Node[], workflowId: string, availableNodeTypes: NodeTypeInfo[]) => void
+  highlightNodesWithErrors: (nodes: Node[], workflowId: string, availableNodeTypes: NodeTypeInfo[], edges?: any[]) => void
   resetAllNodesValidationStyle: (nodes: Node[], availableNodeTypes: NodeTypeInfo[]) => void
   getNodes: () => Node[]
   getEdges: () => Edge[]
@@ -216,7 +216,7 @@ export function useWorkflowManagement(options: WorkflowManagementOptions) {
     setTimeout(() => {
       const validation = validateAllNodes(getNodes(), workflowId, getEdges())
       if (!validation.isValid) {
-        highlightNodesWithErrors(getNodes(), workflowId, availableNodeTypes)
+        highlightNodesWithErrors(getNodes(), workflowId, availableNodeTypes, getEdges())
       }
     }, 100)
   }
@@ -288,7 +288,7 @@ export function useWorkflowManagement(options: WorkflowManagementOptions) {
     // Validate all nodes have required configuration
     const validation = validateAllNodes(nodes, workflowId, edges)
     if (!validation.isValid) {
-      highlightNodesWithErrors(nodes, workflowId, availableNodeTypes)
+      highlightNodesWithErrors(nodes, workflowId, availableNodeTypes, edges)
       toast.error('Cannot save workflow with validation errors:\n' + validation.errors.join('\n'), {
         duration: 8000,
         closeButton: true,
@@ -389,7 +389,7 @@ export function useWorkflowManagement(options: WorkflowManagementOptions) {
       // Validate before publishing
       const validation = validateAllNodes(nodes, workflowId, edges)
       if (!validation.isValid) {
-        highlightNodesWithErrors(nodes, workflowId, availableNodeTypes)
+        highlightNodesWithErrors(nodes, workflowId, availableNodeTypes, edges)
         toast.error('Please fix validation errors before publishing:\n' + validation.errors.join('\n'), {
           duration: 8000,
           closeButton: true,

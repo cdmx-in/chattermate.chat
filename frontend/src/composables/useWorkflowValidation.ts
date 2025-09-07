@@ -96,6 +96,44 @@ export function useWorkflowValidation() {
         if (!conditionExpression || conditionExpression.trim() === '') {
           errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": Condition expression is required`)
         }
+        
+        // Check for valid condition groups and rules
+        const conditionGroups = nodeData.condition_groups || nodeData.config?.condition_groups
+        if (conditionGroups && Array.isArray(conditionGroups)) {
+          let hasValidRule = false
+          
+          for (let groupIndex = 0; groupIndex < conditionGroups.length; groupIndex++) {
+            const group = conditionGroups[groupIndex]
+            if (group.rules && Array.isArray(group.rules)) {
+              for (let ruleIndex = 0; ruleIndex < group.rules.length; ruleIndex++) {
+                const rule = group.rules[ruleIndex]
+                
+                // Check if rule has all required fields
+                if (rule.variable && rule.operator && rule.value) {
+                  hasValidRule = true
+                } else {
+                  // Only show error for incomplete rules if they have any field filled
+                  if (rule.variable || rule.operator || rule.value) {
+                    const missingFields = []
+                    if (!rule.variable) missingFields.push('variable')
+                    if (!rule.operator) missingFields.push('operator')
+                    if (!rule.value) missingFields.push('value')
+                    
+                    errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}" group ${groupIndex + 1}, rule ${ruleIndex + 1}: Missing ${missingFields.join(', ')}`)
+                  }
+                }
+              }
+            }
+          }
+          
+          // If no valid rules found, add error
+          if (!hasValidRule) {
+            errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": At least one complete condition rule is required (variable, operator, and value)`)
+          }
+        } else {
+          // No condition groups found, this is an error for the new structured format
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": At least one condition rule is required`)
+        }
         break
       
       case 'form':
@@ -220,10 +258,61 @@ export function useWorkflowValidation() {
             }
           }
         }
+        
+        // Validate condition node connections
+        if (node.data.nodeType === 'condition') {
+          const nodeData = getNodeDataWithCache(node, workflowId)
+          const nodeName = nodeData.cleanName || nodeData.label || 'Unnamed condition node'
+          const outgoingConnections = edges.filter(edge => edge.source === node.id)
+          
+          // Condition nodes must have exactly 2 outgoing connections
+          if (outgoingConnections.length === 0) {
+            errors.push(`Condition node "${nodeName}" has no outgoing connections. It must have both true and false paths.`)
+          } else if (outgoingConnections.length === 1) {
+            const existingLabel = outgoingConnections[0].label
+            const missingLabel = existingLabel === 'true' ? 'false' : 'true'
+            errors.push(`Condition node "${nodeName}" is missing the ${missingLabel} path. Both true and false paths are required.`)
+          } else if (outgoingConnections.length > 2) {
+            errors.push(`Condition node "${nodeName}" has too many outgoing connections (${outgoingConnections.length}). It can only have true and false paths.`)
+          } else {
+            // Check that we have both true and false labels
+            const labels = outgoingConnections.map(edge => edge.label).filter(Boolean)
+            const hasTrue = labels.includes('true')
+            const hasFalse = labels.includes('false')
+            
+            if (!hasTrue && !hasFalse) {
+              errors.push(`Condition node "${nodeName}" connections are missing both true and false labels. Both true and false paths are required.`)
+            } else if (!hasTrue) {
+              errors.push(`Condition node "${nodeName}" is missing the true path. Both true and false paths are required.`)
+            } else if (!hasFalse) {
+              errors.push(`Condition node "${nodeName}" is missing the false path. Both true and false paths are required.`)
+            }
+          }
+        }
       }
     }
     
     return { isValid: errors.length === 0, errors }
+  }
+
+  // Check if a specific node has connection-related validation errors
+  const hasNodeConnectionErrors = (node: Node, workflowId: string, edges: any[]): boolean => {
+    if (node.data.nodeType !== 'condition') {
+      return false
+    }
+    
+    const outgoingConnections = edges.filter(edge => edge.source === node.id)
+    
+    // Check for connection errors
+    if (outgoingConnections.length !== 2) {
+      return true
+    }
+    
+    const labels = outgoingConnections.map(edge => edge.label).filter(Boolean)
+    const hasTrue = labels.includes('true')
+    const hasFalse = labels.includes('false')
+    
+    return !hasTrue || !hasFalse
   }
 
   // Quick check if workflow has any validation errors (without detailed messages)
@@ -239,12 +328,14 @@ export function useWorkflowValidation() {
   }
 
   // Apply error styling to nodes with validation errors
-  const highlightNodesWithErrors = (nodes: Node[], workflowId: string, availableNodeTypes: NodeTypeInfo[]) => {
+  const highlightNodesWithErrors = (nodes: Node[], workflowId: string, availableNodeTypes: NodeTypeInfo[], edges: any[] = []) => {
     // Update node styles to show validation errors
     nodes.forEach(node => {
       const nodeType = node.data.nodeType
       const nodeData = getNodeDataWithCache(node, workflowId)
-      const hasError = hasNodeValidationErrors(nodeType, nodeData)
+      const hasPropertyError = hasNodeValidationErrors(nodeType, nodeData)
+      const hasConnectionError = hasNodeConnectionErrors(node, workflowId, edges)
+      const hasError = hasPropertyError || hasConnectionError
       
       // Update node style based on validation
       if (hasError) {
@@ -288,6 +379,7 @@ export function useWorkflowValidation() {
     validateAllNodes,
     validateNode,
     hasNodeValidationErrors,
+    hasNodeConnectionErrors,
     hasWorkflowValidationErrors,
     highlightNodesWithErrors,
     resetNodeValidationStyle,

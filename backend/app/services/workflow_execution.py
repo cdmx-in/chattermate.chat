@@ -661,10 +661,12 @@ class WorkflowExecutionService:
     ) -> WorkflowExecutionResult:
         """Execute a condition node"""
         try:
+            logger.info(f"Executing condition node: {node.id}")
             config = node.config or {}
             condition_expression = config.get("condition_expression")
             
             if not condition_expression:
+                logger.error(f"No condition expression configured for condition node: {node.id}")
                 return WorkflowExecutionResult(
                     success=False,
                     message="No condition expression configured",
@@ -673,6 +675,7 @@ class WorkflowExecutionService:
             
             # Evaluate condition
             condition_result = self._evaluate_condition(condition_expression, workflow_state)
+            logger.info(f"Condition result: {condition_result}")
             
             # Find next node based on condition result
             next_node_id = self._find_conditional_next_node(node, condition_result)
@@ -1044,30 +1047,152 @@ class WorkflowExecutionService:
     
     def _evaluate_condition(self, condition: str, workflow_state: Dict[str, Any]) -> bool:
         """Evaluate a condition expression"""
-        # This is a simplified implementation
-        # In a full implementation, you'd use a proper expression evaluator
-        
         try:
+            logger.info(f"Evaluating condition: {condition}")
             # Replace variables in condition
             condition = self._process_variables(condition, workflow_state)
+            logger.debug(f"Processed condition: {condition}")
             
-            # Simple condition evaluation
-            if "==" in condition:
-                left, right = condition.split("==", 1)
-                return left.strip() == right.strip()
-            elif "!=" in condition:
-                left, right = condition.split("!=", 1)
-                return left.strip() != right.strip()
-            elif "contains" in condition:
-                left, right = condition.split("contains", 1)
-                return right.strip() in left.strip()
-            else:
-                # Default to true for unknown conditions
-                return True
+            # Handle different condition formats
+            return self._evaluate_single_condition(condition)
                 
         except Exception as e:
             logger.error(f"Error evaluating condition: {str(e)}")
             return False
+    
+    def _evaluate_single_condition(self, condition: str) -> bool:
+        """Evaluate a single condition expression"""
+        try:
+            # Handle JavaScript-style method calls first (includes, startsWith, endsWith)
+            if ".includes(" in condition:
+                return self._evaluate_method_condition(condition, "includes")
+            elif ".startsWith(" in condition:
+                return self._evaluate_method_condition(condition, "startsWith")
+            elif ".endsWith(" in condition:
+                return self._evaluate_method_condition(condition, "endsWith")
+            
+            # Handle comparison operators (order matters - check longer operators first)
+            elif "!==" in condition:
+                left, right = condition.split("!==", 1)
+                left_val, right_val = self._parse_operands(left, right)
+                result = left_val != right_val
+                logger.debug(f"Comparison: '{left_val}' !== '{right_val}' -> {result}")
+                return result
+            elif "===" in condition:
+                left, right = condition.split("===", 1)
+                left_val, right_val = self._parse_operands(left, right)
+                result = left_val == right_val
+                logger.debug(f"Comparison: '{left_val}' === '{right_val}' -> {result}")
+                return result
+            elif ">=" in condition:
+                left, right = condition.split(">=", 1)
+                left_val, right_val = self._parse_numeric_operands(left, right)
+                result = left_val >= right_val
+                logger.debug(f"Comparison: {left_val} >= {right_val} -> {result}")
+                return result
+            elif "<=" in condition:
+                left, right = condition.split("<=", 1)
+                left_val, right_val = self._parse_numeric_operands(left, right)
+                result = left_val <= right_val
+                logger.debug(f"Comparison: {left_val} <= {right_val} -> {result}")
+                return result
+            elif ">" in condition:
+                left, right = condition.split(">", 1)
+                left_val, right_val = self._parse_numeric_operands(left, right)
+                result = left_val > right_val
+                logger.debug(f"Comparison: {left_val} > {right_val} -> {result}")
+                return result
+            elif "<" in condition:
+                left, right = condition.split("<", 1)
+                left_val, right_val = self._parse_numeric_operands(left, right)
+                result = left_val < right_val
+                logger.debug(f"Comparison: {left_val} < {right_val} -> {result}")
+                return result
+            elif "!=" in condition:
+                left, right = condition.split("!=", 1)
+                left_val, right_val = self._parse_operands(left, right)
+                result = left_val != right_val
+                logger.debug(f"Comparison: '{left_val}' != '{right_val}' -> {result}")
+                return result
+            elif "contains" in condition:
+                # Legacy support for "contains" keyword
+                left, right = condition.split("contains", 1)
+                left_val, right_val = self._parse_operands(left, right)
+                result = right_val in left_val
+                logger.debug(f"Contains: '{right_val}' in '{left_val}' -> {result}")
+                return result
+            else:
+                # Default to true for unknown conditions
+                logger.warning(f"Unknown condition format: {condition}, defaulting to True")
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error evaluating single condition '{condition}': {str(e)}")
+            return False
+    
+    def _evaluate_method_condition(self, condition: str, method: str) -> bool:
+        """Evaluate JavaScript-style method conditions like variable.includes(value)"""
+        try:
+            # Parse variable.method(value) format
+            if f".{method}(" not in condition:
+                return False
+                
+            # Split on the method call
+            parts = condition.split(f".{method}(", 1)
+            if len(parts) != 2:
+                return False
+                
+            variable_part = parts[0].strip()
+            value_part = parts[1].strip()
+            
+            # Remove closing parenthesis from value part
+            if not value_part.endswith(")"):
+                return False
+            value_part = value_part[:-1]  # Remove closing )
+            
+            # Parse variable and value
+            left_val = variable_part.strip().strip('"').strip("'")
+            right_val = value_part.strip().strip('"').strip("'")
+            
+            # Evaluate based on method
+            if method == "includes":
+                result = right_val in left_val
+                logger.debug(f"Method call: '{left_val}'.includes('{right_val}') -> {result}")
+            elif method == "startsWith":
+                result = left_val.startswith(right_val)
+                logger.debug(f"Method call: '{left_val}'.startsWith('{right_val}') -> {result}")
+            elif method == "endsWith":
+                result = left_val.endswith(right_val)
+                logger.debug(f"Method call: '{left_val}'.endsWith('{right_val}') -> {result}")
+            else:
+                result = False
+                
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error evaluating method condition '{condition}': {str(e)}")
+            return False
+    
+    def _parse_operands(self, left: str, right: str) -> tuple[str, str]:
+        """Parse and clean operands for string comparison"""
+        left_val = left.strip().strip('"').strip("'")
+        right_val = right.strip().strip('"').strip("'")
+        return left_val, right_val
+    
+    def _parse_numeric_operands(self, left: str, right: str) -> tuple[float, float]:
+        """Parse and clean operands for numeric comparison"""
+        left_val = left.strip().strip('"').strip("'")
+        right_val = right.strip().strip('"').strip("'")
+        
+        try:
+            # Try to convert to numbers
+            left_num = float(left_val)
+            right_num = float(right_val)
+            return left_num, right_num
+        except ValueError:
+            # If conversion fails, compare as strings (lexicographic)
+            logger.warning(f"Non-numeric comparison: '{left_val}' vs '{right_val}' - using string comparison")
+            return float(ord(left_val[0]) if left_val else 0), float(ord(right_val[0]) if right_val else 0)
     
     def _update_session_workflow_state(
         self,
