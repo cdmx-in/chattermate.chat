@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, computed } from 'vue'
+import { ref, onMounted, onUnmounted, computed, watch } from 'vue'
 import { VueFlow, useVueFlow, type Node, type Edge, type NodeMouseEvent } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -119,13 +119,13 @@ const availableNodeTypes: NodeTypeInfo[] = [
     description: 'AI model processing with configurable prompts',
     color: '#8B5CF6'
   },
-  // {
-  //   type: 'condition',
-  //   label: 'Condition',
-  //   icon: '🔀',
-  //   description: 'Branch conversation based on conditions (Coming Soon)',
-  //   color: '#F59E0B'
-  // },
+  {
+    type: 'condition',
+    label: 'Condition',
+    icon: '🔀',
+    description: 'Branch conversation based on conditions using variables',
+    color: '#F59E0B'
+  },
   {
     type: 'form',
     label: 'Form',
@@ -179,6 +179,20 @@ const selectedNode = ref<Node | null>(null)
 const workflowStatus = ref<WorkflowStatus>(props.workflow.status)
 const publishLoading = ref(false)
 
+// Variables state for PropertiesPanel
+const availableVariables = ref<Array<{
+  nodeId: string
+  nodeName: string
+  fieldName: string
+  fieldType: string
+  fieldLabel: string
+}>>([])
+
+// Watch for node changes to update available variables
+watch(() => getNodes.value, (newNodes) => {
+  updateAvailableVariables(newNodes)
+}, { deep: true })
+
 // Initialize workflow management composable
 const {
   loadWorkflowData,
@@ -219,6 +233,34 @@ const {
 // Helper function to generate UUID-like IDs
 const generateNodeId = (type: string) => {
   return `${type}-${nodeIdCounter.value++}`
+}
+
+// Helper function to generate unique node names
+const generateUniqueNodeName = (baseName: string) => {
+  const nodes = getNodes.value
+  const existingNames = new Set(
+    nodes.map(node => node.data.cleanName?.toLowerCase() || node.data.label?.toLowerCase()).filter(Boolean)
+  )
+  
+  // Check if base name is already unique
+  if (!existingNames.has(baseName.toLowerCase())) {
+    return baseName
+  }
+  
+  // Generate unique name with suffix
+  let counter = 1
+  while (true) {
+    const candidateName = `${baseName}_${counter.toString().padStart(3, '0')}`
+    if (!existingNames.has(candidateName.toLowerCase())) {
+      return candidateName
+    }
+    counter++
+    
+    // Safety check to prevent infinite loop
+    if (counter > 999) {
+      return `${baseName}_${Date.now()}`
+    }
+  }
 }
 
 // Handle node deletion
@@ -277,7 +319,26 @@ const hasValidConnections = computed(() => {
   })
   
   // All nodes must be connected
-  return nodes.every(node => connectedNodeIds.has(node.id))
+  const allNodesConnected = nodes.every(node => connectedNodeIds.has(node.id))
+  if (!allNodesConnected) return false
+  
+  // Check condition nodes have both true and false connections
+  const conditionNodes = nodes.filter(node => node.data.nodeType === 'condition')
+  for (const conditionNode of conditionNodes) {
+    const outgoingConnections = edges.filter(edge => edge.source === conditionNode.id)
+    
+    // Condition nodes must have exactly 2 outgoing connections
+    if (outgoingConnections.length !== 2) return false
+    
+    // Must have one 'true' and one 'false' connection
+    const labels = outgoingConnections.map(edge => edge.label).filter(Boolean)
+    const hasTrue = labels.includes('true')
+    const hasFalse = labels.includes('false')
+    
+    if (!hasTrue || !hasFalse) return false
+  }
+  
+  return true
 })
 const canPublish = computed(() => hasNodes.value && isDraft.value && hasValidConnections.value)
 
@@ -310,13 +371,14 @@ const handleDrop = (event: DragEvent) => {
   }
 
   const nodeType = availableNodeTypes.find(t => t.type === type)
+  const uniqueName = generateUniqueNodeName(nodeType?.label || 'Node')
   const newNode: Node = {
     id: generateNodeId(type),
     type: 'default', // Use default Vue Flow node type
     position,
     data: {
-      label: `${nodeType?.icon || '📄'} ${nodeType?.label || 'Node'}`, // Display with icon
-      cleanName: nodeType?.label || 'Node', // Store clean name for backend
+      label: `${nodeType?.icon || '📄'} ${uniqueName}`, // Display with icon and unique name
+      cleanName: uniqueName, // Store unique clean name for backend
       description: '',
       config: {},
       nodeType: type, // Store the original type for later use
@@ -336,7 +398,7 @@ const handleDrop = (event: DragEvent) => {
   const cacheNodeData = {
     id: newNode.id,
     node_type: mapNodeTypeToBackend(type),
-    name: nodeType?.label || 'Node',
+    name: uniqueName,
     description: '',
     position_x: newNode.position.x,
     position_y: newNode.position.y,
@@ -362,8 +424,13 @@ const autoConnectToLastNode = (newNode: Node) => {
   const otherNodes = nodes.filter(n => n.id !== newNode.id)
   
   // Find nodes that don't have any outgoing edges (no edges where they are the source)
+  // For condition nodes, check if they have less than 2 outgoing connections
   const nodesWithoutOutgoing = otherNodes.filter(node => {
-    return !edges.some(edge => edge.source === node.id)
+    const outgoingConnections = edges.filter(edge => edge.source === node.id)
+    if (node.data.nodeType === 'condition') {
+      return outgoingConnections.length < 2 // Condition nodes can have up to 2 connections
+    }
+    return outgoingConnections.length === 0 // Other nodes can have only 1 connection
   })
   
   // If we have nodes without outgoing connections, use the first one found
@@ -373,6 +440,13 @@ const autoConnectToLastNode = (newNode: Node) => {
     : otherNodes[otherNodes.length - 1]
 
   if (lastNode) {
+    // Check if the new node already has an incoming connection
+    const existingIncomingConnection = edges.find(edge => edge.target === newNode.id)
+    if (existingIncomingConnection) {
+      // Skip auto-connect if the new node already has an incoming connection
+      return
+    }
+    
     // Check if the last node is an LLM with continuous execution
     if (isLLMNodeWithContinuousExecution(lastNode)) {
       toast.error('Cannot connect nodes after an LLM node with continuous execution. Continuous execution LLM nodes must be terminal nodes.', {
@@ -383,11 +457,35 @@ const autoConnectToLastNode = (newNode: Node) => {
       return
     }
     
+    // Determine connection label for condition nodes in auto-connect
+    let autoConnectionLabel = undefined
+    if (lastNode.data.nodeType === 'condition') {
+      const existingOutgoingConnections = edges.filter(edge => edge.source === lastNode.id)
+      const existingLabels = existingOutgoingConnections.map(edge => edge.label).filter(Boolean)
+      
+      // Assign true/false labels based on what's already used
+      if (!existingLabels.includes('true') && !existingLabels.includes('false')) {
+        // First connection - default to 'true'
+        autoConnectionLabel = 'true'
+      } else if (existingLabels.includes('true') && !existingLabels.includes('false')) {
+        // Second connection - must be 'false'
+        autoConnectionLabel = 'false'
+      } else if (!existingLabels.includes('true') && existingLabels.includes('false')) {
+        // Second connection - must be 'true'
+        autoConnectionLabel = 'true'
+      }
+    }
+    
     const newEdge: Edge = {
       id: `${lastNode.id}-${newNode.id}`,
       source: lastNode.id,
       target: newNode.id,
-      animated: true
+      animated: true,
+      label: autoConnectionLabel,
+      style: autoConnectionLabel ? { 
+        stroke: autoConnectionLabel === 'true' ? '#10B981' : '#EF4444',
+        strokeWidth: 2
+      } : undefined
     }
     
     addEdges([newEdge])
@@ -399,7 +497,7 @@ const autoConnectToLastNode = (newNode: Node) => {
       target_node_id: newEdge.target,
       source_handle: newEdge.sourceHandle || undefined,
       target_handle: newEdge.targetHandle || undefined,
-      label: typeof newEdge.label === 'string' ? newEdge.label : undefined,
+      label: autoConnectionLabel,
       condition: newEdge.data?.condition,
       priority: newEdge.data?.priority || 1,
       connection_metadata: newEdge.data?.metadata || {}
@@ -423,10 +521,22 @@ const handleNodeClick = (event: NodeMouseEvent) => {
 onConnect((params) => {
   // Get the source and target nodes
   const nodes = getNodes.value
+  const edges = getEdges.value
   const sourceNode = nodes.find(n => n.id === params.source)
   const targetNode = nodes.find(n => n.id === params.target)
   
   if (!sourceNode || !targetNode) return
+  
+  // Check if target node already has an incoming connection
+  const existingIncomingConnection = edges.find(edge => edge.target === params.target)
+  if (existingIncomingConnection) {
+    toast.error('Each node can only accept one incoming connection. Please remove the existing connection first.', {
+      position: 'top-center',
+      duration: 5000,
+      closeButton: true
+    })
+    return
+  }
   
   // Check if source is an LLM node with continuous execution
   if (isLLMNodeWithContinuousExecution(sourceNode)) {
@@ -438,10 +548,58 @@ onConnect((params) => {
     return
   }
   
+  // Check if source node already has outgoing connections (except for condition nodes which can have multiple)
+  if (sourceNode.data.nodeType !== 'condition') {
+    const existingOutgoingConnection = edges.find(edge => edge.source === params.source)
+    if (existingOutgoingConnection) {
+      toast.error('Each node can only have one outgoing connection, except condition nodes which can branch to multiple paths.', {
+        position: 'top-center',
+        duration: 5000,
+        closeButton: true
+      })
+      return
+    }
+  } else {
+    // For condition nodes, limit to maximum 2 outgoing connections (true/false branches)
+    const existingOutgoingConnections = edges.filter(edge => edge.source === params.source)
+    if (existingOutgoingConnections.length >= 2) {
+      toast.error('Condition nodes can have maximum 2 outgoing connections (true and false branches).', {
+        position: 'top-center',
+        duration: 5000,
+        closeButton: true
+      })
+      return
+    }
+  }
+  
+  // Determine connection label for condition nodes
+  let connectionLabel = undefined
+  if (sourceNode.data.nodeType === 'condition') {
+    const existingOutgoingConnections = edges.filter(edge => edge.source === params.source)
+    const existingLabels = existingOutgoingConnections.map(edge => edge.label).filter(Boolean)
+    
+    // Assign true/false labels based on what's already used
+    if (!existingLabels.includes('true') && !existingLabels.includes('false')) {
+      // First connection - default to 'true'
+      connectionLabel = 'true'
+    } else if (existingLabels.includes('true') && !existingLabels.includes('false')) {
+      // Second connection - must be 'false'
+      connectionLabel = 'false'
+    } else if (!existingLabels.includes('true') && existingLabels.includes('false')) {
+      // Second connection - must be 'true'
+      connectionLabel = 'true'
+    }
+  }
+  
   const newEdge: Edge = {
     ...params,
     id: `${params.source}-${params.target}`,
-    animated: true
+    animated: true,
+    label: connectionLabel,
+    style: connectionLabel ? { 
+      stroke: connectionLabel === 'true' ? '#10B981' : '#EF4444',
+      strokeWidth: 2
+    } : undefined
   }
   addEdges([newEdge])
   
@@ -452,7 +610,7 @@ onConnect((params) => {
     target_node_id: newEdge.target,
     source_handle: newEdge.sourceHandle || undefined,
     target_handle: newEdge.targetHandle || undefined,
-    label: typeof newEdge.label === 'string' ? newEdge.label : undefined,
+    label: connectionLabel,
     condition: newEdge.data?.condition,
     priority: newEdge.data?.priority || 1,
     connection_metadata: newEdge.data?.metadata || {}
@@ -466,6 +624,55 @@ const closeBuilder = () => {
   document.body.classList.remove('workflow-properties-panel-open')
   emit('close')
 }
+
+// Variables methods
+const updateAvailableVariables = (nodes: Node[]) => {
+  const variables: Array<{
+    nodeId: string
+    nodeName: string
+    fieldName: string
+    fieldType: string
+    fieldLabel: string
+  }> = []
+  
+  // Find all form nodes and extract their field definitions
+  nodes.forEach(node => {
+    if (node.data.nodeType === 'form') {
+      // Get form fields from cache or node data
+      const nodeData = getNodeDataWithCache(node, props.workflow.id)
+      const formFields = nodeData?.config?.form_fields || node.data.config?.form_fields || []
+      
+      formFields.forEach((field: any) => {
+        if (field.name) {
+          const nodeName = node.data.cleanName || node.data.label || 'Form'
+          variables.push({
+            nodeId: node.id,
+            nodeName: nodeName,
+            fieldName: `${nodeName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${field.name}`,
+            fieldType: field.type || 'text',
+            fieldLabel: `${nodeName}: ${field.label || field.name}`
+          })
+        }
+      })
+    }
+    
+    // Find all user input nodes and add their input as a variable
+    if (node.data.nodeType === 'userInput') {
+      const nodeName = node.data.cleanName || node.data.label || 'User Input'
+      variables.push({
+        nodeId: node.id,
+        nodeName: nodeName,
+        fieldName: `${nodeName.toLowerCase().replace(/[^a-z0-9]/g, '_')}_input`,
+        fieldType: 'text',
+        fieldLabel: `${nodeName}: User Input`
+      })
+    }
+  })
+  
+  availableVariables.value = variables
+}
+
+
 
 // Load data on mount
 onMounted(() => {
@@ -529,7 +736,7 @@ onUnmounted(() => {
           @click="publishWorkflow" 
           :disabled="!canPublish || publishLoading"
           :title="!hasNodes ? 'Add nodes to the workflow before publishing' : 
-                  !hasValidConnections ? 'Connect all nodes before publishing' : 
+                  !hasValidConnections ? 'Connect all nodes and ensure condition nodes have both true and false paths before publishing' : 
                   'Publish workflow to make it live'"
         >
           <div v-if="publishLoading" class="btn-spinner"></div>
@@ -576,6 +783,8 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+        
+
       </div>
 
       <!-- Canvas -->
@@ -631,6 +840,7 @@ onUnmounted(() => {
         :organization-id="workflow.organization_id"
         :current-edges="getEdges"
         :current-nodes="getNodes"
+        :available-variables="availableVariables"
         @save="saveNodeProperties"
         @close="closePropertiesPanel"
         @delete="deleteSelectedNode"
@@ -1036,5 +1246,7 @@ onUnmounted(() => {
   bottom: var(--space-md);
   right: var(--space-md);
 }
+
+
 
 </style> 

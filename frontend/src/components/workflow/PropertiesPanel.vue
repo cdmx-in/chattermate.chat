@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref, watch, computed, type Ref } from 'vue'
 import type { Node, Edge } from '@vue-flow/core'
 import { workflowNodeService } from '@/services/workflowNode'
 import { workflowCacheStorage } from '@/utils/storage'
@@ -34,13 +34,15 @@ import UserInputNodeConfig from '@/components/workflow/nodes/UserInputNodeConfig
 import { ExitCondition } from '@/types/workflow'
 import { listGroups } from '@/services/groups'
 import type { UserGroup } from '@/types/user'
+import { toast } from 'vue-sonner'
 
 // Collapsible sections state
 const collapsedSections = ref({
   basic: false,
   nodeSettings: false,
   advanced: true, // Advanced settings collapsed by default
-  knowledge: true // Knowledge sources collapsed by default
+  knowledge: true, // Knowledge sources collapsed by default
+  variables: false // Variables expanded by default
 })
 
 // Define form field interface
@@ -67,8 +69,15 @@ const props = defineProps<{
   workflowId: string
   agentId: string
   organizationId: string
-  currentEdges: Edge[]
-  currentNodes: Node[]
+  currentEdges: Edge[] | Ref<Edge[]>
+  currentNodes: Node[] | Ref<Node[]>
+  availableVariables: Array<{
+    nodeId: string
+    nodeName: string
+    fieldName: string
+    fieldType: string
+    fieldLabel: string
+  }>
 }>()
 
 const emit = defineEmits<{
@@ -94,6 +103,7 @@ const nodeForm = ref({
   ask_for_rating: false,
   // Condition node
   condition_expression: '',
+  condition_groups: [] as any[],
 
   // Form node
   form_fields: [] as FormField[],
@@ -148,6 +158,36 @@ const debounce = (func: Function, delay: number) => {
 const toggleSection = (section: keyof typeof collapsedSections.value | string) => {
   if (section in collapsedSections.value) {
     collapsedSections.value[section as keyof typeof collapsedSections.value] = !collapsedSections.value[section as keyof typeof collapsedSections.value]
+  }
+}
+
+// Variables functionality
+const shouldShowVariables = computed(() => {
+  // Show variables for nodes that can use them (message, llm, landingPage, userInput, condition)
+  // Also show for userInput nodes to display what variables they will create
+  const nodeType = props.selectedNode.data.nodeType
+  return ['message', 'llm', 'landingPage', 'userInput', 'condition'].includes(nodeType) && props.availableVariables.length > 0
+})
+
+const getVariableSyntax = (fieldName: string) => {
+  return `{{${fieldName}}}`
+}
+
+const copyVariableToClipboard = async (variable: any) => {
+  try {
+    const variableSyntax = getVariableSyntax(variable.fieldName)
+    await navigator.clipboard.writeText(variableSyntax)
+    
+    // Show success toast
+    toast.success(`Copied ${variableSyntax} to clipboard`, {
+      position: 'top-center',
+      duration: 2000
+    })
+  } catch (error) {
+    console.error('Failed to copy to clipboard:', error)
+    toast.error('Failed to copy to clipboard', {
+      position: 'top-center'
+    })
   }
 }
 
@@ -221,6 +261,56 @@ const updateUserInputFormData = (data: any) => {
   autoSaveToCache()
 }
 
+// Helper function to check if node name is unique
+const isNodeNameUnique = (nodeName: string): boolean => {
+  const currentNodes = Array.isArray(props.currentNodes)
+    ? props.currentNodes
+    : (props.currentNodes as Ref<Node[]>).value
+  const currentNodeId = props.selectedNode.id
+  
+  return !currentNodes.some((node: any) => 
+    node.id !== currentNodeId && 
+    (node.data.cleanName?.toLowerCase() === nodeName.toLowerCase() || 
+     node.data.label?.toLowerCase() === nodeName.toLowerCase())
+  )
+}
+
+// Helper function to validate condition node connections
+const validateConditionConnections = (): string | null => {
+  if (props.selectedNode.data.nodeType !== 'condition') return null
+  
+  const edges = Array.isArray(props.currentEdges)
+    ? props.currentEdges
+    : (props.currentEdges as Ref<Edge[]>).value
+  const outgoingConnections = edges.filter((edge: any) => edge.source === props.selectedNode.id)
+  
+  if (outgoingConnections.length === 0) {
+    return 'Condition node must have both true and false connections'
+  }
+  
+  if (outgoingConnections.length === 1) {
+    const existingLabel = outgoingConnections[0].label
+    const missingLabel = existingLabel === 'true' ? 'false' : 'true'
+    return `Condition node is missing ${missingLabel} connection`
+  }
+  
+  if (outgoingConnections.length === 2) {
+    const labels = outgoingConnections.map((edge: any) => edge.label).filter(Boolean)
+    const hasTrue = labels.includes('true')
+    const hasFalse = labels.includes('false')
+    
+    if (!hasTrue && !hasFalse) {
+      return 'Condition connections must be labeled as true and false'
+    } else if (!hasTrue) {
+      return 'Condition node is missing true connection'
+    } else if (!hasFalse) {
+      return 'Condition node is missing false connection'
+    }
+  }
+  
+  return null
+}
+
 // Validation functions
 const validateField = (field: string, value: any, nodeType: string): string | null => {
   switch (field) {
@@ -230,6 +320,10 @@ const validateField = (field: string, value: any, nodeType: string): string | nu
       }
       if (value.length > 100) {
         return 'Node name must be less than 100 characters'
+      }
+      // Check for unique node name
+      if (!isNodeNameUnique(value.trim())) {
+        return 'Node name must be unique within the workflow'
       }
       break
     
@@ -260,6 +354,49 @@ const validateField = (field: string, value: any, nodeType: string): string | nu
     case 'condition_expression':
       if (nodeType === 'condition' && (!value || value.trim() === '')) {
         return 'Condition expression is required'
+      }
+      break
+    
+    case 'condition_groups':
+      if (nodeType === 'condition') {
+        if (!value || !Array.isArray(value) || value.length === 0) {
+          return 'At least one condition rule is required'
+        }
+        
+        let hasValidRule = false
+        for (let groupIndex = 0; groupIndex < value.length; groupIndex++) {
+          const group = value[groupIndex]
+          if (group.rules && Array.isArray(group.rules)) {
+            for (let ruleIndex = 0; ruleIndex < group.rules.length; ruleIndex++) {
+              const rule = group.rules[ruleIndex]
+              
+              // Check if rule has all required fields
+              if (rule.variable && rule.operator && rule.value) {
+                hasValidRule = true
+              } else {
+                // Only show error for incomplete rules if they have any field filled
+                if (rule.variable || rule.operator || rule.value) {
+                  const missingFields = []
+                  if (!rule.variable) missingFields.push('variable')
+                  if (!rule.operator) missingFields.push('operator')
+                  if (!rule.value) missingFields.push('value')
+                  
+                  return `Group ${groupIndex + 1}, rule ${ruleIndex + 1}: Missing ${missingFields.join(', ')}`
+                }
+              }
+            }
+          }
+        }
+        
+        if (!hasValidRule) {
+          return 'At least one complete condition rule is required (variable, operator, and value)'
+        }
+      }
+      break
+    
+    case 'condition_connections':
+      if (nodeType === 'condition') {
+        return validateConditionConnections()
       }
       break
     
@@ -352,7 +489,7 @@ const validateForm = (): boolean => {
   // Validate each field
   const fieldsToValidate = [
     'name', 'message_text', 'system_prompt', 'temperature', 'exit_condition',
-    'condition_expression', 'action_type', 'action_url',
+    'condition_expression', 'condition_groups', 'condition_connections', 'action_type', 'action_url',
     'transfer_department', 'wait_duration', 'wait_unit', 'form_fields',
     'landing_page_heading', 'landing_page_content', 'prompt_message', 'confirmation_message'
   ]
@@ -435,6 +572,19 @@ const getNodeDataForForm = (node: Node) => {
 // Load user groups on component mount
 loadUserGroups()
 
+// Watch for edge changes to validate condition connections
+watch(() => props.currentEdges, () => {
+  if (props.selectedNode && props.selectedNode.data.nodeType === 'condition') {
+    // Validate condition connections when edges change
+    const error = validateConditionConnections()
+    if (error) {
+      validationErrors.value.condition_connections = error
+    } else {
+      delete validationErrors.value.condition_connections
+    }
+  }
+}, { deep: true })
+
 watch(() => props.selectedNode, (newNode) => {
   if (newNode) {
     console.log('Node changed, loading form data for:', newNode.id)
@@ -489,6 +639,9 @@ watch(() => props.selectedNode, (newNode) => {
       condition_expression: nodeData.config?.condition_expression || 
                             nodeData.condition_expression || 
                             '',
+      condition_groups: nodeData.config?.condition_groups || 
+                        nodeData.condition_groups || 
+                        [],
       // Form node - prioritize config over outer fields
       form_fields: nodeData.config?.form_fields || 
                    nodeData.form_fields || 
@@ -617,6 +770,7 @@ const getNodeSpecificConfig = (nodeType: string) => {
     
     case 'condition':
       if (nodeForm.value.condition_expression) config.condition_expression = nodeForm.value.condition_expression
+      if (nodeForm.value.condition_groups) config.condition_groups = nodeForm.value.condition_groups
       break
     
     case 'form':
@@ -899,12 +1053,50 @@ const handleDelete = () => {
 
           <!-- Condition Node -->
           <template v-if="selectedNode.data.nodeType === 'condition'">
+            <!-- Connection Status -->
+            <div class="form-group">
+              <label>Connection Status</label>
+              <div class="connection-status">
+                <div class="connection-info" :class="{ 'error': validationErrors.condition_connections }">
+                  <div class="connection-item">
+                    <span class="connection-label true">True Path:</span>
+                    <span class="connection-value">
+                      {{ (() => {
+                        const edgesVal = Array.isArray(currentEdges) ? currentEdges : (currentEdges as any).value
+                        const trueConnection = edgesVal.find((edge: any) => edge.source === selectedNode.id && edge.label === 'true')
+                        return trueConnection ? '✓ Connected' : '✗ Not connected'
+                      })() }}
+                    </span>
+                  </div>
+                  <div class="connection-item">
+                    <span class="connection-label false">False Path:</span>
+                    <span class="connection-value">
+                      {{ (() => {
+                        const edgesVal = Array.isArray(currentEdges) ? currentEdges : (currentEdges as any).value
+                        const falseConnection = edgesVal.find((edge: any) => edge.source === selectedNode.id && edge.label === 'false')
+                        return falseConnection ? '✓ Connected' : '✗ Not connected'
+                      })() }}
+                    </span>
+                  </div>
+                </div>
+                <div v-if="validationErrors.condition_connections" class="error-message">
+                  {{ validationErrors.condition_connections }}
+                </div>
+                <div class="help-text">
+                  Drag connections from this node to other nodes. The first connection will be labeled "true" and the second "false".
+                </div>
+              </div>
+            </div>
+            
             <ConditionNodeConfig
+              :key="selectedNode.id"
               :model-value="{
-                condition_expression: nodeForm.condition_expression
+                condition_expression: nodeForm.condition_expression,
+                condition_groups: nodeForm.condition_groups
               }"
               @update:model-value="updateConditionFormData"
               :validation-errors="validationErrors"
+              :available-variables="availableVariables"
               @validate-field="validateFieldOnChange"
             />
           </template>
@@ -1001,6 +1193,53 @@ const handleDelete = () => {
               @validate-field="validateFieldOnChange"
             />
           </template>
+        </div>
+        
+        <!-- Form Variables Section -->
+        <div v-if="shouldShowVariables" class="collapsible-section">
+          <div class="section-header" @click="toggleSection('variables')">
+            <div class="section-title">
+              <svg class="section-icon" :class="{ 'rotated': collapsedSections.variables }" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="6,9 12,15 18,9"></polyline>
+              </svg>
+              <span>Available Variables</span>
+              <span v-if="availableVariables.length > 0" class="variables-count">{{ availableVariables.length }}</span>
+            </div>
+          </div>
+          
+          <div class="section-content" :class="{ 'collapsed': collapsedSections.variables }">
+            <div v-if="availableVariables.length === 0" class="no-variables">
+              <p>No variables available</p>
+              <small>Add form or user input nodes to create variables</small>
+            </div>
+            
+            <div v-else class="variables-list">
+              <div
+                v-for="variable in availableVariables"
+                :key="`${variable.nodeId}-${variable.fieldName}`"
+                class="variable-item"
+                @click="copyVariableToClipboard(variable)"
+                :title="`Click to copy {{${variable.fieldName}}} to clipboard`"
+              >
+                <div class="variable-info">
+                  <div class="variable-name">{{ variable.fieldName }}</div>
+                  <div class="variable-source">from {{ variable.nodeName }}</div>
+                  <div class="variable-type">{{ variable.fieldType }}</div>
+                </div>
+                <div class="variable-syntax">
+                  <code>{{ getVariableSyntax(variable.fieldName) }}</code>
+                </div>
+              </div>
+            </div>
+            
+            <div v-if="availableVariables.length > 0" class="variables-help">
+              <small>
+                <strong>Usage:</strong><br>
+                • <code>{{ getVariableSyntax('field_name') }}</code> - Latest value<br>
+                • <code>{{ getVariableSyntax('node_id.field_name') }}</code> - Specific node
+              </small>
+            </div>
+          </div>
         </div>
         </div>
       </form>
@@ -1701,4 +1940,172 @@ const handleDelete = () => {
     margin: 0 4px;
   }
 }
+
+/* Variables Section Styles */
+.variables-count {
+  background: var(--primary-color);
+  color: white;
+  border-radius: var(--radius-full);
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  font-weight: 500;
+  margin-left: var(--space-xs);
+}
+
+.no-variables {
+  text-align: center;
+  padding: var(--space-lg);
+  color: var(--text-muted);
+}
+
+.no-variables p {
+  margin: 0 0 var(--space-xs) 0;
+  font-size: var(--text-sm);
+}
+
+.no-variables small {
+  font-size: 0.75rem;
+  opacity: 0.7;
+}
+
+.variables-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+}
+
+.variable-item {
+  padding: var(--space-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: var(--background-color);
+}
+
+.variable-item:hover {
+  background: var(--background-alt);
+  border-color: var(--primary-color);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.variable-info {
+  margin-bottom: var(--space-xs);
+}
+
+.variable-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-color);
+}
+
+.variable-source {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 2px 0;
+}
+
+.variable-type {
+  font-size: 0.75rem;
+  color: var(--primary-color);
+  background: var(--primary-soft);
+  padding: 1px 6px;
+  border-radius: var(--radius-xs);
+  display: inline-block;
+}
+
+.variable-syntax {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.variable-syntax code {
+  background: var(--background-soft);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  font-size: 0.75rem;
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+}
+
+.variables-help {
+  padding: var(--space-sm);
+  background: var(--background-soft);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  margin-top: var(--space-sm);
+}
+
+.variables-help small {
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+.variables-help code {
+  background: var(--background-color);
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  font-size: 0.7rem;
+  color: var(--primary-color);
+  border: 1px solid var(--border-color);
+}
+
+/* Connection Status Styles */
+.connection-status {
+  margin-top: var(--space-xs);
+}
+
+.connection-info {
+  padding: var(--space-sm);
+  background: var(--background-soft);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-xs);
+}
+
+.connection-info.error {
+  border-color: var(--error-color);
+  background-color: rgba(239, 68, 68, 0.05);
+}
+
+.connection-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-xs) 0;
+}
+
+.connection-item:not(:last-child) {
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: var(--space-xs);
+  padding-bottom: var(--space-xs);
+}
+
+.connection-label {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.connection-label.true {
+  color: var(--success-color, #10B981);
+}
+
+.connection-label.false {
+  color: var(--error-color, #EF4444);
+}
+
+.connection-value {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.connection-value:contains('✓') {
+  color: var(--success-color, #10B981);
+}
+
+.connection-value:contains('✗') {
+  color: var(--error-color, #EF4444);
+}
+
 </style> 

@@ -36,6 +36,18 @@ class SessionToAgentRepository:
     def create_session(self, session_id: UUID | str, agent_id: UUID | str = None, customer_id: UUID | str = None, user_id: UUID | str = None, organization_id: UUID | str = None) -> SessionToAgent:
         """Create a new session assignment"""
         try:
+            # Convert string IDs to UUID objects
+            if isinstance(session_id, str):
+                session_id = UUID(session_id)
+            if isinstance(agent_id, str):
+                agent_id = UUID(agent_id)
+            if isinstance(customer_id, str):
+                customer_id = UUID(customer_id)
+            if isinstance(user_id, str):
+                user_id = UUID(user_id)
+            if isinstance(organization_id, str):
+                organization_id = UUID(organization_id)
+                
             workflow_id = None
             
             # Check if agent has an active workflow (only if agent_id is provided)
@@ -85,6 +97,10 @@ class SessionToAgentRepository:
             session = self.get_session(session_id)
             if not session:
                 return False
+            
+            # Convert string user_id to UUID if needed
+            if isinstance(user_id, str):
+                user_id = UUID(user_id)
             
             session.user_id = user_id
             session.status = SessionStatus.TRANSFERRED
@@ -380,8 +396,10 @@ class SessionToAgentRepository:
             return None
 
     def add_workflow_history_entry(self, session_id: UUID | str, node_id: UUID | str, entry_type: str, data: dict) -> bool:
-        """Add an entry to the workflow history"""
+        """Add an entry to the workflow history with proper multi-language Unicode support"""
         try:
+            import json
+            import copy
             from sqlalchemy.orm.attributes import flag_modified
             
             session = self.get_session(session_id)
@@ -393,16 +411,24 @@ class SessionToAgentRepository:
             if session.workflow_history is None:
                 session.workflow_history = []
             
+            # Create a deep copy of the data to avoid modifying the original
+            data_copy = copy.deepcopy(data)
+            
             # Create history entry
             history_entry = {
                 "node_id": str(node_id),
                 "type": entry_type,
                 "timestamp": datetime.utcnow().isoformat(),
-                "data": data
+                "data": data_copy
             }
             
+            # Convert to JSON with ensure_ascii=False to preserve Unicode characters
+            # Then parse it back to ensure it's properly formatted for SQLAlchemy
+            json_str = json.dumps(history_entry, ensure_ascii=False, separators=(',', ':'))
+            unicode_safe_entry = json.loads(json_str)
+            
             # Add to history
-            session.workflow_history.append(history_entry)
+            session.workflow_history.append(unicode_safe_entry)
             
             # Mark as modified for SQLAlchemy
             flag_modified(session, 'workflow_history')
