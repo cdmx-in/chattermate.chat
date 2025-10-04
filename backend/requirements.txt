@@ -81,3 +81,7 @@ mcp
 
 # UV tool runner for Python-based MCP servers
 uv
+
+# Web Crawling
+crawl4ai
+httpx

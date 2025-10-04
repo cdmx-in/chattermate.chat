@@ -16,6 +16,10 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
+# Set environment variable to prevent tokenizer deadlock warnings
+import os
+os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
+
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
