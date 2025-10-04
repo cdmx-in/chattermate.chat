@@ -24,6 +24,7 @@ from app.models.agent import Agent
 from uuid import UUID
 from app.core.logger import get_logger
 from app.models.schemas.jira import AgentWithJiraConfig
+import json
 
 logger = get_logger(__name__)
 
@@ -56,6 +57,14 @@ class JiraRepository:
                 AgentJiraConfig.agent_id == str(agent.id)
             ).first()
             
+            # Parse tools JSON if it exists
+            tools_list = []
+            if agent.tools:
+                try:
+                    tools_list = json.loads(agent.tools) if isinstance(agent.tools, str) else agent.tools
+                except (json.JSONDecodeError, TypeError):
+                    tools_list = []
+            
             # Create an AgentWithJiraConfig object
             agent_data = AgentWithJiraConfig(
                 id=agent.id,
@@ -63,7 +72,7 @@ class JiraRepository:
                 display_name=agent.display_name,
                 description=agent.description,
                 instructions=agent.instructions,
-                tools=agent.tools,
+                tools=tools_list,
                 agent_type=agent.agent_type,
                 is_default=agent.is_default,
                 is_active=agent.is_active,

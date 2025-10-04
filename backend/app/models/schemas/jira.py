@@ -22,6 +22,8 @@ from app.models.schemas.agent import AgentResponse
 
 class AgentWithJiraConfig(AgentResponse):
     """Model for agent data with Jira configuration."""
+    tools: Optional[List[Any]] = None
+    is_default: bool = False
     jira_enabled: bool = False
     jira_project_key: Optional[str] = None
     jira_issue_type_id: Optional[str] = None
