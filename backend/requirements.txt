@@ -13,6 +13,7 @@ asyncpg
 # Authentication & Security
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt>=3.2.0,<4.0.0
 python-multipart
 
 # Environment & Config
