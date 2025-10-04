@@ -90,10 +90,12 @@ class TestCreateModel:
 
     def test_create_model_anthropic(self):
         """Test creating Anthropic model"""
-        with patch("agno.models.anthropic.Claude") as mock_claude:
-            mock_model = MagicMock()
-            mock_claude.return_value = mock_model
-            
+        # Mock the import statement inside the function
+        mock_claude_class = MagicMock()
+        mock_model = MagicMock()
+        mock_claude_class.return_value = mock_model
+        
+        with patch.dict('sys.modules', {'agno.models.anthropic': MagicMock(Claude=mock_claude_class)}):
             result = agno_utils.create_model(
                 model_type="ANTHROPIC",
                 api_key="test-api-key",
@@ -101,7 +103,7 @@ class TestCreateModel:
                 max_tokens=1500
             )
             
-            mock_claude.assert_called_once_with(
+            mock_claude_class.assert_called_once_with(
                 api_key="test-api-key", 
                 id="claude-3-opus", 
                 max_tokens=1500
@@ -301,7 +303,11 @@ class TestCreateModel:
 
     def test_create_model_import_error(self):
         """Test handling import errors"""
-        with patch("agno.models.anthropic.Claude", side_effect=ImportError("Module not found")):
+        # Mock the module to raise ImportError when Claude is accessed
+        mock_module = MagicMock()
+        mock_module.Claude.side_effect = ImportError("Module not found")
+        
+        with patch.dict('sys.modules', {'agno.models.anthropic': mock_module}):
             with pytest.raises(HTTPException) as excinfo:
                 agno_utils.create_model(
                     model_type="ANTHROPIC",
