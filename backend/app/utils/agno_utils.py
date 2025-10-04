@@ -54,8 +54,8 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
             from agno.models.anthropic import Claude
             return Claude(api_key=api_key, id=model_name, max_tokens=max_tokens)
         elif model_type == 'DEEPSEEK':
-            from agno.models.deepseek import DeepSeekChat
-            return DeepSeekChat(api_key=api_key, id=model_name, max_tokens=max_tokens)
+            from agno.models.deepseek import DeepSeek
+            return DeepSeek(api_key=api_key, id=model_name, max_tokens=max_tokens)
         elif model_type == 'GOOGLE':
             from agno.models.google import Gemini
             return Gemini(api_key=api_key, id=model_name, max_tokens=max_tokens)
@@ -72,8 +72,8 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
             from agno.models.mistral import MistralChat
             return MistralChat(api_key=api_key, id=model_name, max_tokens=max_tokens)
         elif model_type == 'HUGGINGFACE':
-            from agno.models.huggingface import HuggingFaceChat
-            return HuggingFaceChat(api_key=api_key, id=model_name, max_tokens=max_tokens)
+            from agno.models.huggingface import HuggingFace
+            return HuggingFace(api_key=api_key, id=model_name, max_tokens=max_tokens)
         elif model_type == 'OLLAMA':
             from agno.models.ollama import Ollama
             return Ollama(id=model_name)

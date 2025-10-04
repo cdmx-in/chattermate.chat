@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Set environment variable to prevent tokenizer deadlock warnings
+export TOKENIZERS_PARALLELISM=false
+
 # Wait for PostgreSQL to be ready
 echo "Waiting for PostgreSQL..."
 while ! nc -z db 5432; do

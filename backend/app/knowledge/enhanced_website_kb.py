@@ -20,7 +20,7 @@ from typing import Any, Dict, Iterator, List, Optional
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from queue import Queue
+from queue import Queue, Empty
 import threading
 
 from agno.document import Document
@@ -31,17 +31,17 @@ from app.core.config import settings
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
 from pydantic import model_validator
 
-from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
+from app.knowledge.crawl4ai_website_reader import Crawl4AIWebsiteReader
 
 # Initialize logger for this module
 logger = get_logger(__name__)
 
 
 class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
-    """Enhanced knowledge base for websites with more robust content extraction"""
+    """Enhanced knowledge base for websites with more robust content extraction using Crawl4AI"""
     
     urls: List[str] = []
-    reader: Optional[EnhancedWebsiteReader] = None
+    reader: Optional[Crawl4AIWebsiteReader] = None
 
     # Reader parameters - using settings from config
     max_depth: int = settings.KB_MAX_DEPTH
@@ -81,8 +81,8 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     def set_reader(self) -> "EnhancedWebsiteKnowledgeBase":
         """Set the reader if not provided"""
         if self.reader is None:
-            logger.info(f"Initializing EnhancedWebsiteReader with max_depth={self.max_depth}, max_links={self.max_links}, max_workers={self.max_workers}")
-            self.reader = EnhancedWebsiteReader(
+            logger.info(f"Initializing Crawl4AIWebsiteReader with max_depth={self.max_depth}, max_links={self.max_links}, max_workers={self.max_workers}")
+            self.reader = Crawl4AIWebsiteReader(
                 max_depth=self.max_depth,
                 max_links=self.max_links,
                 min_content_length=self.min_content_length,
@@ -141,7 +141,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
         while True:
             document = None
             try:
-                document = self._embedding_queue.get(timeout=2.0)  # Increased timeout slightly
+                document = self._embedding_queue.get(timeout=2.0)
                 
                 if document is None:  # Sentinel value to stop worker
                     self._embedding_queue.task_done()
@@ -155,25 +155,23 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                 
                 self._embedding_queue.task_done()
                 
+            except Empty:
+                # Queue is empty - this is expected when waiting for work
+                # Continue looping without logging
+                continue
             except Exception as e:
-                # Handle timeouts gracefully (expected when queue is empty)
-                error_msg = str(e).lower()
-                if "timeout" in error_msg or "empty" in error_msg:
-                    # Timeout is normal when waiting for work - continue looping
-                    continue
-                else:
-                    # Log actual errors with full details
-                    logger.error(f"Error in embedding worker {worker_id}: {type(e).__name__}: {str(e)}")
-                    if document and hasattr(document, 'id'):
-                        logger.error(f"Failed to embed document: {document.id}")
-                    
-                    # Mark task as done even if failed to prevent queue blocking
-                    if document is not None:
-                        try:
-                            self._embedding_queue.task_done()
-                        except ValueError:
-                            # task_done called too many times - ignore
-                            pass
+                # Log actual errors with full details
+                logger.error(f"Error in embedding worker {worker_id}: {type(e).__name__}: {str(e)}")
+                if document and hasattr(document, 'id'):
+                    logger.error(f"Failed to embed document: {document.id}")
+                
+                # Mark task as done even if failed to prevent queue blocking
+                if document is not None:
+                    try:
+                        self._embedding_queue.task_done()
+                    except ValueError:
+                        # task_done called too many times - ignore
+                        pass
         
 
 

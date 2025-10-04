@@ -13,6 +13,7 @@ asyncpg
 # Authentication & Security
 python-jose[cryptography]
 passlib[bcrypt]
+bcrypt>=3.2.0,<4.0.0
 python-multipart
 
 # Environment & Config
@@ -36,7 +37,7 @@ coverage==7.4.1
 
 #ai
 openai
-agno
+agno==1.7.6
 duckduckgo-search
 pypdf
 pgvector
@@ -81,3 +82,7 @@ mcp
 
 # UV tool runner for Python-based MCP servers
 uv
+
+# Web Crawling
+crawl4ai
+httpx
