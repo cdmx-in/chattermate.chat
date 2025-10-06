@@ -46,8 +46,8 @@ class Crawl4AIWebsiteReader(WebsiteReader):
     # Configuration options
     min_content_length: int = 100  # Minimum length of text to be considered meaningful content
     timeout: int = 30  # Request timeout in seconds
-    max_retries: int = 3  # Maximum number of retries for failed requests
-    max_workers: int = 3  # Maximum number of parallel workers for crawling (reduced for EC2)
+    max_retries: int = 2  # Maximum number of retries for failed requests (reduced to save time)
+    max_workers: int = 2  # Maximum number of parallel workers for crawling (reduced for t3.medium)
     
     # Browser and crawler configs for crawl4ai
     _browser_config: Optional[BrowserConfig] = None
@@ -76,7 +76,7 @@ class Crawl4AIWebsiteReader(WebsiteReader):
                 '--disable-background-timer-throttling',
                 '--disable-backgrounding-occluded-windows',
                 '--disable-renderer-backgrounding',
-                '--disable-features=TranslateUI',
+                '--disable-features=TranslateUI,AudioServiceOutOfProcess',
                 '--disable-ipc-flooding-protection',
                 '--disable-hang-monitor',
                 '--disable-client-side-phishing-detection',
@@ -86,6 +86,14 @@ class Crawl4AIWebsiteReader(WebsiteReader):
                 '--no-first-run',
                 '--mute-audio',
                 '--disable-breakpad',
+                '--disable-sync',
+                '--disable-translate',
+                '--hide-scrollbars',
+                '--disable-notifications',
+                '--disable-logging',
+                '--disable-permissions-api',
+                '--disable-web-security',  # For docs sites with CORS
+                '--js-flags=--max-old-space-size=512',  # Limit V8 memory
             ]
         )
         
@@ -104,7 +112,7 @@ class Crawl4AIWebsiteReader(WebsiteReader):
             
             # Page loading strategy
             wait_until="domcontentloaded",
-            page_timeout=15000,  # 15 seconds
+            page_timeout=30000,  # 30 seconds (increased for slow pages)
             
             # Cache control
             cache_mode=CacheMode.BYPASS
@@ -215,14 +223,14 @@ class Crawl4AIWebsiteReader(WebsiteReader):
                 try:
                     result = await asyncio.wait_for(
                         crawler.arun(url=url, config=self._crawler_config),
-                        timeout=20  # Increased timeout to 20 seconds
+                        timeout=35  # 35 seconds to allow for 30s page_timeout + overhead
                     )
                     
                 except asyncio.TimeoutError:
-                    logger.warning(f"Timeout after 20s crawling {url}")
+                    logger.warning(f"Timeout after 35s crawling {url}")
                     retry_count += 1
                     if retry_count < self.max_retries:
-                        await asyncio.sleep(min(2 ** retry_count, 3))  # Cap backoff at 3 seconds
+                        await asyncio.sleep(min(2 ** retry_count, 5))  # Cap backoff at 5 seconds
                     continue
                 finally:
                     # Always cleanup the crawler
