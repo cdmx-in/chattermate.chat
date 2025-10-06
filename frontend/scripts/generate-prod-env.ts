@@ -31,17 +31,17 @@ window.APP_CONFIG = {
   WIDGET_URL: "${process.env.VITE_WIDGET_URL || 'https://app.chattermate.chat'}",
   
   // Firebase Configuration
-  FIREBASE_API_KEY: "${process.env.VITE_FIREBASE_API_KEY || 'AIzaSyDTwDgANnBItYx39qm-6shq4cUws6QY4wI'}",
-  FIREBASE_AUTH_DOMAIN: "${process.env.VITE_FIREBASE_AUTH_DOMAIN || 'chattermate-13e0a.firebaseapp.com'}",
-  FIREBASE_PROJECT_ID: "${process.env.VITE_FIREBASE_PROJECT_ID || 'chattermate-13e0a'}",
-  FIREBASE_MESSAGING_SENDER_ID: "${process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '680125690355'}",
-  FIREBASE_APP_ID: "${process.env.VITE_FIREBASE_APP_ID || '1:680125690355:web:466f50999a6c91935ae286'}",
-  FIREBASE_STORAGE_BUCKET: "${process.env.VITE_FIREBASE_STORAGE_BUCKET || 'chattermate-13e0a.firebasestorage.app'}",
-  FIREBASE_MEASUREMENT_ID: "${process.env.VITE_FIREBASE_MEASUREMENT_ID || 'G-7LGB58R2Q7'}",
-  FIREBASE_VAPID_KEY: "${process.env.VITE_FIREBASE_VAPID_KEY || 'BJKnggErez2qK3AxBhHyEV-EoS9lfcWO1GDXhRwUKIHbT_PH23vhY_8HRIz_KyuC-0gbuViSrtSMiFp7zgyYY4g'}",
+  FIREBASE_API_KEY: "${process.env.VITE_FIREBASE_API_KEY || ''}",
+  FIREBASE_AUTH_DOMAIN: "${process.env.VITE_FIREBASE_AUTH_DOMAIN || ''}",
+  FIREBASE_PROJECT_ID: "${process.env.VITE_FIREBASE_PROJECT_ID || ''}",
+  FIREBASE_MESSAGING_SENDER_ID: "${process.env.VITE_FIREBASE_MESSAGING_SENDER_ID || ''}",
+  FIREBASE_APP_ID: "${process.env.VITE_FIREBASE_APP_ID || ''}",
+  FIREBASE_STORAGE_BUCKET: "${process.env.VITE_FIREBASE_STORAGE_BUCKET || ''}",
+  FIREBASE_MEASUREMENT_ID: "${process.env.VITE_FIREBASE_MEASUREMENT_ID || ''}",
+  FIREBASE_VAPID_KEY: "${process.env.VITE_FIREBASE_VAPID_KEY || ''}",
   
   // Google Fonts API
-  GOOGLE_FONTS_API_KEY: "${process.env.VITE_GOOGLE_FONTS_API_KEY || 'AIzaSyCTQCSK_ybLEglabeusbyekQGEyvFr2C5o'}",
+  GOOGLE_FONTS_API_KEY: "${process.env.VITE_GOOGLE_FONTS_API_KEY || ''}",
   
   // Node Environment
   NODE_ENV: "production",
