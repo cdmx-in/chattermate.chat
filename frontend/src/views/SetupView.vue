@@ -21,6 +21,7 @@ import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import type { OrganizationCreate } from '@/types/organization'
 import { createOrganization, getSetupStatus } from '@/services/organization'
+import { userService } from '@/services/user'
 import { validatePassword, validateDomain, validateEmail, validateName, validateOrgName, type PasswordStrength } from '@/utils/validators'
 // @ts-ignore
 import { listTz, clientTz } from 'timezone-select-js'
@@ -36,9 +37,17 @@ const checkingOrganization = ref(true)
 onMounted(async () => {
     try {
         const isSetupComplete = await getSetupStatus()
-        if (isSetupComplete) {
-            router.push('/ai-agents')
+        // Only query setup status if user is authenticated
+        if (userService.isAuthenticated()) {
+            
+            if (isSetupComplete) {
+                router.push('/ai-agents')
+            }
         }
+        else if (isSetupComplete){
+            router.push('/login') 
+        }   
+        
     } catch (e) {
         error.value = e instanceof Error ? e.message : 'Failed to check organization status'
     } finally {

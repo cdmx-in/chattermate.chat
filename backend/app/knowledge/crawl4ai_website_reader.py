@@ -47,7 +47,7 @@ class Crawl4AIWebsiteReader(WebsiteReader):
     min_content_length: int = 100  # Minimum length of text to be considered meaningful content
     timeout: int = 30  # Request timeout in seconds
     max_retries: int = 3  # Maximum number of retries for failed requests
-    max_workers: int = 10  # Maximum number of parallel workers for crawling
+    max_workers: int = 3  # Maximum number of parallel workers for crawling (reduced for EC2)
     
     # Browser and crawler configs for crawl4ai
     _browser_config: Optional[BrowserConfig] = None
@@ -64,7 +64,29 @@ class Crawl4AIWebsiteReader(WebsiteReader):
         self._browser_config = BrowserConfig(
             verbose=False,  # Disable verbose logging to reduce noise
             headless=True,
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            extra_args=[
+                '--disable-dev-shm-usage',  # Use /tmp instead of /dev/shm
+                '--disable-gpu',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-software-rasterizer',
+                '--disable-extensions',
+                '--disable-background-networking',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--disable-features=TranslateUI',
+                '--disable-ipc-flooding-protection',
+                '--disable-hang-monitor',
+                '--disable-client-side-phishing-detection',
+                '--disable-popup-blocking',
+                '--disable-prompt-on-repost',
+                '--metrics-recording-only',
+                '--no-first-run',
+                '--mute-audio',
+                '--disable-breakpad',
+            ]
         )
         
         # Initialize crawler configuration with optimized settings
@@ -183,52 +205,69 @@ class Crawl4AIWebsiteReader(WebsiteReader):
         retry_count = 0
         
         while retry_count < self.max_retries and content is None:
+            crawler = None
             try:
-                async with AsyncWebCrawler(config=self._browser_config) as crawler:
-                    # Add timeout to the crawl operation
-                    try:
-                        result = await asyncio.wait_for(
-                            crawler.arun(url=url, config=self._crawler_config),
-                            timeout=15  # Fixed 15-second timeout
-                        )
-                        
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Timeout after 15s crawling {url}")
-                        retry_count += 1
-                        if retry_count < self.max_retries:
-                            await asyncio.sleep(min(2 ** retry_count, 3))  # Cap backoff at 3 seconds
-                        continue
+                # Create a fresh browser instance for each URL to avoid state issues
+                crawler = AsyncWebCrawler(config=self._browser_config)
+                await crawler.__aenter__()
+                
+                # Add timeout to the crawl operation
+                try:
+                    result = await asyncio.wait_for(
+                        crawler.arun(url=url, config=self._crawler_config),
+                        timeout=20  # Increased timeout to 20 seconds
+                    )
                     
-                    if not result.success:
-                        logger.warning(f"Failed to crawl {url}: {result.error_message}")
-                        retry_count += 1
-                        if retry_count < self.max_retries:
-                            await asyncio.sleep(2 ** retry_count)
-                        continue
-                    
-                    # Extract content with fallback strategy
-                    content = self._extract_content_from_result(result, url)
-                    
-                    # Check content quality
-                    if not content or len(content.strip()) < self.min_content_length:
-                        logger.warning(f"Content too short for {url}: {len(content.strip()) if content else 0} chars")
-                        self._failed_crawls += 1
-                        return None
-                    
-                    self._successful_crawls += 1
-                    logger.info(f"✓ Successfully extracted {len(content.strip())} chars from {url}")
-                    
-                    # Extract new links if not at max depth
-                    if depth < self.max_depth:
-                        links = self._extract_links_from_result(result, url)
-                        next_depth = depth + 1
-                        new_links = [(link, next_depth) for link in links]
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout after 20s crawling {url}")
+                    retry_count += 1
+                    if retry_count < self.max_retries:
+                        await asyncio.sleep(min(2 ** retry_count, 3))  # Cap backoff at 3 seconds
+                    continue
+                finally:
+                    # Always cleanup the crawler
+                    if crawler:
+                        try:
+                            await crawler.__aexit__(None, None, None)
+                        except Exception as cleanup_error:
+                            logger.warning(f"Error cleaning up crawler: {cleanup_error}")
+                
+                if not result.success:
+                    logger.warning(f"Failed to crawl {url}: {result.error_message}")
+                    retry_count += 1
+                    if retry_count < self.max_retries:
+                        await asyncio.sleep(2 ** retry_count)
+                    continue
+                
+                # Extract content with fallback strategy
+                content = self._extract_content_from_result(result, url)
+                
+                # Check content quality
+                if not content or len(content.strip()) < self.min_content_length:
+                    logger.warning(f"Content too short for {url}: {len(content.strip()) if content else 0} chars")
+                    self._failed_crawls += 1
+                    return None
+                
+                self._successful_crawls += 1
+                logger.info(f"✓ Successfully extracted {len(content.strip())} chars from {url}")
+                
+                # Extract new links if not at max depth
+                if depth < self.max_depth:
+                    links = self._extract_links_from_result(result, url)
+                    next_depth = depth + 1
+                    new_links = [(link, next_depth) for link in links]
                     
             except Exception as e:
                 retry_count += 1
                 logger.error(f"Error crawling {url} (attempt {retry_count}/{self.max_retries}): {type(e).__name__}: {str(e)}")
                 if retry_count < self.max_retries:
                     await asyncio.sleep(2 ** retry_count)
+                # Ensure cleanup even on exception
+                if crawler:
+                    try:
+                        await crawler.__aexit__(None, None, None)
+                    except Exception:
+                        pass
         
         # Log failure if all retries failed
         if content is None:
