@@ -50,6 +50,8 @@ class KnowledgeQueue(Base):
     error = Column(String, nullable=True)
     # Renamed from metadata to queue_metadata
     queue_metadata = Column(JSON, nullable=True)
+    # Priority: higher number = higher priority (default 0, explore URLs get 10)
+    priority = Column(Integer, default=0, index=True)
     # Progress tracking
     processing_stage = Column(String, default=ProcessingStage.NOT_STARTED)
     progress_percentage = Column(Float, default=0.0)

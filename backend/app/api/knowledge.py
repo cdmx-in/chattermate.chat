@@ -300,7 +300,7 @@ async def add_explore_url(
                 "message": "URL already exists in knowledge base"
             }
         
-        # Create queue item
+        # Create queue item with HIGH priority for explore URLs
         queue_repo = KnowledgeQueueRepository(db)
         queue_item = KnowledgeQueue(
             organization_id=UUID(org_id),
@@ -309,20 +309,21 @@ async def add_explore_url(
             source_type='website',
             source=request.url,
             status=QueueStatus.PENDING,
+            priority=10,  # High priority for explore URLs (default is 0)
             queue_metadata={
-                "max_links": 20  # Default to 10 links
+                "max_links": 10  # Default to 10 links
             }
         )
         
         # Add to queue
         queue_item = queue_repo.create(queue_item)
         
-        # Process immediately
-        asyncio.create_task(process_queue_item(queue_item.id))
+        # DON'T process immediately in API - let the knowledge processor service handle it
+        # The knowledge processor runs as a separate service and polls the queue
         
         return {
             "status": "success",
-            "message": "URL added to knowledge base and processing started",
+            "message": "URL added to knowledge base queue. Processing will start shortly.",
             "queue_id": queue_item.id
         }
         
