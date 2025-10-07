@@ -23,6 +23,7 @@ from app.knowledge.optimized_pgvector import OptimizedPgVector
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
+from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
@@ -444,11 +445,28 @@ class KnowledgeManager:
                     max_links = queue_item.queue_metadata.get(
                         'max_links', 10) if queue_item.queue_metadata else 10
                     
+                    # Choose reader based on priority - use EnhancedWebsiteReader for priority 10
+                    reader = None
+                    if queue_item.priority == 10:
+                        logger.info(f"Using EnhancedWebsiteReader for high priority queue item: {queue_item.source}")
+                        reader = EnhancedWebsiteReader(
+                            max_depth=settings.KB_MAX_DEPTH,
+                            max_links=max_links,
+                            min_content_length=settings.KB_MIN_CONTENT_LENGTH,
+                            timeout=settings.KB_TIMEOUT,
+                            max_retries=settings.KB_MAX_RETRIES,
+                            max_workers=settings.KB_MAX_WORKERS
+                        )
+                    else:
+                        logger.info(f"Using default Crawl4AIWebsiteReader for queue item: {queue_item.source}")
+                        # reader will remain None, so Crawl4AIWebsiteReader will be used by default
+                    
                     # Process the website - pass queue item and repo for URL tracking
                     knowledge_base = EnhancedWebsiteKnowledgeBase(
                         urls=[queue_item.source],
                         max_links=max_links,
-                        vector_db=self.vector_db
+                        vector_db=self.vector_db,
+                        reader=reader
                     )
                     # Add queue_item and repo for URL tracking
                     knowledge_base.queue_item = queue_item

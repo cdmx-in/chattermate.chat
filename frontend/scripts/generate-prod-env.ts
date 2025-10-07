@@ -1,6 +1,6 @@
-import fs from 'fs'
-import path from 'path'
-import dotenv from 'dotenv'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as dotenv from 'dotenv'
 
 // Load production environment variables
 dotenv.config({ path: '.env.prod' })
@@ -42,6 +42,9 @@ window.APP_CONFIG = {
   
   // Google Fonts API
   GOOGLE_FONTS_API_KEY: "${process.env.VITE_GOOGLE_FONTS_API_KEY || ''}",
+  
+  // Demo Widget ID
+  DEMO_WIDGET_ID: "${process.env.VITE_DEMO_WIDGET_ID || ''}",
   
   // Node Environment
   NODE_ENV: "production",

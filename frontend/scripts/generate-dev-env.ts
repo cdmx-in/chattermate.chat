@@ -43,6 +43,9 @@ window.APP_CONFIG = {
   // Google Fonts API
   GOOGLE_FONTS_API_KEY: "${process.env.VITE_GOOGLE_FONTS_API_KEY || 'your_google_fonts_api_key_here'}",
   
+  // Demo Widget ID
+  DEMO_WIDGET_ID: "${process.env.VITE_DEMO_WIDGET_ID || 'your_demo_widget_id_here'}",
+  
   // Node Environment
   NODE_ENV: "development",
   HOST: "${process.env.VITE_HOST || '0.0.0.0'}"
