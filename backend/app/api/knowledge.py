@@ -311,7 +311,7 @@ async def add_explore_url(
             status=QueueStatus.PENDING,
             priority=10,  # High priority for explore URLs (default is 0)
             queue_metadata={
-                "max_links": 10  # Default to 10 links
+                "max_links": 20  # Default to 10 links
             }
         )
         
