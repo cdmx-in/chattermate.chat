@@ -1,5 +1,6 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import api from '@/services/api'
+import { validatePassword } from '@/modules/enterprise/utils/validation'
 import type { AxiosError } from 'axios'
 
 interface ErrorResponse {
@@ -16,6 +17,19 @@ export function useForgotPassword() {
   const otp = ref('')
   const newPassword = ref('')
   const confirmPassword = ref('')
+  const passwordValidation = ref({
+    hasMinLength: false,
+    hasUpperCase: false,
+    hasLowerCase: false,
+    hasNumber: false,
+    hasSpecial: false,
+    isValid: false
+  })
+
+  // Live update password validation as user types
+  watch(newPassword, (val) => {
+    passwordValidation.value = validatePassword(val)
+  })
 
   /**
    * Request password reset OTP
@@ -58,9 +72,10 @@ export function useForgotPassword() {
         return false
       }
 
-      // Validate password strength
-      if (newPassword.value.length < 8) {
-        error.value = 'Password must be at least 8 characters long'
+      // Validate password strength using shared validator
+      passwordValidation.value = validatePassword(newPassword.value)
+      if (!passwordValidation.value.isValid) {
+        error.value = 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character'
         return false
       }
 
@@ -75,16 +90,28 @@ export function useForgotPassword() {
     } catch (err) {
       const axiosError = err as AxiosError<ErrorResponse>
       const errorMessage = axiosError.response?.data?.detail || 'Failed to reset password'
-      error.value = errorMessage
       
-      // Check if max attempts reached, if so reset to step 1
-      if (errorMessage.includes('Maximum attempts reached')) {
+      // Directly show backend-provided remaining attempts message when present
+      if (errorMessage.includes('Invalid code') && errorMessage.includes('attempt')) {
+        error.value = errorMessage
+        return false
+      }
+
+      // Map terminal states to the exact UX and reset to step 1
+      if (
+        errorMessage.includes('Maximum attempts reached') ||
+        errorMessage.includes('No active OTP found') ||
+        errorMessage.includes('OTP has expired')
+      ) {
+        error.value = 'Maximum no of OTP attempts reached, please retry forgot password'
         setTimeout(() => {
           goBackToEmailStep()
-          error.value = 'Too many failed attempts. Please request a new verification code.'
-        }, 2000)
+        }, 1500)
+        return false
       }
-      
+
+      // Fallback
+      error.value = errorMessage
       console.error('Password reset verification error:', err)
       return false
     } finally {
@@ -128,6 +155,7 @@ export function useForgotPassword() {
     otp,
     newPassword,
     confirmPassword,
+    passwordValidation,
     
     // Methods
     requestPasswordReset,

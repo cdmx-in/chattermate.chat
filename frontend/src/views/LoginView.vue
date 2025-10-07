@@ -51,6 +51,14 @@ const forgotPasswordEmail = forgotPassword?.email ?? ref('')
 const forgotPasswordOtp = forgotPassword?.otp ?? ref('')
 const newPassword = forgotPassword?.newPassword ?? ref('')
 const confirmPassword = forgotPassword?.confirmPassword ?? ref('')
+const passwordValidation = forgotPassword?.passwordValidation ?? ref({
+    hasMinLength: false,
+    hasUpperCase: false,
+    hasLowerCase: false,
+    hasNumber: false,
+    hasSpecial: false,
+    isValid: false
+})
 const requestPasswordReset = forgotPassword?.requestPasswordReset ?? (() => Promise.resolve(false))
 const verifyAndResetPassword = forgotPassword?.verifyAndResetPassword ?? (() => Promise.resolve(false))
 const resetForgotPasswordForm = forgotPassword?.resetForm ?? (() => {})
@@ -201,7 +209,7 @@ const handleVerifyAndResetPassword = async () => {
         </div>
 
         <!-- Forgot Password Modal - only show if enterprise module is available -->
-        <div v-if="hasEnterpriseModule && showForgotPasswordModal" class="modal-overlay" @click.self="closeForgotPasswordModal">
+        <div v-if="hasEnterpriseModule && showForgotPasswordModal" class="modal-overlay">
             <div class="modal-content">
                 <div class="modal-header">
                     <h2>{{ forgotPasswordStep === 1 ? 'Reset Password' : 'Verify & Reset' }}</h2>
@@ -274,6 +282,16 @@ const handleVerifyAndResetPassword = async () => {
                                     placeholder="Enter new password"
                                     :disabled="isForgotPasswordLoading"
                                 />
+                            </div>
+                            <div class="password-requirements">
+                                <p class="requirements-title">Password must include:</p>
+                                <ul>
+                                    <li :class="{ valid: passwordValidation.hasMinLength }">At least 8 characters</li>
+                                    <li :class="{ valid: passwordValidation.hasUpperCase }">Contains an uppercase letter</li>
+                                    <li :class="{ valid: passwordValidation.hasLowerCase }">Contains a lowercase letter</li>
+                                    <li :class="{ valid: passwordValidation.hasNumber }">Contains a number</li>
+                                    <li :class="{ valid: passwordValidation.hasSpecial }">Contains a special character (!@#$%^&*)</li>
+                                </ul>
                             </div>
                         </div>
 
@@ -642,6 +660,32 @@ const handleVerifyAndResetPassword = async () => {
     border-radius: var(--radius-md);
     font-size: 0.875rem;
     margin: 0;
+}
+
+/* Password requirements styling matching signup */
+.password-requirements {
+    margin-top: 0.5rem;
+}
+
+.password-requirements .requirements-title {
+    margin: 0 0 0.25rem 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.password-requirements ul {
+    margin: 0;
+    padding-left: 1rem;
+}
+
+.password-requirements li {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin: 0.125rem 0;
+}
+
+.password-requirements li.valid {
+    color: var(--success-color, #10b981);
 }
 
 .modal-submit-btn {
