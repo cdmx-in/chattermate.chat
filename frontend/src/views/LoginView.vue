@@ -22,6 +22,7 @@ import { useRouter } from 'vue-router'
 import { authService } from '@/services/auth'
 import { permissionChecks } from '@/utils/permissions'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
+import { useForgotPassword } from '@/composables/useForgotPassword'
 import type { AxiosError } from 'axios'
 
 interface ErrorResponse {
@@ -36,6 +37,32 @@ const isLoading = ref(false)
 
 // Check if enterprise module is available
 const { hasEnterpriseModule } = useEnterpriseFeatures()
+
+// Forgot password composable - only initialize if enterprise module is available
+const showForgotPasswordModal = ref(false)
+const forgotPassword = hasEnterpriseModule ? useForgotPassword() : null
+
+// Destructure with fallbacks for when enterprise module is not available
+const isForgotPasswordLoading = forgotPassword?.isLoading ?? ref(false)
+const forgotPasswordError = forgotPassword?.error ?? ref('')
+const forgotPasswordSuccess = forgotPassword?.success ?? ref('')
+const forgotPasswordStep = forgotPassword?.currentStep ?? ref(1)
+const forgotPasswordEmail = forgotPassword?.email ?? ref('')
+const forgotPasswordOtp = forgotPassword?.otp ?? ref('')
+const newPassword = forgotPassword?.newPassword ?? ref('')
+const confirmPassword = forgotPassword?.confirmPassword ?? ref('')
+const passwordValidation = forgotPassword?.passwordValidation ?? ref({
+    score: 0,
+    hasMinLength: false,
+    hasUpperCase: false,
+    hasLowerCase: false,
+    hasNumber: false,
+    hasSpecialChar: false
+})
+const requestPasswordReset = forgotPassword?.requestPasswordReset ?? (() => Promise.resolve(false))
+const verifyAndResetPassword = forgotPassword?.verifyAndResetPassword ?? (() => Promise.resolve(false))
+const resetForgotPasswordForm = forgotPassword?.resetForm ?? (() => {})
+const goBackToEmailStep = forgotPassword?.goBackToEmailStep ?? (() => {})
 
 const getInitialRoute = () => {
     // Check permissions in order of priority
@@ -83,6 +110,33 @@ const handleLogin = async () => {
 const navigateToSignup = () => {
     router.push('/signup')
 }
+
+const openForgotPasswordModal = () => {
+    resetForgotPasswordForm()
+    showForgotPasswordModal.value = true
+}
+
+const closeForgotPasswordModal = () => {
+    showForgotPasswordModal.value = false
+    resetForgotPasswordForm()
+}
+
+const handleRequestPasswordReset = async () => {
+    const success = await requestPasswordReset()
+    // Keep modal open to proceed to step 2
+}
+
+const handleVerifyAndResetPassword = async () => {
+    const success = await verifyAndResetPassword()
+    if (success) {
+        // Wait a moment to show success message, then close modal
+        setTimeout(() => {
+            closeForgotPasswordModal()
+            // Optionally pre-fill the email in login form
+            email.value = forgotPasswordEmail.value
+        }, 2000)
+    }
+}
 </script>
 
 <template>
@@ -110,6 +164,9 @@ const navigateToSignup = () => {
                             <label for="password">Password</label>
                             <div class="input-wrapper">
                                 <input id="password" v-model="password" type="password" required placeholder="Enter your password" />
+                            </div>
+                            <div v-if="hasEnterpriseModule" class="forgot-password-link-wrapper">
+                                <a href="#" @click.prevent="openForgotPasswordModal" class="forgot-password-link">Forgot Password?</a>
                             </div>
                         </div>
 
@@ -146,6 +203,136 @@ const navigateToSignup = () => {
                     <div class="illustration-content">
                         <h2>Welcome to ChatterMate</h2>
                         <p>Access your AI-powered customer support dashboard and deliver exceptional service.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Forgot Password Modal - only show if enterprise module is available -->
+        <div v-if="hasEnterpriseModule && showForgotPasswordModal" class="modal-overlay">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>{{ forgotPasswordStep === 1 ? 'Reset Password' : 'Verify & Reset' }}</h2>
+                    <button class="close-btn" @click="closeForgotPasswordModal" aria-label="Close">×</button>
+                </div>
+
+                <div class="modal-body">
+                    <!-- Step 1: Request OTP -->
+                    <div v-if="forgotPasswordStep === 1" class="forgot-password-step">
+                        <p class="step-description">Enter your email address and we'll send you a verification code to reset your password.</p>
+                        
+                        <div class="form-group">
+                            <label for="forgot-email">Email Address</label>
+                            <div class="input-wrapper">
+                                <input 
+                                    id="forgot-email" 
+                                    v-model="forgotPasswordEmail" 
+                                    type="email" 
+                                    required 
+                                    placeholder="Enter your email"
+                                    :disabled="isForgotPasswordLoading"
+                                />
+                            </div>
+                        </div>
+
+                        <div v-if="forgotPasswordError" class="error-message" role="alert">
+                            {{ forgotPasswordError }}
+                        </div>
+
+                        <div v-if="forgotPasswordSuccess" class="success-message" role="status">
+                            {{ forgotPasswordSuccess }}
+                        </div>
+
+                        <button 
+                            class="modal-submit-btn" 
+                            @click="handleRequestPasswordReset"
+                            :disabled="isForgotPasswordLoading || !forgotPasswordEmail"
+                        >
+                            {{ isForgotPasswordLoading ? 'Sending...' : 'Send Verification Code' }}
+                        </button>
+                    </div>
+
+                    <!-- Step 2: Verify OTP and Reset Password -->
+                    <div v-if="forgotPasswordStep === 2" class="forgot-password-step">
+                        <p class="step-description">Enter the verification code sent to your email and your new password.</p>
+                        
+                        <div class="form-group">
+                            <label for="forgot-otp">Verification Code</label>
+                            <div class="input-wrapper">
+                                <input 
+                                    id="forgot-otp" 
+                                    v-model="forgotPasswordOtp" 
+                                    type="text" 
+                                    required 
+                                    placeholder="Enter 6-digit code"
+                                    maxlength="6"
+                                    :disabled="isForgotPasswordLoading"
+                                />
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="new-password">New Password</label>
+                            <div class="input-wrapper">
+                                <input 
+                                    id="new-password" 
+                                    v-model="newPassword" 
+                                    type="password" 
+                                    required 
+                                    placeholder="Enter new password"
+                                    :disabled="isForgotPasswordLoading"
+                                />
+                            </div>
+                            <div class="password-requirements">
+                                <p class="requirements-title">Password must include:</p>
+                                <ul>
+                                    <li :class="{ valid: passwordValidation.hasMinLength }">At least 8 characters</li>
+                                    <li :class="{ valid: passwordValidation.hasUpperCase }">Contains an uppercase letter</li>
+                                    <li :class="{ valid: passwordValidation.hasLowerCase }">Contains a lowercase letter</li>
+                                    <li :class="{ valid: passwordValidation.hasNumber }">Contains a number</li>
+                                    <li :class="{ valid: passwordValidation.hasSpecialChar }">Contains a special character (!@#$%^&*)</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="confirm-password">Confirm Password</label>
+                            <div class="input-wrapper">
+                                <input 
+                                    id="confirm-password" 
+                                    v-model="confirmPassword" 
+                                    type="password" 
+                                    required 
+                                    placeholder="Confirm new password"
+                                    :disabled="isForgotPasswordLoading"
+                                />
+                            </div>
+                        </div>
+
+                        <div v-if="forgotPasswordError" class="error-message" role="alert">
+                            {{ forgotPasswordError }}
+                        </div>
+
+                        <div v-if="forgotPasswordSuccess" class="success-message" role="status">
+                            {{ forgotPasswordSuccess }}
+                        </div>
+
+                        <div class="modal-actions">
+                            <button 
+                                class="modal-back-btn" 
+                                @click="goBackToEmailStep"
+                                :disabled="isForgotPasswordLoading"
+                            >
+                                Back
+                            </button>
+                            <button 
+                                class="modal-submit-btn" 
+                                @click="handleVerifyAndResetPassword"
+                                :disabled="isForgotPasswordLoading || !forgotPasswordOtp || !newPassword || !confirmPassword"
+                            >
+                                {{ isForgotPasswordLoading ? 'Resetting...' : 'Reset Password' }}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -367,6 +554,203 @@ const navigateToSignup = () => {
     
     .login-container {
         border-radius: 16px;
+    }
+}
+
+/* Forgot Password Link */
+.forgot-password-link-wrapper {
+    margin-top: 0.5rem;
+    text-align: right;
+}
+
+.forgot-password-link {
+    color: var(--primary-color);
+    font-size: 0.875rem;
+    text-decoration: none;
+    transition: var(--transition-fast);
+}
+
+.forgot-password-link:hover {
+    color: var(--accent-color);
+    text-decoration: underline;
+}
+
+/* Modal Overlay */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: 1rem;
+}
+
+.modal-content {
+    background: var(--background-color);
+    border-radius: var(--radius-lg);
+    width: 100%;
+    max-width: 500px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.modal-header h2 {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.close-btn {
+    background: none;
+    border: none;
+    font-size: 2rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 0;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    transition: var(--transition-fast);
+}
+
+.close-btn:hover {
+    background: var(--background-soft);
+    color: var(--text-primary);
+}
+
+.modal-body {
+    padding: 1.5rem;
+}
+
+.forgot-password-step {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+.step-description {
+    color: var(--text-secondary);
+    margin: 0;
+    line-height: 1.5;
+}
+
+.success-message {
+    color: var(--success-color, #10b981);
+    text-align: center;
+    padding: 0.75rem;
+    background: rgba(16, 185, 129, 0.1);
+    border-radius: var(--radius-md);
+    font-size: 0.875rem;
+    margin: 0;
+}
+
+/* Password requirements styling matching signup */
+.password-requirements {
+    margin-top: 0.5rem;
+}
+
+.password-requirements .requirements-title {
+    margin: 0 0 0.25rem 0;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.password-requirements ul {
+    margin: 0;
+    padding-left: 1rem;
+}
+
+.password-requirements li {
+    font-size: 0.8125rem;
+    color: var(--text-secondary);
+    margin: 0.125rem 0;
+}
+
+.password-requirements li.valid {
+    color: var(--success-color, #10b981);
+}
+
+.modal-submit-btn {
+    width: 100%;
+    padding: 0.75rem;
+    background: var(--primary-color);
+    color: var(--background-color);
+    border: none;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.modal-submit-btn:hover:not(:disabled) {
+    background: var(--accent-color);
+}
+
+.modal-submit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.modal-back-btn {
+    flex: 1;
+    padding: 0.75rem;
+    background: var(--background-soft);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: var(--transition-fast);
+}
+
+.modal-back-btn:hover:not(:disabled) {
+    background: var(--background-color);
+    border-color: var(--text-muted);
+}
+
+.modal-back-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+@media (max-width: 640px) {
+    .modal-content {
+        max-width: 100%;
+        margin: 1rem;
+    }
+    
+    .modal-header {
+        padding: 1rem;
+    }
+    
+    .modal-body {
+        padding: 1rem;
     }
 }
 </style>

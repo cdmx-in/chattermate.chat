@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Union
 import time
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -26,6 +26,7 @@ import threading
 from agno.document import Document
 from agno.knowledge.agent import AgentKnowledge
 from agno.embedder import Embedder
+from agno.document.reader.website_reader import WebsiteReader
 from app.core.logger import get_logger
 from app.core.config import settings
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
@@ -41,7 +42,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     """Enhanced knowledge base for websites with more robust content extraction using Crawl4AI"""
     
     urls: List[str] = []
-    reader: Optional[Crawl4AIWebsiteReader] = None
+    reader: Optional[WebsiteReader] = None
 
     # Reader parameters - using settings from config
     max_depth: int = settings.KB_MAX_DEPTH
@@ -81,7 +82,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     def set_reader(self) -> "EnhancedWebsiteKnowledgeBase":
         """Set the reader if not provided"""
         if self.reader is None:
-            logger.info(f"Initializing Crawl4AIWebsiteReader with max_depth={self.max_depth}, max_links={self.max_links}, max_workers={self.max_workers}")
+            logger.info(f"Initializing default Crawl4AIWebsiteReader with max_depth={self.max_depth}, max_links={self.max_links}, max_workers={self.max_workers}")
             self.reader = Crawl4AIWebsiteReader(
                 max_depth=self.max_depth,
                 max_links=self.max_links,
@@ -90,6 +91,8 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                 max_retries=self.max_retries,
                 max_workers=self.max_workers
             )
+        else:
+            logger.info(f"Using custom reader: {type(self.reader).__name__}")
         return self
 
     def _init_embedding_system(self):

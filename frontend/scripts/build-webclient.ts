@@ -2,6 +2,7 @@ import { build } from 'esbuild'
 import { resolve, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import * as fs from 'fs'
+import * as path from 'path'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -44,6 +45,20 @@ async function buildWebClient() {
     
     // Clean up temporary file
     fs.unlinkSync(tempFile)
+
+    // Copy output to dist/webclient directory
+    const publicWebclientPath = resolve(dirname(__dirname), 'public/webclient/chattermate.min.js')
+    const distWebclientDir = resolve(dirname(__dirname), 'dist/webclient')
+    const distWebclientPath = resolve(distWebclientDir, 'chattermate.min.js')
+    
+    // Ensure dist/webclient directory exists
+    if (!fs.existsSync(distWebclientDir)) {
+      fs.mkdirSync(distWebclientDir, { recursive: true })
+    }
+    
+    // Copy the built file to dist/webclient
+    fs.copyFileSync(publicWebclientPath, distWebclientPath)
+    console.log('Web client copied to dist/webclient/')
 
     console.log('Web client built successfully!')
   } catch (error) {

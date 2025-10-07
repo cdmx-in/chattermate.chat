@@ -45,9 +45,9 @@ class Crawl4AIWebsiteReader(WebsiteReader):
     
     # Configuration options
     min_content_length: int = 100  # Minimum length of text to be considered meaningful content
-    timeout: int = 30  # Request timeout in seconds
-    max_retries: int = 3  # Maximum number of retries for failed requests
-    max_workers: int = 10  # Maximum number of parallel workers for crawling
+    timeout: int = 15  # Request timeout in seconds (reduced for faster failures)
+    max_retries: int = 1  # Maximum number of retries (1 retry = 2 attempts total)
+    max_workers: int = 2  # Maximum number of parallel workers for crawling (reduced for t3.medium)
     
     # Browser and crawler configs for crawl4ai
     _browser_config: Optional[BrowserConfig] = None
@@ -64,25 +64,55 @@ class Crawl4AIWebsiteReader(WebsiteReader):
         self._browser_config = BrowserConfig(
             verbose=False,  # Disable verbose logging to reduce noise
             headless=True,
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            extra_args=[
+                '--disable-dev-shm-usage',  # Use /tmp instead of /dev/shm
+                '--disable-gpu',
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-software-rasterizer',
+                '--disable-extensions',
+                '--disable-background-networking',
+                '--disable-background-timer-throttling',
+                '--disable-backgrounding-occluded-windows',
+                '--disable-renderer-backgrounding',
+                '--disable-features=TranslateUI,AudioServiceOutOfProcess',
+                '--disable-ipc-flooding-protection',
+                '--disable-hang-monitor',
+                '--disable-client-side-phishing-detection',
+                '--disable-popup-blocking',
+                '--disable-prompt-on-repost',
+                '--metrics-recording-only',
+                '--no-first-run',
+                '--mute-audio',
+                '--disable-breakpad',
+                '--disable-sync',
+                '--disable-translate',
+                '--hide-scrollbars',
+                '--disable-notifications',
+                '--disable-logging',
+                '--disable-permissions-api',
+                '--disable-web-security',  # For docs sites with CORS
+                '--js-flags=--max-old-space-size=512',  # Limit V8 memory
+            ]
         )
         
-        # Initialize crawler configuration with optimized settings
+        # Initialize crawler configuration with optimized settings for SPEED
         self._crawler_config = CrawlerRunConfig(
             # Content filtering - use reasonable threshold
             word_count_threshold=10,
             exclude_external_links=False,
             
-            # Content processing
-            process_iframes=True,  # Always parse iframes for complete content
-            remove_overlay_elements=True,
+            # Content processing - DISABLED for speed
+            process_iframes=False,  # Skip iframes for faster processing
+            remove_overlay_elements=False,  # Skip overlay removal for speed
             
             # Markdown generation strategy
             markdown_generator=DefaultMarkdownGenerator(),
             
-            # Page loading strategy
-            wait_until="domcontentloaded",
-            page_timeout=15000,  # 15 seconds
+            # Page loading strategy - OPTIMIZED for speed
+            wait_until="load",  # Faster than domcontentloaded
+            page_timeout=15000,  # 15 seconds (reduced for faster failures)
             
             # Cache control
             cache_mode=CacheMode.BYPASS
@@ -117,7 +147,7 @@ class Crawl4AIWebsiteReader(WebsiteReader):
     
     def _extract_links_from_result(self, result, base_url: str) -> List[str]:
         """
-        Extract links from crawl4ai result.
+        Extract links from crawl4ai result with smart filtering for speed.
         
         :param result: The CrawlResult from crawl4ai
         :param base_url: The base URL to resolve relative URLs.
@@ -125,6 +155,14 @@ class Crawl4AIWebsiteReader(WebsiteReader):
         """
         links = []
         primary_domain = self._get_primary_domain(base_url)
+        
+        # Common non-content paths to skip (improves speed)
+        skip_paths = {
+            '/login', '/signin', '/signup', '/register', '/cart', '/checkout',
+            '/search', '/account', '/profile', '/settings', '/admin', '/wp-admin',
+            '/api/', '/ajax/', '/assets/', '/static/', '/media/', '/images/',
+            '/css/', '/js/', '/fonts/', '/downloads/', '/feed', '/rss'
+        }
         
         # Extract internal links from the result
         if hasattr(result, 'links') and result.links:
@@ -149,6 +187,10 @@ class Crawl4AIWebsiteReader(WebsiteReader):
                 # Ignore self-links
                 if full_url == base_url:
                     continue
+                
+                # Skip common non-content paths (SPEED OPTIMIZATION)
+                if any(parsed_url.path.lower().startswith(skip) for skip in skip_paths):
+                    continue
                     
                 # Check if it's in the same domain
                 link_domain = parsed_url.netloc
@@ -157,10 +199,12 @@ class Crawl4AIWebsiteReader(WebsiteReader):
                 if (
                     is_same_domain
                     and not any(parsed_url.path.endswith(ext) for ext in [
-                        ".pdf", ".jpg", ".png", ".gif", ".zip", ".mp3", ".mp4", ".exe", ".dll"
+                        ".pdf", ".jpg", ".png", ".gif", ".zip", ".mp3", ".mp4", ".exe", ".dll",
+                        ".css", ".js", ".xml", ".json", ".ico", ".svg", ".woff", ".ttf"
                     ])
                     and not parsed_url.path.startswith("#")  # Skip anchors
-                    and "?" not in full_url  # Skip query parameters for simplicity
+                    and "?" not in full_url  # Skip query parameters
+                    and "#" not in full_url  # Skip fragments
                 ):
                     links.append(full_url)
         
@@ -183,52 +227,69 @@ class Crawl4AIWebsiteReader(WebsiteReader):
         retry_count = 0
         
         while retry_count < self.max_retries and content is None:
+            crawler = None
             try:
-                async with AsyncWebCrawler(config=self._browser_config) as crawler:
-                    # Add timeout to the crawl operation
-                    try:
-                        result = await asyncio.wait_for(
-                            crawler.arun(url=url, config=self._crawler_config),
-                            timeout=15  # Fixed 15-second timeout
-                        )
-                        
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Timeout after 15s crawling {url}")
-                        retry_count += 1
-                        if retry_count < self.max_retries:
-                            await asyncio.sleep(min(2 ** retry_count, 3))  # Cap backoff at 3 seconds
-                        continue
+                # Create a fresh browser instance for each URL to avoid state issues
+                crawler = AsyncWebCrawler(config=self._browser_config)
+                await crawler.__aenter__()
+                
+                # Add timeout to the crawl operation (REDUCED for speed)
+                try:
+                    result = await asyncio.wait_for(
+                        crawler.arun(url=url, config=self._crawler_config),
+                        timeout=20  # 20 seconds (reduced from 35s for faster failures)
+                    )
                     
-                    if not result.success:
-                        logger.warning(f"Failed to crawl {url}: {result.error_message}")
-                        retry_count += 1
-                        if retry_count < self.max_retries:
-                            await asyncio.sleep(2 ** retry_count)
-                        continue
-                    
-                    # Extract content with fallback strategy
-                    content = self._extract_content_from_result(result, url)
-                    
-                    # Check content quality
-                    if not content or len(content.strip()) < self.min_content_length:
-                        logger.warning(f"Content too short for {url}: {len(content.strip()) if content else 0} chars")
-                        self._failed_crawls += 1
-                        return None
-                    
-                    self._successful_crawls += 1
-                    logger.info(f"✓ Successfully extracted {len(content.strip())} chars from {url}")
-                    
-                    # Extract new links if not at max depth
-                    if depth < self.max_depth:
-                        links = self._extract_links_from_result(result, url)
-                        next_depth = depth + 1
-                        new_links = [(link, next_depth) for link in links]
+                except asyncio.TimeoutError:
+                    logger.warning(f"Timeout after 20s crawling {url}")
+                    retry_count += 1
+                    if retry_count < self.max_retries:
+                        await asyncio.sleep(2)  # Fixed 2s delay instead of exponential backoff
+                    continue
+                finally:
+                    # Always cleanup the crawler
+                    if crawler:
+                        try:
+                            await crawler.__aexit__(None, None, None)
+                        except Exception as cleanup_error:
+                            logger.warning(f"Error cleaning up crawler: {cleanup_error}")
+                
+                if not result.success:
+                    logger.warning(f"Failed to crawl {url}: {result.error_message}")
+                    retry_count += 1
+                    if retry_count < self.max_retries:
+                        await asyncio.sleep(2)  # Fixed 2s delay for speed
+                    continue
+                
+                # Extract content with fallback strategy
+                content = self._extract_content_from_result(result, url)
+                
+                # Check content quality
+                if not content or len(content.strip()) < self.min_content_length:
+                    logger.warning(f"Content too short for {url}: {len(content.strip()) if content else 0} chars")
+                    self._failed_crawls += 1
+                    return None
+                
+                self._successful_crawls += 1
+                logger.info(f"✓ Successfully extracted {len(content.strip())} chars from {url}")
+                
+                # Extract new links if not at max depth
+                if depth < self.max_depth:
+                    links = self._extract_links_from_result(result, url)
+                    next_depth = depth + 1
+                    new_links = [(link, next_depth) for link in links]
                     
             except Exception as e:
                 retry_count += 1
                 logger.error(f"Error crawling {url} (attempt {retry_count}/{self.max_retries}): {type(e).__name__}: {str(e)}")
                 if retry_count < self.max_retries:
-                    await asyncio.sleep(2 ** retry_count)
+                    await asyncio.sleep(2)  # Fixed 2s delay for speed
+                # Ensure cleanup even on exception
+                if crawler:
+                    try:
+                        await crawler.__aexit__(None, None, None)
+                    except Exception:
+                        pass
         
         # Log failure if all retries failed
         if content is None:

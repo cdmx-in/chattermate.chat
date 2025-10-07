@@ -23,6 +23,45 @@ vi.mock('@/utils/permissions', () => ({
   }
 }))
 
+// Mock enterprise features
+vi.mock('@/composables/useEnterpriseFeatures', () => ({
+  useEnterpriseFeatures: vi.fn(() => ({
+    hasEnterpriseModule: false
+  }))
+}))
+
+// Mock forgot password composable
+vi.mock('@/composables/useForgotPassword', () => ({
+  useForgotPassword: vi.fn(() => ({
+    isLoading: { value: false },
+    error: { value: '' },
+    success: { value: '' },
+    currentStep: { value: 1 },
+    email: { value: '' },
+    otp: { value: '' },
+    newPassword: { value: '' },
+    confirmPassword: { value: '' },
+    passwordValidation: { value: { score: 0, hasMinLength: false, hasUpperCase: false, hasLowerCase: false, hasNumber: false, hasSpecialChar: false } },
+    requestPasswordReset: vi.fn(),
+    verifyAndResetPassword: vi.fn(),
+    resetForm: vi.fn(),
+    goBackToEmailStep: vi.fn()
+  }))
+}))
+
+// Mock Firebase services
+vi.mock('@/services/firebase', () => ({
+  messaging: {},
+  requestNotificationPermission: vi.fn()
+}))
+
+vi.mock('@/composables/useNotifications', () => ({
+  useNotifications: vi.fn(() => ({
+    requestPermission: vi.fn(),
+    hasPermission: { value: false }
+  }))
+}))
+
 // Import the mocked modules
 import { authService } from '@/services/auth'
 import { permissionChecks } from '@/utils/permissions'

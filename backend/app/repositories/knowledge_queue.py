@@ -43,9 +43,10 @@ class KnowledgeQueueRepository:
         ).first()
 
     def get_pending(self) -> List[KnowledgeQueue]:
-        """Get all pending queue items"""
+        """Get all pending queue items ordered by priority (highest first), then by creation time"""
         return self.db.query(KnowledgeQueue)\
             .filter(KnowledgeQueue.status == QueueStatus.PENDING)\
+            .order_by(KnowledgeQueue.priority.desc(), KnowledgeQueue.created_at.asc())\
             .all()
 
     def update_status(self, queue_id: int, status: QueueStatus, error: Optional[str] = None) -> bool:

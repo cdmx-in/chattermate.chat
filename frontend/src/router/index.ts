@@ -273,6 +273,7 @@ router.beforeEach(async (to, from, next) => {
   
   // Now check for standard app conditions
   const isAuthenticated = userService.isAuthenticated()
+  // Always check setup status to decide between Setup vs Login/Signup
   const isSetupComplete = await getSetupStatus()
   const requiresAuth = to.matched.some((record) => record.meta.requiresAuth)
   const requiredPermissions = to.meta.permissions as string[] | undefined
@@ -295,16 +296,21 @@ router.beforeEach(async (to, from, next) => {
     }
   }
 
-  // Standard app navigation logic
-  if (!isSetupComplete && to.path !== '/setup') {
-    return next('/setup')
-  } else if (!isAuthenticated && requiresAuth) {
-    return next('/login')
-  } else if (to.path === '/login' && isAuthenticated) {
-    return next('/ai-agents')
-  } else if (to.path === '/setup' && isSetupComplete) {
-    return next('/ai-agents')
-  } else if (requiredPermissions && !hasAnyPermission(requiredPermissions)) {
+    // Standard app navigation logic
+    if (!isAuthenticated) {
+      // If setup is not complete, always go to setup page first
+      if (!isSetupComplete && to.path !== '/setup') {
+        return next('/setup')
+      } else if (requiresAuth) {
+        return next('/login')
+      }
+      // Public route; allow
+    } else {
+      if (!isSetupComplete && to.path !== '/setup') {
+        return next('/setup')
+      }
+  }
+  if (requiredPermissions && !hasAnyPermission(requiredPermissions)) {
     // Redirect to 403 page or dashboard if user lacks required permissions
     return next('/403')
   } else {
