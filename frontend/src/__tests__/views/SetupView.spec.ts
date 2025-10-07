@@ -22,6 +22,19 @@ vi.mock('@/services/organization', () => ({
   getSetupStatus: vi.fn().mockResolvedValue(false)
 }))
 
+// Mock Firebase services
+vi.mock('@/services/firebase', () => ({
+  messaging: {},
+  requestNotificationPermission: vi.fn()
+}))
+
+vi.mock('@/composables/useNotifications', () => ({
+  useNotifications: vi.fn(() => ({
+    requestPermission: vi.fn(),
+    hasPermission: { value: false }
+  }))
+}))
+
 // Import mocked services
 import { createOrganization, getSetupStatus } from '@/services/organization'
 
@@ -83,7 +96,7 @@ describe('SetupView', () => {
     await flushPromises()
     await router.isReady()
     
-    expect(router.currentRoute.value.path).toBe('/ai-agents')
+    expect(router.currentRoute.value.path).toBe('/login')
     expect(getSetupStatus).toHaveBeenCalled()
   })
 

@@ -1,6 +1,6 @@
 import { ref, watch } from 'vue'
 import api from '@/services/api'
-import { validatePassword } from '@/modules/enterprise/utils/validation'
+import { validatePassword } from '@/utils/validators'
 import type { AxiosError } from 'axios'
 
 interface ErrorResponse {
@@ -18,12 +18,12 @@ export function useForgotPassword() {
   const newPassword = ref('')
   const confirmPassword = ref('')
   const passwordValidation = ref({
+    score: 0,
     hasMinLength: false,
     hasUpperCase: false,
     hasLowerCase: false,
     hasNumber: false,
-    hasSpecial: false,
-    isValid: false
+    hasSpecialChar: false
   })
 
   // Live update password validation as user types
@@ -74,7 +74,7 @@ export function useForgotPassword() {
 
       // Validate password strength using shared validator
       passwordValidation.value = validatePassword(newPassword.value)
-      if (!passwordValidation.value.isValid) {
+      if (passwordValidation.value.score < 5) {
         error.value = 'Password must be at least 8 characters and include uppercase, lowercase, number, and special character'
         return false
       }

@@ -52,12 +52,12 @@ const forgotPasswordOtp = forgotPassword?.otp ?? ref('')
 const newPassword = forgotPassword?.newPassword ?? ref('')
 const confirmPassword = forgotPassword?.confirmPassword ?? ref('')
 const passwordValidation = forgotPassword?.passwordValidation ?? ref({
+    score: 0,
     hasMinLength: false,
     hasUpperCase: false,
     hasLowerCase: false,
     hasNumber: false,
-    hasSpecial: false,
-    isValid: false
+    hasSpecialChar: false
 })
 const requestPasswordReset = forgotPassword?.requestPasswordReset ?? (() => Promise.resolve(false))
 const verifyAndResetPassword = forgotPassword?.verifyAndResetPassword ?? (() => Promise.resolve(false))
@@ -290,7 +290,7 @@ const handleVerifyAndResetPassword = async () => {
                                     <li :class="{ valid: passwordValidation.hasUpperCase }">Contains an uppercase letter</li>
                                     <li :class="{ valid: passwordValidation.hasLowerCase }">Contains a lowercase letter</li>
                                     <li :class="{ valid: passwordValidation.hasNumber }">Contains a number</li>
-                                    <li :class="{ valid: passwordValidation.hasSpecial }">Contains a special character (!@#$%^&*)</li>
+                                    <li :class="{ valid: passwordValidation.hasSpecialChar }">Contains a special character (!@#$%^&*)</li>
                                 </ul>
                             </div>
                         </div>
