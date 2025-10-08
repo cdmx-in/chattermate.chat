@@ -586,11 +586,11 @@ async def link_knowledge_to_agent(
             agent_id=agent_uuid
         ))
 
-        # Update vector database filters to include the new agent_id
+        # Update vector database filters and meta_data to include the new agent_id
         if knowledge.table_name and knowledge.schema:
             # Get existing records for this knowledge source
             query = text(f"""
-                SELECT DISTINCT name, filters 
+                SELECT DISTINCT name, filters, meta_data 
                 FROM {knowledge.schema}."{knowledge.table_name}"
                 WHERE name = :source
             """)
@@ -613,17 +613,38 @@ async def link_knowledge_to_agent(
                     'agent_id': agent_ids
                 }
                 
-                # Update the filters in the vector database using string concatenation for JSONB
-                update_query = text(f"""
+                # Update meta_data for all records of this knowledge source
+                # We need to update each record individually since meta_data can vary per chunk
+                agent_ids_json = json.dumps(agent_ids)
+                new_filters_json = json.dumps(new_filters)
+                
+                # Use direct string substitution for JSON values (safe because they're JSON-serialized)
+                # and parameterized query for the source name
+                update_meta_query = text(f"""
                     UPDATE {knowledge.schema}."{knowledge.table_name}"
-                    SET filters = '{json.dumps(new_filters)}'::jsonb
+                    SET 
+                        filters = '{new_filters_json}'::jsonb,
+                        meta_data = CASE 
+                            WHEN meta_data IS NULL THEN 
+                                jsonb_build_object('agent_id', '{agent_ids_json}'::jsonb)
+                            WHEN meta_data ? 'agent_id' THEN
+                                jsonb_set(
+                                    meta_data, 
+                                    '{{agent_id}}', 
+                                    '{agent_ids_json}'::jsonb
+                                )
+                            ELSE 
+                                meta_data || jsonb_build_object('agent_id', '{agent_ids_json}'::jsonb)
+                        END
                     WHERE name = :source
                 """)
 
-                db.execute(update_query, {
+                db.execute(update_meta_query, {
                     "source": knowledge.source
                 })
                 db.commit()
+                
+                logger.info(f"Updated vector database filters and meta_data for knowledge source: {knowledge.source}, added agent_id: {agent_uuid}")
 
         return {"message": "Knowledge linked to agent successfully"}
 
@@ -662,7 +683,7 @@ async def unlink_knowledge_from_agent(
         if not success:
             raise HTTPException(status_code=404, detail="Link not found")
 
-        # Update vector database filters to remove the agent_id
+        # Update vector database filters and meta_data to remove the agent_id
         if knowledge.table_name and knowledge.schema:
             # Get existing records for this knowledge source
             query = text(f"""
@@ -687,10 +708,28 @@ async def unlink_knowledge_from_agent(
                     'agent_id': agent_ids
                 }
                 
-                # Update the filters in the vector database using string concatenation for JSONB
+                # Update both filters and meta_data in the vector database
+                agent_ids_json = json.dumps(agent_ids)
+                new_filters_json = json.dumps(new_filters)
+                
+                # Use direct string substitution for JSON values (safe because they're JSON-serialized)
+                # and parameterized query for the source name
                 update_query = text(f"""
                     UPDATE {knowledge.schema}."{knowledge.table_name}"
-                    SET filters = '{json.dumps(new_filters)}'::jsonb
+                    SET 
+                        filters = '{new_filters_json}'::jsonb,
+                        meta_data = CASE 
+                            WHEN meta_data IS NULL THEN 
+                                NULL
+                            WHEN meta_data ? 'agent_id' THEN
+                                jsonb_set(
+                                    meta_data, 
+                                    '{{agent_id}}', 
+                                    '{agent_ids_json}'::jsonb
+                                )
+                            ELSE 
+                                meta_data
+                        END
                     WHERE name = :source
                 """)
 

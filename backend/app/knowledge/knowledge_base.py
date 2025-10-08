@@ -445,21 +445,17 @@ class KnowledgeManager:
                     max_links = queue_item.queue_metadata.get(
                         'max_links', 10) if queue_item.queue_metadata else 10
                     
-                    # Choose reader based on priority - use EnhancedWebsiteReader for priority 10
-                    reader = None
-                    if queue_item.priority == 10:
-                        logger.info(f"Using EnhancedWebsiteReader for high priority queue item: {queue_item.source}")
-                        reader = EnhancedWebsiteReader(
-                            max_depth=settings.KB_MAX_DEPTH,
-                            max_links=max_links,
-                            min_content_length=settings.KB_MIN_CONTENT_LENGTH,
-                            timeout=settings.KB_TIMEOUT,
-                            max_retries=settings.KB_MAX_RETRIES,
-                            max_workers=settings.KB_MAX_WORKERS
-                        )
-                    else:
-                        logger.info(f"Using default Crawl4AIWebsiteReader for queue item: {queue_item.source}")
-                        # reader will remain None, so Crawl4AIWebsiteReader will be used by default
+                    # Use EnhancedWebsiteReader for all website crawling
+                    logger.info(f"Using EnhancedWebsiteReader for queue item: {queue_item.source}")
+                    reader = EnhancedWebsiteReader(
+                        max_depth=settings.KB_MAX_DEPTH,
+                        max_links=max_links,
+                        min_content_length=settings.KB_MIN_CONTENT_LENGTH,
+                        timeout=settings.KB_TIMEOUT,
+                        max_retries=settings.KB_MAX_RETRIES,
+                        max_workers=settings.KB_MAX_WORKERS,
+                        verify_ssl=False  # Disable SSL verification to support websites with invalid/self-signed certificates
+                    )
                     
                     # Process the website - pass queue item and repo for URL tracking
                     knowledge_base = EnhancedWebsiteKnowledgeBase(

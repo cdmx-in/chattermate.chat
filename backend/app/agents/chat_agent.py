@@ -58,6 +58,8 @@ class ChatAgent(ChatAgentMCPMixin):
         # Initialize knowledge search tool if org_id and agent_id provided
         logger.debug(f"Initializing chat agent for agent_id: {agent_id} and org_id: {org_id} and source: {source}")
         tools = []
+        knowledge_tool_prompt = ""  # Initialize to empty string
+        
         if org_id and agent_id:
             logger.debug(f"Initializing knowledge search tool for agent_id: {agent_id} and org_id: {org_id} and source: {source}")
             knowledge_tool = KnowledgeSearchByAgent(
@@ -65,6 +67,8 @@ class ChatAgent(ChatAgentMCPMixin):
             tools.append(knowledge_tool)
             knowledge_tool_prompt = """
             You have access to the knowledge search tool. You can use this tool to search for information about the customer's query on product, services, policies, etc. Only use the tool if required, dont use it for general greeting. Dont hallucinate information.
+            
+            IMPORTANT: If you attempt to search for information but cannot find relevant results after a few tries, or if you've already searched multiple times without success, respond with a helpful message like "I apologize, but I don't have specific information about that in our knowledge base at the moment. Is there anything else I can help you with?" Do not keep searching indefinitely.
             """
             
 
@@ -325,7 +329,7 @@ class ChatAgent(ChatAgentMCPMixin):
            agent_id=str(agent_id),
            storage=storage,
            add_history_to_messages=True,
-           tool_call_limit=10,
+           tool_call_limit=5,  # Reduced from 10 to 5 to prevent excessive loops
            num_history_responses=10,
            read_chat_history=True,
            markdown=False,
