@@ -165,7 +165,6 @@ const handleNavigation = () => {
 <style scoped>
 .sidebar {
     width: 230px;
-
     background: var(--background-soft);
     border-right: 1px solid var(--border-color);
     display: flex;
@@ -173,6 +172,8 @@ const handleNavigation = () => {
     transition: all var(--transition-normal);
     overflow: hidden;
     position: relative;
+    height: 100vh;
+    z-index: 100;
 }
 
 .sidebar.collapsed {
@@ -303,5 +304,73 @@ const handleNavigation = () => {
     font-size: var(--text-sm);
     color: var(--text-color);
     opacity: 0.7;
+}
+
+/* Small laptops (1025px - 1280px) - Keep normal sidebar behavior */
+@media (max-width: 1280px) and (min-width: 1025px) {
+    .sidebar {
+        width: 230px;
+        position: relative;
+    }
+    
+    .sidebar.collapsed {
+        width: 90px;
+    }
+}
+
+/* Tablets and below - Overlay mode */
+@media (max-width: 1024px) {
+    .sidebar {
+        position: fixed;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        z-index: 1000;
+        box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+        transform: translateX(0);
+    }
+    
+    .sidebar.collapsed {
+        transform: translateX(-100%);
+        width: 230px;
+    }
+}
+
+/* Mobile responsive */
+@media (max-width: 768px) {
+    .sidebar {
+        width: 280px;
+        max-width: 85vw;
+    }
+    
+    .sidebar.collapsed {
+        width: 280px;
+        max-width: 85vw;
+    }
+    
+    .logo-container {
+        padding: var(--space-md);
+    }
+}
+
+/* Very small mobile devices */
+@media (max-width: 480px) {
+    .sidebar {
+        width: 100%;
+        max-width: 100vw;
+    }
+    
+    .sidebar.collapsed {
+        width: 100%;
+        max-width: 100vw;
+    }
+    
+    .nav-item {
+        padding: var(--space-md) var(--space-lg);
+    }
+    
+    .nav-section {
+        padding: var(--space-md) var(--space-lg) var(--space-xs);
+    }
 }
 </style>

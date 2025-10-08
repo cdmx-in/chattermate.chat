@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { ref, onMounted, watch, provide, computed } from 'vue'
+import { ref, onMounted, onUnmounted, watch, provide, computed } from 'vue'
 import { useAuth } from '@/composables/useAuth'
 import AppSidebar from '@/components/layout/AppSidebar.vue'
 import userAvatar from '@/assets/user.svg'
@@ -36,9 +36,12 @@ const props = defineProps<{
     hideHeader?: boolean
 }>()
 
-// Initialize sidebar state based on current route
+// Initialize sidebar state based on current route and screen size
 const route = useRoute()
-const isSidebarOpen = ref(route.path !== '/conversations')
+const isMobile = computed(() => window.innerWidth <= 1024)
+const isSidebarOpen = ref(
+    route.path !== '/conversations' && !isMobile.value
+)
 const showUserMenu = ref(false)
 const showNotifications = ref(false)
 const currentUser = ref<User>(userService.getCurrentUser() as User)
@@ -102,11 +105,13 @@ watch(
     showUserMenu.value = false
     showNotifications.value = false
     
-    // Set sidebar state based on route
+    // Set sidebar state based on route and screen size
     if (newPath === '/conversations') {
       isSidebarOpen.value = false // Collapsed for conversations
+    } else if (isMobile.value) {
+      isSidebarOpen.value = false // Collapsed on mobile by default
     } else {
-      isSidebarOpen.value = true // Expanded for all other routes
+      isSidebarOpen.value = true // Expanded for all other routes on desktop
     }
   }
 )
@@ -119,8 +124,21 @@ const fetchUnreadCount = async () => {
     }
 }
 
+const handleResize = () => {
+    // Close sidebar on tablet/mobile when resizing
+    if (window.innerWidth <= 1024 && isSidebarOpen.value) {
+        isSidebarOpen.value = false
+    }
+    // Open sidebar on desktop when resizing from mobile
+    if (window.innerWidth > 1024 && !isSidebarOpen.value && route.path !== '/conversations') {
+        isSidebarOpen.value = true
+    }
+}
+
 onMounted(() => {
     fetchUnreadCount()
+    window.addEventListener('resize', handleResize)
+    
     if (hasEnterpriseModule) {
         initializeSubscriptionStore().then(() => {
             subscriptionStore.value.fetchCurrentPlan().then(() => {
@@ -133,8 +151,19 @@ onMounted(() => {
     }
 })
 
+onUnmounted(() => {
+    window.removeEventListener('resize', handleResize)
+})
+
 const toggleSidebar = () => {
     isSidebarOpen.value = !isSidebarOpen.value
+}
+
+const closeSidebar = () => {
+    // On mobile, close the sidebar when clicking backdrop
+    if (window.innerWidth <= 1024) {
+        isSidebarOpen.value = false
+    }
 }
 
 const navigateToUpgrade = () => {
@@ -152,6 +181,13 @@ const layoutClasses = computed(() => ({
 
 <template>
     <div class="dashboard-layout" :class="layoutClasses">
+        <!-- Backdrop for mobile -->
+        <div 
+            v-if="!props.hideSidebar && isSidebarOpen" 
+            class="sidebar-backdrop"
+            @click="closeSidebar"
+        ></div>
+
         <AppSidebar 
             v-if="!props.hideSidebar"
             :isCollapsed="!isSidebarOpen" 
@@ -191,7 +227,12 @@ const layoutClasses = computed(() => ({
             <header v-if="!props.hideHeader" class="header">
                 <div class="header-content">
                     <div class="left-section">
-                        <!-- Any left section content -->
+                        <!-- Hamburger menu for mobile -->
+                        <button class="hamburger-menu" @click="toggleSidebar" aria-label="Toggle menu">
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M3 12H21M3 6H21M3 18H21" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                            </svg>
+                        </button>
                     </div>
                     <div class="right-section">
                         <div v-if="hasEnterpriseModule" class="plan-display">
@@ -287,6 +328,13 @@ const layoutClasses = computed(() => ({
     grid-template-columns: auto 1fr;
     min-height: 100vh;
     transition: grid-template-columns var(--transition-normal);
+    overflow-x: hidden;
+    width: 100%;
+    position: relative;
+}
+
+.sidebar-backdrop {
+    display: none;
 }
 
 /* Sidebar Styles */
@@ -355,6 +403,31 @@ const layoutClasses = computed(() => ({
     justify-content: space-between;
     align-items: center;
     padding: var(--space-md) var(--space-xl);
+}
+
+.left-section {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+}
+
+.hamburger-menu {
+    display: none;
+    background: none;
+    border: none;
+    color: var(--text-color);
+    cursor: pointer;
+    padding: var(--space-xs);
+    border-radius: var(--radius-sm);
+    transition: var(--transition-fast);
+}
+
+.hamburger-menu:hover {
+    background: var(--background-mute);
+}
+
+.hamburger-menu svg {
+    display: block;
 }
 
 .right-section {
@@ -705,6 +778,8 @@ const layoutClasses = computed(() => ({
     padding: var(--space-md) var(--space-xl);
     background: var(--warning-soft);
     border-bottom: 1px solid var(--warning-color);
+    width: 100%;
+    overflow: hidden;
 }
 
 .message-limit-banner.error {
@@ -724,6 +799,8 @@ const layoutClasses = computed(() => ({
     align-items: center;
     gap: var(--space-sm);
     font-weight: 500;
+    word-break: break-word;
+    flex: 1;
 }
 
 .banner-icon {
@@ -733,6 +810,7 @@ const layoutClasses = computed(() => ({
 .banner-actions {
     display: flex;
     gap: var(--space-sm);
+    flex-wrap: wrap;
 }
 
 .action-button {
@@ -782,6 +860,8 @@ const layoutClasses = computed(() => ({
     display: flex;
     flex-direction: column;
     min-height: 100vh;
+    width: 100%;
+    overflow-x: hidden;
 }
 
 .content {
@@ -839,16 +919,22 @@ const layoutClasses = computed(() => ({
         padding: var(--space-xs) var(--space-md);
         font-size: 0.8rem;
     }
+    
+    .plan-badge {
+        font-size: 0.7rem;
+        padding: 2px 6px;
+    }
 }
 
-/* Responsive Design - Small laptops and tablets */
-@media (max-width: 1280px) {
+/* Responsive Design - Small laptops (1025px - 1280px) */
+@media (max-width: 1280px) and (min-width: 1025px) {
+    /* Keep normal grid layout with sidebar in this range */
     .dashboard-layout {
-        grid-template-columns: 1fr;
+        grid-template-columns: auto 1fr;
     }
     
     .dashboard-layout.sidebar-collapsed {
-        grid-template-columns: 1fr;
+        grid-template-columns: auto 1fr;
     }
     
     .header-content {
@@ -862,6 +948,63 @@ const layoutClasses = computed(() => ({
     .right-section {
         gap: var(--space-md);
     }
+    
+    .trial-badge {
+        font-size: 0.75rem;
+        padding: 3px 10px;
+    }
+}
+
+/* Tablet and below (overlay mode) */
+@media (max-width: 1024px) {
+    .dashboard-layout {
+        grid-template-columns: 1fr;
+    }
+    
+    .sidebar-backdrop {
+        display: block;
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 999;
+        backdrop-filter: blur(2px);
+    }
+    
+    .dashboard-layout.sidebar-collapsed .sidebar-backdrop {
+        display: none;
+    }
+    
+    .hamburger-menu {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+    
+    .user-info {
+        display: none !important;
+    }
+    
+    .plan-display .plan-info {
+        display: none;
+    }
+    
+    .trial-info {
+        margin-right: 0;
+    }
+    
+    .footer-content {
+        flex-direction: column;
+        gap: var(--space-md);
+        text-align: center;
+    }
+    
+    .footer-links {
+        flex-direction: column;
+        gap: var(--space-sm);
+    }
 }
 
 /* Mobile responsive */
@@ -874,13 +1017,157 @@ const layoutClasses = computed(() => ({
         padding: var(--space-sm);
     }
     
+    .right-section {
+        gap: var(--space-sm);
+    }
+    
+    .banner-content {
+        gap: var(--space-xs);
+    }
+    
+    .banner-text {
+        font-size: var(--text-sm);
+    }
+    
     .banner-actions {
         flex-direction: column;
+        width: 100%;
     }
     
     .action-button {
         width: 100%;
         text-align: center;
+        padding: var(--space-sm);
+    }
+    
+    .trial-badge {
+        font-size: 0.7rem;
+        padding: 2px 8px;
+    }
+    
+    .notification-badge {
+        min-width: 16px;
+        height: 16px;
+        font-size: 10px;
+    }
+    
+    .avatar {
+        width: 28px;
+        height: 28px;
+    }
+    
+    .avatar-wrapper {
+        width: 28px;
+        height: 28px;
+    }
+    
+    .dropdown-menu {
+        right: 0;
+        left: auto;
+        min-width: 140px;
+    }
+    
+    .footer {
+        padding: var(--space-md);
+    }
+    
+    .footer-content p {
+        font-size: var(--text-sm);
+    }
+}
+
+/* Very small mobile devices */
+@media (max-width: 480px) {
+    .header-content {
+        padding: var(--space-xs) var(--space-sm);
+    }
+    
+    .content {
+        padding: var(--space-xs);
+    }
+    
+    .plan-display {
+        display: none !important;
+    }
+    
+    .user-menu {
+        gap: var(--space-xs);
+    }
+    
+    .notification-button {
+        padding: var(--space-xs);
+    }
+    
+    .notification-icon {
+        width: 20px;
+        height: 20px;
+    }
+    
+    .message-limit-banner {
+        padding: var(--space-sm);
+    }
+    
+    .banner-content {
+        gap: var(--space-xs);
+    }
+    
+    .banner-text {
+        font-size: var(--text-xs);
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-xs);
+    }
+    
+    .banner-icon {
+        font-size: 1em;
+    }
+    
+    .action-button {
+        font-size: 0.75rem;
+        padding: var(--space-xs) var(--space-sm);
+        white-space: nowrap;
+    }
+    
+    .avatar {
+        width: 24px;
+        height: 24px;
+    }
+    
+    .avatar-wrapper {
+        width: 24px;
+        height: 24px;
+    }
+    
+    .status-indicator {
+        width: 8px;
+        height: 8px;
+        border-width: 1px;
+    }
+    
+    .dropdown-menu {
+        min-width: 120px;
+        font-size: var(--text-sm);
+    }
+    
+    .menu-item {
+        padding: var(--space-xs) var(--space-sm);
+        font-size: var(--text-sm);
+    }
+    
+    .footer {
+        padding: var(--space-sm);
+    }
+    
+    .footer-content {
+        gap: var(--space-sm);
+    }
+    
+    .footer-content p {
+        font-size: var(--text-xs);
+    }
+    
+    .footer-links a {
+        font-size: var(--text-xs);
     }
 }
 </style>
