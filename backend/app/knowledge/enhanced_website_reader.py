@@ -71,6 +71,7 @@ class EnhancedWebsiteReader(WebsiteReader):
     max_retries: int = 3  # Maximum number of retries for failed requests
     respect_robots_txt: bool = True  # Whether to respect robots.txt
     max_workers: int = 10  # Maximum number of parallel workers for crawling
+    verify_ssl: bool = True  # Whether to verify SSL certificates (set to False for self-signed certs)
     
     # Track crawling statistics
     _crawled_pages_count: int = 0
@@ -131,31 +132,39 @@ class EnhancedWebsiteReader(WebsiteReader):
             for element in elements:
                 content = self._get_clean_text(element)
                 if len(content) >= self.min_content_length:
-                    logger.debug(f"✓ Content extracted using tag strategy: {tag} ({len(content)} chars)")
+                    logger.info(f"✓ Content extracted using tag strategy: {tag} ({len(content)} chars)")
                     return content
+                elif content:
+                    logger.debug(f"  '{tag}' element too short: {len(content)} chars (min: {self.min_content_length})")
                     
         # Strategy 2: Try to find main content by common class names
+        logger.debug(f"Trying Strategy 2: Common class names")
         for class_name in self.common_content_classes:
             elements = soup.find_all(class_=re.compile(class_name, re.IGNORECASE))
+            if elements:
+                logger.debug(f"  Found {len(elements)} elements with class matching '{class_name}'")
             for element in elements:
                 content = self._get_clean_text(element)
                 if len(content) >= self.min_content_length:
-                    logger.debug(f"Content extracted using class strategy: {class_name}")
+                    logger.info(f"✓ Content extracted using class strategy: {class_name} ({len(content)} chars)")
                     return content
         
         # Strategy 3: Try to find main content by common IDs
+        logger.debug(f"Trying Strategy 3: Common IDs")
         for id_name in self.common_content_ids:
             element = soup.find(id=re.compile(id_name, re.IGNORECASE))
             if element:
+                logger.debug(f"  Found element with ID matching '{id_name}'")
                 content = self._get_clean_text(element)
                 if len(content) >= self.min_content_length:
-                    logger.debug(f"Content extracted using ID strategy: {id_name}")
+                    logger.info(f"✓ Content extracted using ID strategy: {id_name} ({len(content)} chars)")
                     return content
         
         # Strategy 4: Density-based content extraction
+        logger.debug(f"Trying Strategy 4: Text density")
         density_content = self._extract_by_text_density(soup)
         if density_content and len(density_content) >= self.min_content_length:
-            logger.debug("Content extracted using density strategy")
+            logger.info(f"✓ Content extracted using density strategy ({len(density_content)} chars)")
             return density_content
         
         # Strategy 5: Collect all meaningful text elements (headings, paragraphs, lists, etc.)
@@ -168,15 +177,25 @@ class EnhancedWebsiteReader(WebsiteReader):
             logger.debug(f"  Meaningful content too short: {len(meaningful_content) if meaningful_content else 0} chars")
             
         # Strategy 6: Fallback to entire body content with minimal cleaning
+        logger.debug(f"Trying Strategy 6: Body fallback")
         body = soup.find('body')
         if body:
             content = self._get_clean_text(body)
-            logger.debug(f"Content extracted using body fallback strategy (length: {len(content)})")
-            return content
+            if content:
+                logger.info(f"✓ Content extracted using body fallback strategy (length: {len(content)})")
+                return content
+            else:
+                logger.warning(f"Body element found but no text extracted")
+        else:
+            logger.warning(f"No body element found in HTML")
             
         # Last resort: just get all text from the document
+        logger.debug(f"Trying Last Resort: All text from document")
         content = soup.get_text(strip=True, separator=" ")
-        logger.debug(f"Content extracted using last resort strategy (length: {len(content)})")
+        if content:
+            logger.info(f"✓ Content extracted using last resort strategy (length: {len(content)})")
+        else:
+            logger.error(f"Failed to extract any text from HTML document")
         return content
         
     def _clean_soup(self, soup: BeautifulSoup) -> None:
@@ -359,17 +378,55 @@ class EnhancedWebsiteReader(WebsiteReader):
         
         while retry_count < self.max_retries and content is None:
             try:
+                logger.info(f"Attempt {retry_count + 1}/{self.max_retries} to fetch {current_url}")
+                
+                # Warn if SSL verification is disabled
+                if not self.verify_ssl and retry_count == 0:
+                    logger.warning(f"⚠️  SSL verification is disabled for {current_url} - This may pose security risks")
+                
                 # Make the request
                 with httpx.Client(
                     timeout=self.timeout, 
                     follow_redirects=True, 
-                    headers=self.headers
+                    headers=self.headers,
+                    verify=self.verify_ssl
                 ) as client:
+                    logger.debug(f"Making HTTP GET request to {current_url}")
                     response = client.get(current_url)
+                    logger.info(f"Received response: status={response.status_code}, url={response.url}")
                     response.raise_for_status()
                     
                 # Parse HTML with BeautifulSoup
                 soup = BeautifulSoup(response.text, 'html.parser')
+                
+                # Log HTML response info for debugging
+                logger.info(f"Response status: {response.status_code}, Content-Type: {response.headers.get('content-type', 'unknown')}")
+                logger.info(f"HTML length: {len(response.text)} characters")
+                
+                # Check if the page is JavaScript-heavy
+                script_tags = soup.find_all('script')
+                total_script_length = sum(len(str(script)) for script in script_tags)
+                logger.info(f"Found {len(script_tags)} script tags, total script content: {total_script_length} characters")
+                
+                # Log page structure for debugging
+                body = soup.find('body')
+                if body:
+                    body_children = list(body.children)
+                    logger.info(f"Body found with {len(body_children)} direct children")
+                    # Log child element types
+                    child_types = {}
+                    for child in body_children:
+                        if hasattr(child, 'name') and child.name:
+                            child_types[child.name] = child_types.get(child.name, 0) + 1
+                    logger.info(f"Body children types: {child_types}")
+                else:
+                    logger.warning(f"No body tag found in HTML for {current_url}")
+                
+                # Detect JavaScript-heavy pages
+                if total_script_length > len(response.text) * 0.5:
+                    logger.warning(f"⚠️  This appears to be a JavaScript-heavy website ({total_script_length}/{len(response.text)} = {total_script_length/len(response.text)*100:.1f}% scripts)")
+                    logger.warning(f"⚠️  Content may require browser rendering (Playwright/Selenium) for full extraction")
+                
                 content = self._extract_main_content(soup)
                 
                 # Log extracted content length for debugging
@@ -379,9 +436,19 @@ class EnhancedWebsiteReader(WebsiteReader):
                 if not content or len(content) < self.min_content_length:
                     logger.warning(f"Content too short or empty ({len(content) if content else 0} chars) for {current_url}. Min required: {self.min_content_length}")
                     if content:
-                        logger.debug(f"Content preview: {content[:200]}...")
-                    self._failed_crawls += 1
-                    return None
+                        logger.warning(f"Content preview: {content[:200]}...")
+                    else:
+                        logger.warning(f"Content is None or empty. HTML preview: {response.text[:500]}...")
+                    
+                    # Try to extract any text as last resort
+                    fallback_content = soup.get_text(strip=True, separator=" ")
+                    if fallback_content and len(fallback_content) >= self.min_content_length:
+                        logger.info(f"Using fallback extraction: {len(fallback_content)} characters")
+                        content = fallback_content
+                    else:
+                        logger.error(f"All extraction strategies failed for {current_url}. Fallback content: {len(fallback_content) if fallback_content else 0} chars")
+                        self._failed_crawls += 1
+                        return None
                 
                 self._successful_crawls += 1
                 logger.info(f"✓ Successfully extracted {len(content)} chars from {current_url}")
@@ -394,16 +461,37 @@ class EnhancedWebsiteReader(WebsiteReader):
                     new_links = [(link, next_depth) for link in links 
                                 if link not in self._visited]
                     
-            except Exception as e:
+            except httpx.HTTPStatusError as e:
                 retry_count += 1
-                last_error = str(e)
+                last_error = f"HTTP {e.response.status_code}: {e.response.reason_phrase}"
+                logger.warning(f"HTTP error on attempt {retry_count}/{self.max_retries} for {current_url}: {last_error}")
                 # Exponential backoff
                 if retry_count < self.max_retries:
-                    time.sleep(2 ** retry_count)
+                    sleep_time = 2 ** retry_count
+                    logger.info(f"Retrying in {sleep_time} seconds...")
+                    time.sleep(sleep_time)
+            except httpx.TimeoutException as e:
+                retry_count += 1
+                last_error = f"Request timeout after {self.timeout}s"
+                logger.warning(f"Timeout on attempt {retry_count}/{self.max_retries} for {current_url}")
+                if retry_count < self.max_retries:
+                    sleep_time = 2 ** retry_count
+                    logger.info(f"Retrying in {sleep_time} seconds...")
+                    time.sleep(sleep_time)
+            except Exception as e:
+                retry_count += 1
+                last_error = f"{type(e).__name__}: {str(e)}"
+                logger.error(f"Error on attempt {retry_count}/{self.max_retries} for {current_url}: {last_error}", exc_info=True)
+                # Exponential backoff
+                if retry_count < self.max_retries:
+                    sleep_time = 2 ** retry_count
+                    logger.info(f"Retrying in {sleep_time} seconds...")
+                    time.sleep(sleep_time)
         
         # Log failure if all retries failed
         if content is None:
             self._failed_crawls += 1
+            logger.error(f"❌ Failed to extract content from {current_url} after {self.max_retries} attempts. Last error: {last_error}")
             return None
         
         page_end_time = time.time()

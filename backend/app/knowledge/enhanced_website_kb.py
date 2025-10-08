@@ -32,14 +32,14 @@ from app.core.config import settings
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
 from pydantic import model_validator
 
-from app.knowledge.crawl4ai_website_reader import Crawl4AIWebsiteReader
+from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
 
 # Initialize logger for this module
 logger = get_logger(__name__)
 
 
 class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
-    """Enhanced knowledge base for websites with more robust content extraction using Crawl4AI"""
+    """Enhanced knowledge base for websites with robust content extraction using EnhancedWebsiteReader"""
     
     urls: List[str] = []
     reader: Optional[WebsiteReader] = None
@@ -82,14 +82,15 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     def set_reader(self) -> "EnhancedWebsiteKnowledgeBase":
         """Set the reader if not provided"""
         if self.reader is None:
-            logger.info(f"Initializing default Crawl4AIWebsiteReader with max_depth={self.max_depth}, max_links={self.max_links}, max_workers={self.max_workers}")
-            self.reader = Crawl4AIWebsiteReader(
+            logger.info(f"Initializing default EnhancedWebsiteReader with max_depth={self.max_depth}, max_links={self.max_links}, max_workers={self.max_workers}")
+            self.reader = EnhancedWebsiteReader(
                 max_depth=self.max_depth,
                 max_links=self.max_links,
                 min_content_length=self.min_content_length,
                 timeout=self.timeout,
                 max_retries=self.max_retries,
-                max_workers=self.max_workers
+                max_workers=self.max_workers,
+                verify_ssl=False  # Disable SSL verification to handle self-signed/invalid certificates
             )
         else:
             logger.info(f"Using custom reader: {type(self.reader).__name__}")

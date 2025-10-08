@@ -20,7 +20,7 @@ import pytest
 from unittest.mock import MagicMock, patch, call, ANY
 from agno.document.base import Document
 from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
-from app.knowledge.crawl4ai_website_reader import Crawl4AIWebsiteReader
+from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
 
 # Test Data
 TEST_URLS = [
@@ -45,7 +45,7 @@ def mock_vector_db():
 @pytest.fixture
 def mock_reader():
     """Create a mock website reader"""
-    mock = MagicMock(spec=Crawl4AIWebsiteReader)
+    mock = MagicMock(spec=EnhancedWebsiteReader)
     mock.read.return_value = TEST_DOCUMENTS
     return mock
 
@@ -55,7 +55,7 @@ class TestEnhancedWebsiteKnowledgeBase:
         kb = EnhancedWebsiteKnowledgeBase(urls=TEST_URLS)
         
         assert kb.urls == TEST_URLS
-        assert isinstance(kb.reader, Crawl4AIWebsiteReader)
+        assert isinstance(kb.reader, EnhancedWebsiteReader)
         assert kb.max_depth == 5
         assert kb.max_links == 25
         assert kb.min_content_length == 100
@@ -76,7 +76,7 @@ class TestEnhancedWebsiteKnowledgeBase:
         )
         
         assert kb.urls == TEST_URLS
-        assert isinstance(kb.reader, Crawl4AIWebsiteReader)
+        assert isinstance(kb.reader, EnhancedWebsiteReader)
         assert kb.max_depth == 5
         assert kb.max_links == 20
         assert kb.min_content_length == 200
@@ -94,7 +94,7 @@ class TestEnhancedWebsiteKnowledgeBase:
     
     def test_initialization_with_custom_reader(self):
         """Test initialization with a custom reader"""
-        custom_reader = Crawl4AIWebsiteReader(max_depth=4, max_links=15)
+        custom_reader = EnhancedWebsiteReader(max_depth=4, max_links=15)
         kb = EnhancedWebsiteKnowledgeBase(urls=TEST_URLS, reader=custom_reader)
         
         assert kb.reader is custom_reader
