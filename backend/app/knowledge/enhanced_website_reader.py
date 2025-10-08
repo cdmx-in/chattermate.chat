@@ -43,8 +43,9 @@ class EnhancedWebsiteReader(WebsiteReader):
     debug_on = True
     # Additional configuration options
     min_content_length: int = 100  # Minimum length of text to be considered meaningful content
+    # Only blacklist truly problematic tags - keep structural elements that may have useful content
     blacklist_tags: List[str] = field(default_factory=lambda: [
-        'script', 'style', 'nav', 'footer', 'header', 'aside', 'noscript', 'iframe', 'head'
+        'script', 'style', 'noscript', 'iframe', 'head'
     ])
     common_content_tags: List[str] = field(default_factory=lambda: [
         'article', 'main', 'section', 'div', 'p', 'content', 'body'
@@ -113,7 +114,8 @@ class EnhancedWebsiteReader(WebsiteReader):
         2. Look for content by class names
         3. Look for content by ID
         4. Density-based content extraction (paragraph density)
-        5. Fallback to cleaned body content
+        5. Collect all meaningful text with smart filtering
+        6. Fallback to cleaned body content
         
         :param soup: The BeautifulSoup object to extract the main content from.
         :return: The main content as a string.
@@ -122,11 +124,14 @@ class EnhancedWebsiteReader(WebsiteReader):
         self._clean_soup(soup)
         
         # Strategy 1: Try to find main content by common content tags
+        logger.debug(f"Trying Strategy 1: Common content tags")
         for tag in self.common_content_tags:
             elements = soup.find_all(tag)
+            logger.debug(f"  Found {len(elements)} '{tag}' elements")
             for element in elements:
                 content = self._get_clean_text(element)
                 if len(content) >= self.min_content_length:
+                    logger.debug(f"✓ Content extracted using tag strategy: {tag} ({len(content)} chars)")
                     return content
                     
         # Strategy 2: Try to find main content by common class names
@@ -135,6 +140,7 @@ class EnhancedWebsiteReader(WebsiteReader):
             for element in elements:
                 content = self._get_clean_text(element)
                 if len(content) >= self.min_content_length:
+                    logger.debug(f"Content extracted using class strategy: {class_name}")
                     return content
         
         # Strategy 3: Try to find main content by common IDs
@@ -143,48 +149,81 @@ class EnhancedWebsiteReader(WebsiteReader):
             if element:
                 content = self._get_clean_text(element)
                 if len(content) >= self.min_content_length:
+                    logger.debug(f"Content extracted using ID strategy: {id_name}")
                     return content
         
         # Strategy 4: Density-based content extraction
         density_content = self._extract_by_text_density(soup)
         if density_content and len(density_content) >= self.min_content_length:
+            logger.debug("Content extracted using density strategy")
             return density_content
+        
+        # Strategy 5: Collect all meaningful text elements (headings, paragraphs, lists, etc.)
+        logger.debug(f"Trying Strategy 5: All meaningful content (tables, headings, paragraphs, lists)")
+        meaningful_content = self._extract_all_meaningful_content(soup)
+        if meaningful_content and len(meaningful_content) >= self.min_content_length:
+            logger.debug(f"✓ Content extracted using meaningful content strategy ({len(meaningful_content)} chars)")
+            return meaningful_content
+        else:
+            logger.debug(f"  Meaningful content too short: {len(meaningful_content) if meaningful_content else 0} chars")
             
-        # Strategy 5: Fallback to entire body content with minimal cleaning
+        # Strategy 6: Fallback to entire body content with minimal cleaning
         body = soup.find('body')
         if body:
-            return self._get_clean_text(body)
+            content = self._get_clean_text(body)
+            logger.debug(f"Content extracted using body fallback strategy (length: {len(content)})")
+            return content
             
         # Last resort: just get all text from the document
-        return soup.get_text(strip=True, separator=" ")
+        content = soup.get_text(strip=True, separator=" ")
+        logger.debug(f"Content extracted using last resort strategy (length: {len(content)})")
+        return content
         
     def _clean_soup(self, soup: BeautifulSoup) -> None:
         """
         Removes undesirable elements from the soup.
+        IMPORTANT: Only remove elements that are truly undesirable (scripts, styles, etc.)
+        Keep structural elements like nav, footer, header, aside as they may contain useful content.
         
         :param soup: The BeautifulSoup object to clean.
         """
+        removed_count = 0
+        
         # Remove comments
         for comment in soup.find_all(string=lambda text: isinstance(text, str) and text.strip().startswith('<!--')):
             comment.extract()
+            removed_count += 1
             
-        # Remove blacklisted tags
-        for tag in self.blacklist_tags:
-            for element in soup.find_all(tag):
+        # Only remove truly problematic tags (scripts, styles, iframes)
+        # DO NOT remove structural tags like nav, footer, header, aside
+        minimal_blacklist = ['script', 'style', 'noscript', 'iframe', 'head']
+        for tag in minimal_blacklist:
+            elements = soup.find_all(tag)
+            removed_count += len(elements)
+            for element in elements:
                 element.extract()
                 
-        # Remove hidden elements with style attribute
-        for element in soup.find_all(style=re.compile(r'display:\s*none|visibility:\s*hidden')):
+        # Remove hidden elements with style attribute (but be careful)
+        hidden_elements = soup.find_all(style=re.compile(r'display:\s*none|visibility:\s*hidden'))
+        removed_count += len(hidden_elements)
+        for element in hidden_elements:
             element.extract()
             
-        # Remove elements with hidden class
-        for element in soup.find_all(class_='hidden'):
-            element.extract()
-            
-        # Remove elements with certain classes
-        for class_name in ['ads', 'advertisement', 'banner', 'cookie', 'popup', 'modal', 'sidebar']:
-            for element in soup.find_all(class_=re.compile(class_name, re.IGNORECASE)):
+        # Remove elements with hidden or screen-reader-text class
+        for class_name in ['hidden', 'screen-reader-text']:
+            hidden_class_elements = soup.find_all(class_=class_name)
+            removed_count += len(hidden_class_elements)
+            for element in hidden_class_elements:
                 element.extract()
+            
+        # Only remove obvious ad/tracking elements
+        for class_name in ['ads', 'advertisement', 'cookie']:
+            elements = soup.find_all(class_=re.compile(class_name, re.IGNORECASE))
+            removed_count += len(elements)
+            for element in elements:
+                element.extract()
+        
+        logger.debug(f"Cleaned soup: removed {removed_count} elements (minimal cleaning mode)")
 
     def _get_clean_text(self, element: Tag) -> str:
         """
@@ -207,6 +246,43 @@ class EnhancedWebsiteReader(WebsiteReader):
         
         return text.strip()
         
+    def _extract_all_meaningful_content(self, soup: BeautifulSoup) -> str:
+        """
+        Extracts all meaningful content from the page (headings, paragraphs, lists, tables, etc.).
+        This is useful for pages that don't have clear content containers.
+        
+        :param soup: The BeautifulSoup object to extract content from.
+        :return: The extracted meaningful content.
+        """
+        # Focus on block-level content elements to avoid duplication from nested inline elements
+        meaningful_tags = ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'li', 'td', 'th', 'blockquote', 'pre']
+        content_parts = []
+        tag_counts = {}
+        
+        for tag in meaningful_tags:
+            elements = soup.find_all(tag)
+            count = 0
+            for element in elements:
+                text = element.get_text(strip=True)
+                # Only include text that's substantial (more than 10 characters)
+                if len(text) > 10:
+                    content_parts.append(text)
+                    count += 1
+            if count > 0:
+                tag_counts[tag] = count
+        
+        logger.debug(f"  Meaningful elements found: {tag_counts}")
+        logger.debug(f"  Total text parts collected: {len(content_parts)}")
+        
+        if not content_parts:
+            return ""
+        
+        # Join all parts with space and clean up
+        full_content = " ".join(content_parts)
+        full_content = re.sub(r'\s+', ' ', full_content)
+        
+        return full_content.strip()
+    
     def _extract_by_text_density(self, soup: BeautifulSoup) -> str:
         """
         Extracts content based on text density (paragraphs with substantial text).
@@ -296,8 +372,14 @@ class EnhancedWebsiteReader(WebsiteReader):
                 soup = BeautifulSoup(response.text, 'html.parser')
                 content = self._extract_main_content(soup)
                 
+                # Log extracted content length for debugging
+                logger.info(f"Extracted content length: {len(content) if content else 0} characters from {current_url}")
+                
                 # Check content quality
                 if not content or len(content) < self.min_content_length:
+                    logger.warning(f"Content too short or empty ({len(content) if content else 0} chars) for {current_url}. Min required: {self.min_content_length}")
+                    if content:
+                        logger.debug(f"Content preview: {content[:200]}...")
                     self._failed_crawls += 1
                     return None
                 
