@@ -657,30 +657,26 @@ const validateForm = (formConfig: any): boolean => {
 
 // Handle form submission
 const handleFormSubmit = async (formConfig: any) => {
-    console.log('handleFormSubmit called with config:', formConfig)
-    console.log('Current form data:', formData.value)
-    console.log('isSubmittingForm:', isSubmittingForm.value)
+
     
     if (isSubmittingForm.value) {
-        console.log('Form submission already in progress, returning')
         return
     }
     
-    console.log('Validating form...')
+
     const isValid = validateForm(formConfig)
-    console.log('Form validation result:', isValid)
-    console.log('Form errors:', formErrors.value)
+ 
     
     if (!isValid) {
-        console.log('Form validation failed, not submitting')
+       
         return
     }
     
     try {
-        console.log('Starting form submission...')
+    
         isSubmittingForm.value = true
         await submitForm(formData.value)
-        console.log('Form submitted successfully')
+       
         
         // Remove the form message from messages array
         const formIndex = messages.value.findIndex(msg => 
@@ -689,26 +685,26 @@ const handleFormSubmit = async (formConfig: any) => {
         )
         if (formIndex !== -1) {
             messages.value.splice(formIndex, 1)
-            console.log('Removed form message from chat')
+           
         }
         
         // Clear form data after successful submission
         formData.value = {}
         formErrors.value = {}
-        console.log('Cleared form data and errors')
+      
     } catch (error) {
         console.error('Failed to submit form:', error)
     } finally {
         isSubmittingForm.value = false
-        console.log('Form submission completed')
+      
     }
 }
 
 // Handle form field change
 const handleFieldChange = (fieldName: string, value: any) => {
-    console.log(`Field change: ${fieldName} = `, value)
+
     formData.value[fieldName] = value
-    console.log('Updated formData:', formData.value)
+
     
     // Real-time validation: validate the current field if it has a value
     if (value && value.toString().trim() !== '') {
@@ -732,7 +728,7 @@ const handleFieldChange = (fieldName: string, value: any) => {
                 console.log(`Validation error for ${fieldName}:`, error)
             } else {
                 delete formErrors.value[fieldName]
-                console.log(`Validation passed for ${fieldName}`)
+      
             }
         }
     } else {
@@ -803,12 +799,10 @@ const submitFullScreenForm = async () => {
 
     
     if (isSubmittingForm.value || !fullScreenFormData.value) {
-        console.log('Already submitting or no form data, returning')
         return
     }
     
     try {
-        console.log('Starting full screen form submission...')
         isSubmittingForm.value = true
         formErrors.value = {}
         
@@ -825,8 +819,6 @@ const submitFullScreenForm = async () => {
             }
         }
         
-        console.log('Validation completed. Has errors:', hasErrors)
-        console.log('Form errors:', formErrors.value)
         
         if (hasErrors) {
             isSubmittingForm.value = false
@@ -835,15 +827,12 @@ const submitFullScreenForm = async () => {
         }
         
         // Submit form data through the workflow
-        console.log('Submitting form data:', formData.value)
         await submitForm(formData.value)
-        console.log('Full screen form submitted successfully')
         
         // Hide full screen form after successful submission
         showFullScreenForm.value = false
         fullScreenFormData.value = null
         formData.value = {}
-        console.log('Full screen form hidden and data cleared')
         
     } catch (error) {
         console.error('Failed to submit full screen form:', error)
@@ -897,7 +886,6 @@ const handleUserInputSubmit = async (message: any) => {
         // Send the user input as a regular message to continue the workflow
         await socketSendMessage(userInput, emailInput.value)
         
-        console.log('User input submitted:', userInput)
     } catch (error) {
         console.error('Failed to submit user input:', error)
         // Reset submission state on error
@@ -925,7 +913,6 @@ const initializeWidget = async () => {
         const isAuthorized = await checkAuthorization()
         
         if (!isAuthorized) {
-            console.log('$$$ isAuthorized false, setting connection status to connected')
             connectionStatus.value = 'connected'
             return false
         }
@@ -962,28 +949,24 @@ const setupEventListeners = () => {
 
     // Register workflow state callback
     onWorkflowState((data) => {
-        console.log('Workflow state received in component:', data)
-        console.log('Data type:', data.type)
-        console.log('Form data:', data.form_data)
+
         workflowButtonText.value = data.button_text || 'Start Chat'
         
         if (data.type === 'landing_page') {
-            console.log('Setting landing page data:', data.landing_page_data)
             landingPageData.value = data.landing_page_data
             showLandingPage.value = true
             showFullScreenForm.value = false
-            console.log('Landing page state - show:', showLandingPage.value, 'data:', landingPageData.value)
         } else if (data.type === 'form' || data.type === 'display_form') {
             // Check if form should be displayed in full screen mode
-            console.log('Form full screen flag:', data.form_data?.form_full_screen)
+
             if (data.form_data?.form_full_screen === true) {
-                console.log('Setting full screen form data:', data.form_data)
+
                 fullScreenFormData.value = data.form_data
                 showFullScreenForm.value = true
                 showLandingPage.value = false
-                console.log('Full screen form state - show:', showFullScreenForm.value)
+
             } else {
-                console.log('Regular form mode - adding form message to chat')
+
                 // For non-fullscreen forms, add a form message to the chat
                 const formMessage = {
                     message: '',
@@ -1008,7 +991,7 @@ const setupEventListeners = () => {
                 showFullScreenForm.value = false
             }
         } else {
-            console.log('No special workflow state, hiding overlay forms')
+
             showLandingPage.value = false
             showFullScreenForm.value = false
         }
@@ -1022,7 +1005,7 @@ const setupEventListeners = () => {
 // Start new conversation workflow
 const startNewConversationWorkflow = async () => {
     try {
-        console.log('Starting new conversation - getting workflow state')
+       
         await initializeWidget()
         await getWorkflowState()
     } catch (error) {
@@ -1369,7 +1352,7 @@ const shouldShowWelcomeMessage = computed(() => {
                         >
                             <option value="">{{ field.placeholder || 'Please select...' }}</option>
                             <option 
-                                v-for="option in field.options?.split('\n').filter(o => o.trim())" 
+                                v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())" 
                                 :key="option" 
                                 :value="option.trim()"
                             >
@@ -1399,7 +1382,7 @@ const shouldShowWelcomeMessage = computed(() => {
                             class="radio-group"
                         >
                             <label 
-                                v-for="option in field.options?.split('\n').filter(o => o.trim())" 
+                                v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())" 
                                 :key="option"
                                 class="radio-field"
                             >
@@ -1654,7 +1637,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                             >
                                                 <option value="">{{ field.placeholder || 'Select an option' }}</option>
                                                 <option 
-                                                    v-for="option in field.options?.split('\n').filter(o => o.trim()) || []" 
+                                                    v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())" 
                                                     :key="option.trim()" 
                                                     :value="option.trim()"
                                                 >
@@ -1680,7 +1663,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                             <!-- Radio buttons -->
                                             <div v-else-if="field.type === 'radio'" class="radio-field">
                                                 <div 
-                                                    v-for="option in field.options?.split('\n').filter(o => o.trim()) || []" 
+                                                    v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())" 
                                                     :key="option.trim()"
                                                     class="radio-option"
                                                 >
