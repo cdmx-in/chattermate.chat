@@ -3,8 +3,16 @@ import api from '@/services/api'
 import { validatePassword } from '@/utils/validators'
 import type { AxiosError } from 'axios'
 
+interface ValidationError {
+  type: string
+  loc: (string | number)[]
+  msg: string
+  input?: any
+  ctx?: Record<string, any>
+}
+
 interface ErrorResponse {
-  detail: string
+  detail: string | ValidationError[]
 }
 
 export function useForgotPassword() {
@@ -32,6 +40,33 @@ export function useForgotPassword() {
   })
 
   /**
+   * Parse validation errors from backend response
+   */
+  const parseValidationErrors = (detail: string | ValidationError[]): string => {
+    if (typeof detail === 'string') {
+      return detail
+    }
+    
+    if (Array.isArray(detail) && detail.length > 0) {
+      // Get the first validation error and return a user-friendly message
+      const firstError = detail[0]
+      
+      // Handle email validation errors specifically
+      if (firstError.loc.includes('email')) {
+        if (firstError.msg.includes('not a valid email address')) {
+          return firstError.ctx?.reason || 'Please enter a valid email address'
+        }
+        return 'Please enter a valid email address'
+      }
+      
+      // Return the error message for other validation errors
+      return firstError.msg
+    }
+    
+    return 'Invalid input provided'
+  }
+
+  /**
    * Request password reset OTP
    */
   const requestPasswordReset = async () => {
@@ -49,7 +84,14 @@ export function useForgotPassword() {
       return true
     } catch (err) {
       const axiosError = err as AxiosError<ErrorResponse>
-      error.value = axiosError.response?.data?.detail || 'Failed to send verification code'
+      const detail = axiosError.response?.data?.detail
+      
+      if (detail) {
+        error.value = parseValidationErrors(detail)
+      } else {
+        error.value = 'Failed to send verification code'
+      }
+      
       console.error('Password reset request error:', err)
       return false
     } finally {
@@ -89,7 +131,14 @@ export function useForgotPassword() {
       return true
     } catch (err) {
       const axiosError = err as AxiosError<ErrorResponse>
-      const errorMessage = axiosError.response?.data?.detail || 'Failed to reset password'
+      const detail = axiosError.response?.data?.detail
+      
+      let errorMessage: string
+      if (detail) {
+        errorMessage = parseValidationErrors(detail)
+      } else {
+        errorMessage = 'Failed to reset password'
+      }
       
       // Directly show backend-provided remaining attempts message when present
       if (errorMessage.includes('Invalid code') && errorMessage.includes('attempt')) {
