@@ -52,7 +52,7 @@ interface FormField {
   type: string
   required: boolean
   placeholder: string
-  options: string
+  options: string | string[]
   minLength: number
   maxLength: number
 }
@@ -643,9 +643,14 @@ watch(() => props.selectedNode, (newNode) => {
                         nodeData.condition_groups || 
                         [],
       // Form node - prioritize config over outer fields
-      form_fields: nodeData.config?.form_fields || 
-                   nodeData.form_fields || 
-                   [] as FormField[],
+      form_fields: (() => {
+        const fields = nodeData.config?.form_fields || nodeData.form_fields || []
+        // Convert array options back to newline-separated string for textarea display
+        return fields.map((field: any) => ({
+          ...field,
+          options: Array.isArray(field.options) ? field.options.join('\n') : (field.options || '')
+        }))
+      })(),
       form_title: nodeData.config?.form_title || 
                   nodeData.form_title || 
                   '',
@@ -782,7 +787,12 @@ const getNodeSpecificConfig = (nodeType: string) => {
           type: field.type || 'text',
           required: field.required || false,
           placeholder: field.placeholder || '',
-          options: field.options || '',
+          // Convert newline-separated string to array for select/radio options
+          options: (field.type === 'select' || field.type === 'radio') && field.options 
+            ? (typeof field.options === 'string' 
+                ? field.options.split('\n').map(opt => opt.trim()).filter(opt => opt.length > 0)
+                : field.options)
+            : (field.options || ''),
           minLength: field.minLength || 0,
           maxLength: field.maxLength || 255
         }))

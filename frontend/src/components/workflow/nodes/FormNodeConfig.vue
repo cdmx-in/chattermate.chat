@@ -26,7 +26,7 @@ interface FormField {
   type: string
   required: boolean
   placeholder: string
-  options: string
+  options: string | string[] // Can be string (for textarea display) or array (when saved)
   minLength: number
   maxLength: number
 }
@@ -288,7 +288,7 @@ const updateFormData = (field: keyof FormNodeData, value: any) => {
               <div class="field-col-full">
                 <label class="field-label">Options (one per line)</label>
                 <textarea
-                  :value="field.options"
+                  :value="Array.isArray(field.options) ? field.options.join('\n') : field.options"
                   @input="updateField(index, 'options', ($event.target as HTMLTextAreaElement).value)"
                   @blur="$emit('validate-field', 'form_fields')"
                   class="field-textarea"

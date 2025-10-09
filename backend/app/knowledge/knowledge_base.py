@@ -24,6 +24,8 @@ from app.core.config import settings
 from app.core.logger import get_logger
 from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
 from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
+from app.knowledge.enhanced_pdf_kb import EnhancedPDFKnowledgeBase
+from app.knowledge.enhanced_pdf_url_kb import EnhancedPDFUrlKnowledgeBase
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
@@ -119,8 +121,8 @@ class KnowledgeManager:
                 # Check if the URL ends with .pdf
                 if url.lower().endswith('.pdf'):
                     logger.info(f"PDF URL detected, adding to knowledge base: {url}")
-                    # Use PDFUrlKnowledgeBase for direct PDF URLs
-                    knowledge_base = PDFUrlKnowledgeBase(
+                    # Use EnhancedPDFUrlKnowledgeBase for direct PDF URLs
+                    knowledge_base = EnhancedPDFUrlKnowledgeBase(
                         urls=[url],  # Pass single URL in a list
                         vector_db=self.vector_db
                     )
@@ -285,7 +287,7 @@ class KnowledgeManager:
                 try:
                     # First try with regular PDFReader
                     try:
-                        knowledge_base = PDFKnowledgeBase(
+                        knowledge_base = EnhancedPDFKnowledgeBase(
                             path=path_to_use,
                             vector_db=self.vector_db,
                             reader=PDFReader(chunk=chunk) if not reader else reader
@@ -311,7 +313,7 @@ class KnowledgeManager:
                     except Exception as e:
                         logger.warning(f"Regular PDFReader failed for {path_to_use}, trying PDFImageReader: {str(e)}")
                         # Fallback to PDFImageReader if PDFReader fails
-                        knowledge_base = PDFKnowledgeBase(
+                        knowledge_base = EnhancedPDFKnowledgeBase(
                             path=path_to_use,
                             vector_db=self.vector_db,
                             reader=PDFImageReader(chunk=chunk)

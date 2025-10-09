@@ -97,7 +97,7 @@ async def test_add_pdf_urls_success(knowledge_manager, mock_knowledge):
     # Setup
     urls = ["http://example.com/test.pdf"]
     
-    with patch('app.knowledge.knowledge_base.PDFUrlKnowledgeBase') as mock_pdf_kb, \
+    with patch('app.knowledge.knowledge_base.EnhancedPDFUrlKnowledgeBase') as mock_pdf_kb, \
          patch.object(knowledge_manager, '_add_knowledge_source', return_value=mock_knowledge) as mock_add_source:
         # Configure mock
         mock_pdf_kb_instance = MagicMock()
@@ -118,7 +118,7 @@ async def test_add_pdf_urls_failure(knowledge_manager):
     # Setup
     urls = ["http://example.com/test.pdf"]
     
-    with patch('app.knowledge.knowledge_base.PDFUrlKnowledgeBase') as mock_pdf_kb:
+    with patch('app.knowledge.knowledge_base.EnhancedPDFUrlKnowledgeBase') as mock_pdf_kb:
         # Configure mock to raise exception
         mock_pdf_kb.side_effect = Exception("Failed to load PDF")
         
@@ -156,7 +156,7 @@ async def test_add_pdf_files_success(knowledge_manager, mock_knowledge):
     # Setup
     files = ["/path/to/test.pdf"]
     
-    with patch('app.knowledge.knowledge_base.PDFKnowledgeBase') as mock_pdf_kb, \
+    with patch('app.knowledge.knowledge_base.EnhancedPDFKnowledgeBase') as mock_pdf_kb, \
          patch('app.knowledge.knowledge_base.PDFImageReader') as mock_pdf_reader, \
          patch.object(knowledge_manager, '_add_knowledge_source', return_value=mock_knowledge) as mock_add_source:
         # Configure mocks
