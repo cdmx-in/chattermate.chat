@@ -27,8 +27,45 @@ from app.core.processor import PROCESSOR_STATUS
 from datetime import datetime
 from app.models.notification import Notification, NotificationType
 from app.services.user import send_fcm_notification
+from urllib.parse import urlparse, unquote
 
 logger = get_logger(__name__)
+
+
+def get_user_friendly_filename(source: str, source_type: str) -> str:
+    """Extract a user-friendly filename from the source URL or path"""
+    try:
+        if source_type == 'website':
+            # For websites, just return the domain
+            parsed = urlparse(source)
+            return parsed.netloc or source
+        
+        # For files (PDF, etc.), extract filename from URL or path
+        if source.startswith('http'):
+            # Parse URL to get the path
+            parsed = urlparse(source)
+            path = parsed.path
+            
+            # Extract filename from path
+            if path:
+                # Get the last part of the path (filename)
+                filename = path.split('/')[-1]
+                # URL decode the filename to handle encoded characters like %20
+                filename = unquote(filename)
+                # Remove query parameters if any
+                filename = filename.split('?')[0]
+                if filename:
+                    return filename
+            
+            # Fallback to domain if no filename found
+            return parsed.netloc or source
+        else:
+            # For local file paths, just get the basename
+            return os.path.basename(source)
+            
+    except Exception as e:
+        logger.warning(f"Error extracting filename from {source}: {e}")
+        return source
 
 
 async def process_queue_item(queue_item_id: int):
@@ -60,11 +97,12 @@ async def process_queue_item(queue_item_id: int):
             await knowledge.process_knowledge(queue_item)
 
             # Create notification for successful processing
+            user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
             notification = Notification(
                 user_id=queue_item.user_id,
                 type=NotificationType.KNOWLEDGE_PROCESSED,
                 title="Knowledge Processing Complete",
-                message=f"Successfully processed {queue_item.source}",
+                message=f"Successfully processed {user_friendly_name}",
                 metadata={"queue_id": queue_item.id}
             )
             db.add(notification)
@@ -82,11 +120,12 @@ async def process_queue_item(queue_item_id: int):
             queue_item.status = QueueStatus.FAILED
 
             # Create notification for failed processing
+            user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
             notification = Notification(
                 user_id=queue_item.user_id,
                 type=NotificationType.KNOWLEDGE_FAILED,
                 title="Knowledge Processing Failed",
-                message=f"Failed to process {queue_item.source}: {str(e)}",
+                message=f"Failed to process {user_friendly_name}: {str(e)}",
                 metadata={"queue_id": queue_item.id}
             )
             db.add(notification)
