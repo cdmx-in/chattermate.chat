@@ -26,6 +26,7 @@ from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
 from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
 from app.knowledge.enhanced_pdf_kb import EnhancedPDFKnowledgeBase
 from app.knowledge.enhanced_pdf_url_kb import EnhancedPDFUrlKnowledgeBase
+from app.core.s3 import delete_file_from_s3
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
@@ -196,19 +197,12 @@ class KnowledgeManager:
                         # Delete the S3 URL from storage if it's an S3 URL
                         if "s3.amazonaws.com" in url:
                             try:
-                                # Delete the file from S3
-                                # Parse the S3 bucket and key from the URL
-                                s3_parts = urlparse(url)
-                                bucket_name = s3_parts.netloc.split('.')[0]
-                                key = s3_parts.path.lstrip('/')
-                                
-                                # Initialize boto3 S3 client
-                                import boto3
-                                s3_client = boto3.client('s3')
-                                
-                                # Delete the object
-                                s3_client.delete_object(Bucket=bucket_name, Key=key)
-                                logger.info(f"Deleted S3 object: {url}")
+                                # Delete the file from S3 using the centralized utility function
+                                success = await delete_file_from_s3(url)
+                                if success:
+                                    logger.info(f"Deleted S3 object: {url}")
+                                else:
+                                    logger.warning(f"Failed to delete S3 file: {url}")
                             except Exception as s3_err:
                                 # Ignore errors when deleting S3 file
                                 logger.warning(f"Failed to delete S3 file, ignoring: {str(s3_err)}")
