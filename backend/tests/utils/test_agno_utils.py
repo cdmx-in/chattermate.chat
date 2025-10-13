@@ -161,45 +161,56 @@ class TestCreateModel:
         assert "is not available in this installation" in excinfo.value.detail
 
     def test_create_model_groq_with_response_format(self):
-        """Test creating Groq model with response format"""
-        with patch("agno.models.groq.Groq") as mock_groq:
-            mock_model = MagicMock()
-            mock_groq.return_value = mock_model
-            
-            result = agno_utils.create_model(
-                model_type="GROQ",
-                api_key="test-api-key",
-                model_name="mixtral-8x7b",
-                response_format={"type": "json_object"}
-            )
-            
-            mock_groq.assert_called_once_with(
-                api_key="test-api-key", 
-                id="mixtral-8x7b", 
-                max_tokens=1000,
-                response_format={"type": "json_object"}
-            )
-            assert result == mock_model
+        """Test creating Groq model with response format (uses PatchedGroq)"""
+        result = agno_utils.create_model(
+            model_type="GROQ",
+            api_key="test-api-key",
+            model_name="mixtral-8x7b",
+            response_format={"type": "json_object"}
+        )
+        
+        # Should return a PatchedGroq instance
+        assert result.__class__.__name__ == "PatchedGroq"
+        assert result.api_key == "test-api-key"
+        assert result.id == "mixtral-8x7b"
+        assert result.max_tokens == 1000
 
     def test_create_model_groq_without_response_format(self):
-        """Test creating Groq model without response format (should default to text)"""
-        with patch("agno.models.groq.Groq") as mock_groq:
-            mock_model = MagicMock()
-            mock_groq.return_value = mock_model
-            
-            result = agno_utils.create_model(
-                model_type="GROQ",
-                api_key="test-api-key",
-                model_name="llama2-70b"
-            )
-            
-            mock_groq.assert_called_once_with(
-                api_key="test-api-key", 
-                id="llama2-70b", 
-                max_tokens=1000,
-                response_format={"type": "text"}
-            )
-            assert result == mock_model
+        """Test creating Groq model without response format (uses PatchedGroq)"""
+        result = agno_utils.create_model(
+            model_type="GROQ",
+            api_key="test-api-key",
+            model_name="llama2-70b"
+        )
+        
+        # Should return a PatchedGroq instance
+        assert result.__class__.__name__ == "PatchedGroq"
+        assert result.api_key == "test-api-key"
+        assert result.id == "llama2-70b"
+        assert result.max_tokens == 1000
+
+    def test_patched_groq_response_format_tools_conflict(self):
+        """Test that PatchedGroq handles response_format + tools conflict correctly"""
+        result = agno_utils.create_model(
+            model_type="GROQ",
+            api_key="test-api-key",
+            model_name="llama-3.3-70b-versatile"
+        )
+        
+        # Test with tools - should NOT include response_format
+        params_with_tools = result.get_request_params(
+            response_format={"type": "json_object"},
+            tools=[{"type": "function", "function": {"name": "test_tool"}}]
+        )
+        assert "tools" in params_with_tools
+        assert "response_format" not in params_with_tools
+        
+        # Test without tools - should include response_format
+        params_without_tools = result.get_request_params(
+            response_format={"type": "json_object"}
+        )
+        assert "response_format" in params_without_tools
+        assert "tools" not in params_without_tools
 
     def test_create_model_mistral(self):
         """Test creating Mistral model (should trigger import error)"""

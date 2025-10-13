@@ -65,11 +65,17 @@ class ChatAgent(ChatAgentMCPMixin):
             knowledge_tool = KnowledgeSearchByAgent(
                 agent_id=agent_id, org_id=org_id, source=source)
             tools.append(knowledge_tool)
-            knowledge_tool_prompt = """
-            You have access to the knowledge search tool. You can use this tool to search for information about the customer's query on product, services, policies, etc. Only use the tool if required, dont use it for general greeting. Dont hallucinate information.
             
-            IMPORTANT: If you attempt to search for information but cannot find relevant results after a few tries, or if you've already searched multiple times without success, respond with a helpful message like "I apologize, but I don't have specific information about that in our knowledge base at the moment. Is there anything else I can help you with?" Do not keep searching indefinitely.
-            """
+            # Base knowledge tool prompt
+            knowledge_tool_prompt = """
+            You have access to the knowledge search tool. You can use this tool to search for information about the customer's query on product, services, policies, etc. Only use the tool if required, dont use it for general greeting. Dont hallucinate information. For all other queries other than general always search tools before answering."""
+            
+            # For non-Groq models, add the search limit instruction
+            # For Groq, skip this to avoid discouraging tool usage
+            if model_type.upper() != 'GROQ':
+                knowledge_tool_prompt += """
+            
+            IMPORTANT: If you attempt to search for information but cannot find relevant results after a few tries, or if you've already searched multiple times without success, respond with a helpful message like "I apologize, but I don't have specific information about that in our knowledge base at the moment. Is there anything else I can help you with?" Do not keep searching indefinitely."""
             
 
         # Get template instructions and Jira config in a single optimized query
@@ -174,6 +180,12 @@ class ChatAgent(ChatAgentMCPMixin):
                 system_message = custom_system_prompt
             elif self.agent_data.instructions:
                 system_message = "\n".join(self.agent_data.instructions) +  knowledge_tool_prompt
+            
+            # Add concise response instruction for better performance
+            system_message += """
+            
+Keep your responses concise and focused. Provide clear, actionable information in 2-4 sentences unless a detailed explanation is specifically requested. Avoid unnecessary elaboration."""
+
 
             
             # Add transfer instructions if enabled
@@ -320,6 +332,8 @@ class ChatAgent(ChatAgentMCPMixin):
         if hasattr(self, 'tools') and self.tools:
            all_tools.extend(self.tools)
 
+        # Enable structured outputs for all models including Groq
+        # The PatchedGroq class handles the response_format conflict when tools are present
         self.agent = Agent(
            name=self.agent_data.name if self.agent_data else "Default Agent",
            session_id=session_id,
@@ -329,8 +343,8 @@ class ChatAgent(ChatAgentMCPMixin):
            agent_id=str(agent_id),
            storage=storage,
            add_history_to_messages=True,
-           tool_call_limit=5,  # Reduced from 10 to 5 to prevent excessive loops
-           num_history_responses=10,
+           tool_call_limit=3,  # Reduced from 5 to 3 for faster response - prevents excessive knowledge searches
+           num_history_responses=5,  # Reduced from 10 to 5 to minimize context size and improve speed
            read_chat_history=True,
            markdown=False,
            debug_mode=settings.ENVIRONMENT == "development",
