@@ -64,10 +64,60 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
             return Gemini(api_key=api_key, id=model_name, max_tokens=max_tokens)
         elif model_type == 'GROQ':
             from agno.models.groq import Groq
-            if response_format:
-                return Groq(api_key=api_key, id=model_name, max_tokens=max_tokens, response_format=response_format)
-            else:
-                return Groq(api_key=api_key, id=model_name, max_tokens=max_tokens, response_format={"type": "text"})
+            
+            # Create a patched Groq model that handles the response_format + tools conflict
+            class PatchedGroq(Groq):
+                def __post_init__(self):
+                    """Set supports_native_structured_outputs after initialization"""
+                    super().__post_init__() if hasattr(super(), '__post_init__') else None
+                    # Override to indicate Groq supports structured outputs via response_format
+                    object.__setattr__(self, 'supports_native_structured_outputs', True)
+                
+                def get_request_params(self, response_format=None, tools=None, tool_choice=None):
+                    """
+                    Override get_request_params to handle the conflict between response_format and tools.
+                    Groq API doesn't allow JSON response_format when tools are present.
+                    """
+                    # Get the base parameters from parent class
+                    base_params = {
+                        "frequency_penalty": self.frequency_penalty,
+                        "logit_bias": self.logit_bias,
+                        "logprobs": self.logprobs,
+                        "max_tokens": self.max_tokens,
+                        "presence_penalty": self.presence_penalty,
+                        "seed": self.seed,
+                        "stop": self.stop,
+                        "temperature": self.temperature,
+                        "top_logprobs": self.top_logprobs,
+                        "top_p": self.top_p,
+                        "user": self.user,
+                        "extra_headers": self.extra_headers,
+                        "extra_query": self.extra_query,
+                    }
+                    
+                    # Filter out None values
+                    request_params = {k: v for k, v in base_params.items() if v is not None}
+                    
+                    # Add tools first
+                    if tools is not None:
+                        request_params["tools"] = tools
+                        if tool_choice is not None:
+                            request_params["tool_choice"] = tool_choice
+                        # Don't add response_format when tools are present to avoid conflict
+                        logger.debug("Groq: Skipping response_format due to tools being present")
+                    else:
+                        # Only add response_format if no tools are present
+                        if response_format is not None:
+                            request_params["response_format"] = response_format
+                    
+                    # Add additional request params if provided
+                    if self.request_params:
+                        request_params.update(self.request_params)
+                    
+                    return request_params
+            
+            # Groq model doesn't support response_format parameter in constructor
+            return PatchedGroq(api_key=api_key, id=model_name, max_tokens=max_tokens)
         elif model_type == 'MISTRAL':
             from agno.models.mistral import MistralChat
             return MistralChat(api_key=api_key, id=model_name, max_tokens=max_tokens)

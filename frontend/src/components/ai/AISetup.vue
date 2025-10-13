@@ -74,6 +74,20 @@ const {
 
 // Set initial tab based on enterprise availability
 const activeTab = ref(hasEnterpriseModule ? 'chattermate' : 'custom')
+
+// Watch for existing configuration changes to set the correct tab
+watch([hasExistingConfig, setupConfig], ([hasConfig, config]) => {
+  if (hasConfig && config.provider) {
+    // If existing config is ChatterMate, show ChatterMate tab
+    if (config.provider.toLowerCase() === 'chattermate' && hasEnterpriseModule) {
+      activeTab.value = 'chattermate'
+    } else {
+      // If existing config is a custom model (OpenAI, Groq, etc.), show custom tab
+      activeTab.value = 'custom'
+    }
+  }
+}, { deep: true, immediate: true })
+
 // API key is always required for our supported providers
 const showApiKey = computed(() => true)
 
@@ -221,9 +235,12 @@ const rateLimitText = computed(() => {
   return `Rate limit: ${rateLimit} messages/minute`
 })
 
-// Reset model when provider changes
-watch(() => setupConfig.value.provider, () => {
-  setupConfig.value.model = ''
+// Reset model when provider changes (but only for new configurations, not existing ones)
+watch(() => setupConfig.value.provider, (newProvider, oldProvider) => {
+  // Only reset model if this is not the initial load of existing config
+  if (oldProvider !== undefined && !hasExistingConfig.value) {
+    setupConfig.value.model = ''
+  }
 })
 
 const selectTab = (tab: 'chattermate' | 'custom') => {

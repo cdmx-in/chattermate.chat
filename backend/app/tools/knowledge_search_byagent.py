@@ -16,7 +16,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from typing import List
+from typing import List, Dict, Any
 from agno.tools import Toolkit
 from agno.utils.log import logger
 from app.database import SessionLocal
@@ -83,7 +83,7 @@ class KnowledgeSearchByAgent(Toolkit):
                         table_name=source.table_name,
                         db_url=settings.DATABASE_URL,
                         schema=source.schema,
-                        search_type=SearchType.hybrid,
+                        search_type=SearchType.vector,  # Changed from hybrid to vector for speed
                         embedder=embedder
                     )
                     logger.debug(f"Vector db initialized: {source.table_name}")
@@ -97,10 +97,11 @@ class KnowledgeSearchByAgent(Toolkit):
                     filters["name"] = self.source
                 logger.debug(f"Search filters: {filters}")
 
-                # Search with filters
+                # Search with filters - reduced from 5 to 3 documents for faster retrieval
+                # Only retrieve what we actually use to minimize database query time
                 documents = self.agent_knowledge.search(
                     query=query,
-                    num_documents=5,
+                    num_documents=3,  # Reduced from 5 to 3 since we only use top 3 anyway
                     filters=filters
                 )
                 logger.debug(f"Documents: {documents}")
@@ -126,9 +127,9 @@ class KnowledgeSearchByAgent(Toolkit):
                 # Sort by similarity and format results
                 search_results.sort(key=lambda x: x['similarity'], reverse=True)
 
-                # Return top 3 most relevant results
+                # Return all results (already limited to 3)
                 formatted_results = []
-                for result in search_results[:3]:
+                for result in search_results:
                     formatted_results.append(
                         f"[{result['source_type'].upper()} - {result['name']}] {result['content']}")
                 logger.debug(f"Formatted results: {formatted_results}")
