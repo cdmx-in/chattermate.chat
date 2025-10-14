@@ -144,15 +144,21 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         soup_copy = BeautifulSoup(str(self.soup), 'html.parser')
         self.reader._clean_soup(soup_copy)
         
-        # Check that truly unwanted elements are removed (scripts, styles)
+        # Check that truly unwanted elements are removed (scripts, styles, hidden elements)
         self.assertIsNone(soup_copy.find('script'))
         self.assertIsNone(soup_copy.find('style'))
         self.assertIsNone(soup_copy.find(class_='hidden'))
         
-        # Check that structural elements are kept (header, footer, nav are now preserved)
+        # Check that navigation elements are removed (they contain menu links, not main content)
+        self.assertIsNone(soup_copy.find('nav'))
+        
+        # Check that sidebar elements are removed
+        self.assertIsNone(soup_copy.find(class_='sidebar'))
+        
+        # Check that main content elements are kept (header and footer may contain some content)
         self.assertIsNotNone(soup_copy.find('header'))
         self.assertIsNotNone(soup_copy.find('footer'))
-        self.assertIsNotNone(soup_copy.find('nav'))
+        self.assertIsNotNone(soup_copy.find('main'))
         
     @patch('httpx.Client')
     def test_crawl_with_successful_request(self, mock_client):
