@@ -51,12 +51,12 @@ class EnhancedWebsiteReader(WebsiteReader):
         'article', 'main', 'section', 'div', 'p', 'content', 'body'
     ])
     common_content_classes: List[str] = field(default_factory=lambda: [
-        'content', 'main-content', 'post-content', 'article-content', 'entry-content', 'page-content',
-        'blog-content', 'main', 'article', 'post', 'entry', 'text', 'body', 'container'
+        'post-content', 'article-content', 'entry-content', 'page-content', 'main-content',
+        'blog-content', 'content', 'main', 'article', 'post', 'entry', 'text', 'body'
     ])
     common_content_ids: List[str] = field(default_factory=lambda: [
         'content', 'main-content', 'post-content', 'article-content', 'entry-content', 'page-content',
-        'blog-content', 'main', 'article', 'post', 'entry', 'text', 'body', 'container'
+        'blog-content', 'main', 'article', 'post', 'entry', 'text', 'body'
     ])
     user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
     headers: Dict[str, str] = field(default_factory=lambda: {
@@ -77,6 +77,7 @@ class EnhancedWebsiteReader(WebsiteReader):
     _crawled_pages_count: int = 0
     _successful_crawls: int = 0
     _failed_crawls: int = 0
+    _current_url: str = None  # Track current URL being processed for link resolution
     
     def _get_primary_domain(self, url: str) -> str:
         """
@@ -111,12 +112,13 @@ class EnhancedWebsiteReader(WebsiteReader):
         Extracts the main content from a BeautifulSoup object using multiple strategies.
         
         Strategies:
-        1. Look for main content containers (article, main, etc.)
-        2. Look for content by class names
-        3. Look for content by ID
-        4. Density-based content extraction (paragraph density)
-        5. Collect all meaningful text with smart filtering
-        6. Fallback to cleaned body content
+        1. Look for elements with role="main" attribute (semantic HTML)
+        2. Look for main content containers (article, main, etc.)
+        3. Look for content by class names
+        4. Look for content by ID
+        5. Density-based content extraction (paragraph density)
+        6. Collect all meaningful text with smart filtering
+        7. Fallback to cleaned body content
         
         :param soup: The BeautifulSoup object to extract the main content from.
         :return: The main content as a string.
@@ -124,51 +126,63 @@ class EnhancedWebsiteReader(WebsiteReader):
         # Remove undesirable elements first
         self._clean_soup(soup)
         
-        # Strategy 1: Try to find main content by common content tags
-        logger.debug(f"Trying Strategy 1: Common content tags")
+        # Strategy 1: Try to find main content by role="main" attribute (semantic HTML)
+        logger.debug(f"Trying Strategy 1: role='main' attribute")
+        main_role_element = soup.find(attrs={'role': 'main'})
+        if main_role_element:
+            logger.debug(f"  Found element with role='main'")
+            content = self._get_clean_text(main_role_element, include_links=True, base_url=self._current_url)
+            if len(content) >= self.min_content_length:
+                logger.info(f"✓ Content extracted using role='main' strategy ({len(content)} chars)")
+                return content
+            else:
+                logger.debug(f"  role='main' element too short: {len(content)} chars")
+        
+        # Strategy 2: Try to find main content by common content tags
+        logger.debug(f"Trying Strategy 2: Common content tags")
         for tag in self.common_content_tags:
             elements = soup.find_all(tag)
             logger.debug(f"  Found {len(elements)} '{tag}' elements")
             for element in elements:
-                content = self._get_clean_text(element)
+                content = self._get_clean_text(element, include_links=True, base_url=self._current_url)
                 if len(content) >= self.min_content_length:
                     logger.info(f"✓ Content extracted using tag strategy: {tag} ({len(content)} chars)")
                     return content
                 elif content:
                     logger.debug(f"  '{tag}' element too short: {len(content)} chars (min: {self.min_content_length})")
                     
-        # Strategy 2: Try to find main content by common class names
-        logger.debug(f"Trying Strategy 2: Common class names")
+        # Strategy 3: Try to find main content by common class names
+        logger.debug(f"Trying Strategy 3: Common class names")
         for class_name in self.common_content_classes:
             elements = soup.find_all(class_=re.compile(class_name, re.IGNORECASE))
             if elements:
                 logger.debug(f"  Found {len(elements)} elements with class matching '{class_name}'")
             for element in elements:
-                content = self._get_clean_text(element)
+                content = self._get_clean_text(element, include_links=True, base_url=self._current_url)
                 if len(content) >= self.min_content_length:
                     logger.info(f"✓ Content extracted using class strategy: {class_name} ({len(content)} chars)")
                     return content
         
-        # Strategy 3: Try to find main content by common IDs
-        logger.debug(f"Trying Strategy 3: Common IDs")
+        # Strategy 4: Try to find main content by common IDs
+        logger.debug(f"Trying Strategy 4: Common IDs")
         for id_name in self.common_content_ids:
             element = soup.find(id=re.compile(id_name, re.IGNORECASE))
             if element:
                 logger.debug(f"  Found element with ID matching '{id_name}'")
-                content = self._get_clean_text(element)
+                content = self._get_clean_text(element, include_links=True, base_url=self._current_url)
                 if len(content) >= self.min_content_length:
                     logger.info(f"✓ Content extracted using ID strategy: {id_name} ({len(content)} chars)")
                     return content
         
-        # Strategy 4: Density-based content extraction
-        logger.debug(f"Trying Strategy 4: Text density")
+        # Strategy 5: Density-based content extraction
+        logger.debug(f"Trying Strategy 5: Text density")
         density_content = self._extract_by_text_density(soup)
         if density_content and len(density_content) >= self.min_content_length:
             logger.info(f"✓ Content extracted using density strategy ({len(density_content)} chars)")
             return density_content
         
-        # Strategy 5: Collect all meaningful text elements (headings, paragraphs, lists, etc.)
-        logger.debug(f"Trying Strategy 5: All meaningful content (tables, headings, paragraphs, lists)")
+        # Strategy 6: Collect all meaningful text elements (headings, paragraphs, lists, etc.)
+        logger.debug(f"Trying Strategy 6: All meaningful content (tables, headings, paragraphs, lists)")
         meaningful_content = self._extract_all_meaningful_content(soup)
         if meaningful_content and len(meaningful_content) >= self.min_content_length:
             logger.debug(f"✓ Content extracted using meaningful content strategy ({len(meaningful_content)} chars)")
@@ -176,11 +190,11 @@ class EnhancedWebsiteReader(WebsiteReader):
         else:
             logger.debug(f"  Meaningful content too short: {len(meaningful_content) if meaningful_content else 0} chars")
             
-        # Strategy 6: Fallback to entire body content with minimal cleaning
-        logger.debug(f"Trying Strategy 6: Body fallback")
+        # Strategy 7: Fallback to entire body content with minimal cleaning
+        logger.debug(f"Trying Strategy 7: Body fallback")
         body = soup.find('body')
         if body:
-            content = self._get_clean_text(body)
+            content = self._get_clean_text(body, include_links=True, base_url=self._current_url)
             if content:
                 logger.info(f"✓ Content extracted using body fallback strategy (length: {len(content)})")
                 return content
@@ -242,20 +256,101 @@ class EnhancedWebsiteReader(WebsiteReader):
             for element in elements:
                 element.extract()
         
+        # Remove comment sections - these often contain user comments that aren't main content
+        # Look for common comment container patterns
+        comment_selectors = [
+            {'id': re.compile(r'comment', re.IGNORECASE)},
+            {'class_': re.compile(r'comment', re.IGNORECASE)},
+            {'id': 'respond'},
+            {'class_': 'comment-respond'},
+            {'class_': 'comment-form'},
+            {'class_': 'comment-list'},
+            {'class_': 'comment-body'},
+            {'class_': 'comments-area'},
+        ]
+        
+        for selector in comment_selectors:
+            comment_elements = soup.find_all(**selector)
+            if comment_elements:
+                logger.debug(f"  Removing {len(comment_elements)} comment elements matching {selector}")
+                removed_count += len(comment_elements)
+                for element in comment_elements:
+                    element.extract()
+        
+        # Remove navigation menus - these are not main content
+        nav_selectors = [
+            'nav',
+            {'role': 'navigation'},
+            {'class_': re.compile(r'navigation|menu|nav-', re.IGNORECASE)},
+            {'id': re.compile(r'navigation|menu|nav-', re.IGNORECASE)},
+        ]
+        
+        for selector in nav_selectors:
+            if isinstance(selector, str):
+                nav_elements = soup.find_all(selector)
+            else:
+                nav_elements = soup.find_all(**selector)
+            if nav_elements:
+                logger.debug(f"  Removing {len(nav_elements)} navigation elements matching {selector}")
+                removed_count += len(nav_elements)
+                for element in nav_elements:
+                    element.extract()
+        
+        # Remove sidebars and widgets - often contain non-essential content
+        sidebar_selectors = [
+            {'id': re.compile(r'sidebar|widget', re.IGNORECASE)},
+            {'class_': re.compile(r'sidebar|widget', re.IGNORECASE)},
+        ]
+        
+        for selector in sidebar_selectors:
+            sidebar_elements = soup.find_all(**selector)
+            if sidebar_elements:
+                logger.debug(f"  Removing {len(sidebar_elements)} sidebar/widget elements matching {selector}")
+                removed_count += len(sidebar_elements)
+                for element in sidebar_elements:
+                    element.extract()
+        
         logger.debug(f"Cleaned soup: removed {removed_count} elements (minimal cleaning mode)")
 
-    def _get_clean_text(self, element: Tag) -> str:
+    def _get_clean_text(self, element: Tag, include_links: bool = True, base_url: str = None) -> str:
         """
-        Gets clean text from a BeautifulSoup element.
+        Gets clean text from a BeautifulSoup element, optionally including URLs.
         
         :param element: The BeautifulSoup element to get text from.
+        :param include_links: If True, appends URLs after link text in format [text](url)
+        :param base_url: Base URL for converting relative URLs to absolute URLs
         :return: The clean text.
         """
         if not element:
             return ""
+        
+        if include_links:
+            # Create a deep copy to avoid modifying the original
+            from copy import deepcopy
+            element_copy = deepcopy(element)
             
-        # Get text with preserved whitespace
-        text = element.get_text(separator=" ", strip=True)
+            # Find all links and append their URLs to the text
+            for link in element_copy.find_all('a', href=True):
+                href = link.get('href', '')
+                # Skip anchor links and javascript links
+                if href and not href.startswith('#') and not href.startswith('javascript:'):
+                    # Convert relative URLs to absolute URLs if base_url is provided
+                    if base_url and not href.startswith(('http://', 'https://', 'mailto:')):
+                        href = urljoin(base_url, href)
+                    
+                    # Get the link text
+                    link_text = link.get_text(strip=True)
+                    if link_text:  # Only add URL if there's text
+                        # Create a new text node with the URL appended
+                        # Format: "text (URL: https://...)"
+                        new_text = f"{link_text} (URL: {href})"
+                        link.string = new_text
+            
+            # Get text with preserved whitespace
+            text = element_copy.get_text(separator=" ", strip=True)
+        else:
+            # Get text with preserved whitespace
+            text = element.get_text(separator=" ", strip=True)
         
         # Normalize whitespace
         text = re.sub(r'\s+', ' ', text)
@@ -334,10 +429,10 @@ class EnhancedWebsiteReader(WebsiteReader):
         # Get the parent with the most children
         if parent_counts:
             best_parent = max(parent_counts.items(), key=lambda x: x[1])[0]
-            return self._get_clean_text(best_parent)
+            return self._get_clean_text(best_parent, include_links=True, base_url=self._current_url)
             
         # If no good parent found, just concatenate the good paragraphs
-        return " ".join([self._get_clean_text(p) for p in good_paragraphs])
+        return " ".join([self._get_clean_text(p, include_links=True, base_url=self._current_url) for p in good_paragraphs])
 
     def _process_url(self, url_info: Tuple[str, int], primary_domain: str) -> Optional[Tuple[str, str, List[str]]]:
         """
@@ -427,6 +522,8 @@ class EnhancedWebsiteReader(WebsiteReader):
                     logger.warning(f"⚠️  This appears to be a JavaScript-heavy website ({total_script_length}/{len(response.text)} = {total_script_length/len(response.text)*100:.1f}% scripts)")
                     logger.warning(f"⚠️  Content may require browser rendering (Playwright/Selenium) for full extraction")
                 
+                # Set current URL for link resolution
+                self._current_url = current_url
                 content = self._extract_main_content(soup)
                 
                 # Log extracted content length for debugging
