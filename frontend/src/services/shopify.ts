@@ -66,6 +66,7 @@ export const getShopifyShops = async () => {
  * Save agent-to-Shopify configuration
  */
 export const saveAgentShopifyConfig = async (agentId: string, config: {
+  shop_id?: string;
   enabled: boolean;
 }) => {
   try {
@@ -87,5 +88,38 @@ export const getAgentShopifyConfig = async (agentId: string) => {
   } catch (error) {
     console.error('Error getting agent Shopify config:', error)
     return { enabled: false }
+  }
+}
+
+/**
+ * Enable Shopify for multiple agents
+ */
+export const enableShopifyForAgents = async (agentIds: string[], shopId: string) => {
+  try {
+    const savePromises = agentIds.map(agentId => 
+      saveAgentShopifyConfig(agentId, {
+        shop_id: shopId,
+        enabled: true
+      })
+    )
+    
+    await Promise.all(savePromises)
+    return { success: true, count: agentIds.length }
+  } catch (error) {
+    console.error('Error enabling Shopify for agents:', error)
+    throw error
+  }
+}
+
+/**
+ * Get shop information from backend during auth flow
+ */
+export const getShopAuthInfo = async (shopDomain: string, embedded: boolean = true) => {
+  try {
+    const response = await api.get(`/shopify/auth?shop=${encodeURIComponent(shopDomain)}&embedded=${embedded ? 1 : 0}`)
+    return response.data
+  } catch (error) {
+    console.error('Error getting shop auth info:', error)
+    throw error
   }
 } 

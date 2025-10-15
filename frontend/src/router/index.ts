@@ -32,6 +32,12 @@ const baseRoutes = [
     meta: { requiresAuth: false },
   },
   {
+    path: '/shopify/agent-selection',
+    name: 'shopify-agent-selection',
+    component: () => import('@/views/ShopifyAgentSelectionView.vue'),
+    meta: { requiresAuth: true },
+  },
+  {
     path: '/shopify/success',
     name: 'shopify-success',
     component: () => import('@/views/ShopifySuccessView.vue'),
@@ -263,9 +269,10 @@ router.beforeEach(async (to, from, next) => {
       // Redirect to login page
       return next('/login')
     } else {
+
       // User is authenticated, redirect to backend Shopify auth endpoint with embedded param
-      const apiUrl = `${import.meta.env.VITE_API_URL}/shopify/auth?shop=${encodeURIComponent(shopifyShop)}&embedded=1`
-      window.location.href = apiUrl
+      // const apiUrl = `${import.meta.env.VITE_API_URL}/shopify/auth?shop=${encodeURIComponent(shopifyShop)}&embedded=1`
+      // window.location.href = apiUrl
       // Return next() to prevent the Vue Router warning, even though we're redirecting
       return next()
     }

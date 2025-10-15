@@ -114,6 +114,14 @@ class ShopifyShopRepository:
         self.db.refresh(db_shop)
         return db_shop
     
+    def update(self, shop: ShopifyShop) -> ShopifyShop:
+        """
+        Update an existing shop object
+        """
+        self.db.commit()
+        self.db.refresh(shop)
+        return shop
+    
     def delete_shop(self, shop_id: str) -> bool:
         """
         Delete a shop

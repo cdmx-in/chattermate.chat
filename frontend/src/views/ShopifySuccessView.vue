@@ -2,19 +2,40 @@
   <div class="shopify-success-page">
     <div class="success-container">
       <div class="success-icon">✓</div>
-      <h1>Shopify Connection Successful</h1>
+      <h1>Shopify Integration Complete!</h1>
       <p>Your Shopify store <strong>{{ shopName }}</strong> has been successfully connected to ChatterMate.</p>
-      <p>You can now manage your AI agents and chat configurations from the ChatterMate dashboard.</p>
-      <button class="primary-button" @click="openDashboard">Open ChatterMate Dashboard</button>
+      
+      <div v-if="agentsConnected" class="connected-info">
+        <p class="highlight">
+          ✨ <strong>{{ agentsConnected }}</strong> AI agent{{ agentsConnected !== '1' ? 's' : '' }} 
+          {{ agentsConnected !== '1' ? 'are' : 'is' }} now connected and ready to assist your customers!
+        </p>
+      </div>
+
+      <div class="features-list">
+        <h3>Your AI agents can now:</h3>
+        <ul>
+          <li>🛍️ Search and display products from your store</li>
+          <li>📦 Check order status and tracking</li>
+          <li>💡 Recommend products to customers</li>
+          <li>❓ Answer product questions instantly</li>
+        </ul>
+      </div>
+
+      <div class="action-buttons">
+        <button class="primary-button" @click="openDashboard">Go to Dashboard</button>
+        <button class="secondary-button" @click="openShopify">Back to Shopify</button>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
+const router = useRouter()
 
 // Get shop name from URL query parameters
 const shopName = computed(() => {
@@ -22,15 +43,26 @@ const shopName = computed(() => {
   return shop ? shop.replace('.myshopify.com', '') : 'your store'
 })
 
-// Function to open the dashboard in a new tab
+// Get number of connected agents
+const agentsConnected = computed(() => route.query.agents_connected as string)
+
+// Function to open the dashboard
 const openDashboard = () => {
-  const dashboardUrl = `${window.location.origin}/ai-agents`
-  window.open(dashboardUrl, '_blank')
+  router.push({ name: 'ai-agents' })
+}
+
+// Function to return to Shopify
+const openShopify = () => {
+  const shop = route.query.shop as string
+  if (shop) {
+    window.location.href = `https://${shop}/admin/themes/current/editor?context=apps`
+  }
 }
 
 // For analytics or tracking
 onMounted(() => {
   console.log('Shopify connection success page loaded for shop:', shopName.value)
+  console.log('Agents connected:', agentsConnected.value)
 })
 </script>
 
@@ -71,13 +103,60 @@ h1 {
 }
 
 p {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   color: #4B5563;
 }
 
-.primary-button {
-  background-color: #F24611;
-  color: white;
+.connected-info {
+  background-color: #ECFDF5;
+  border: 1px solid #10B981;
+  border-radius: 8px;
+  padding: 16px;
+  margin: 24px 0;
+}
+
+.highlight {
+  color: #047857;
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.features-list {
+  text-align: left;
+  margin: 32px 0;
+  padding: 20px;
+  background-color: #F9FAFB;
+  border-radius: 8px;
+}
+
+.features-list h3 {
+  color: #111827;
+  margin-top: 0;
+  margin-bottom: 16px;
+  font-size: 1.1rem;
+}
+
+.features-list ul {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+}
+
+.features-list li {
+  padding: 8px 0;
+  color: #4B5563;
+  font-size: 0.95rem;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.primary-button,
+.secondary-button {
   border: none;
   padding: 12px 24px;
   border-radius: 6px;
@@ -85,10 +164,28 @@ p {
   cursor: pointer;
   text-decoration: none;
   display: inline-block;
-  transition: background-color 0.2s;
+  transition: all 0.2s;
+  font-size: 1rem;
+}
+
+.primary-button {
+  background-color: #F24611;
+  color: white;
 }
 
 .primary-button:hover {
   background-color: #D93B0A;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(242, 70, 17, 0.2);
+}
+
+.secondary-button {
+  background-color: #F3F4F6;
+  color: #374151;
+  border: 1px solid #D1D5DB;
+}
+
+.secondary-button:hover {
+  background-color: #E5E7EB;
 }
 </style> 

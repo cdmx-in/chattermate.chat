@@ -96,4 +96,10 @@ class AgentShopifyConfigRepository:
         
         self.db.delete(db_config)
         self.db.commit()
-        return True 
+        return True
+    
+    def update(self, config: AgentShopifyConfig) -> AgentShopifyConfig:
+        """Update an existing Shopify configuration object."""
+        self.db.commit()
+        self.db.refresh(config)
+        return config 
