@@ -388,6 +388,25 @@ def list_widgets(
     return widget_repo.get_widgets(current_user.organization_id)
 
 
+@router.get("/agent/{agent_id}", response_model=List[WidgetResponse])
+def get_widgets_by_agent(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """Get all widgets for a specific agent"""
+    widget_repo = WidgetRepository(db)
+    widgets = widget_repo.get_widgets_by_agent(agent_id)
+    
+    # Verify the agent belongs to the user's organization
+    agent_repo = AgentRepository(db)
+    agent = agent_repo.get_by_id(agent_id)
+    if not agent or str(agent.organization_id) != str(current_user.organization_id):
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    return widgets
+
+
 @router.delete("/{widget_id}")
 def remove_widget(
     widget_id: str,

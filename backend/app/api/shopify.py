@@ -34,7 +34,7 @@ import hashlib
 import base64
 import json
 from urllib.parse import urlencode, quote
-from app.core.auth import get_current_user, require_permissions, get_current_organization
+from app.core.auth import get_current_user, require_permissions, get_current_organization, check_permissions
 from app.models.user import User
 from app.models.organization import Organization
 from app.repositories.widget import WidgetRepository
@@ -108,14 +108,37 @@ async def shopify_auth(
     shop: str = Query(..., description="Shopify shop domain"),
     hmac: Optional[str] = Query(None, description="HMAC signature for validation"),
     embedded: Optional[str] = Query(None, description="Whether this is an embedded app request"),
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("manage_organization"))
+    db: Session = Depends(get_db)
 ):
     """
     Initiates the Shopify OAuth process by redirecting to the Shopify authorization URL.
     If the shop is already installed, validates the token before proceeding.
     """
     logger.info(f"Shopify auth request received for shop: {shop}, embedded: {embedded}")
+    
+    # Check if user is authenticated
+    try:
+        current_user = await get_current_user(request=request, db=db)
+        if not check_permissions(current_user, ["manage_organization"]):
+            raise HTTPException(status_code=403, detail="Not enough permissions")
+    except HTTPException as e:
+        # User is not authenticated or doesn't have permission
+        # Redirect to login page with return URL
+        logger.info(f"User not authenticated, redirecting to login")
+        
+        # Build the return URL to come back to this endpoint after login
+        return_url = f"/shopify/auth?shop={shop}"
+        if hmac:
+            return_url += f"&hmac={hmac}"
+        if embedded:
+            return_url += f"&embedded={embedded}"
+        
+        login_url = f"{settings.FRONTEND_URL}/login?redirect={quote(return_url)}"
+        return RedirectResponse(login_url)
+    except Exception as e:
+        logger.error(f"Unexpected error checking authentication: {str(e)}")
+        login_url = f"{settings.FRONTEND_URL}/login"
+        return RedirectResponse(login_url)
 
     shop_repository = ShopifyShopRepository(db)
     db_shop = shop_repository.get_shop_by_domain(shop)

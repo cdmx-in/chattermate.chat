@@ -237,8 +237,11 @@ class ShopifyTools(Toolkit):
             }
             """
             
+            # Add status:active filter to only return active products (exclude archived and draft)
+            filtered_query = f"({query}) AND status:active"
+            
             variables = {
-                "searchTerm": query,
+                "searchTerm": filtered_query,
                 "limit": limit,
                 "cursor": cursor if cursor else None # Pass None instead of empty string
             }
@@ -829,9 +832,10 @@ class ShopifyTools(Toolkit):
                 logger.info("No specific criteria for recommendations, fetching recent products.")
                 
                 # Use GraphQL to get recent products with pagination
+                # Filter to only return active products (exclude archived and draft)
                 graphql_query = """
                 query GetProducts($limit: Int!, $cursor: String) {
-                  products(first: $limit, sortKey: CREATED_AT, reverse: true, after: $cursor) {
+                  products(first: $limit, query: "status:active", sortKey: CREATED_AT, reverse: true, after: $cursor) {
                     edges {
                       node {
                         id
@@ -881,7 +885,8 @@ class ShopifyTools(Toolkit):
                 search_type = "recent products"
             else:
                 # Construct final query: Join parts with OR for broader recommendations
-                search_query = " OR ".join(search_query_parts)
+                # Add status:active filter to only return active products (exclude archived and draft)
+                search_query = f"({' OR '.join(search_query_parts)}) AND status:active"
                 logger.info(f"Constructed recommendation search query: {search_query}")
                 
                 # Use GraphQL to search products with pagination

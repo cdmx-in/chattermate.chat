@@ -60,6 +60,11 @@ async def get_current_user(
 ) -> User:
     """Get current user from access token cookie"""
     try:
+        # Manually extract cookie from request if access_token is not a string
+        if access_token is None or not isinstance(access_token, str):
+            # Try to get from cookies directly
+            access_token = request.cookies.get('access_token')
+        
         if not access_token:
             # Try getting token from Authorization header as fallback
             auth_header = request.headers.get('Authorization')

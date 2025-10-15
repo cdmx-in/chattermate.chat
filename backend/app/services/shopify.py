@@ -182,7 +182,7 @@ class ShopifyService:
         """
         query = """
         query GetProducts($limit: Int!) {
-          products(first: $limit) {
+          products(first: $limit, query: "status:active") {
             edges {
               node {
                 id
@@ -645,8 +645,11 @@ class ShopifyService:
         }
         """
         
+        # Add status:active filter to only return active products (exclude archived and draft)
+        filtered_query = f"({query}) AND status:active"
+        
         variables = {
-            "query": query,
+            "query": filtered_query,
             "limit": limit
         }
         
