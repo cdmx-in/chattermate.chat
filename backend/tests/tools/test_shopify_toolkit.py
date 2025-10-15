@@ -105,7 +105,8 @@ def mock_shopify_service():
             "fulfillments": [
                 {
                     "tracking_number": "12345",
-                    "tracking_company": "USPS"
+                    "tracking_company": "USPS",
+                    "status": "SUCCESS"
                 }
             ]
         }
@@ -236,8 +237,11 @@ def test_search_products(shopify_tools):
         assert "pageInfo" in result["shopify_output"]
 
 def test_get_order_status(shopify_tools, mock_shopify_service):
+    # Use a Shopify GID format to avoid triggering the order number search
+    order_id = "gid://shopify/Order/987654321"
+    
     # Act
-    result_str = shopify_tools.get_order_status(order_id="987654321")
+    result_str = shopify_tools.get_order_status(order_id=order_id)
     result = json.loads(result_str)
     
     # Assert
@@ -247,6 +251,8 @@ def test_get_order_status(shopify_tools, mock_shopify_service):
     assert result["fulfillment_status"] == "fulfilled"
     assert "tracking_numbers" in result
     assert result["tracking_numbers"][0] == "12345"
+    assert "shop_domain" in result
+    assert result["shop_domain"] == "test-shop.myshopify.com"
     mock_shopify_service.get_order.assert_called_once()
 
 def test_search_orders(shopify_tools):
