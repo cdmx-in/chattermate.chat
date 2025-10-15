@@ -63,9 +63,14 @@ async def get_current_user(
         # Manually extract cookie from request if access_token is not a string
         if access_token is None or not isinstance(access_token, str):
             # Try to get from cookies directly
-            access_token = request.cookies.get('access_token')
+            cookie_token = request.cookies.get('access_token')
+            # Ensure we got a valid string, not a mock or None
+            if cookie_token and isinstance(cookie_token, str):
+                access_token = cookie_token
+            else:
+                access_token = None
         
-        if not access_token:
+        if not access_token or not isinstance(access_token, str):
             # Try getting token from Authorization header as fallback
             auth_header = request.headers.get('Authorization')
             if auth_header and auth_header.startswith('Bearer '):
