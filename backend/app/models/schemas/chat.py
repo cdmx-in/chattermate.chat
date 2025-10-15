@@ -98,6 +98,7 @@ class ShopifyOutputData(BaseModel):
     search_type: Optional[str] = Field(default=None)
     total_count: Optional[int] = Field(default=None)
     has_more: Optional[bool] = Field(default=None)
+    shop_domain: Optional[str] = Field(default=None, description="Shopify shop domain for constructing product URLs")
 
     class Config:
         json_encoders = {

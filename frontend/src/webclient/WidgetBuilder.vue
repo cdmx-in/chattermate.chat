@@ -842,12 +842,37 @@ const submitFullScreenForm = async () => {
     }
 }
 
-const handleViewDetails = (productId) => {
-    if (productId) {
-        window.parent.postMessage({
-            type: 'VIEW_PRODUCT',
-            productId: productId
-        }, '*');
+const handleViewDetails = (product, shopDomain) => {
+    console.log('handleViewDetails called with:', { product, shopDomain });
+    
+    if (!product) {
+        console.error('No product provided to handleViewDetails');
+        return;
+    }
+    
+    // Try to construct the product URL
+    let productUrl = null;
+    
+    // If product has a handle, construct the URL
+    if (product.handle && shopDomain) {
+        productUrl = `https://${shopDomain}/products/${product.handle}`;
+    } else if (product.id && shopDomain) {
+        // Fallback: use product ID
+        productUrl = `https://${shopDomain}/products/${product.id}`;
+    } else if (!shopDomain) {
+        console.error('Shop domain is missing! Product:', product);
+        alert('Unable to open product: Shop domain not available. Please contact support.');
+        return;
+    } else if (!product.handle && !product.id) {
+        console.error('Product handle and ID are both missing! Product:', product);
+        alert('Unable to open product: Product information incomplete.');
+        return;
+    }
+    
+    // Open the product URL in new tab
+    if (productUrl) {
+        console.log('Opening product URL:', productUrl);
+        window.open(productUrl, '_blank');
     }
 };
 
@@ -1765,7 +1790,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                                     <div class="product-actions-compact">
                                                         <button 
                                                             class="view-details-button-compact"
-                                                            @click="handleViewDetails(product.id)"
+                                                            @click="handleViewDetails(product, message.shopify_output?.shop_domain)"
                                                         >
                                                             View product <span class="external-link-icon">↗</span>
                                                         </button>

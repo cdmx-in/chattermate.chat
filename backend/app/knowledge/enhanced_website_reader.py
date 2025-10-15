@@ -79,6 +79,27 @@ class EnhancedWebsiteReader(WebsiteReader):
     _failed_crawls: int = 0
     _current_url: str = None  # Track current URL being processed for link resolution
     
+    def _normalize_url(self, url: str) -> str:
+        """
+        Normalize URL by ensuring it has a proper protocol (http:// or https://).
+        If no protocol is present, https:// is added by default.
+        
+        :param url: The URL to normalize.
+        :return: The normalized URL with protocol.
+        """
+        if not url:
+            return url
+        
+        url = url.strip()
+        
+        # Check if URL already has a protocol
+        if url.startswith(('http://', 'https://')):
+            return url
+        
+        # Add https:// by default if no protocol is present
+        logger.debug(f"URL '{url}' is missing protocol, adding 'https://'")
+        return f"https://{url}"
+    
     def _get_primary_domain(self, url: str) -> str:
         """
         Extract primary domain from the given URL.
@@ -87,6 +108,9 @@ class EnhancedWebsiteReader(WebsiteReader):
         :param url: The URL to extract the primary domain from.
         :return: The primary domain.
         """
+        # Normalize URL first to ensure it has a protocol
+        url = self._normalize_url(url)
+        
         # Parse the URL to get the netloc
         parsed_url = urlparse(url)
         netloc = parsed_url.netloc
@@ -445,6 +469,9 @@ class EnhancedWebsiteReader(WebsiteReader):
         """
         current_url, current_depth = url_info
         
+        # Normalize URL to ensure it has a protocol
+        current_url = self._normalize_url(current_url)
+        
         # Skip if URL meets any skip conditions
         if current_url in self._visited:
             return None
@@ -607,6 +634,9 @@ class EnhancedWebsiteReader(WebsiteReader):
         :param on_url_crawled_callback: Callback function that receives (url) when a page is successfully crawled
         :return: Dictionary of URLs and their corresponding content.
         """
+        # Normalize URL to ensure it has a protocol
+        url = self._normalize_url(url)
+        
         # Reset visited and urls_to_crawl for fresh crawl
         self._visited = set()
         self._urls_to_crawl = []
@@ -792,6 +822,9 @@ class EnhancedWebsiteReader(WebsiteReader):
         :param url_crawled_callback: Optional callback called when each URL is successfully crawled
         :return: A list of Document objects.
         """
+        # Normalize URL to ensure it has a protocol
+        url = self._normalize_url(url)
+        
         # Get timestamp for tracking
         start_time = time.time()
         logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Starting to read from {url} with parallel processing")
