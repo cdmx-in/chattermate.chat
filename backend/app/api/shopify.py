@@ -107,18 +107,31 @@ async def shopify_auth(
     request: Request,
     shop: str = Query(..., description="Shopify shop domain"),
     hmac: Optional[str] = Query(None, description="HMAC signature for validation"),
+    embedded: Optional[str] = Query(None, description="Whether this is an embedded app request"),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("manage_integrations"))
+    current_user: User = Depends(require_permissions("manage_organization"))
 ):
     """
     Initiates the Shopify OAuth process by redirecting to the Shopify authorization URL.
     If the shop is already installed, validates the token before proceeding.
     """
-    logger.info(f"Shopify auth request received for shop: {shop}")
+    logger.info(f"Shopify auth request received for shop: {shop}, embedded: {embedded}")
 
     shop_repository = ShopifyShopRepository(db)
     db_shop = shop_repository.get_shop_by_domain(shop)
 
+    # If shop is already installed and this is an embedded request, just return success
+    # to avoid redirect loops in Shopify's embedded app context
+    if db_shop and db_shop.access_token and db_shop.is_installed and embedded == "1":
+        logger.info(f"Shop {shop} already installed, returning success status for embedded app")
+        return {
+            "status": "already_installed",
+            "shop": shop,
+            "shop_id": str(db_shop.id),
+            "message": "Shop is already connected. You can manage your agents from the dashboard."
+        }
+
+    # For non-embedded requests or new installations, verify token if shop exists
     if db_shop and db_shop.access_token and db_shop.is_installed:
         logger.info(f"Shop {shop} found and marked as installed. Verifying token...")
         shopify_service = ShopifyService(db)
@@ -216,7 +229,7 @@ async def shopify_callback(
                 is_installed=True,
                 organization_id=org_id_str
             )
-            shop_repository.update_shop(db_shop.id, shop_update)
+            db_shop = shop_repository.update_shop(db_shop.id, shop_update)
         else:
             # Create new shop
             shop_data = ShopifyShopCreate(
@@ -226,10 +239,11 @@ async def shopify_callback(
                 is_installed=True,
                 organization_id=org_id_str
             )
-            shop_repository.create_shop(shop_data)
+            db_shop = shop_repository.create_shop(shop_data)
         
-        # Redirect to the app or admin section
-        redirect_url = f"https://{shop}/admin/themes/current/editor?context=apps"
+        # Redirect to frontend agent selection page
+        frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
+        redirect_url = f"{frontend_url}/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}"
         return RedirectResponse(redirect_url)
     
     except Exception as e:
@@ -543,3 +557,104 @@ async def save_agent_shopify_config(
     except Exception as e:
         logger.error(f"Failed to save agent Shopify config to DB: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to save Shopify configuration to database.")
+
+@router.post("/webhooks/app-uninstalled")
+async def shopify_app_uninstalled_webhook(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    Webhook handler for Shopify app uninstallation.
+    This endpoint is called by Shopify when a merchant uninstalls the app.
+    
+    It performs the following cleanup:
+    1. Marks the shop as uninstalled (is_installed = False)
+    2. Disables all agent Shopify configs for this shop
+    3. Optionally: Can clear access tokens for security
+    
+    Documentation: https://shopify.dev/docs/apps/build/webhooks/subscribe/get-started
+    """
+    try:
+        # Get the request body and headers
+        request_body = await request.body()
+        request_headers = request.headers
+        
+        # Verify the webhook signature
+        if not verify_shopify_webhook(request_headers, request_body):
+            logger.warning("Invalid webhook signature for app/uninstalled")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        # Parse the webhook payload
+        try:
+            payload = json.loads(request_body.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse webhook payload: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+        # Extract shop domain from payload
+        # Shopify sends the shop domain in the payload
+        shop_domain = payload.get('domain') or payload.get('myshopify_domain')
+        
+        if not shop_domain:
+            logger.error(f"No shop domain in webhook payload: {payload}")
+            raise HTTPException(status_code=400, detail="Missing shop domain in payload")
+        
+        logger.info(f"Processing app uninstall webhook for shop: {shop_domain}")
+        
+        # Initialize repositories
+        shop_repo = ShopifyShopRepository(db)
+        config_repo = AgentShopifyConfigRepository(db)
+        
+        # Find the shop in our database
+        db_shop = shop_repo.get_shop_by_domain(shop_domain)
+        
+        if not db_shop:
+            logger.warning(f"Shop not found in database: {shop_domain}")
+            # Return 200 anyway to acknowledge receipt
+            return {"success": True, "message": "Shop not found, no action needed"}
+        
+        logger.info(f"Found shop in database: {db_shop.id}")
+        
+        # Update shop status to uninstalled
+        db_shop.is_installed = False
+        
+        # Optional: Clear access token for security
+        # Uncomment if you want to remove the token completely
+        # db_shop.access_token = None
+        
+        shop_repo.update(db_shop)
+        logger.info(f"Marked shop {shop_domain} as uninstalled")
+        
+        # Disable all agent configurations for this shop
+        # This prevents agents from trying to use Shopify tools for this shop
+        configs = config_repo.get_configs_by_shop(str(db_shop.id))
+        disabled_count = 0
+        
+        for config in configs:
+            if config.enabled:
+                config.enabled = False
+                config_repo.update(config)
+                disabled_count += 1
+                logger.info(f"Disabled Shopify config for agent {config.agent_id}")
+        
+        logger.info(f"Successfully processed uninstall for {shop_domain}. Disabled {disabled_count} agent config(s)")
+        
+        # Return 200 OK to acknowledge receipt
+        return {
+            "success": True,
+            "message": f"App uninstalled successfully for {shop_domain}",
+            "shop_id": str(db_shop.id),
+            "configs_disabled": disabled_count
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing app uninstall webhook: {str(e)}")
+        logger.error(traceback.format_exc())
+        # Return 200 to prevent Shopify from retrying
+        # Log the error for investigation
+        return {
+            "success": False,
+            "message": f"Error processing webhook: {str(e)}"
+        }
