@@ -92,6 +92,36 @@ const handleLogin = async () => {
 
         await authService.login(email.value, password.value)
        
+        // Check if there's a Shopify redirect pending in localStorage
+        const shopifyRedirectData = localStorage.getItem('shopifyRedirect')
+        if (shopifyRedirectData) {
+            try {
+                const redirectInfo = JSON.parse(shopifyRedirectData)
+                // Clear the stored redirect
+                localStorage.removeItem('shopifyRedirect')
+                
+                // Build the full URL with all query parameters
+                const queryParams = new URLSearchParams()
+                for (const [key, value] of Object.entries(redirectInfo)) {
+                    queryParams.append(key, value as string)
+                }
+                
+                // Redirect to the backend Shopify auth endpoint
+                window.location.href = `${import.meta.env.VITE_API_URL}/shopify/auth?${queryParams.toString()}`
+                return // Don't do the normal navigation
+            } catch (e) {
+                console.error('Failed to parse shopifyRedirect data:', e)
+                // Clear invalid data
+                localStorage.removeItem('shopifyRedirect')
+            }
+        }
+
+        // Check for redirect query parameter
+        const redirectUrl = router.currentRoute.value.query.redirect as string
+        if (redirectUrl) {
+            window.location.href = `${import.meta.env.VITE_API_URL}${redirectUrl}`
+            return
+        }
 
         // Determine initial route based on permissions
         const initialRoute = getInitialRoute()

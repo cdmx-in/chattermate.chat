@@ -46,12 +46,33 @@ logger = get_logger(__name__)
 
 # Add a function to remove URLs from message content
 def remove_urls_from_message(message: str) -> str:
-    """Remove URLs from message text"""
+    """Remove URLs from message text, but preserve markdown image URLs"""
     if not message:
         return message
-    # Replace URLs with [link removed] to maintain context
+    
+    # Don't remove URLs from markdown images: ![alt](url)
+    # We'll replace other URLs but skip those in image markdown
+    
+    # Pattern to match markdown images: ![...](url)
+    image_pattern = r'!\[[^\]]*\]\(([^)]+)\)'
+    
+    # Find all markdown images and temporarily replace them with placeholders
+    images = []
+    def save_image(match):
+        images.append(match.group(0))
+        return f'__IMAGE_PLACEHOLDER_{len(images)-1}__'
+    
+    message = re.sub(image_pattern, save_image, message)
+    
+    # Now remove other URLs
     url_pattern = r'https?://[^\s\)\]"]+'
-    return re.sub(url_pattern, '[link removed]', message)
+    message = re.sub(url_pattern, '[link removed]', message)
+    
+    # Restore markdown images
+    for i, image in enumerate(images):
+        message = message.replace(f'__IMAGE_PLACEHOLDER_{i}__', image)
+    
+    return message
 
 class ChatAgent(ChatAgentMCPMixin):
     def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None, source: str = None):

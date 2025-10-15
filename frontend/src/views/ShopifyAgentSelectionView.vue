@@ -23,10 +23,8 @@
       <!-- Agent Selection -->
       <div v-else-if="agents.length > 0" class="agent-selection">
         <div class="selection-header">
-          <h2>Select AI Agents</h2>
-          <button @click="toggleSelectAll" class="btn-text">
-            {{ allSelected ? 'Deselect All' : 'Select All' }}
-          </button>
+          <h2>Select AI Agent</h2>
+          <p class="selection-subtitle">Choose one agent to connect with your Shopify store</p>
         </div>
 
         <div class="agent-list">
@@ -34,14 +32,16 @@
             v-for="agent in agents"
             :key="agent.id"
             class="agent-item"
-            :class="{ selected: selectedAgents.includes(agent.id) }"
+            :class="{ selected: selectedAgent === agent.id }"
           >
             <label class="agent-item-label">
-              <div class="agent-checkbox">
+              <div class="agent-radio">
                 <input
-                  type="checkbox"
-                  :checked="selectedAgents.includes(agent.id)"
-                  @change="toggleAgent(agent.id)"
+                  type="radio"
+                  name="agent-selection"
+                  :value="agent.id"
+                  :checked="selectedAgent === agent.id"
+                  @change="selectAgent(agent.id)"
                 />
               </div>
               <div class="agent-info">
@@ -54,6 +54,16 @@
                 </div>
               </div>
             </label>
+          </div>
+        </div>
+
+        <!-- Widget ID Display -->
+        <div v-if="widgetId" class="widget-info">
+          <div class="info-icon">📋</div>
+          <div class="widget-content">
+            <strong>Widget ID:</strong>
+            <code class="widget-id">{{ widgetId }}</code>
+            <p class="widget-hint">This widget ID will be used for your Shopify integration</p>
           </div>
         </div>
 
@@ -83,13 +93,11 @@
           <button
             @click="saveConfiguration"
             class="btn-primary"
-            :disabled="selectedAgents.length === 0 || saving"
+            :disabled="!selectedAgent || saving"
           >
             <div v-if="saving" class="btn-spinner"></div>
             <span v-if="saving">Connecting...</span>
-            <span v-else>
-              Connect {{ selectedAgents.length }} Agent{{ selectedAgents.length !== 1 ? 's' : '' }}
-            </span>
+            <span v-else>Connect Agent</span>
           </button>
         </div>
       </div>
@@ -111,22 +119,20 @@ import { useRouter, useRoute } from 'vue-router'
 import { agentService } from '@/services/agent'
 import { enableShopifyForAgents, getShopAuthInfo } from '@/services/shopify'
 import type { Agent } from '@/types/agent'
+import api from '@/services/api'
 
 const router = useRouter()
 const route = useRoute()
 
 const agents = ref<Agent[]>([])
-const selectedAgents = ref<string[]>([])
+const selectedAgent = ref<string | null>(null)
+const widgetId = ref<string | null>(null)
 const loading = ref(true)
 const saving = ref(false)
 const error = ref<string | null>(null)
 
 const shopDomain = computed(() => route.query.shop as string)
 const shopId = computed(() => route.query.shop_id as string)
-
-const allSelected = computed(() => 
-  agents.value.length > 0 && selectedAgents.value.length === agents.value.length
-)
 
 // Load agents from API
 const loadAgents = async () => {
@@ -141,8 +147,11 @@ const loadAgents = async () => {
       return
     }
     
-    // Auto-select all agents by default for better UX
-    selectedAgents.value = agents.value.map(a => a.id)
+    // Auto-select the first agent by default
+    if (agents.value.length > 0) {
+      selectedAgent.value = agents.value[0].id
+      await loadWidgetForAgent(agents.value[0].id)
+    }
     
   } catch (err: any) {
     console.error('Failed to load agents:', err)
@@ -152,42 +161,49 @@ const loadAgents = async () => {
   }
 }
 
-// Toggle agent selection
-const toggleAgent = (agentId: string) => {
-  const index = selectedAgents.value.indexOf(agentId)
-  if (index > -1) {
-    selectedAgents.value.splice(index, 1)
-  } else {
-    selectedAgents.value.push(agentId)
+// Load widget for selected agent
+const loadWidgetForAgent = async (agentId: string) => {
+  try {
+    const response = await api.get(`/widgets/agent/${agentId}`)
+    const widgets = response.data
+    
+    if (widgets && widgets.length > 0) {
+      widgetId.value = widgets[0].id
+      console.log('Widget ID loaded:', widgetId.value)
+    } else {
+      widgetId.value = null
+      console.log('No widget found for agent:', agentId)
+    }
+  } catch (err: any) {
+    console.error('Failed to load widget:', err)
+    widgetId.value = null
   }
 }
 
-// Toggle select all
-const toggleSelectAll = () => {
-  if (allSelected.value) {
-    selectedAgents.value = []
-  } else {
-    selectedAgents.value = agents.value.map(a => a.id)
-  }
+// Select agent (radio button behavior)
+const selectAgent = async (agentId: string) => {
+  selectedAgent.value = agentId
+  await loadWidgetForAgent(agentId)
 }
 
 // Save configuration
 const saveConfiguration = async () => {
-  if (selectedAgents.value.length === 0) return
+  if (!selectedAgent.value) return
   
   saving.value = true
   error.value = null
   
   try {
-    // Enable Shopify for each selected agent
-    await enableShopifyForAgents(selectedAgents.value, shopId.value)
+    // Enable Shopify for the selected agent
+    await enableShopifyForAgents([selectedAgent.value], shopId.value)
     
-    // Show success message and redirect
+    // Show success message and redirect with widget ID
     router.push({
       name: 'shopify-success',
       query: {
         shop: shopDomain.value,
-        agents_connected: selectedAgents.value.length.toString()
+        agents_connected: '1',
+        widget_id: widgetId.value || ''
       }
     })
     
@@ -361,16 +377,20 @@ onMounted(async () => {
 
 /* Agent Selection */
 .selection-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   margin-bottom: var(--space-lg);
+  text-align: center;
 }
 
 .selection-header h2 {
   font-size: var(--text-xl);
   font-weight: 600;
   color: var(--text-primary);
+  margin: 0 0 var(--space-xs);
+}
+
+.selection-subtitle {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
   margin: 0;
 }
 
@@ -411,12 +431,12 @@ onMounted(async () => {
   border-left: 3px solid var(--primary-color);
 }
 
-.agent-checkbox {
+.agent-radio {
   margin-right: var(--space-md);
   padding-top: 2px;
 }
 
-.agent-checkbox input[type="checkbox"] {
+.agent-radio input[type="radio"] {
   width: 20px;
   height: 20px;
   cursor: pointer;
@@ -461,6 +481,49 @@ onMounted(async () => {
 .badge.active {
   background: rgba(16, 185, 129, 0.1);
   color: var(--success-color);
+}
+
+/* Widget Info */
+.widget-info {
+  display: flex;
+  gap: var(--space-sm);
+  padding: var(--space-md);
+  background: linear-gradient(135deg, rgba(149, 191, 71, 0.08) 0%, rgba(149, 191, 71, 0.03) 100%);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-lg);
+  border: 1px solid rgba(149, 191, 71, 0.2);
+}
+
+.widget-content {
+  flex: 1;
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.widget-content strong {
+  display: block;
+  color: var(--text-primary);
+  margin-bottom: var(--space-xs);
+  font-weight: 600;
+}
+
+.widget-id {
+  display: inline-block;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--background-mute);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-family: 'Monaco', 'Courier New', monospace;
+  font-size: var(--text-xs);
+  color: var(--primary-color);
+  margin: var(--space-xs) 0;
+  user-select: all;
+}
+
+.widget-hint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  margin: var(--space-xs) 0 0;
 }
 
 /* Info Box */
