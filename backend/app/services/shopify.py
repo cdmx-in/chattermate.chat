@@ -36,7 +36,7 @@ class ShopifyService:
         self.db = db
         self.shopify_shop_repository = ShopifyShopRepository(db)
         self.agent_shopify_config_repository = AgentShopifyConfigRepository(db)
-        self.api_version = "2025-07"
+        self.api_version = "2025-10"
 
     def _execute_graphql(self, shop: ShopifyShop, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -459,7 +459,7 @@ class ShopifyService:
                     "message": "Shop not connected or missing access token"
                 }
 
-            url = f"https://{shop.shop_domain}/admin/api/2025-04/products.json"
+            url = f"https://{shop.shop_domain}/admin/api/2025-10/products.json"
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -511,7 +511,7 @@ class ShopifyService:
                     "message": "Shop not connected or missing access token"
                 }
 
-            url = f"https://{shop.shop_domain}/admin/api/2025-04/products/{product_id}.json"
+            url = f"https://{shop.shop_domain}/admin/api/2025-10/products/{product_id}.json"
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -562,7 +562,7 @@ class ShopifyService:
                     "message": "Shop not connected or missing access token"
                 }
 
-            url = f"https://{shop.shop_domain}/admin/api/2025-04/products/{product_id}.json"
+            url = f"https://{shop.shop_domain}/admin/api/2025-10/products/{product_id}.json"
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -755,13 +755,17 @@ class ShopifyService:
                   email
                   phone
                 }
-                currentTotalPrice {
-                  amount
-                  currencyCode
+                currentTotalPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
                 }
-                originalTotalPrice {
-                  amount
-                  currencyCode
+                originalTotalPriceSet {
+                  shopMoney {
+                    amount
+                    currencyCode
+                  }
                 }
                 shippingAddress {
                   address1
@@ -785,9 +789,11 @@ class ShopifyService:
                       id
                       name
                       quantity
-                      originalTotalPrice {
-                        amount
-                        currencyCode
+                      originalUnitPriceSet {
+                        shopMoney {
+                          amount
+                          currencyCode
+                        }
                       }
                       variant {
                         id
@@ -834,8 +840,8 @@ class ShopifyService:
                     "id": li_node.get("id").split("/")[-1] if li_node.get("id") else None,
                     "name": li_node.get("name"),
                     "quantity": li_node.get("quantity"),
-                    "price": li_node.get("originalTotalPrice", {}).get("amount"),
-                    "currency": li_node.get("originalTotalPrice", {}).get("currencyCode"),
+                    "price": li_node.get("originalUnitPriceSet", {}).get("shopMoney", {}).get("amount"),
+                    "currency": li_node.get("originalUnitPriceSet", {}).get("shopMoney", {}).get("currencyCode"),
                     "variant_id": variant.get("id").split("/")[-1] if variant.get("id") else None,
                     "variant_title": variant.get("title"),
                     "sku": variant.get("sku")
@@ -887,9 +893,9 @@ class ShopifyService:
                 "financial_status": node.get("displayFinancialStatus"),
                 "fulfillment_status": node.get("displayFulfillmentStatus"),
                 "customer": customer_data,
-                "total_price": node.get("currentTotalPrice", {}).get("amount"),
-                "currency": node.get("currentTotalPrice", {}).get("currencyCode"),
-                "original_total_price": node.get("originalTotalPrice", {}).get("amount"),
+            "total_price": node.get("currentTotalPriceSet", {}).get("shopMoney", {}).get("amount"),
+            "currency": node.get("currentTotalPriceSet", {}).get("shopMoney", {}).get("currencyCode"),
+            "original_total_price": node.get("originalTotalPriceSet", {}).get("shopMoney", {}).get("amount"),
                 "shipping_address": shipping_address,
                 "fulfillments": fulfillments,
                 "line_items": line_items
@@ -943,13 +949,17 @@ class ShopifyService:
               email
               phone
             }
-            currentTotalPrice {
-              amount
-              currencyCode
+            currentTotalPriceSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
             }
-            originalTotalPrice {
-              amount
-              currencyCode
+            originalTotalPriceSet {
+              shopMoney {
+                amount
+                currencyCode
+              }
             }
             shippingAddress {
               address1
@@ -973,9 +983,11 @@ class ShopifyService:
                   id
                   name
                   quantity
-                  originalTotalPrice {
-                    amount
-                    currencyCode
+                  originalUnitPriceSet {
+                    shopMoney {
+                      amount
+                      currencyCode
+                    }
                   }
                   variant {
                     id
@@ -1016,8 +1028,8 @@ class ShopifyService:
                 "id": li_node.get("id").split("/")[-1] if li_node.get("id") else None,
                 "name": li_node.get("name"),
                 "quantity": li_node.get("quantity"),
-                "price": li_node.get("originalTotalPrice", {}).get("amount"),
-                "currency": li_node.get("originalTotalPrice", {}).get("currencyCode"),
+                "price": li_node.get("originalUnitPriceSet", {}).get("shopMoney", {}).get("amount"),
+                "currency": li_node.get("originalUnitPriceSet", {}).get("shopMoney", {}).get("currencyCode"),
                 "variant_id": variant.get("id").split("/")[-1] if variant.get("id") else None,
                 "variant_title": variant.get("title"),
                 "sku": variant.get("sku")
@@ -1066,9 +1078,9 @@ class ShopifyService:
             "financial_status": order_data.get("displayFinancialStatus"),
             "fulfillment_status": order_data.get("displayFulfillmentStatus"),
             "customer": customer_data,
-            "total_price": order_data.get("currentTotalPrice", {}).get("amount"),
-            "currency": order_data.get("currentTotalPrice", {}).get("currencyCode"),
-            "original_total_price": order_data.get("originalTotalPrice", {}).get("amount"),
+            "total_price": order_data.get("currentTotalPriceSet", {}).get("shopMoney", {}).get("amount"),
+            "currency": order_data.get("currentTotalPriceSet", {}).get("shopMoney", {}).get("currencyCode"),
+            "original_total_price": order_data.get("originalTotalPriceSet", {}).get("shopMoney", {}).get("amount"),
             "shipping_address": order_data.get("shippingAddress", {}),
             "fulfillments": fulfillments,
             "line_items": line_items

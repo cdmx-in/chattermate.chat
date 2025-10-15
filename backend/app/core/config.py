@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     # Shopify
     SHOPIFY_API_KEY: str = os.getenv("SHOPIFY_API_KEY", "")
     SHOPIFY_API_SECRET: str = os.getenv("SHOPIFY_API_SECRET", "")
-    SHOPIFY_API_VERSION: str = os.getenv("SHOPIFY_API_VERSION", "2025-04")
+    SHOPIFY_API_VERSION: str = os.getenv("SHOPIFY_API_VERSION", "2025-10")
     VERIFY_SSL_CERTIFICATES: bool = os.getenv("VERIFY_SSL_CERTIFICATES", "true").lower() == "true"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     TRIAL_DAYS: int = 7  # 7-day trial period

@@ -152,7 +152,8 @@ class ShopifyTools(Toolkit):
                 return json.dumps({
                     "success": True,
                     "message": f"Here is the product information for {result.get('product', {}).get('title')}",
-                    "shopify_product": result.get("product")
+                    "shopify_product": result.get("product"),
+                    "shop_domain": shop.shop_domain  # Add shop domain for frontend URL construction
                 })
             else:
                 # Product not found or error
@@ -239,11 +240,11 @@ class ShopifyTools(Toolkit):
             variables = {
                 "searchTerm": query,
                 "limit": limit,
-                "cursor": cursor # Add cursor to variables
+                "cursor": cursor if cursor else None # Pass None instead of empty string
             }
             
             # Execute the GraphQL query
-            url = f"https://{shop.shop_domain}/admin/api/2025-07/graphql.json"
+            url = f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json"
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -327,7 +328,8 @@ class ShopifyTools(Toolkit):
                          "products": products,
                          "search_query": query,
                          "total_count": len(products), 
-                         "pageInfo": page_info # Include full pageInfo
+                         "pageInfo": page_info, # Include full pageInfo
+                         "shop_domain": shop.shop_domain # Add shop domain for frontend URL construction
                     }
                 })
             else:
@@ -362,6 +364,14 @@ class ShopifyTools(Toolkit):
             str: JSON string with the matching orders or error information
         """
         try:
+            # Validate that at least one search parameter is provided
+            if not query and not customer_email and not order_number:
+                return json.dumps({
+                    "success": False,
+                    "message": "Please provide at least one search parameter: order number, email address, or search query. Ask the user for this information if not provided.",
+                    "requires_user_input": True
+                })
+            
             # Get the Shopify shop for this agent
             shop = self._get_shop_for_agent()
             
@@ -373,12 +383,12 @@ class ShopifyTools(Toolkit):
 
             # Construct the search query
             search_terms = []
-            if query:
-                search_terms.append(query)
-            if customer_email:
-                search_terms.append(f"email:{customer_email}")
-            if order_number:
-                search_terms.append(f"name:{order_number}")
+            if query and query.strip():
+                search_terms.append(query.strip())
+            if customer_email and customer_email.strip():
+                search_terms.append(f"email:{customer_email.strip()}")
+            if order_number and order_number.strip():
+                search_terms.append(f"name:{order_number.strip()}")
 
             # Join search terms with AND operator
             search_query = " AND ".join(search_terms) if search_terms else ""
@@ -469,7 +479,7 @@ class ShopifyTools(Toolkit):
             """
 
             # Execute the GraphQL query
-            url = f"https://{shop.shop_domain}/admin/api/2025-07/graphql.json"
+            url = f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json"
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -593,7 +603,8 @@ class ShopifyTools(Toolkit):
                 "success": True,
                 "message": f"Found {len(orders)} order(s)",
                 "orders": orders,
-                "page_info": page_info
+                "page_info": page_info,
+                "shop_domain": shop.shop_domain
             })
             
         except Exception as e:
@@ -609,7 +620,7 @@ class ShopifyTools(Toolkit):
         Get the status of a specific order from the Shopify store.
         
         Args:
-            order_id: The ID of the order to retrieve status for
+            order_id: The order number (e.g., "1001", "#1001") or internal Shopify order ID
             
         Returns:
             str: JSON string with order status details or error information
@@ -623,15 +634,52 @@ class ShopifyTools(Toolkit):
                     "success": False,
                     "message": "Shopify integration is not enabled for this agent or shop not found"
                 })
+            
+            # Clean up order_id - remove # if present
+            order_identifier = order_id.strip().lstrip('#')
+            logger.debug(f"Order identifier: {order_identifier}")
+            
+            # Try to determine if this is an order number (name) or internal ID
+            # Order numbers are typically shorter (e.g., "1001", "1002")
+            # Internal IDs are very long numbers (e.g., "5678901234567890")
+            is_order_number = len(order_identifier) < 10 and order_identifier.isdigit()
+            logger.debug(f"Is order number: {is_order_number}")
+            
+            # If it looks like an order number, search for it first to get the internal ID
+            if is_order_number:
+                logger.debug(f"Searching for order by number: {order_identifier}")
+                # Use search_orders to find the order by name (without # prefix in search query)
+                search_result = self.search_orders(order_number=order_identifier, limit=1)
+               
+                search_data = json.loads(search_result)
+                
+                if search_data.get("success") and search_data.get("orders") and len(search_data.get("orders")) > 0:
+                    # Found the order, get its internal ID
+                    order_identifier = search_data.get("orders")[0].get("id")
+                    logger.debug(f"Found order with internal ID: {order_identifier}")
+                else:
+                    return json.dumps({
+                        "success": False,
+                        "message": f"Order {order_id} not found"
+                    })
                 
             # Get order details using context manager for database operations
             with SessionLocal() as db:
                 shopify_service = ShopifyService(db)
-                result = shopify_service.get_order(shop, order_id)
+                logger.debug(f"Getting order with internal ID: {order_identifier}")
+                result = shopify_service.get_order(shop, order_identifier)
             
             # If successful, extract relevant order status information
             if result.get("success", False) and result.get("order"):
                 order = result.get("order")
+                
+                # Filter out cancelled fulfillments - only include active ones
+                all_fulfillments = order.get("fulfillments", [])
+                active_fulfillments = [
+                    f for f in all_fulfillments 
+                    if f.get("status") and f.get("status").upper() != "CANCELLED"
+                ]
+                
                 status_info = {
                     "success": True,
                     "order_id": order.get("id"),
@@ -643,16 +691,16 @@ class ShopifyTools(Toolkit):
                     "customer": order.get("customer"),
                     "total_price": order.get("total_price"),
                     "currency": order.get("currency"),
-                    "fulfillments": order.get("fulfillments", []),
+                    "fulfillments": active_fulfillments,  # Only include active fulfillments
                     "shipping_address": order.get("shipping_address"),
                     "billing_address": order.get("billing_address"),
-                    "tracking_numbers": []
+                    "tracking_numbers": [],
+                    "shop_domain": shop.shop_domain
                 }
                 
-                # Extract tracking numbers from fulfillments
-                fulfillments = order.get("fulfillments", [])
+                # Extract tracking numbers from active fulfillments only
                 tracking_numbers = []
-                for fulfillment in fulfillments:
+                for fulfillment in active_fulfillments:
                     if fulfillment.get("tracking_number"):
                         tracking_numbers.append(fulfillment.get("tracking_number"))
                     elif fulfillment.get("tracking_numbers"):
@@ -662,6 +710,9 @@ class ShopifyTools(Toolkit):
                 
                 return json.dumps(status_info)
             
+            # Add shop_domain to error result as well
+            if isinstance(result, dict):
+                result["shop_domain"] = shop.shop_domain
             return json.dumps(result)
             
         except Exception as e:
@@ -720,7 +771,7 @@ class ShopifyTools(Toolkit):
                     "id": gid
                 }
                 
-                url = f"https://{shop.shop_domain}/admin/api/2025-07/graphql.json"
+                url = f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json"
                 headers = {
                     "X-Shopify-Access-Token": shop.access_token,
                     "Content-Type": "application/json"
@@ -824,7 +875,7 @@ class ShopifyTools(Toolkit):
                 
                 variables = {
                     "limit": limit,
-                    "cursor": cursor
+                    "cursor": cursor if cursor else None
                 }
                 
                 search_type = "recent products"
@@ -881,13 +932,13 @@ class ShopifyTools(Toolkit):
                 variables = {
                     "searchTerm": search_query,
                     "limit": search_limit,
-                    "cursor": cursor
+                    "cursor": cursor if cursor else None
                 }
                 
                 search_type = "recommendations"
             
             # Execute the GraphQL query
-            url = f"https://{shop.shop_domain}/admin/api/2025-07/graphql.json"
+            url = f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json"
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -981,7 +1032,8 @@ class ShopifyTools(Toolkit):
                         "products": products,
                         "search_type": search_type, # Optional context
                         "total_count": len(products),
-                        "pageInfo": page_info # Include full pageInfo
+                        "pageInfo": page_info, # Include full pageInfo
+                        "shop_domain": shop.shop_domain # Add shop domain for frontend URL construction
                     }
                 })
 

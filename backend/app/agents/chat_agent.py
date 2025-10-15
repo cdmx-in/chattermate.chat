@@ -184,7 +184,13 @@ class ChatAgent(ChatAgentMCPMixin):
             # Add concise response instruction for better performance
             system_message += """
             
-Keep your responses concise and focused. Provide clear, actionable information in 2-4 sentences unless a detailed explanation is specifically requested. Avoid unnecessary elaboration."""
+Keep your responses concise and focused. Provide clear, actionable information in 2-4 sentences unless a detailed explanation is specifically requested. Avoid unnecessary elaboration.
+
+**CRITICAL: Tool Usage Guidelines:**
+- If you need information from the user to complete a task, ASK them directly. DO NOT repeatedly call tools hoping to find the information.
+- If a tool returns an error or indicates missing information, STOP calling tools and respond to the user.
+- DO NOT call the same tool multiple times with the same parameters if it failed the first time.
+- DO NOT call tools in a loop. If you've tried a few tools and haven't found what you need, ask the user for help."""
 
 
             
@@ -240,8 +246,39 @@ Keep your responses concise and focused. Provide clear, actionable information i
             if shopify_config and shopify_config.enabled and not self.transfer_to_human:
                 # UPDATED Shopify Instructions (v3)
                 shopify_instructions = """
-                You have access to Shopify tools (`search_products`, `get_product`, `recommend_products`, etc.). 
+                You have access to Shopify tools (`search_products`, `get_product`, `recommend_products`, `search_orders`, `get_order_status`, etc.). 
                 When using `search_products` or `recommend_products`, use a `limit` of 5 unless the user specifies otherwise.
+                
+                **Order Status & Tracking - User-Friendly Communication:**
+                - **BEFORE using order tools (`search_orders`, `get_order_status`):**
+                  * Check if you have the required information (order number OR email address) from the current user message
+                  * If the user asks about order status but doesn't provide order number or email, **IMMEDIATELY respond** (don't call any tools): "To check your order status, could you please provide your order number or the email address you used for the order?"
+                  * **DO NOT** call order tools with empty parameters
+                  * **DO NOT** call `get_chat_history` to look for order information - just ask the user directly
+                  * **DO NOT** repeatedly call any tools when user information is missing
+                  * If a tool returns an error saying "requires_user_input", stop calling tools and ask the user directly
+                
+                - Use natural, conversational language when providing order status.
+                - Translate technical statuses into customer-friendly terms:
+                  * FULFILLED = "Your order has been shipped" or "Your order is on its way"
+                  * PAID = Order is confirmed (no need to mention this separately if shipped)
+                  * IN_TRANSIT = "Your order is on its way"
+                  * DELIVERED = "Your order has been delivered"
+                  * PENDING = "We're preparing your order for shipment"
+                
+                - **Format tracking information naturally:**
+                  * Good: "Your order has been shipped! Track it here: [tracking_number](tracking_url)"
+                  * Bad: "The status of order #1002 remains PAID and it is FULFILLED"
+                
+                - **Be concise and helpful:**
+                  * Focus on what matters to the customer: shipment status and tracking
+                  * Include shipping address only if relevant to the query
+                  * Always make tracking numbers clickable links
+                  
+                - **Example good responses:**
+                  * "Great news! Your order has been shipped. Track your package: [123456](url)"
+                  * "Your order is on its way! Track it here: [123456](url). Expected delivery to Bengaluru by [date]."
+                  * "Your order has been delivered to your address in Bengaluru on [date]."
                 
                 **Search Query Construction (`search_products`):**
                 - When the user mentions multiple characteristics (e.g., "kids snowboard"), construct the `searchTerm` to combine them using `OR` and wildcards.
@@ -280,6 +317,12 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 - Copy the **entire relevant JSON output** from the tool directly into the `shopify_output` field. 
                   - If the tool output contains a `shopify_output` key with a nested `products` list like `{"shopify_output": {"products": [...], "pageInfo": {...}}}` , copy that entire inner `shopify_output` object.
                   - If the tool output contains just `shopify_product` for a single item (e.g., from `get_product`), structure it as `{"products": [ ...the_single_product... ]}` within your response's `shopify_output` field.
+                  - **CRITICAL**: If the tool returns `shop_domain` in its response, you MUST include it in the `shopify_output` field as well.
+                
+                - **When displaying order information with products (from `search_orders` or `get_order_status`):**
+                  - If you want to show products from order line items, transform them into the products array
+                  - **ALWAYS** include `shop_domain` from the tool response in your `shopify_output`
+                  - Example: If tool returns `{"orders": [...], "shop_domain": "store.myshopify.com"}`, your `shopify_output` must include `"shop_domain": "store.myshopify.com"`
                 
                 - Example Structure for your `shopify_output` field (when multiple products with pagination info):
                   ```json
@@ -290,6 +333,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
                     ],
                     "search_query": "optional search term",
                     "total_count": 5, // Example count from the first page
+                    "shop_domain": "store.myshopify.com", // ALWAYS include this from tool response
                     "pageInfo": {
                         "hasNextPage": true,
                         "endCursor": "CURSOR_STRING_FROM_TOOL" 
@@ -343,7 +387,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
            agent_id=str(agent_id),
            storage=storage,
            add_history_to_messages=True,
-           tool_call_limit=3,  # Reduced from 5 to 3 for faster response - prevents excessive knowledge searches
+           tool_call_limit=5,  # Allow up to 5 tool calls - balance between functionality and performance
            num_history_responses=5,  # Reduced from 10 to 5 to minimize context size and improve speed
            read_chat_history=True,
            markdown=False,
@@ -387,8 +431,9 @@ Keep your responses concise and focused. Provide clear, actionable information i
 
             logger.debug(f"Response content: {response_content}")
             
-            # If shopify_output is present, remove URLs from message
-            if response_content.shopify_output:
+            # If shopify_output has products, remove URLs from message
+            # (URLs should only be removed when products are being displayed separately)
+            if response_content.shopify_output and response_content.shopify_output.products:
                 response_content.message = remove_urls_from_message(response_content.message)
                 logger.debug(f"Cleaned message for Shopify output: {response_content.message}")
             
@@ -674,8 +719,9 @@ Keep your responses concise and focused. Provide clear, actionable information i
 
                 logger.debug(f"Response content: {response_content}")
                 
-                # If shopify_output is present, remove URLs from message
-                if response_content.shopify_output:
+                # If shopify_output has products, remove URLs from message
+                # (URLs should only be removed when products are being displayed separately)
+                if response_content.shopify_output and response_content.shopify_output.products:
                     response_content.message = remove_urls_from_message(response_content.message)
                     logger.debug(f"Cleaned message for Shopify output: {response_content.message}")
                 

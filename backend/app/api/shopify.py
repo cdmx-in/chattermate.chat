@@ -320,7 +320,7 @@ async def delete_shop(
     if db_shop.access_token:
         try:
             # Request to delete app data from Shopify
-            uninstall_url = f"https://{db_shop.shop_domain}/admin/api/2023-07/graphql.json"
+            uninstall_url = f"https://{db_shop.shop_domain}/admin/api/2025-10/graphql.json"
             headers = {
                 "X-Shopify-Access-Token": db_shop.access_token,
                 "Content-Type": "application/json"
