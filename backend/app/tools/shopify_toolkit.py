@@ -176,9 +176,9 @@ class ShopifyTools(Toolkit):
                 # Create detailed text description for LLM
                 text_message = (
                     f"Product Details:\n\n"
-                    f"Title: {product['title']}\n"
-                    f"Price: {product.get('currency', 'USD')} {product['price']}\n"
-                    f"Vendor: {product['vendor']}\n"
+                    f"Title: {product.get('title', 'N/A')}\n"
+                    f"Price: {product.get('currency', 'USD')} {product.get('price', 'N/A')}\n"
+                    f"Vendor: {product.get('vendor', 'N/A')}\n"
                     f"Type: {product.get('product_type', 'N/A')}\n"
                     f"In Stock: {product.get('total_inventory', 'N/A')} units\n"
                     f"Tags: {tags_str}\n"
