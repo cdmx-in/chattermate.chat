@@ -882,9 +882,13 @@ const removeUrls = (text) => {
     
     console.log('removeUrls - Input text:', text);
     
-    // First, temporarily replace markdown links with placeholders to preserve them
+    // First, remove markdown images: ![alt text](url)
+    let processedText = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '');
+    console.log('After removing markdown images:', processedText);
+    
+    // Then, temporarily replace regular markdown links with placeholders to preserve them
     const markdownLinks = [];
-    let processedText = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
+    processedText = processedText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
         const placeholder = `__MARKDOWN_LINK_${markdownLinks.length}__`;
         console.log('Found markdown link:', match, '-> placeholder:', placeholder);
         markdownLinks.push(match);
@@ -904,6 +908,9 @@ const removeUrls = (text) => {
         processedText = processedText.replace(`__MARKDOWN_LINK_${index}__`, link);
         console.log(`Restored markdown link ${index}:`, link);
     });
+    
+    // Clean up extra whitespace and newlines left after removing images
+    processedText = processedText.replace(/\n\s*\n\s*\n/g, '\n\n').trim();
     
     console.log('removeUrls - Final output:', processedText);
     
