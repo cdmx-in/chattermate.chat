@@ -1796,8 +1796,8 @@ const shouldShowWelcomeMessage = computed(() => {
                             </template>
                             <template v-else-if="message.shopify_output || message.message_type === 'product'">
                                 <div class="product-message-container">
-                                    <!-- Display the message text -->
-                                    <div v-if="message.message" v-html="marked(message.shopify_output?.products?.length > 0 ? removeUrls(message.message) : message.message, { renderer })" class="product-message-text"></div>
+                                    <!-- Display the message text only if there are no products -->
+                                    <div v-if="message.message && (!message.shopify_output?.products || message.shopify_output.products.length === 0)" v-html="marked(message.message, { renderer })" class="product-message-text"></div>
                                     
                                     <!-- Always use carousel/list display -->
                                     <div v-if="message.shopify_output?.products && message.shopify_output.products.length > 0" class="products-carousel">
