@@ -163,8 +163,16 @@ const handleConnectShopify = () => {
       return
     }
     
-    // Clean the domain - remove any .myshopify.com suffix if user added it
+    // Clean the domain - remove protocol, www, and .myshopify.com suffix if user added them
     let cleanDomain = shopifyForm.value.shopDomain.trim()
+    
+    // Remove https:// or http:// protocol
+    cleanDomain = cleanDomain.replace(/^https?:\/\//, '')
+    
+    // Remove www. prefix
+    cleanDomain = cleanDomain.replace(/^www\./, '')
+    
+    // Remove .myshopify.com suffix if user added it
     if (cleanDomain.endsWith('.myshopify.com')) {
       cleanDomain = cleanDomain.replace('.myshopify.com', '')
     }

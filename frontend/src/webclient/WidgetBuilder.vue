@@ -879,9 +879,35 @@ const handleViewDetails = (product, shopDomain) => {
 // Add this function in the script section after the other helper functions
 const removeUrls = (text) => {
     if (!text) return '';
-    // Replace URLs with empty string
-    // This regex looks for http/https URLs and removes them
-    return text.replace(/https?:\/\/[^\s\)]+/g, '[link removed]');
+    
+    console.log('removeUrls - Input text:', text);
+    
+    // First, temporarily replace markdown links with placeholders to preserve them
+    const markdownLinks = [];
+    let processedText = text.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
+        const placeholder = `__MARKDOWN_LINK_${markdownLinks.length}__`;
+        console.log('Found markdown link:', match, '-> placeholder:', placeholder);
+        markdownLinks.push(match);
+        return placeholder;
+    });
+    
+    console.log('After replacing markdown links with placeholders:', processedText);
+    console.log('Markdown links array:', markdownLinks);
+    
+    // Now remove standalone URLs (not part of markdown links)
+    processedText = processedText.replace(/https?:\/\/[^\s\)]+/g, '[link removed]');
+    
+    console.log('After removing standalone URLs:', processedText);
+    
+    // Restore markdown links
+    markdownLinks.forEach((link, index) => {
+        processedText = processedText.replace(`__MARKDOWN_LINK_${index}__`, link);
+        console.log(`Restored markdown link ${index}:`, link);
+    });
+    
+    console.log('removeUrls - Final output:', processedText);
+    
+    return processedText;
 }
 
 // Handle landing page proceed action
@@ -1771,7 +1797,7 @@ const shouldShowWelcomeMessage = computed(() => {
                             <template v-else-if="message.shopify_output || message.message_type === 'product'">
                                 <div class="product-message-container">
                                     <!-- Display the message text -->
-                                    <div v-if="message.message" v-html="marked(removeUrls(message.message), { renderer })" class="product-message-text"></div>
+                                    <div v-if="message.message" v-html="marked(message.shopify_output?.products?.length > 0 ? removeUrls(message.message) : message.message, { renderer })" class="product-message-text"></div>
                                     
                                     <!-- Always use carousel/list display -->
                                     <div v-if="message.shopify_output?.products && message.shopify_output.products.length > 0" class="products-carousel">
@@ -1800,12 +1826,12 @@ const shouldShowWelcomeMessage = computed(() => {
                                         </div>
                                     </div>
 
-                                    <!-- No products found message (remains the same) -->
-                                    <div v-else-if="message.shopify_output?.products && message.shopify_output.products.length === 0" class="no-products-message">
+                                    <!-- No products found message - only show if there's no message text -->
+                                    <div v-else-if="!message.message && message.shopify_output?.products && message.shopify_output.products.length === 0" class="no-products-message">
                                         <p>No products found.</p>
                                     </div>
                                     <!-- Add a message if shopify_output exists but has no products array (edge case) -->
-                                     <div v-else-if="message.shopify_output && !message.shopify_output.products" class="no-products-message">
+                                     <div v-else-if="!message.message && message.shopify_output && !message.shopify_output.products" class="no-products-message">
                                         <p>No products to display.</p>
                                      </div>
                                 </div>
