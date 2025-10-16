@@ -51,6 +51,7 @@
       </div>
 
       <div v-if="!isEmbedded" class="action-buttons">
+        <button class="primary-button" @click="goToHome">Go to Dashboard</button>
         <button class="secondary-button" @click="openShopify">Setup Widget in Shopify</button>
       </div>
       
@@ -96,6 +97,11 @@ const isEmbedded = computed(() => {
     return true
   }
 })
+
+// Function to go to home (app.chattermate.chat)
+const goToHome = () => {
+  window.location.href = 'https://app.chattermate.chat'
+}
 
 // Function to open the dashboard
 const openDashboard = () => {

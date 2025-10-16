@@ -202,6 +202,8 @@ def clean_malformed_output(text: str) -> str:
     Returns:
         str: Cleaned text
     """
+    original_text = text
+    
     # Replace patterns like "truefalse" with proper JSON values
     # This regex finds patterns like "truefalseXXX" and removes them
     text = re.sub(r'(true|false)(true|false)', ' ', text)
@@ -218,6 +220,29 @@ def clean_malformed_output(text: str) -> str:
     # This is a simplified approach - a more robust solution would need to
     # identify whether true/false is inside quotes or not
     text = re.sub(r'\b(true|false)\b', replace_literals, text)
+    
+    # Fix malformed image objects in shopify_output
+    # Pattern: "src":"url"},"   ,"alt" should be "src":"url","alt"
+    before_fix = text
+    text = re.sub(r'(\"src\":\"[^\"]+\")\}[,\s]*,[,\s]*\"alt\"', r'\1,"alt"', text)
+    if text != before_fix:
+        logger.warning("Fixed malformed image object: },'   ,'alt' pattern")
+    
+    # Fix pattern: }," followed by whitespace or comma before next field
+    before_fix = text
+    text = re.sub(r'\}[,\s]+,\s*\"', ',"', text)
+    if text != before_fix:
+        logger.warning("Fixed malformed JSON: },\" pattern")
+    
+    # Fix pattern where closing brace appears after URL before comma
+    # "image":{"src":"url"}," should be "image":{"src":"url",
+    before_fix = text
+    text = re.sub(r'(\"image\":\{\"src\":\"[^\"]+\")\},([\s]*\")', r'\1,\2', text)
+    if text != before_fix:
+        logger.warning("Fixed malformed image closing brace pattern")
+    
+    if text != original_text:
+        logger.debug(f"Cleaned JSON from: {original_text[:200]}... to: {text[:200]}...")
     
     return text
 
