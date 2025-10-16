@@ -112,6 +112,28 @@ class ShopifyTools(Toolkit):
             with SessionLocal() as db:
                 shopify_service = ShopifyService(db)
                 result = shopify_service.get_products(shop, limit)
+                
+                # Convert to more LLM-friendly text format
+                if result.get("success") and result.get("shopify_output", {}).get("products"):
+                    products = result["shopify_output"]["products"]
+                    product_summaries = []
+                    for idx, product in enumerate(products, 1):
+                        tags_str = ", ".join(product.get("tags", [])) if product.get("tags") else "None"
+                        summary = (
+                            f"{idx}. {product['title']}\n"
+                            f"   - Price: {product.get('currency', 'USD')} {product['price']}\n"
+                            f"   - Vendor: {product['vendor']}\n"
+                            f"   - Type: {product.get('product_type', 'N/A')}\n"
+                            f"   - In Stock: {product.get('total_inventory', 'N/A')} units\n"
+                            f"   - Tags: {tags_str}"
+                        )
+                        product_summaries.append(summary)
+                    
+                    result["message"] = (
+                        f"Here are {len(products)} products from the store:\n\n"
+                        + "\n\n".join(product_summaries)
+                    )
+                
                 return json.dumps(result)
             
         except Exception as e:
@@ -148,11 +170,28 @@ class ShopifyTools(Toolkit):
             
             # Check if product was found
             if result.get("success", False) and result.get("product"):
+                product = result.get("product")
+                tags_str = ", ".join(product.get("tags", [])) if product.get("tags") else "None"
+                
+                # Create detailed text description for LLM
+                text_message = (
+                    f"Product Details:\n\n"
+                    f"Title: {product.get('title', 'N/A')}\n"
+                    f"Price: {product.get('currency', 'USD')} {product.get('price', 'N/A')}\n"
+                    f"Vendor: {product.get('vendor', 'N/A')}\n"
+                    f"Type: {product.get('product_type', 'N/A')}\n"
+                    f"In Stock: {product.get('total_inventory', 'N/A')} units\n"
+                    f"Tags: {tags_str}\n"
+                )
+                
+                if product.get('description'):
+                    text_message += f"Description: {product['description']}\n"
+                
                 # Format as a product card
                 return json.dumps({
                     "success": True,
-                    "message": f"Here is the product information for {result.get('product', {}).get('title')}",
-                    "shopify_product": result.get("product"),
+                    "message": text_message,
+                    "shopify_product": product,
                     "shop_domain": shop.shop_domain  # Add shop domain for frontend URL construction
                 })
             else:
@@ -323,10 +362,29 @@ class ShopifyTools(Toolkit):
             
             # Check if search was successful
             if products:
-                # Create a response with the full list of products structured for the frontend
+                # Create a text summary for the LLM
+                product_summaries = []
+                for idx, product in enumerate(products, 1):
+                    tags_str = ", ".join(product.get("tags", [])) if product.get("tags") else "None"
+                    summary = (
+                        f"{idx}. {product['title']}\n"
+                        f"   - Price: {product['currency']} {product['price']}\n"
+                        f"   - Vendor: {product['vendor']}\n"
+                        f"   - Type: {product['product_type']}\n"
+                        f"   - In Stock: {product['total_inventory']} units\n"
+                        f"   - Tags: {tags_str}"
+                    )
+                    product_summaries.append(summary)
+                
+                text_message = (
+                    f"Found {len(products)} product(s) matching '{query}':\n\n"
+                    + "\n\n".join(product_summaries)
+                )
+                
+                # Create a response with text for LLM and structured data for frontend
                 return json.dumps({
                     "success": True,
-                    "message": f"Found {len(products)} product(s) matching your search.",
+                    "message": text_message,
                     "shopify_output": { # Nest products under shopify_output
                          "products": products,
                          "search_query": query,
@@ -601,10 +659,42 @@ class ShopifyTools(Toolkit):
                 
                 orders.append(order)
             
+            # Create text summary for LLM
+            if orders:
+                order_summaries = []
+                for idx, order in enumerate(orders, 1):
+                    customer_name = f"{order['customer'].get('first_name', '')} {order['customer'].get('last_name', '')}".strip()
+                    customer_info = customer_name if customer_name else order.get('email', 'N/A')
+                    
+                    summary = (
+                        f"{idx}. Order {order['name']}\n"
+                        f"   - Customer: {customer_info}\n"
+                        f"   - Total: {order['currency']} {order['current_total']}\n"
+                        f"   - Status: {order['financial_status']}\n"
+                        f"   - Fulfillment: {order['fulfillment_status']}\n"
+                        f"   - Items: {order['total_items']}\n"
+                        f"   - Created: {order['created_at']}"
+                    )
+                    
+                    # Add tracking info if available
+                    if order.get('tracking_info'):
+                        tracking_numbers = [t.get('number') for t in order['tracking_info'] if t.get('number')]
+                        if tracking_numbers:
+                            summary += f"\n   - Tracking: {', '.join(tracking_numbers)}"
+                    
+                    order_summaries.append(summary)
+                
+                text_message = (
+                    f"Found {len(orders)} order(s):\n\n"
+                    + "\n\n".join(order_summaries)
+                )
+            else:
+                text_message = "No orders found matching your search criteria."
+            
             # Return success response with orders and pagination info
             return json.dumps({
                 "success": True,
-                "message": f"Found {len(orders)} order(s)",
+                "message": text_message,
                 "orders": orders,
                 "page_info": page_info,
                 "shop_domain": shop.shop_domain
@@ -683,24 +773,6 @@ class ShopifyTools(Toolkit):
                     if f.get("status") and f.get("status").upper() != "CANCELLED"
                 ]
                 
-                status_info = {
-                    "success": True,
-                    "order_id": order.get("id"),
-                    "order_number": order.get("name"),
-                    "status": order.get("financial_status"),
-                    "fulfillment_status": order.get("fulfillment_status"),
-                    "created_at": order.get("created_at"),
-                    "processed_at": order.get("processed_at"),
-                    "customer": order.get("customer"),
-                    "total_price": order.get("total_price"),
-                    "currency": order.get("currency"),
-                    "fulfillments": active_fulfillments,  # Only include active fulfillments
-                    "shipping_address": order.get("shipping_address"),
-                    "billing_address": order.get("billing_address"),
-                    "tracking_numbers": [],
-                    "shop_domain": shop.shop_domain
-                }
-                
                 # Extract tracking numbers from active fulfillments only
                 tracking_numbers = []
                 for fulfillment in active_fulfillments:
@@ -709,7 +781,55 @@ class ShopifyTools(Toolkit):
                     elif fulfillment.get("tracking_numbers"):
                         tracking_numbers.extend(fulfillment.get("tracking_numbers"))
                 
-                status_info["tracking_numbers"] = tracking_numbers
+                # Create text summary for LLM
+                customer = order.get("customer", {})
+                customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
+                customer_info = customer_name if customer_name else customer.get('email', 'N/A')
+                
+                text_message = (
+                    f"Order Status for {order.get('name')}:\n\n"
+                    f"Customer: {customer_info}\n"
+                    f"Total: {order.get('currency', 'USD')} {order.get('total_price')}\n"
+                    f"Payment Status: {order.get('financial_status')}\n"
+                    f"Fulfillment Status: {order.get('fulfillment_status')}\n"
+                    f"Order Date: {order.get('created_at')}\n"
+                )
+                
+                # Add tracking information
+                if tracking_numbers:
+                    text_message += f"Tracking Numbers: {', '.join(tracking_numbers)}\n"
+                
+                # Add shipping address if available
+                shipping_addr = order.get("shipping_address")
+                if shipping_addr:
+                    addr_parts = [
+                        shipping_addr.get("address1"),
+                        shipping_addr.get("city"),
+                        shipping_addr.get("provinceCode"),
+                        shipping_addr.get("zip"),
+                        shipping_addr.get("country")
+                    ]
+                    addr_str = ", ".join([p for p in addr_parts if p])
+                    text_message += f"Shipping Address: {addr_str}\n"
+                
+                status_info = {
+                    "success": True,
+                    "message": text_message,
+                    "order_id": order.get("id"),
+                    "order_number": order.get("name"),
+                    "status": order.get("financial_status"),
+                    "fulfillment_status": order.get("fulfillment_status"),
+                    "created_at": order.get("created_at"),
+                    "processed_at": order.get("processed_at"),
+                    "customer": customer,
+                    "total_price": order.get("total_price"),
+                    "currency": order.get("currency"),
+                    "fulfillments": active_fulfillments,  # Only include active fulfillments
+                    "shipping_address": shipping_addr,
+                    "billing_address": order.get("billing_address"),
+                    "tracking_numbers": tracking_numbers,
+                    "shop_domain": shop.shop_domain
+                }
                 
                 return json.dumps(status_info)
             
@@ -1024,15 +1144,34 @@ class ShopifyTools(Toolkit):
 
             # Process results
             if products:
-                recommendation_message = f"Here are {len(products)} recommendations for you:"
-                # Customize message based on initial criteria if needed
-                if product_type and not product_id: recommendation_message = f"Here are recommendations in the {product_type} category:"
-                elif tags and not product_id: recommendation_message = f"Here are products tagged with {tags}:"
-                elif product_id: recommendation_message = f"Based on the product you viewed, you might like:"
+                # Create a text summary for the LLM
+                product_summaries = []
+                for idx, product in enumerate(products, 1):
+                    tags_str = ", ".join(product.get("tags", [])) if product.get("tags") else "None"
+                    summary = (
+                        f"{idx}. {product['title']}\n"
+                        f"   - Price: {product['currency']} {product['price']}\n"
+                        f"   - Vendor: {product['vendor']}\n"
+                        f"   - Type: {product['product_type']}\n"
+                        f"   - In Stock: {product['total_inventory']} units\n"
+                        f"   - Tags: {tags_str}"
+                    )
+                    product_summaries.append(summary)
+                
+                # Customize message header based on initial criteria
+                recommendation_header = f"Here are {len(products)} recommendations for you:"
+                if product_type and not product_id:
+                    recommendation_header = f"Here are recommendations in the {product_type} category:"
+                elif tags and not product_id:
+                    recommendation_header = f"Here are products tagged with {tags}:"
+                elif product_id:
+                    recommendation_header = f"Based on the product you viewed, you might like:"
+                
+                text_message = recommendation_header + "\n\n" + "\n\n".join(product_summaries)
                 
                 return json.dumps({
                     "success": True,
-                    "message": recommendation_message,
+                    "message": text_message,
                     "shopify_output": { # Nest products under shopify_output
                         "products": products,
                         "search_type": search_type, # Optional context

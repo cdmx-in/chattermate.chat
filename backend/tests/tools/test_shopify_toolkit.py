@@ -66,15 +66,22 @@ def mock_shopify_service():
     service = MagicMock()
     service.get_products.return_value = {
         "success": True,
-        "products": [
-            {
-                "id": "123456789",
-                "title": "Test Product",
-                "description": "This is a test product",
-                "price": "19.99",
-                "image": {"src": "https://example.com/image.jpg"}
-            }
-        ]
+        "shopify_output": {
+            "products": [
+                {
+                    "id": "123456789",
+                    "title": "Test Product",
+                    "description": "This is a test product",
+                    "price": "19.99",
+                    "currency": "USD",
+                    "vendor": "Test Vendor",
+                    "product_type": "Test Type",
+                    "total_inventory": 10,
+                    "tags": ["tag1", "tag2"],
+                    "image": {"src": "https://example.com/image.jpg"}
+                }
+            ]
+        }
     }
     service.get_product.return_value = {
         "success": True,
@@ -83,6 +90,11 @@ def mock_shopify_service():
             "title": "Test Product",
             "description": "This is a test product",
             "price": "19.99",
+            "currency": "USD",
+            "vendor": "Test Vendor",
+            "product_type": "Test Type",
+            "total_inventory": 10,
+            "tags": ["tag1", "tag2"],
             "image": {"src": "https://example.com/image.jpg"}
         }
     }
@@ -154,9 +166,11 @@ def test_list_products(shopify_tools, mock_shopify_service):
     
     # Assert
     assert result["success"] is True
-    assert "products" in result
-    assert len(result["products"]) == 1
-    assert result["products"][0]["title"] == "Test Product"
+    assert "message" in result  # Now includes text summary
+    assert "shopify_output" in result
+    assert "products" in result["shopify_output"]
+    assert len(result["shopify_output"]["products"]) == 1
+    assert result["shopify_output"]["products"][0]["title"] == "Test Product"
     mock_shopify_service.get_products.assert_called_once()
 
 def test_get_product(shopify_tools, mock_shopify_service):
@@ -166,8 +180,13 @@ def test_get_product(shopify_tools, mock_shopify_service):
     
     # Assert
     assert result["success"] is True
+    assert "message" in result  # Now includes text summary
     assert "shopify_product" in result
     assert result["shopify_product"]["title"] == "Test Product"
+    # Verify message contains key product details
+    assert "Test Product" in result["message"]
+    assert "19.99" in result["message"]
+    assert "Test Vendor" in result["message"]
     mock_shopify_service.get_product.assert_called_once()
 
 def test_search_products(shopify_tools):

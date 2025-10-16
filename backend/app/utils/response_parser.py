@@ -222,22 +222,24 @@ def clean_malformed_output(text: str) -> str:
     text = re.sub(r'\b(true|false)\b', replace_literals, text)
     
     # Fix malformed image objects in shopify_output
-    # Pattern: "src":"url"},"   ,"alt" should be "src":"url","alt"
+    # Pattern 1: "src":"url"}," followed by whitespace/newlines and then ,"alt" 
+    # Should be: "src":"url","alt"
     before_fix = text
-    text = re.sub(r'(\"src\":\"[^\"]+\")\}[,\s]*,[,\s]*\"alt\"', r'\1,"alt"', text)
+    # This handles: }," \n\n                ,"alt"
+    text = re.sub(r'(\"src\":\"[^\"]+\")\}[,\s\n]*,[,\s\n]*\"alt\"', r'\1,"alt"', text, flags=re.MULTILINE)
     if text != before_fix:
-        logger.warning("Fixed malformed image object: },'   ,'alt' pattern")
+        logger.warning("Fixed malformed image object: },' with newlines before 'alt' pattern")
     
-    # Fix pattern: }," followed by whitespace or comma before next field
+    # Pattern 2: }," followed by whitespace/newlines and comma before next field
     before_fix = text
-    text = re.sub(r'\}[,\s]+,\s*\"', ',"', text)
+    text = re.sub(r'\}[,\s\n]+,[,\s\n]*\"', ',"', text, flags=re.MULTILINE)
     if text != before_fix:
-        logger.warning("Fixed malformed JSON: },\" pattern")
+        logger.warning("Fixed malformed JSON: },' with newlines pattern")
     
-    # Fix pattern where closing brace appears after URL before comma
+    # Pattern 3: Fix pattern where closing brace appears after URL before comma
     # "image":{"src":"url"}," should be "image":{"src":"url",
     before_fix = text
-    text = re.sub(r'(\"image\":\{\"src\":\"[^\"]+\")\},([\s]*\")', r'\1,\2', text)
+    text = re.sub(r'(\"image\":\{\"src\":\"[^\"]+\")\},[,\s\n]*\"', r'\1,"', text, flags=re.MULTILINE)
     if text != before_fix:
         logger.warning("Fixed malformed image closing brace pattern")
     
