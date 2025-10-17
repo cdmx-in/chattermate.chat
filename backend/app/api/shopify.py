@@ -201,32 +201,126 @@ def get_embedded_app_redirect_html(shop: str, redirect_path: str, api_key: str) 
     Generate HTML page with Shopify App Bridge for embedded app redirects.
     This returns a 200 response that Shopify's checks can validate.
     """
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Redirecting...</title>
-        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-    </head>
-    <body>
-        <p>Redirecting to ChatterMate...</p>
-        <script>
-            var AppBridge = window['app-bridge'];
-            var createApp = AppBridge.default;
-            var Redirect = AppBridge.actions.Redirect;
+    # Properly escape for safe JavaScript embedding
+    redirect_path_escaped = (redirect_path
+                             .replace('\\', '\\\\')  # Escape backslashes first
+                             .replace("'", "\\'")     # Escape single quotes
+                             .replace('"', '\\"')     # Escape double quotes
+                             .replace('\n', '\\n'))   # Escape newlines
+    
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChatterMate - Loading...</title>
+    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }}
+        .loader {{
+            text-align: center;
+            color: white;
+        }}
+        .spinner {{
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 15px;
+        }}
+        @keyframes spin {{
+            to {{ transform: rotate(360deg); }}
+        }}
+        h2 {{ margin: 10px 0; font-weight: 400; }}
+        p {{ opacity: 0.9; font-size: 14px; margin: 5px 0; }}
+    </style>
+</head>
+<body>
+    <div class="loader">
+        <div class="spinner"></div>
+        <h2>ChatterMate</h2>
+        <p id="status">Setting up your AI assistant...</p>
+    </div>
+    
+    <script>
+        (function() {{
+            var statusEl = document.getElementById('status');
+            var redirectUrl = '{redirect_path_escaped}';
             
-            var app = createApp({{
-                apiKey: '{api_key}',
-                host: new URLSearchParams(window.location.search).get('host'),
-                forceRedirect: true
-            }});
+            function updateStatus(msg) {{
+                if (statusEl) statusEl.textContent = msg;
+                console.log('ChatterMate:', msg);
+            }}
             
-            var redirect = Redirect.create(app);
-            redirect.dispatch(Redirect.Action.REMOTE, '{redirect_path}');
-        </script>
-    </body>
-    </html>
-    """
+            function fallbackRedirect() {{
+                updateStatus('Finalizing setup...');
+                setTimeout(function() {{
+                    window.top.location.href = redirectUrl;
+                }}, 500);
+            }}
+            
+            try {{
+                // Get host parameter
+                var urlParams = new URLSearchParams(window.location.search);
+                var host = urlParams.get('host');
+                
+                if (!host) {{
+                    console.warn('No host parameter, using fallback redirect');
+                    fallbackRedirect();
+                    return;
+                }}
+                
+                // Wait for App Bridge to load
+                if (!window['app-bridge']) {{
+                    console.warn('App Bridge not loaded, using fallback redirect');
+                    fallbackRedirect();
+                    return;
+                }}
+                
+                updateStatus('Connecting to Shopify...');
+                
+                var AppBridge = window['app-bridge'];
+                var createApp = AppBridge.default;
+                var Redirect = AppBridge.actions.Redirect;
+                
+                // Initialize App Bridge
+                var app = createApp({{
+                    apiKey: '{api_key}',
+                    host: host,
+                    forceRedirect: true
+                }});
+                
+                console.log('App Bridge initialized for host:', host);
+                updateStatus('Redirecting...');
+                
+                // Dispatch redirect
+                var redirect = Redirect.create(app);
+                redirect.dispatch(Redirect.Action.REMOTE, redirectUrl);
+                
+                console.log('Redirect dispatched to:', redirectUrl);
+                
+                // Fallback after 3 seconds if redirect didn't work
+                setTimeout(fallbackRedirect, 3000);
+                
+            }} catch (error) {{
+                console.error('App Bridge error:', error);
+                updateStatus('Completing setup...');
+                fallbackRedirect();
+            }}
+        }})();
+    </script>
+</body>
+</html>"""
 
 @router.get("/auth/callback")
 async def shopify_callback(
