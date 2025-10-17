@@ -167,7 +167,14 @@ async def shopify_auth(
                 success_url += "&embedded=1"
             
             logger.info(f"Shop already connected, redirecting to success page: {success_url}")
-            return RedirectResponse(success_url)
+            
+            # For embedded apps, return HTML with App Bridge redirect
+            if embedded == "1":
+                logger.info(f"Embedded app detected, returning App Bridge redirect HTML")
+                html_content = get_embedded_app_redirect_html(shop, success_url, settings.SHOPIFY_API_KEY)
+                return HTMLResponse(content=html_content, status_code=200)
+            else:
+                return RedirectResponse(success_url)
         else:
             # Token is invalid, clear it and continue with OAuth flow
             shop_update_data = ShopifyShopUpdate(
@@ -189,6 +196,38 @@ async def shopify_auth(
     logger.info(f"Redirecting to Shopify OAuth: {auth_url}")
     return RedirectResponse(auth_url, status_code=302)
 
+def get_embedded_app_redirect_html(shop: str, redirect_path: str, api_key: str) -> str:
+    """
+    Generate HTML page with Shopify App Bridge for embedded app redirects.
+    This returns a 200 response that Shopify's checks can validate.
+    """
+    return f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Redirecting...</title>
+        <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
+    </head>
+    <body>
+        <p>Redirecting to ChatterMate...</p>
+        <script>
+            var AppBridge = window['app-bridge'];
+            var createApp = AppBridge.default;
+            var Redirect = AppBridge.actions.Redirect;
+            
+            var app = createApp({{
+                apiKey: '{api_key}',
+                host: new URLSearchParams(window.location.search).get('host'),
+                forceRedirect: true
+            }});
+            
+            var redirect = Redirect.create(app);
+            redirect.dispatch(Redirect.Action.REMOTE, '{redirect_path}');
+        </script>
+    </body>
+    </html>
+    """
+
 @router.get("/auth/callback")
 async def shopify_callback(
     request: Request,
@@ -196,13 +235,14 @@ async def shopify_callback(
     code: str = Query(..., description="Authorization code"),
     state: Optional[str] = Query(None, description="State parameter for verification"),
     hmac: str = Query(..., description="HMAC signature for validation"),
+    host: Optional[str] = Query(None, description="Shopify host parameter for embedded apps"),
     db: Session = Depends(get_db)
 ):
     """
     Handles the Shopify OAuth callback, exchanges the code for an access token,
-    and stores the token securely. If user is not authenticated, redirects to login first.
+    and stores the token securely. For embedded apps, returns HTML with App Bridge redirect.
     """
-    logger.info(f"Shopify callback received for shop: {shop}")
+    logger.info(f"Shopify callback received for shop: {shop}, host: {host}")
     
     # Validate the request
     if not validate_shop_request(request, shop, hmac):
@@ -278,18 +318,27 @@ async def shopify_callback(
             db_shop = shop_repository.create_shop(shop_data)
         
         frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
+        is_embedded = host is not None  # Embedded apps include the 'host' parameter
         
-        # If user is not authenticated, redirect to login with return URL
+        # Determine the target path
         if not organization:
             logger.info(f"User not authenticated, redirecting to login")
             # Build the return URL to agent selection page
             return_url = f"/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}"
-            redirect_url = f"{frontend_url}/login?redirect={quote(return_url)}"
-            return RedirectResponse(redirect_url)
+            target_path = f"{frontend_url}/login?redirect={quote(return_url)}"
+        else:
+            # User is authenticated, go directly to agent selection
+            target_path = f"{frontend_url}/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}"
         
-        # User is authenticated, go directly to agent selection
-        redirect_url = f"{frontend_url}/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}"
-        return RedirectResponse(redirect_url)
+        # For embedded apps, return HTML with App Bridge redirect (200 response)
+        # For non-embedded, use standard redirect (302 response)
+        if is_embedded:
+            logger.info(f"Embedded app detected, returning App Bridge redirect HTML")
+            html_content = get_embedded_app_redirect_html(shop, target_path, settings.SHOPIFY_API_KEY)
+            return HTMLResponse(content=html_content, status_code=200)
+        else:
+            logger.info(f"Non-embedded app, using standard redirect")
+            return RedirectResponse(target_path)
     
     except Exception as e:
         logger.error(f"Error processing Shopify callback: {str(e)}")
