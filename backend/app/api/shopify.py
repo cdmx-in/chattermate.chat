@@ -141,17 +141,33 @@ async def shopify_auth(
 
         if validation_result.get("success"):
             logger.info(f"Token for shop {shop} is valid")
-            # For embedded apps, return JSON; for others, redirect to agent selection
+            
+            # Get agent count and widget ID for success page
+            frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
+            agent_config_repository = AgentShopifyConfigRepository(db)
+            configs = agent_config_repository.get_configs_by_shop(str(db_shop.id))
+            agents_connected = len(configs) if configs else 0
+            
+            # Get widget ID from the first connected agent
+            widget_id = None
+            if configs and len(configs) > 0:
+                from app.repositories.widget import WidgetRepository
+                widget_repo = WidgetRepository(db)
+                widgets = widget_repo.get_widgets_by_agent(configs[0].agent_id)
+                if widgets and len(widgets) > 0:
+                    widget_id = str(widgets[0].id)
+            
+            # Build success page URL with all parameters
+            success_url = f"{frontend_url}/shopify/success?shop={shop}&shop_id={str(db_shop.id)}"
+            if agents_connected > 0:
+                success_url += f"&agents_connected={agents_connected}"
+            if widget_id:
+                success_url += f"&widget_id={widget_id}"
             if embedded == "1":
-                return {
-                    "status": "already_installed",
-                    "shop": shop,
-                    "shop_id": str(db_shop.id),
-                    "message": "Shop is already connected"
-                }
-            else:
-                # Redirect to agent selection page
-                return RedirectResponse(f"{settings.FRONTEND_URL}/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}")
+                success_url += "&embedded=1"
+            
+            logger.info(f"Shop already connected, redirecting to success page: {success_url}")
+            return RedirectResponse(success_url)
         else:
             # Token is invalid, clear it and continue with OAuth flow
             shop_update_data = ShopifyShopUpdate(
