@@ -76,22 +76,6 @@ const baseRoutes = [
     meta: { requiresAuth: true },
   },
   {
-    path: '/shopify/auth/callback',
-    name: 'shopify-callback',
-    component: () => import('@/views/AIAgentView.vue'), // Dummy component, will redirect before rendering
-    beforeEnter: (to: RouteLocationNormalized, from: RouteLocationNormalized, next: NavigationGuardNext) => {
-      // Extract all query parameters
-      const queryParams = Object.entries(to.query)
-        .map(([key, value]) => `${key}=${encodeURIComponent(value as string)}`)
-        .join('&')
-      
-     
-      // Redirect to backend callback endpoint with all query parameters
-      window.location.href = `${import.meta.env.VITE_API_URL}/shopify/auth/callback?${queryParams}`
-    },
-    meta: { requiresAuth: false }, // Shopify callback doesn't require authentication
-  },
-  {
     path: '/ai-agents',
     name: 'ai-agents',
     component: () => import('@/views/AIAgentView.vue'),
@@ -242,8 +226,8 @@ router.beforeEach(async (to, from, next) => {
   const isShopifyRequest = !!shopifyShop && shopifyShop.endsWith('.myshopify.com')
   const embedded = to.query.embedded as string
   
-  // If this is a Shopify callback route or success page, don't process further
-  if (to.path === '/shopify/auth/callback' || to.path === '/shopify/success') {
+  // If this is the Shopify success page, don't process further
+  if (to.path === '/shopify/success') {
     return next()
   }
   

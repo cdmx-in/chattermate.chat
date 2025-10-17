@@ -108,87 +108,70 @@ async def shopify_auth(
     shop: str = Query(..., description="Shopify shop domain"),
     hmac: Optional[str] = Query(None, description="HMAC signature for validation"),
     embedded: Optional[str] = Query(None, description="Whether this is an embedded app request"),
+    timestamp: Optional[str] = Query(None, description="Timestamp"),
     db: Session = Depends(get_db)
 ):
     """
     Initiates the Shopify OAuth process by redirecting to the Shopify authorization URL.
-    If the shop is already installed, validates the token before proceeding.
+    This endpoint works for both initial installation and re-authentication.
+    Authentication is handled AFTER OAuth callback, not before.
     """
     logger.info(f"Shopify auth request received for shop: {shop}, embedded: {embedded}")
     
-    # Check if user is authenticated
-    try:
-        current_user = await get_current_user(request=request, db=db)
-        if not check_permissions(current_user, ["manage_organization"]):
-            raise HTTPException(status_code=403, detail="Not enough permissions")
-    except HTTPException as e:
-        # User is not authenticated or doesn't have permission
-        # Redirect to login page with return URL
-        logger.info(f"User not authenticated, redirecting to login")
-        
-        # Build the return URL to come back to this endpoint after login
-        return_url = f"/shopify/auth?shop={shop}"
-        if hmac:
-            return_url += f"&hmac={hmac}"
-        if embedded:
-            return_url += f"&embedded={embedded}"
-        
-        login_url = f"{settings.FRONTEND_URL}/login?redirect={quote(return_url)}"
-        return RedirectResponse(login_url)
-    except Exception as e:
-        logger.error(f"Unexpected error checking authentication: {str(e)}")
-        login_url = f"{settings.FRONTEND_URL}/login"
-        return RedirectResponse(login_url)
+    # Validate shop domain
+    if not shop or not shop.endswith('.myshopify.com'):
+        logger.warning(f"Invalid shop domain: {shop}")
+        raise HTTPException(status_code=400, detail="Invalid shop domain")
+    
+    # If HMAC is provided, validate it
+    if hmac:
+        if not validate_shop_request(request, shop, hmac):
+            logger.warning(f"HMAC validation failed for shop: {shop}")
+            raise HTTPException(status_code=400, detail="Invalid request signature")
 
     shop_repository = ShopifyShopRepository(db)
     db_shop = shop_repository.get_shop_by_domain(shop)
 
-    # If shop is already installed and this is an embedded request, just return success
-    # to avoid redirect loops in Shopify's embedded app context
-    if db_shop and db_shop.access_token and db_shop.is_installed and embedded == "1":
-        logger.info(f"Shop {shop} already installed, returning success status for embedded app")
-        return {
-            "status": "already_installed",
-            "shop": shop,
-            "shop_id": str(db_shop.id),
-            "message": "Shop is already connected. You can manage your agents from the dashboard."
-        }
-
-    # For non-embedded requests or new installations, verify token if shop exists
+    # If shop is already installed, verify token
     if db_shop and db_shop.access_token and db_shop.is_installed:
-        logger.info(f"Shop {shop} found and marked as installed. Verifying token...")
+        logger.info(f"Shop {shop} is already installed, verifying token...")
         shopify_service = ShopifyService(db)
         validation_query = "query { shop { name } }"
-        
-        # Use the async version if available, otherwise adapt
-        # Assuming _execute_graphql_async exists and is appropriate here
         validation_result = await shopify_service._execute_graphql_async(db_shop, validation_query)
 
         if validation_result.get("success"):
-            logger.info(f"Token for shop {shop} is valid.")
-            return {"status": "already_installed", "shop": shop}
+            logger.info(f"Token for shop {shop} is valid")
+            # For embedded apps, return JSON; for others, redirect to agent selection
+            if embedded == "1":
+                return {
+                    "status": "already_installed",
+                    "shop": shop,
+                    "shop_id": str(db_shop.id),
+                    "message": "Shop is already connected"
+                }
+            else:
+                # Redirect to agent selection page
+                return RedirectResponse(f"{settings.FRONTEND_URL}/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}")
         else:
-            # Instantiate ShopifyShopUpdate with the required fields
+            # Token is invalid, clear it and continue with OAuth flow
             shop_update_data = ShopifyShopUpdate(
                 is_installed=False,
-                access_token=None, # Clear invalid token
-                scope=None # Clear scope as well
+                access_token=None,
+                scope=None
             )
-            # Pass the Pydantic model instance
             shop_repository.update_shop(db_shop.id, shop_update_data) 
             db.commit()
-                # Let the function continue to initiate the OAuth flow below
-            
+            logger.info(f"Cleared invalid token for shop {shop}, will re-authenticate")
     
-    # Initialize OAuth flow (if shop not installed, or token was invalid)
+    # Initiate OAuth flow for new installation or re-authentication
     logger.info(f"Initiating OAuth flow for shop: {shop}")
-    nonce = base64.b64encode(hashlib.sha256(shop.encode('utf-8')).digest()).decode('utf-8')
     
-    # Create auth URL
-    redirect_uri = f"{settings.FRONTEND_URL}/shopify/auth/callback"
+    # Use backend callback URL
+    redirect_uri = f"{settings.BACKEND_URL}/api/v1/shopify/auth/callback"
     auth_url = f"https://{shop}/admin/oauth/authorize?client_id={settings.SHOPIFY_API_KEY}&scope={SCOPES}&redirect_uri={redirect_uri}"
     
-    return RedirectResponse(auth_url)
+    logger.info(f"Redirecting to Shopify OAuth: {auth_url}")
+    return RedirectResponse(auth_url, status_code=302)
 
 @router.get("/auth/callback")
 async def shopify_callback(
@@ -197,20 +180,35 @@ async def shopify_callback(
     code: str = Query(..., description="Authorization code"),
     state: Optional[str] = Query(None, description="State parameter for verification"),
     hmac: str = Query(..., description="HMAC signature for validation"),
-    db: Session = Depends(get_db),
-    organization: Organization = Depends(get_current_organization)
+    db: Session = Depends(get_db)
 ):
     """
     Handles the Shopify OAuth callback, exchanges the code for an access token,
-    and stores the token securely.
+    and stores the token securely. If user is not authenticated, redirects to login first.
     """
     logger.info(f"Shopify callback received for shop: {shop}")
+    
     # Validate the request
     if not validate_shop_request(request, shop, hmac):
         logger.warning(f"Invalid Shopify OAuth callback: {shop}")
         raise HTTPException(status_code=400, detail="Invalid request")
     
     logger.info(f"Validating Shopify OAuth callback: {shop}")
+    
+    # Check if user is authenticated
+    organization = None
+    try:
+        current_user = await get_current_user(request=request, db=db)
+        if check_permissions(current_user, ["manage_organization"]):
+            # Get the organization from the authenticated user
+            if current_user.organization_id:
+                from app.repositories.organization import OrganizationRepository
+                org_repo = OrganizationRepository(db)
+                organization = org_repo.get_organization(str(current_user.organization_id))
+    except Exception as e:
+        logger.info(f"User not authenticated during callback: {str(e)}")
+        # User is not authenticated, will handle this after getting the token
+    
     # Exchange the code for an access token
     token_url = f"https://{shop}/admin/oauth/access_token"
     payload = {
@@ -221,11 +219,11 @@ async def shopify_callback(
     
     try:
         # Check if we should verify SSL certificates (default to True for production)
-        # For development/testing environments, this can be set to False in settings
         verify_ssl = settings.VERIFY_SSL_CERTIFICATES
         logger.info(f"Verify SSL Certificates: {verify_ssl}")
         logger.info(f"Token URL: {token_url}")
         logger.info(f"Payload: {payload}")
+        
         # Add verify parameter to control SSL certificate verification
         response = requests.post(token_url, json=payload, verify=verify_ssl)
         response.raise_for_status()
@@ -245,7 +243,6 @@ async def shopify_callback(
         db_shop = shop_repository.get_shop_by_domain(shop)
         if db_shop:
             # Update existing shop
-            # Instantiate ShopifyShopUpdate for updating existing shop
             shop_update = ShopifyShopUpdate( 
                 access_token=access_token,
                 scope=scope,
@@ -264,8 +261,17 @@ async def shopify_callback(
             )
             db_shop = shop_repository.create_shop(shop_data)
         
-        # Redirect to frontend agent selection page
         frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
+        
+        # If user is not authenticated, redirect to login with return URL
+        if not organization:
+            logger.info(f"User not authenticated, redirecting to login")
+            # Build the return URL to agent selection page
+            return_url = f"/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}"
+            redirect_url = f"{frontend_url}/login?redirect={quote(return_url)}"
+            return RedirectResponse(redirect_url)
+        
+        # User is authenticated, go directly to agent selection
         redirect_url = f"{frontend_url}/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}"
         return RedirectResponse(redirect_url)
     
@@ -677,6 +683,275 @@ async def shopify_app_uninstalled_webhook(
         logger.error(traceback.format_exc())
         # Return 200 to prevent Shopify from retrying
         # Log the error for investigation
+        return {
+            "success": False,
+            "message": "An internal error occurred while processing the uninstall webhook."
+        }
+
+@router.post("/webhooks/customers/data_request")
+async def shopify_customers_data_request_webhook(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    GDPR Compliance Webhook: Customer Data Request
+    
+    This webhook is called when a customer requests access to their data.
+    You must provide the customer's data within a specified timeframe.
+    
+    Shopify sends the following information:
+    - shop_id: The ID of the shop
+    - shop_domain: The shop's domain
+    - customer: Customer information including email, phone
+    - orders_requested: List of order IDs the customer has placed
+    
+    Documentation: https://shopify.dev/docs/apps/build/privacy-law-compliance
+    """
+    try:
+        # Get the request body and headers
+        request_body = await request.body()
+        request_headers = request.headers
+        
+        # Verify the webhook signature
+        if not verify_shopify_webhook(request_headers, request_body):
+            logger.warning("Invalid webhook signature for customers/data_request")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        # Parse the webhook payload
+        try:
+            payload = json.loads(request_body.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse webhook payload: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+        shop_domain = payload.get('shop_domain')
+        customer = payload.get('customer', {})
+        customer_email = customer.get('email')
+        customer_phone = customer.get('phone')
+        orders_requested = payload.get('orders_requested', [])
+        
+        logger.info(f"Received customer data request for shop: {shop_domain}, customer: {customer_email}")
+        
+        # TODO: Implement data collection based on your data storage
+        # For now, we'll log the request and acknowledge receipt
+        # You should:
+        # 1. Collect all customer data you've stored (chat history, customer info, etc.)
+        # 2. Prepare it in a readable format (JSON, CSV, etc.)
+        # 3. Send it to the customer or make it available for download
+        # 4. Keep a record of the request for compliance
+        
+        logger.info(f"Customer data request details:")
+        logger.info(f"  - Shop: {shop_domain}")
+        logger.info(f"  - Customer Email: {customer_email}")
+        logger.info(f"  - Customer Phone: {customer_phone}")
+        logger.info(f"  - Orders: {orders_requested}")
+        
+        # In a production system, you would:
+        # 1. Query your chat_history table for this customer
+        # 2. Query any customer-specific data
+        # 3. Format and send the data to the customer
+        
+        # Return 200 OK to acknowledge receipt
+        return {
+            "success": True,
+            "message": "Customer data request received and logged",
+            "shop_domain": shop_domain,
+            "customer_email": customer_email
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing customer data request webhook: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "message": f"Error processing webhook: {str(e)}"
+        }
+
+@router.post("/webhooks/customers/redact")
+async def shopify_customers_redact_webhook(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    GDPR Compliance Webhook: Customer Data Erasure
+    
+    This webhook is called when a customer requests their data to be deleted.
+    You must delete all customer data within a specified timeframe.
+    
+    Shopify sends the following information:
+    - shop_id: The ID of the shop
+    - shop_domain: The shop's domain
+    - customer: Customer information including email, phone
+    - orders_to_redact: List of order IDs to redact
+    
+    Documentation: https://shopify.dev/docs/apps/build/privacy-law-compliance
+    """
+    try:
+        # Get the request body and headers
+        request_body = await request.body()
+        request_headers = request.headers
+        
+        # Verify the webhook signature
+        if not verify_shopify_webhook(request_headers, request_body):
+            logger.warning("Invalid webhook signature for customers/redact")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        # Parse the webhook payload
+        try:
+            payload = json.loads(request_body.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse webhook payload: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+        shop_domain = payload.get('shop_domain')
+        customer = payload.get('customer', {})
+        customer_email = customer.get('email')
+        customer_phone = customer.get('phone')
+        orders_to_redact = payload.get('orders_to_redact', [])
+        
+        logger.info(f"Received customer redact request for shop: {shop_domain}, customer: {customer_email}")
+        
+        # TODO: Implement data deletion based on your data storage
+        # For now, we'll log the request and acknowledge receipt
+        # You should:
+        # 1. Delete or anonymize all customer data (chat history, personal info, etc.)
+        # 2. Keep a minimal record for compliance (that the request was fulfilled)
+        # 3. Ensure the customer's data is no longer accessible
+        
+        logger.info(f"Customer redact request details:")
+        logger.info(f"  - Shop: {shop_domain}")
+        logger.info(f"  - Customer Email: {customer_email}")
+        logger.info(f"  - Customer Phone: {customer_phone}")
+        logger.info(f"  - Orders to redact: {orders_to_redact}")
+        
+        # In a production system, you would:
+        # 1. Find all chat_history records for this customer
+        # 2. Either delete them or anonymize the customer data
+        # 3. Remove any personally identifiable information (PII)
+        # 4. Keep a log that the request was fulfilled
+        
+        # Example pseudocode:
+        # chat_repo = ChatHistoryRepository(db)
+        # if customer_email:
+        #     chat_repo.delete_by_customer_email(customer_email, shop_domain)
+        # if customer_phone:
+        #     chat_repo.delete_by_customer_phone(customer_phone, shop_domain)
+        
+        # Return 200 OK to acknowledge receipt
+        return {
+            "success": True,
+            "message": "Customer data redaction request received and logged",
+            "shop_domain": shop_domain,
+            "customer_email": customer_email
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing customer redact webhook: {str(e)}")
+        logger.error(traceback.format_exc())
+        return {
+            "success": False,
+            "message": f"Error processing webhook: {str(e)}"
+        }
+
+@router.post("/webhooks/shop/redact")
+async def shopify_shop_redact_webhook(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """
+    GDPR Compliance Webhook: Shop Data Erasure
+    
+    This webhook is called 48 hours after a shop owner uninstalls your app.
+    You must delete all shop-related data.
+    
+    Shopify sends the following information:
+    - shop_id: The ID of the shop
+    - shop_domain: The shop's domain
+    
+    Documentation: https://shopify.dev/docs/apps/build/privacy-law-compliance
+    """
+    try:
+        # Get the request body and headers
+        request_body = await request.body()
+        request_headers = request.headers
+        
+        # Verify the webhook signature
+        if not verify_shopify_webhook(request_headers, request_body):
+            logger.warning("Invalid webhook signature for shop/redact")
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
+        
+        # Parse the webhook payload
+        try:
+            payload = json.loads(request_body.decode('utf-8'))
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse webhook payload: {str(e)}")
+            raise HTTPException(status_code=400, detail="Invalid JSON payload")
+        
+        shop_domain = payload.get('shop_domain')
+        shop_id = payload.get('shop_id')
+        
+        logger.info(f"Received shop redact request for shop: {shop_domain} (ID: {shop_id})")
+        
+        # Initialize repositories
+        shop_repo = ShopifyShopRepository(db)
+        config_repo = AgentShopifyConfigRepository(db)
+        
+        # Find the shop in our database
+        db_shop = shop_repo.get_shop_by_domain(shop_domain)
+        
+        if not db_shop:
+            logger.warning(f"Shop not found in database: {shop_domain}")
+            # Return 200 anyway to acknowledge receipt
+            return {"success": True, "message": "Shop not found, no action needed"}
+        
+        logger.info(f"Found shop in database: {db_shop.id}")
+        
+        # Delete all agent configurations for this shop
+        configs = config_repo.get_configs_by_shop(str(db_shop.id))
+        deleted_configs = 0
+        
+        for config in configs:
+            config_repo.delete_agent_shopify_config(config.agent_id)
+            deleted_configs += 1
+            logger.info(f"Deleted Shopify config for agent {config.agent_id}")
+        
+        # TODO: Delete all shop-related data
+        # You should also:
+        # 1. Delete or anonymize all chat history related to this shop
+        # 2. Remove any customer data associated with this shop
+        # 3. Delete any cached product data
+        # 4. Remove any analytics data for this shop
+        
+        # Example pseudocode:
+        # chat_repo = ChatHistoryRepository(db)
+        # chat_repo.delete_by_shop(shop_domain)
+        # 
+        # customer_repo = CustomerRepository(db)
+        # customer_repo.delete_by_shop(shop_domain)
+        
+        # Delete the shop record from the database
+        shop_repo.delete_shop(str(db_shop.id))
+        logger.info(f"Deleted shop record for {shop_domain}")
+        
+        logger.info(f"Successfully redacted all data for shop {shop_domain}. Deleted {deleted_configs} config(s)")
+        
+        # Return 200 OK to acknowledge receipt
+        return {
+            "success": True,
+            "message": f"Shop data redacted successfully for {shop_domain}",
+            "shop_domain": shop_domain,
+            "configs_deleted": deleted_configs
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing shop redact webhook: {str(e)}")
+        logger.error(traceback.format_exc())
         return {
             "success": False,
             "message": f"Error processing webhook: {str(e)}"
