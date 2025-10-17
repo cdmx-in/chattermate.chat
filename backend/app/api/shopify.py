@@ -142,10 +142,10 @@ async def shopify_auth(
         if validation_result.get("success"):
             logger.info(f"Token for shop {shop} is valid")
             
-            # Get agent count and widget ID for success page
+            # Get agent count and widget ID for success page (only enabled configs)
             frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
             agent_config_repository = AgentShopifyConfigRepository(db)
-            configs = agent_config_repository.get_configs_by_shop(str(db_shop.id))
+            configs = agent_config_repository.get_configs_by_shop(str(db_shop.id), enabled_only=True)
             agents_connected = len(configs) if configs else 0
             
             # Get widget ID from the first connected agent

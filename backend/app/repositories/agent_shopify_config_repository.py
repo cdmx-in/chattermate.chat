@@ -37,9 +37,22 @@ class AgentShopifyConfigRepository:
         """Get Shopify configuration for an agent."""
         return self.db.query(AgentShopifyConfig).filter(AgentShopifyConfig.agent_id == agent_id).first()
     
-    def get_configs_by_shop(self, shop_id: str) -> List[AgentShopifyConfig]:
-        """Get all agent configurations for a specific shop."""
-        return self.db.query(AgentShopifyConfig).filter(AgentShopifyConfig.shop_id == shop_id).all()
+    def get_configs_by_shop(self, shop_id: str, enabled_only: bool = False) -> List[AgentShopifyConfig]:
+        """Get all agent configurations for a specific shop.
+        
+        Args:
+            shop_id: The shop ID to filter by
+            enabled_only: If True, only return enabled configurations (default: False)
+        
+        Returns:
+            List of AgentShopifyConfig objects
+        """
+        query = self.db.query(AgentShopifyConfig).filter(AgentShopifyConfig.shop_id == shop_id)
+        
+        if enabled_only:
+            query = query.filter(AgentShopifyConfig.enabled == True)
+        
+        return query.all()
     
     def get_enabled_configs_for_org(self, organization_id: str) -> List[AgentShopifyConfig]:
         """
