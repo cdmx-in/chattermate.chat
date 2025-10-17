@@ -685,7 +685,7 @@ async def shopify_app_uninstalled_webhook(
         # Log the error for investigation
         return {
             "success": False,
-            "message": f"Error processing webhook: {str(e)}"
+            "message": "An internal error occurred while processing the uninstall webhook."
         }
 
 @router.post("/webhooks/customers/data_request")
