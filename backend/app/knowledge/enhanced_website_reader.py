@@ -32,6 +32,7 @@ import httpx
 from agno.document.base import Document
 from agno.document.reader.website_reader import WebsiteReader
 from app.core.logger import get_logger
+from app.knowledge.crawl4ai_fallback import get_crawl4ai_fallback
 
 # Initialize logger for this module
 logger = get_logger(__name__)
@@ -497,6 +498,8 @@ class EnhancedWebsiteReader(WebsiteReader):
         new_links = []
         retry_count = 0
         last_error = None
+        is_javascript_heavy = False
+        soup = None
         
         while retry_count < self.max_retries and content is None:
             try:
@@ -545,9 +548,9 @@ class EnhancedWebsiteReader(WebsiteReader):
                     logger.warning(f"No body tag found in HTML for {current_url}")
                 
                 # Detect JavaScript-heavy pages
-                if total_script_length > len(response.text) * 0.5:
-                    logger.warning(f"⚠️  This appears to be a JavaScript-heavy website ({total_script_length}/{len(response.text)} = {total_script_length/len(response.text)*100:.1f}% scripts)")
-                    logger.warning(f"⚠️  Content may require browser rendering (Playwright/Selenium) for full extraction")
+                is_javascript_heavy = total_script_length > len(response.text) * 0.3
+                if is_javascript_heavy:
+                    logger.warning(f"⚠️  JavaScript-heavy website detected ({total_script_length}/{len(response.text)} = {total_script_length/len(response.text)*100:.1f}% scripts)")
                 
                 # Set current URL for link resolution
                 self._current_url = current_url
@@ -570,9 +573,44 @@ class EnhancedWebsiteReader(WebsiteReader):
                         logger.info(f"Using fallback extraction: {len(fallback_content)} characters")
                         content = fallback_content
                     else:
-                        logger.error(f"All extraction strategies failed for {current_url}. Fallback content: {len(fallback_content) if fallback_content else 0} chars")
-                        self._failed_crawls += 1
-                        return None
+                        logger.warning(f"Standard extraction failed. Fallback content: {len(fallback_content) if fallback_content else 0} chars")
+                        
+                        # Try Crawl4AI fallback whenever content extraction fails
+                        # (regardless of whether page is JavaScript-heavy or not)
+                        crawl4ai = get_crawl4ai_fallback(timeout=self.timeout, verify_ssl=self.verify_ssl)
+                        
+                        if crawl4ai.is_available:
+                            # Log reason for using Crawl4AI
+                            if is_javascript_heavy:
+                                logger.info(f"🔄 Attempting Crawl4AI fallback - JavaScript-heavy page detected: {current_url}")
+                            else:
+                                logger.info(f"🔄 Attempting Crawl4AI fallback - Standard extraction failed: {current_url}")
+                            
+                            crawl4ai_content, crawl4ai_soup = crawl4ai.fetch_with_browser(current_url)
+                            
+                            if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
+                                logger.info(f"✓ Crawl4AI successfully extracted {len(crawl4ai_content)} chars")
+                                content = crawl4ai_content
+                                soup = crawl4ai_soup if crawl4ai_soup else soup
+                            elif crawl4ai_soup:
+                                # Try to extract from crawl4ai soup
+                                self._current_url = current_url
+                                content = self._extract_main_content(crawl4ai_soup)
+                                if content and len(content) >= self.min_content_length:
+                                    logger.info(f"✓ Extracted {len(content)} chars from Crawl4AI HTML")
+                                    soup = crawl4ai_soup
+                                else:
+                                    logger.error(f"Crawl4AI extraction also failed for {current_url}")
+                            else:
+                                logger.error(f"Crawl4AI fallback failed for {current_url}")
+                        else:
+                            logger.warning(f"⚠️  Crawl4AI not available. Install with: pip install crawl4ai>=0.7.0")
+                        
+                        # Final check
+                        if not content or len(content) < self.min_content_length:
+                            logger.error(f"All extraction strategies failed for {current_url}. Final content: {len(content) if content else 0} chars")
+                            self._failed_crawls += 1
+                            return None
                 
                 self._successful_crawls += 1
                 logger.info(f"✓ Successfully extracted {len(content)} chars from {current_url}")
