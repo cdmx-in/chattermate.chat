@@ -59,13 +59,19 @@ class EnhancedWebsiteReader(WebsiteReader):
         'content', 'main-content', 'post-content', 'article-content', 'entry-content', 'page-content',
         'blog-content', 'main', 'article', 'post', 'entry', 'text', 'body'
     ])
-    user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36'
+    user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     headers: Dict[str, str] = field(default_factory=lambda: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
+        'DNT': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
         'Cache-Control': 'max-age=0'
     })
     timeout: int = 30  # Request timeout in seconds
@@ -625,10 +631,17 @@ class EnhancedWebsiteReader(WebsiteReader):
                     
             except httpx.HTTPStatusError as e:
                 retry_count += 1
-                last_error = f"HTTP {e.response.status_code}: {e.response.reason_phrase}"
+                status_code = e.response.status_code
+                last_error = f"HTTP {status_code}: {e.response.reason_phrase}"
                 logger.warning(f"HTTP error on attempt {retry_count}/{self.max_retries} for {current_url}: {last_error}")
-                # Exponential backoff
-                if retry_count < self.max_retries:
+                
+                # Special handling for 403 Forbidden (bot detection)
+                if status_code == 403:
+                    logger.warning(f"⚠️  403 Forbidden - Server may be blocking bot requests")
+                    # Don't retry httpx for 403, go straight to Crawl4AI fallback
+                    retry_count = self.max_retries
+                elif retry_count < self.max_retries:
+                    # Exponential backoff for other errors
                     sleep_time = 2 ** retry_count
                     logger.info(f"Retrying in {sleep_time} seconds...")
                     time.sleep(sleep_time)
@@ -650,10 +663,67 @@ class EnhancedWebsiteReader(WebsiteReader):
                     logger.info(f"Retrying in {sleep_time} seconds...")
                     time.sleep(sleep_time)
         
-        # Log failure if all retries failed
-        if content is None:
+        # If all retries failed, try Crawl4AI fallback as last resort
+        if content is None and last_error:
+            logger.warning(f"⚠️  All extraction attempts failed. Last error: {last_error}")
+            
+            # Try Crawl4AI fallback for HTTP errors (403, 429, etc.) and other failures
+            crawl4ai = get_crawl4ai_fallback(timeout=self.timeout, verify_ssl=self.verify_ssl)
+            
+            if crawl4ai.is_available:
+                logger.info(f"🔄 Attempting Crawl4AI fallback after HTTP/extraction failure: {current_url}")
+                logger.info(f"   Reason: {last_error}")
+                
+                try:
+                    crawl4ai_content, crawl4ai_soup = crawl4ai.fetch_with_browser(current_url)
+                    
+                    if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
+                        logger.info(f"✓ Crawl4AI successfully bypassed error and extracted {len(crawl4ai_content)} chars")
+                        content = crawl4ai_content
+                        soup = crawl4ai_soup if crawl4ai_soup else soup
+                        
+                        # Extract links if we got content
+                        if current_depth < self.max_depth and soup:
+                            links = self._extract_links(soup, current_url)
+                            next_depth = current_depth + 1
+                            new_links = [(link, next_depth) for link in links 
+                                        if link not in self._visited]
+                        
+                        self._successful_crawls += 1
+                        page_end_time = time.time()
+                        page_duration = page_end_time - page_start_time
+                        logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Completed crawling page {self._crawled_pages_count} with Crawl4AI (Time taken: {page_duration:.2f}s)")
+                        return (current_url, content, new_links)
+                    elif crawl4ai_soup:
+                        # Try to extract from crawl4ai soup
+                        self._current_url = current_url
+                        content = self._extract_main_content(crawl4ai_soup)
+                        if content and len(content) >= self.min_content_length:
+                            logger.info(f"✓ Extracted {len(content)} chars from Crawl4AI HTML")
+                            soup = crawl4ai_soup
+                            
+                            # Extract links
+                            if current_depth < self.max_depth:
+                                links = self._extract_links(soup, current_url)
+                                next_depth = current_depth + 1
+                                new_links = [(link, next_depth) for link in links 
+                                            if link not in self._visited]
+                            
+                            self._successful_crawls += 1
+                            page_end_time = time.time()
+                            page_duration = page_end_time - page_start_time
+                            logger.info(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Completed crawling page {self._crawled_pages_count} with Crawl4AI (Time taken: {page_duration:.2f}s)")
+                            return (current_url, content, new_links)
+                    
+                    logger.error(f"Crawl4AI also failed to extract content from {current_url}")
+                except Exception as crawl_error:
+                    logger.error(f"Crawl4AI fallback error: {str(crawl_error)}", exc_info=True)
+            else:
+                logger.warning(f"⚠️  Crawl4AI not available to retry failed request. Install with: pip install crawl4ai>=0.7.0")
+            
+            # Final failure
             self._failed_crawls += 1
-            logger.error(f"❌ Failed to extract content from {current_url} after {self.max_retries} attempts. Last error: {last_error}")
+            logger.error(f"❌ Failed to extract content from {current_url} after all attempts. Last error: {last_error}")
             return None
         
         page_end_time = time.time()
