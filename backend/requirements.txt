@@ -85,3 +85,4 @@ uv
 
 # Web Crawling
 httpx
+crawl4ai>=0.7.0
