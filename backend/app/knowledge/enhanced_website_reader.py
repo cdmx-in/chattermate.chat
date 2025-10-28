@@ -592,7 +592,9 @@ class EnhancedWebsiteReader(WebsiteReader):
                             else:
                                 logger.info(f"🔄 Attempting Crawl4AI fallback - Standard extraction failed: {current_url}")
                             
-                            crawl4ai_content, crawl4ai_soup = crawl4ai.fetch_with_browser(current_url)
+                            # Note: fetch_with_browser returns (content, soup, screenshot)
+                            # We don't need screenshot for backend crawling, so ignore it
+                            crawl4ai_content, crawl4ai_soup, _ = crawl4ai.fetch_with_browser(current_url, take_screenshot=False)
                             
                             if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
                                 logger.info(f"✓ Crawl4AI successfully extracted {len(crawl4ai_content)} chars")
@@ -675,7 +677,9 @@ class EnhancedWebsiteReader(WebsiteReader):
                 logger.info(f"   Reason: {last_error}")
                 
                 try:
-                    crawl4ai_content, crawl4ai_soup = crawl4ai.fetch_with_browser(current_url)
+                    # Note: fetch_with_browser returns (content, soup, screenshot)
+                    # We don't need screenshot for backend crawling, so ignore it
+                    crawl4ai_content, crawl4ai_soup, _ = crawl4ai.fetch_with_browser(current_url, take_screenshot=False)
                     
                     if crawl4ai_content and len(crawl4ai_content) >= self.min_content_length:
                         logger.info(f"✓ Crawl4AI successfully bypassed error and extracted {len(crawl4ai_content)} chars")
