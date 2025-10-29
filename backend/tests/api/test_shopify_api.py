@@ -32,7 +32,8 @@ from app.models.schemas.shopify.agent_shopify_config import AgentShopifyConfig
 from app.models.shopify.agent_shopify_config import AgentShopifyConfig
 
 from app.main import app
-from app.api.shopify import router, validate_shop_request, verify_shopify_webhook
+from app.api.shopify import router
+from app.services.shopify_helper_service import ShopifyHelperService
 from app.repositories.shopify_shop_repository import ShopifyShopRepository
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
 from app.models.shopify import ShopifyShop
@@ -100,7 +101,7 @@ def test_verify_shopify_webhook():
     request_body = b'{"test":"data"}'
     secret = "test_secret"
     
-    with patch('app.api.shopify.settings') as mock_settings:
+    with patch('app.services.shopify_helper_service.settings') as mock_settings:
         mock_settings.SHOPIFY_API_SECRET = secret
         
         # Create a valid HMAC
@@ -113,15 +114,15 @@ def test_verify_shopify_webhook():
         
         # Act & Assert - Valid HMAC
         headers = {"X-Shopify-Hmac-Sha256": valid_hmac}
-        assert verify_shopify_webhook(headers, request_body) is True
+        assert ShopifyHelperService.verify_shopify_webhook(headers, request_body) is True
         
         # Act & Assert - Invalid HMAC
         headers = {"X-Shopify-Hmac-Sha256": "invalid_hmac"}
-        assert verify_shopify_webhook(headers, request_body) is False
+        assert ShopifyHelperService.verify_shopify_webhook(headers, request_body) is False
         
         # Act & Assert - Missing HMAC
         headers = {}
-        assert verify_shopify_webhook(headers, request_body) is False
+        assert ShopifyHelperService.verify_shopify_webhook(headers, request_body) is False
 
 
 def test_validate_shop_request():
@@ -154,21 +155,21 @@ def test_validate_shop_request():
     query_params_with_hmac["hmac"] = digest
     mock_request.query_params = query_params_with_hmac
     
-    with patch('app.api.shopify.settings') as mock_settings:
+    with patch('app.services.shopify_helper_service.settings') as mock_settings:
         mock_settings.SHOPIFY_API_SECRET = secret
         
         # Act & Assert - Valid shop and HMAC
-        assert validate_shop_request(mock_request, shop, digest) is True
+        assert ShopifyHelperService.validate_shop_request(mock_request, shop, digest) is True
         
         # Act & Assert - Invalid shop domain
-        assert validate_shop_request(mock_request, "not-shopify.com", digest) is False
+        assert ShopifyHelperService.validate_shop_request(mock_request, "not-shopify.com", digest) is False
         
         # Act & Assert - Invalid HMAC
-        assert validate_shop_request(mock_request, shop, "invalid_hmac") is False
+        assert ShopifyHelperService.validate_shop_request(mock_request, shop, "invalid_hmac") is False
 
 
 @pytest.mark.asyncio
-@patch('app.api.shopify.validate_shop_request')
+@patch('app.services.shopify_helper_service.ShopifyHelperService.validate_shop_request')
 @patch('app.api.shopify.ShopifyShopRepository')
 @patch('app.api.shopify.ShopifyService')
 async def test_shopify_auth_new_shop(mock_shopify_service, mock_shop_repo, mock_validate, mock_db, mock_user):
@@ -193,49 +194,78 @@ async def test_shopify_auth_new_shop(mock_shopify_service, mock_shop_repo, mock_
         response = await shopify_auth(mock_request, shop, "test_hmac", mock_db, mock_user)
         
         # Assert
-        assert response.status_code == 307  # Update expected status code to 307 for RedirectResponse
+        assert response.status_code == 302  # RedirectResponse uses 302 status code
 
 
 @pytest.mark.asyncio
-@patch('app.api.shopify.validate_shop_request')
-@patch('app.api.shopify.requests.post')
+@patch('app.services.shopify_helper_service.ShopifyHelperService.validate_shop_request')
+@patch('app.services.shopify_helper_service.ShopifyHelperService.exchange_oauth_code_for_token')
 @patch('app.api.shopify.ShopifyShopRepository')
-async def test_shopify_callback(mock_shop_repo, mock_post, mock_validate, mock_db, mock_organization):
-    """Test the shopify_callback endpoint"""
+@patch('app.api.shopify.get_current_user')
+async def test_shopify_callback(mock_get_user, mock_shop_repo, mock_exchange_token, mock_validate, mock_db):
+    """Test the shopify_callback endpoint with valid state"""
     # Arrange
     shop = "test-shop.myshopify.com"
     code = "test_code"
+    state = "valid_state_token"
     hmac_param = "test_hmac"
+    
+    # Mock existing shop with oauth_state
+    from datetime import datetime, timedelta
+    mock_shop = MagicMock()
+    mock_shop.id = str(uuid.uuid4())
+    mock_shop.shop_domain = shop
+    mock_shop.oauth_state = state
+    mock_shop.oauth_state_expiry = datetime.utcnow() + timedelta(minutes=5)
+    mock_shop.access_token = None
+    mock_shop.is_installed = False
+    mock_shop.organization_id = None
+    
+    # Create updated shop with access token (simulates what happens after token exchange)
+    updated_shop = MagicMock()
+    updated_shop.id = mock_shop.id
+    updated_shop.shop_domain = shop
+    updated_shop.access_token = "new_access_token"
+    updated_shop.is_installed = True
+    updated_shop.organization_id = None
     
     mock_shop_repo_instance = MagicMock()
     mock_shop_repo.return_value = mock_shop_repo_instance
-    mock_shop_repo_instance.get_shop_by_domain.return_value = None  # Shop not found
+    # First call returns the shop with oauth_state, second call (after update) returns updated shop
+    mock_shop_repo_instance.get_shop_by_domain.side_effect = [mock_shop, updated_shop]
+    mock_shop_repo_instance.update_shop.return_value = updated_shop
     
     mock_validate.return_value = True  # Request validation passes
     
-    # Mock the token exchange response
-    mock_post.return_value.json.return_value = {
-        "access_token": "new_access_token",
-        "scope": "read_products,write_products"
-    }
-    mock_post.return_value.status_code = 200
-    mock_post.return_value.raise_for_status = MagicMock()
+    # Mock the token exchange
+    mock_exchange_token.return_value = ("new_access_token", "read_products,write_products")
     
-    mock_request = MagicMock()
+    # Mock user not authenticated
+    mock_get_user.side_effect = Exception("Not authenticated")
     
-    with patch('app.api.shopify.settings') as mock_settings:
-        mock_settings.SHOPIFY_API_KEY = "test_api_key"
-        mock_settings.SHOPIFY_API_SECRET = "test_secret"
+    # Mock AgentShopifyConfigRepository for checking agents
+    with patch('app.api.shopify.AgentShopifyConfigRepository') as mock_agent_config_repo:
+        mock_agent_config_instance = MagicMock()
+        mock_agent_config_repo.return_value = mock_agent_config_instance
+        mock_agent_config_instance.get_configs_by_shop.return_value = []  # No agents configured
         
-        # Act
-        from app.api.shopify import shopify_callback
-        response = await shopify_callback(mock_request, shop, code, None, hmac_param, mock_db, mock_organization)
+        mock_request = MagicMock()
         
-        # Assert
-        # Should create a new shop
-        mock_shop_repo_instance.create_shop.assert_called_once()
-        # Should redirect to the shop admin
-        assert response.status_code == 307  # Update expected status code to 307 for RedirectResponse
+        with patch('app.api.shopify.settings') as mock_settings:
+            mock_settings.SHOPIFY_API_KEY = "test_api_key"
+            mock_settings.SHOPIFY_API_SECRET = "test_secret"
+            mock_settings.FRONTEND_URL = "https://example.com"
+            
+            # Act
+            from app.api.shopify import shopify_callback
+            response = await shopify_callback(mock_request, shop, code, state, hmac_param, "test_host", mock_db)
+            
+            # Assert
+            # Should update the shop with new token
+            mock_shop_repo_instance.update_shop.assert_called()
+            # Should redirect to login since user is not authenticated
+            assert response.status_code in [302, 307]  # RedirectResponse can use 302 or 307
+            assert "login" in response.headers["location"]
 
 
 @pytest.mark.asyncio

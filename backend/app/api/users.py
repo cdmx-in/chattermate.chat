@@ -17,6 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Body, File, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List
@@ -37,6 +38,8 @@ from pydantic import BaseModel
 from app.models.role import Role
 from app.core.s3 import get_s3_signed_url, upload_file_to_s3, delete_file_from_s3
 from app.core.config import settings
+from app.repositories.shopify_shop_repository import ShopifyShopRepository
+from app.models.schemas.shopify.shopify_shop import ShopifyShopUpdate
 # Try to import enterprise modules
 try:
     from app.enterprise.repositories.subscription import SubscriptionRepository
@@ -242,6 +245,7 @@ async def delete_user(
 @router.post("/login", response_model=TokenResponse)
 async def login(
     response: Response,
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db)
 ):
@@ -305,6 +309,27 @@ async def login(
             samesite="lax",
             max_age=604800  # 7 days
         )
+
+        # Handle Shopify shop update if shop_id is provided in query params
+        shop_id = request.query_params.get('shop_id')
+        if shop_id:
+            try:
+                shop_repository = ShopifyShopRepository(db)
+                db_shop = shop_repository.get_shop(shop_id)
+                
+                if db_shop:
+                    # Update shop with user's organization_id
+                    shop_update = ShopifyShopUpdate(
+                        organization_id=str(user.organization_id)
+                    )
+                    shop_repository.update_shop(db_shop.id, shop_update)
+                    db.commit()
+                    logger.info(f"Updated shop {db_shop.shop_domain} with organization_id {user.organization_id} after login")
+                else:
+                    logger.warning(f"Shop {shop_id} not found during login")
+            except Exception as e:
+                logger.error(f"Error updating shopify shop during login: {str(e)}")
+                # Don't fail login if shop update fails
 
         return {
             "access_token": access_token,

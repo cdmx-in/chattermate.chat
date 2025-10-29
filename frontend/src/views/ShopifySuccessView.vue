@@ -63,11 +63,12 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 const route = useRoute()
 const router = useRouter()
+const shopifyApp = ref<any>(null)
 
 // Get shop name from URL query parameters
 const shopName = computed(() => {
@@ -98,6 +99,33 @@ const isEmbedded = computed(() => {
   }
 })
 
+// Initialize Shopify App Bridge for embedded apps
+const initializeShopifyAppBridge = () => {
+  try {
+    // Check if we're in an embedded context
+    const urlParams = new URLSearchParams(window.location.search)
+    const host = urlParams.get('host')
+    
+    if (isEmbedded.value && (host || window.self !== window.top)) {
+      // App Bridge is already loaded in index.html
+      const AppBridge = (window as any)['app-bridge']
+      if (AppBridge && AppBridge.default) {
+        const apiKey = (window.APP_CONFIG as any)?.VITE_SHOPIFY_API_KEY || ''
+        shopifyApp.value = AppBridge.default.createApp({
+          apiKey: apiKey,
+          host: host || '',
+          forceRedirect: true
+        })
+        console.log('Shopify App Bridge initialized in success page')
+      } else {
+        console.warn('App Bridge not available')
+      }
+    }
+  } catch (err) {
+    console.error('Failed to initialize Shopify App Bridge:', err)
+  }
+}
+
 // Function to go to home (app.chattermate.chat)
 const goToHome = () => {
   window.location.href = 'https://app.chattermate.chat'
@@ -112,7 +140,21 @@ const openDashboard = () => {
 const openShopify = () => {
   const shop = route.query.shop as string
   if (shop) {
-    window.open(`https://${shop}/admin/themes/current/editor?context=apps`, '_blank')
+    const themeEditorUrl = `https://${shop}/admin/themes/current/editor?context=apps`
+    
+    // For embedded apps, use App Bridge redirect
+    if (isEmbedded.value && shopifyApp.value) {
+      try {
+        const Redirect = (window as any)['app-bridge'].actions.Redirect
+        const redirect = Redirect.create(shopifyApp.value)
+        redirect.dispatch(Redirect.Action.REMOTE, themeEditorUrl)
+      } catch (err) {
+        console.error('Failed to redirect with App Bridge:', err)
+        window.open(themeEditorUrl, '_blank')
+      }
+    } else {
+      window.open(themeEditorUrl, '_blank')
+    }
   }
 }
 
@@ -120,6 +162,9 @@ const openShopify = () => {
 onMounted(() => {
   console.log('Shopify connection success page loaded for shop:', shopName.value)
   console.log('Agents connected:', agentsConnected.value)
+  
+  // Initialize Shopify App Bridge if embedded
+  initializeShopifyAppBridge()
 })
 </script>
 

@@ -39,6 +39,8 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.repositories.widget import WidgetRepository
 from app.services.shopify import ShopifyService
+from app.services.shopify_auth_service import ShopifyAuthService
+from app.services.shopify_helper_service import ShopifyHelperService
 from app.repositories.knowledge import KnowledgeRepository
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
@@ -53,54 +55,7 @@ logger = get_logger(__name__)
 # Define the scopes needed for your app
 SCOPES = "read_products,read_themes,write_themes,write_script_tags,read_script_tags,read_orders,read_customers"
 
-# Validate Shopify HMAC signature
-def verify_shopify_webhook(request_headers, request_body):
-    shopify_hmac = request_headers.get('X-Shopify-Hmac-Sha256')
-    if not shopify_hmac:
-        return False
-    
-    digest = hmac.new(
-        settings.SHOPIFY_API_SECRET.encode('utf-8'),
-        request_body,
-        hashlib.sha256
-    ).digest()
-    
-    computed_hmac = base64.b64encode(digest).decode('utf-8')
-    return hmac.compare_digest(computed_hmac, shopify_hmac)
 
-# Validate the OAuth request from Shopify
-def validate_shop_request(request: Request, shop: str, hmac_param: str):
-    """Simple HMAC validation for Shopify OAuth requests"""
-    # Check if the shop URL is a valid Shopify domain
-    if not shop.endswith('.myshopify.com'):
-        logger.warning(f"Invalid shop domain: {shop}")
-        return False
-    
-    # Get query parameters as dictionary
-    query_params = dict(request.query_params)
-    
-    # Remove hmac from params for validation
-    if 'hmac' in query_params:
-        query_params.pop('hmac')
-    
-    logger.info(f"Query params: {query_params}")
-    logger.info(f"HMAC param: {hmac_param}")
-    # Sort and encode parameters
-    sorted_params = "&".join([f"{key}={quote(value)}" for key, value in sorted(query_params.items())])
-    
-    # Generate HMAC
-    digest = hmac.new(
-        settings.SHOPIFY_API_SECRET.encode('utf-8'),
-        sorted_params.encode('utf-8'),
-        hashlib.sha256
-    ).hexdigest()
-    
-    # Compare with provided HMAC
-    is_valid = hmac.compare_digest(digest, hmac_param)
-    if not is_valid:
-        logger.warning(f"HMAC validation failed for shop: {shop}")
-    
-    return is_valid
 
 @router.get("/auth")
 async def shopify_auth(
@@ -109,6 +64,7 @@ async def shopify_auth(
     hmac: Optional[str] = Query(None, description="HMAC signature for validation"),
     embedded: Optional[str] = Query(None, description="Whether this is an embedded app request"),
     timestamp: Optional[str] = Query(None, description="Timestamp"),
+    host: Optional[str] = Query(None, description="Shopify host parameter for embedded apps"),
     db: Session = Depends(get_db)
 ):
     """
@@ -116,7 +72,11 @@ async def shopify_auth(
     This endpoint works for both initial installation and re-authentication.
     Authentication is handled AFTER OAuth callback, not before.
     """
-    logger.info(f"Shopify auth request received for shop: {shop}, embedded: {embedded}")
+    logger.info(f"Shopify auth request received for shop: {shop}, embedded: {embedded}, host: {host}")
+    
+    # # Normalize embedded parameter (Shopify can send "1", "true", or "True")
+    # # Used only for validation of already-installed shops
+    # is_embedded = embedded in ("1", "true", "True")
     
     # Validate shop domain
     if not shop or not shop.endswith('.myshopify.com'):
@@ -125,320 +85,224 @@ async def shopify_auth(
     
     # If HMAC is provided, validate it
     if hmac:
-        if not validate_shop_request(request, shop, hmac):
+        if not ShopifyHelperService.validate_shop_request(request, shop, hmac):
             logger.warning(f"HMAC validation failed for shop: {shop}")
             raise HTTPException(status_code=400, detail="Invalid request signature")
 
     shop_repository = ShopifyShopRepository(db)
     db_shop = shop_repository.get_shop_by_domain(shop)
-
-    # If shop is already installed, verify token
+    # Generate CSRF protection state parameter
+    import secrets
+    from datetime import datetime, timedelta
+    
+    state = secrets.token_urlsafe(16)
+    state_expiry = datetime.utcnow() + timedelta(minutes=10)  # State expires in 10 minutes
+    
+    # Check if shop is already installed with valid token
+    token_valid = False
     if db_shop and db_shop.access_token and db_shop.is_installed:
         logger.info(f"Shop {shop} is already installed, verifying token...")
-        shopify_service = ShopifyService(db)
-        validation_query = "query { shop { name } }"
-        validation_result = await shopify_service._execute_graphql_async(db_shop, validation_query)
-
-        if validation_result.get("success"):
-            logger.info(f"Token for shop {shop} is valid")
-            
-            # Get agent count and widget ID for success page (only enabled configs)
-            frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
-            agent_config_repository = AgentShopifyConfigRepository(db)
-            configs = agent_config_repository.get_configs_by_shop(str(db_shop.id), enabled_only=True)
-            agents_connected = len(configs) if configs else 0
-            
-            # Get widget ID from the first connected agent
-            widget_id = None
-            if configs and len(configs) > 0:
-                from app.repositories.widget import WidgetRepository
-                widget_repo = WidgetRepository(db)
-                widgets = widget_repo.get_widgets_by_agent(configs[0].agent_id)
-                if widgets and len(widgets) > 0:
-                    widget_id = str(widgets[0].id)
-            
-            # Build success page URL with all parameters
-            success_url = f"{frontend_url}/shopify/success?shop={shop}&shop_id={str(db_shop.id)}"
-            if agents_connected > 0:
-                success_url += f"&agents_connected={agents_connected}"
-            if widget_id:
-                success_url += f"&widget_id={widget_id}"
-            if embedded == "1":
-                success_url += "&embedded=1"
-            
-            logger.info(f"Shop already connected, redirecting to success page: {success_url}")
-            
-            # For embedded apps, return HTML with App Bridge redirect
-            if embedded == "1":
-                logger.info(f"Embedded app detected, returning App Bridge redirect HTML")
-                html_content = get_embedded_app_redirect_html(shop, success_url, settings.SHOPIFY_API_KEY)
-                return HTMLResponse(content=html_content, status_code=200)
-            else:
-                return RedirectResponse(success_url)
-        else:
-            # Token is invalid, clear it and continue with OAuth flow
-            shop_update_data = ShopifyShopUpdate(
-                is_installed=False,
-                access_token=None,
-                scope=None
-            )
-            shop_repository.update_shop(db_shop.id, shop_update_data) 
-            db.commit()
-            logger.info(f"Cleared invalid token for shop {shop}, will re-authenticate")
-    
-    # Initiate OAuth flow for new installation or re-authentication
-    logger.info(f"Initiating OAuth flow for shop: {shop}")
-    
-    # Use backend callback URL
-    redirect_uri = f"{settings.BACKEND_URL}/api/v1/shopify/auth/callback"
-    auth_url = f"https://{shop}/admin/oauth/authorize?client_id={settings.SHOPIFY_API_KEY}&scope={SCOPES}&redirect_uri={redirect_uri}"
+        token_valid = await ShopifyAuthService.verify_shop_token(db, db_shop)
+        logger.info(f"Token valid: {token_valid}")
+    # Build OAuth URL with proper URL encoding
+    redirect_uri = f"{settings.APP_BASE_URL}/api/v1/shopify/auth/callback"
+    auth_url = (
+        f"https://{shop}/admin/oauth/authorize?"
+        f"client_id={settings.SHOPIFY_API_KEY}"
+        f"&scope={SCOPES}"
+        f"&redirect_uri={quote(redirect_uri, safe='')}"
+        f"&state={state}"
+    )
     
     logger.info(f"Redirecting to Shopify OAuth: {auth_url}")
-    return RedirectResponse(auth_url, status_code=302)
+    # If shop is installed with valid token, return to app
+    if db_shop and db_shop.is_installed and token_valid:
 
-def get_embedded_app_redirect_html(shop: str, redirect_path: str, api_key: str) -> str:
-    """
-    Generate HTML page with Shopify App Bridge for embedded app redirects.
-    This returns a 200 response that Shopify's checks can validate.
-    """
-    # Properly escape for safe JavaScript embedding
-    redirect_path_escaped = (redirect_path
-                             .replace('\\', '\\\\')  # Escape backslashes first
-                             .replace("'", "\\'")     # Escape single quotes
-                             .replace('"', '\\"')     # Escape double quotes
-                             .replace('\n', '\\n'))   # Escape newlines
+       logger.info(f"Shop {shop} has valid token, loading app and updating state")
+       shop_update_data = ShopifyShopUpdate(
+            oauth_state=state,
+            oauth_state_expiry=state_expiry
+        )
+       shop_repository.update_shop(db_shop.id, shop_update_data) 
+       db.commit()
+       return RedirectResponse(auth_url, status_code=302)
+        
     
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ChatterMate - Loading...</title>
-    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }}
-        .loader {{
-            text-align: center;
-            color: white;
-        }}
-        .spinner {{
-            border: 3px solid rgba(255,255,255,0.3);
-            border-top-color: white;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 0.8s linear infinite;
-            margin: 0 auto 15px;
-        }}
-        @keyframes spin {{
-            to {{ transform: rotate(360deg); }}
-        }}
-        h2 {{ margin: 10px 0; font-weight: 400; }}
-        p {{ opacity: 0.9; font-size: 14px; margin: 5px 0; }}
-    </style>
-</head>
-<body>
-    <div class="loader">
-        <div class="spinner"></div>
-        <h2>ChatterMate</h2>
-        <p id="status">Setting up your AI assistant...</p>
-    </div>
+    # Store state in database for validation in callback
+    if not db_shop:
+        # Create shop record if it doesn't exist
+        shop_data = ShopifyShopCreate(
+            shop_domain=shop,
+            is_installed=False,
+            oauth_state=state,
+            oauth_state_expiry=state_expiry
+        )
+        db_shop = shop_repository.create_shop(shop_data)
+    elif db_shop and db_shop.access_token and not token_valid:
+        logger.info(f"Clearing invalid token for shop {shop}")
+        shop_update_data = ShopifyShopUpdate(
+            is_installed=False,
+            access_token=None,
+            scope=None,
+            oauth_state=state,
+            oauth_state_expiry=state_expiry
+        )
+        shop_repository.update_shop(db_shop.id, shop_update_data) 
+        db.commit()    
+    else:
+        shop_update = ShopifyShopUpdate(
+            oauth_state=state,
+            oauth_state_expiry=state_expiry
+        )
+        shop_repository.update_shop(db_shop.id, shop_update)
+        db.commit()
     
-    <script>
-        (function() {{
-            var statusEl = document.getElementById('status');
-            var redirectUrl = '{redirect_path_escaped}';
-            
-            function updateStatus(msg) {{
-                if (statusEl) statusEl.textContent = msg;
-                console.log('ChatterMate:', msg);
-            }}
-            
-            function fallbackRedirect() {{
-                updateStatus('Finalizing setup...');
-                setTimeout(function() {{
-                    window.top.location.href = redirectUrl;
-                }}, 500);
-            }}
-            
-            try {{
-                // Get host parameter
-                var urlParams = new URLSearchParams(window.location.search);
-                var host = urlParams.get('host');
-                
-                if (!host) {{
-                    console.warn('No host parameter, using fallback redirect');
-                    fallbackRedirect();
-                    return;
-                }}
-                
-                // Wait for App Bridge to load
-                if (!window['app-bridge']) {{
-                    console.warn('App Bridge not loaded, using fallback redirect');
-                    fallbackRedirect();
-                    return;
-                }}
-                
-                updateStatus('Connecting to Shopify...');
-                
-                var AppBridge = window['app-bridge'];
-                var createApp = AppBridge.default;
-                var Redirect = AppBridge.actions.Redirect;
-                
-                // Initialize App Bridge
-                var app = createApp({{
-                    apiKey: '{api_key}',
-                    host: host,
-                    forceRedirect: true
-                }});
-                
-                console.log('App Bridge initialized for host:', host);
-                updateStatus('Redirecting...');
-                
-                // Dispatch redirect
-                var redirect = Redirect.create(app);
-                redirect.dispatch(Redirect.Action.REMOTE, redirectUrl);
-                
-                console.log('Redirect dispatched to:', redirectUrl);
-                
-                // Fallback after 3 seconds if redirect didn't work
-                setTimeout(fallbackRedirect, 3000);
-                
-            }} catch (error) {{
-                console.error('App Bridge error:', error);
-                updateStatus('Completing setup...');
-                fallbackRedirect();
-            }}
-        }})();
-    </script>
-</body>
-</html>"""
+    
+    logger.info(f"Generated OAuth state for shop {shop}: {state} (expires at {state_expiry})")
+
+    return RedirectResponse(auth_url, status_code=302)
 
 @router.get("/auth/callback")
 async def shopify_callback(
     request: Request,
     shop: str = Query(..., description="Shopify shop domain"),
     code: str = Query(..., description="Authorization code"),
-    state: Optional[str] = Query(None, description="State parameter for verification"),
+    state: Optional[str] = Query(None, description="State parameter for CSRF verification"),
     hmac: str = Query(..., description="HMAC signature for validation"),
     host: Optional[str] = Query(None, description="Shopify host parameter for embedded apps"),
     db: Session = Depends(get_db)
 ):
     """
     Handles the Shopify OAuth callback, exchanges the code for an access token,
-    and stores the token securely. For embedded apps, returns HTML with App Bridge redirect.
+    and stores the token securely.
+    
+    Flow:
+    1. Validate request (HMAC + state)
+    2. Check if shop already authenticated (prevent code reuse)
+    3. Exchange code for access token
+    4. Store shop details in database
+    5. Render appropriate page (agent selection or success)
     """
-    logger.info(f"Shopify callback received for shop: {shop}, host: {host}")
+    logger.info(f"Shopify callback received for shop: {shop}, host: {host}, state: {state}")
     
-    # Validate the request
-    if not validate_shop_request(request, shop, hmac):
-        logger.warning(f"Invalid Shopify OAuth callback: {shop}")
-        raise HTTPException(status_code=400, detail="Invalid request")
-    
-    logger.info(f"Validating Shopify OAuth callback: {shop}")
-    
-    # Check if user is authenticated
-    organization = None
-    try:
-        current_user = await get_current_user(request=request, db=db)
-        if check_permissions(current_user, ["manage_organization"]):
-            # Get the organization from the authenticated user
-            if current_user.organization_id:
-                from app.repositories.organization import OrganizationRepository
-                org_repo = OrganizationRepository(db)
-                organization = org_repo.get_organization(str(current_user.organization_id))
-    except Exception as e:
-        logger.info(f"User not authenticated during callback: {str(e)}")
-        # User is not authenticated, will handle this after getting the token
-    
-    # Exchange the code for an access token
-    token_url = f"https://{shop}/admin/oauth/access_token"
-    payload = {
-        "client_id": settings.SHOPIFY_API_KEY,
-        "client_secret": settings.SHOPIFY_API_SECRET,
-        "code": code
-    }
-    
-    try:
-        # Check if we should verify SSL certificates (default to True for production)
-        verify_ssl = settings.VERIFY_SSL_CERTIFICATES
-        logger.info(f"Verify SSL Certificates: {verify_ssl}")
-        logger.info(f"Token URL: {token_url}")
-        logger.info(f"Payload: {payload}")
-        
-        # Add verify parameter to control SSL certificate verification
-        response = requests.post(token_url, json=payload, verify=verify_ssl)
-        response.raise_for_status()
-        token_data = response.json()
-        access_token = token_data.get("access_token")
-        scope = token_data.get("scope")
-        
-        if not access_token:
-            logger.error(f"Failed to get access token for shop: {shop}")
-            raise HTTPException(status_code=400, detail="Failed to obtain access token")
-        
-        # Convert the organization ID to string
-        org_id_str = str(organization.id) if organization and organization.id else None
-        
-        # Store or update the shop in the database
-        shop_repository = ShopifyShopRepository(db)
+
+    # Validate the HMAC
+    if not ShopifyHelperService.validate_shop_request(request, shop, hmac):
+        logger.warning(f"Invalid Shopify OAuth callback HMAC: {shop}")
+        raise HTTPException(status_code=400, detail="Invalid request signature")
+    try:    
+
+        # Check if user is authenticated
+        organization = None
+        try:
+            current_user = await get_current_user(request=request, db=db)
+            logger.debug(f"Current user: {current_user}")
+            if check_permissions(current_user, ["manage_organization"]):
+                # Get the organization from the authenticated user
+                if current_user.organization_id:
+                    from app.repositories.organization import OrganizationRepository
+                    org_repo = OrganizationRepository(db)
+                    organization = org_repo.get_organization(str(current_user.organization_id))
+        except Exception as e:
+                logger.info(f"User not authenticated during callback: {str(e)}")
+
+        org_id_str = str(organization.id) if organization and organization.id else None        
+        shop_repository = ShopifyShopRepository(db)    
         db_shop = shop_repository.get_shop_by_domain(shop)
-        if db_shop:
+        # Validate CSRF state parameter from database
+        if state and db_shop and db_shop.oauth_state:
+            if db_shop.organization_id:
+                org_id_str = str(db_shop.organization_id)
+            access_token, scope = ShopifyHelperService.exchange_oauth_code_for_token(shop, code)
+
+            
+            if not db_shop:
+                logger.warning(f"Shop {shop} not found in database during OAuth callback")
+                raise HTTPException(status_code=400, detail="Shop not found")
+            
+            if not db_shop.oauth_state:
+                logger.warning(f"No OAuth state found for shop {shop}")
+                raise HTTPException(status_code=400, detail="Invalid OAuth state - no state found")
+            
+            if db_shop.oauth_state != state:
+                logger.warning(f"Invalid OAuth state for shop {shop}. Expected: {db_shop.oauth_state}, Got: {state}")
+                raise HTTPException(status_code=400, detail="Invalid state parameter - possible CSRF attack")
+            
+            # Check if state has expired
+            from datetime import datetime
+            if db_shop.oauth_state_expiry and datetime.utcnow() > db_shop.oauth_state_expiry:
+                logger.warning(f"OAuth state expired for shop {shop}")
+                raise HTTPException(status_code=400, detail="OAuth state expired - please try again")
+                    
+
             # Update existing shop
             shop_update = ShopifyShopUpdate( 
-                access_token=access_token,
-                scope=scope,
-                is_installed=True,
-                organization_id=org_id_str
+                    access_token=access_token,
+                    scope=scope,
+                    is_installed=True,
+                    organization_id=org_id_str,
+                    oauth_state=None,
+                    oauth_state_expiry=None
             )
             db_shop = shop_repository.update_shop(db_shop.id, shop_update)
-        else:
-            # Create new shop
-            shop_data = ShopifyShopCreate(
-                shop_domain=shop,
-                access_token=access_token,
-                scope=scope,
-                is_installed=True,
-                organization_id=org_id_str
+            logger.info(f"Updated existing shop: {shop}")
+            db.commit()
+            logger.info(f"OAuth state validated successfully for shop: {shop}")
+        
+        if db_shop and db_shop.access_token and db_shop.is_installed:
+            logger.info(f"Shop {shop} already has access token, skipping token exchange")
+            
+            # Check if any agents are configured for this shop
+            agent_config_repository = AgentShopifyConfigRepository(db)
+            configs = agent_config_repository.get_configs_by_shop(str(db_shop.id), enabled_only=True)
+            agents_connected = len(configs) if configs else 0
+            
+            logger.info(f"Shop {shop} has {agents_connected} agents configured")
+            
+            # Installed shops should ONLY use embedded flow (accessed via Shopify admin)
+            if not host:
+                logger.warning(f"Installed shop {shop} accessed without host parameter - should use embedded flow")
+                raise HTTPException(
+                    status_code=400, 
+                    detail="This app must be accessed through your Shopify admin. Please open it from Apps section in your Shopify dashboard."
+                )
+            # Embedded app (Shopify always provides host parameter)
+            # If user is not authenticated, redirect to login first
+            if not organization and not db_shop.organization_id:
+                logger.info(f"User not authenticated, redirecting to login")
+                frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
+                
+                # Build return URL based on agent configuration
+                if agents_connected > 0:
+                    # Has agents configured - return to success page after login
+                    return_url = f"/shopify/success?shop={shop}&shop_id={str(db_shop.id)}&agents_connected={agents_connected}"
+                else:
+                    # No agents - return to agent selection after login
+                    return_url = f"/shopify/agent-selection?shop={shop}&shop_id={str(db_shop.id)}"
+                
+                # Redirect to login with return URL and shop_id for updating after login
+                login_url = f"{frontend_url}/login?redirect={quote(return_url)}&shop_id={str(db_shop.id)}"
+                logger.info(f"Redirecting to login: {login_url}")
+                return RedirectResponse(login_url)            
+            # Render embedded app response
+            logger.info(f"Embedded app callback (already authenticated), rendering page directly")
+            return ShopifyHelperService.handle_embedded_app_response(
+                db=db,
+                shop=shop,
+                shop_id=str(db_shop.id),
+                organization_id=db_shop.organization_id,
+                agents_connected=agents_connected,
+                configs=configs,
+                api_key=settings.SHOPIFY_API_KEY,
+                host=host
             )
-            db_shop = shop_repository.create_shop(shop_data)
         
-        frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
-        is_embedded = host is not None  # Embedded apps include the 'host' parameter
+        # Shop doesn't have token yet, proceed with OAuth flow
+        logger.info(f"Shop {shop} needs authentication, exchanging code for token")
         
-        # Determine the target path
-        if not organization:
-            logger.info(f"User not authenticated, redirecting to login")
-            # Build the return URL to agent selection page
-            return_url = f"/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}"
-            target_path = f"{frontend_url}/login?redirect={quote(return_url)}"
-        else:
-            # User is authenticated, go directly to agent selection
-            target_path = f"{frontend_url}/shopify/agent-selection?shop={shop}&shop_id={db_shop.id}"
-        
-        # For embedded apps, return HTML with App Bridge redirect (200 response)
-        # For non-embedded, use standard redirect (302 response)
-        if is_embedded:
-            logger.info(f"Embedded app detected, returning App Bridge redirect HTML")
-            html_content = get_embedded_app_redirect_html(shop, target_path, settings.SHOPIFY_API_KEY)
-            return HTMLResponse(content=html_content, status_code=200)
-        else:
-            logger.info(f"Non-embedded app, using standard redirect")
-            return RedirectResponse(target_path)
-    
     except Exception as e:
         logger.error(f"Error processing Shopify callback: {str(e)}")
         traceback.print_exc()
-        if isinstance(e, requests.exceptions.SSLError):
-            logger.error("SSL Certificate verification failed. If this is a development environment, consider setting VERIFY_SSL_CERTIFICATES=False in settings.")
         raise HTTPException(status_code=500, detail="Error processing callback")
 
 @router.get("/shops", response_model=list[ShopifyShop])
@@ -613,6 +477,59 @@ async def check_connection(
             detail="Error checking Shopify connection status"
         )
 
+@router.get("/shop-config-status")
+async def get_shop_config_status(
+    shop: str = Query(..., description="Shopify shop domain"),
+    shop_id: Optional[str] = Query(None, description="Shop ID"),
+    db: Session = Depends(get_db)
+):
+    """
+    Check configuration status for a shop (agents configured, widget ID, etc.)
+    This endpoint can be called without authentication for embedded apps using session tokens.
+    """
+    try:
+        shop_repository = ShopifyShopRepository(db)
+        
+        # Get shop by domain or ID
+        if shop_id:
+            db_shop = shop_repository.get_shop(shop_id)
+        else:
+            db_shop = shop_repository.get_shop_by_domain(shop)
+        
+        if not db_shop:
+            raise HTTPException(status_code=404, detail="Shop not found")
+        
+        # Check if any agents are configured for this shop
+        agent_config_repository = AgentShopifyConfigRepository(db)
+        configs = agent_config_repository.get_configs_by_shop(str(db_shop.id), enabled_only=True)
+        agents_connected = len(configs) if configs else 0
+        
+        # Get widget ID if agents are configured
+        widget_id = None
+        if configs and len(configs) > 0:
+            widget_repo = WidgetRepository(db)
+            widgets = widget_repo.get_widgets_by_agent(configs[0].agent_id)
+            if widgets and len(widgets) > 0:
+                widget_id = str(widgets[0].id)
+        
+        return {
+            "shop_id": str(db_shop.id),
+            "shop_domain": db_shop.shop_domain,
+            "is_installed": db_shop.is_installed,
+            "agents_connected": agents_connected,
+            "widget_id": widget_id,
+            "organization_id": str(db_shop.organization_id) if db_shop.organization_id else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting shop config status: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error retrieving shop configuration status"
+        )
+
 @router.get("/agent-config/{agent_id}", response_model=AgentShopifyConfig)
 async def get_agent_shopify_config(
     agent_id: str,
@@ -768,7 +685,7 @@ async def shopify_app_uninstalled_webhook(
         request_headers = request.headers
         
         # Verify the webhook signature
-        if not verify_shopify_webhook(request_headers, request_body):
+        if not ShopifyHelperService.verify_shopify_webhook(request_headers, request_body):
             logger.warning("Invalid webhook signature for app/uninstalled")
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
         
@@ -872,7 +789,7 @@ async def shopify_customers_data_request_webhook(
         request_headers = request.headers
         
         # Verify the webhook signature
-        if not verify_shopify_webhook(request_headers, request_body):
+        if not ShopifyHelperService.verify_shopify_webhook(request_headers, request_body):
             logger.warning("Invalid webhook signature for customers/data_request")
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
         
@@ -953,7 +870,7 @@ async def shopify_customers_redact_webhook(
         request_headers = request.headers
         
         # Verify the webhook signature
-        if not verify_shopify_webhook(request_headers, request_body):
+        if not ShopifyHelperService.verify_shopify_webhook(request_headers, request_body):
             logger.warning("Invalid webhook signature for customers/redact")
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
         
@@ -1039,7 +956,7 @@ async def shopify_shop_redact_webhook(
         request_headers = request.headers
         
         # Verify the webhook signature
-        if not verify_shopify_webhook(request_headers, request_body):
+        if not ShopifyHelperService.verify_shopify_webhook(request_headers, request_body):
             logger.warning("Invalid webhook signature for shop/redact")
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
         

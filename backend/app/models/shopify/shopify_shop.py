@@ -33,6 +33,11 @@ class ShopifyShop(Base):
     access_token = Column(String, nullable=True)
     scope = Column(String, nullable=True)
     is_installed = Column(Boolean, default=False)
+    
+    # OAuth state for CSRF protection
+    oauth_state = Column(String, nullable=True)
+    oauth_state_expiry = Column(DateTime, nullable=True)
+    
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     

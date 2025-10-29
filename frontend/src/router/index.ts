@@ -3,6 +3,7 @@ import type { RouteLocationNormalized, NavigationGuardNext } from 'vue-router'
 import { userService } from '@/services/user'
 import { getSetupStatus } from '@/services/organization'
 import { permissionChecks, hasAnyPermission } from '@/utils/permissions'
+import { getApiUrl } from '@/config/api'
 import HumanAgentView from '@/views/HumanAgentView.vue'
 import OrganizationSettings from '@/views/settings/OrganizationSettings.vue'
 import AIConfigSettings from '@/views/settings/AIConfigSettings.vue'
@@ -30,6 +31,29 @@ const baseRoutes = [
     name: 'setup',
     component: () => import('@/views/SetupView.vue'),
     meta: { requiresAuth: false },
+  },
+  {
+    path: '/shopify',
+    name: 'shopify-home',
+    component: () => import('@/views/ShopifyHomeView.vue'),
+    meta: { requiresAuth: false }, // Will handle auth check internally for embedded apps
+    beforeEnter: (to: RouteLocationNormalized, from: RouteLocationNormalized, next: NavigationGuardNext) => {
+      // When Shopify loads the embedded app, it will redirect to this URL with shop and host params
+      // We need to check if the shop is authenticated and redirect accordingly
+      const shop = to.query.shop as string
+      const host = to.query.host as string
+      
+      if (shop) {
+        // Redirect to backend which will handle authentication and redirect back
+        // getApiUrl() already includes /api/v1, so we just append /shopify/auth
+        const apiUrl = getApiUrl()
+        window.location.href = `${apiUrl}/shopify/auth?shop=${encodeURIComponent(shop)}&embedded=1${host ? `&host=${encodeURIComponent(host)}` : ''}`
+        return
+      }
+      
+      // No shop parameter, just render the home view
+      next()
+    },
   },
   {
     path: '/shopify/agent-selection',
@@ -71,7 +95,7 @@ const baseRoutes = [
       .join('&')
       
       // Redirect to backend auth endpoint
-      window.location.href = `${import.meta.env.VITE_API_URL}/shopify/auth?${queryParams}`
+      window.location.href = `${getApiUrl()}/shopify/auth?${queryParams}`
     },
     meta: { requiresAuth: true },
   },
@@ -233,12 +257,25 @@ router.beforeEach(async (to, from, next) => {
   
   // Handle Shopify API request with shop parameter
   if (isShopifyRequest) {
-    // If embedded=1, redirect to the success page
+    const host = to.query.host as string
+    const hmac = to.query.hmac as string
+    const timestamp = to.query.timestamp as string
+    
+    // If this is from Shopify (has hmac), redirect to backend OAuth flow first
+    // This handles initial installation or re-authorization
+    if (hmac && timestamp) {
+      console.log('Shopify OAuth request detected, redirecting to backend OAuth flow')
+      const apiUrl = `${getApiUrl()}/shopify/auth?shop=${encodeURIComponent(shopifyShop)}&host=${encodeURIComponent(host || '')}&embedded=1`
+      window.location.href = apiUrl
+      return next(false) // Cancel Vue Router navigation since we're doing a full page redirect
+    }
+    
+    // If embedded=1, redirect to the shopify home page (after OAuth is complete)
     if (embedded === '1') {
-      console.log('Embedded Shopify app detected in navigation guard, redirecting to success page')
+      console.log('Embedded Shopify app detected in navigation guard, redirecting to shopify home')
       return next({ 
-        name: 'shopify-success',
-        query: { shop: shopifyShop } 
+        name: 'shopify-home',
+        query: { shop: shopifyShop, host: host || '' } 
       })
     }
     
@@ -253,11 +290,7 @@ router.beforeEach(async (to, from, next) => {
       // Redirect to login page
       return next('/login')
     } else {
-
-      // User is authenticated, redirect to backend Shopify auth endpoint with embedded param
-      // const apiUrl = `${import.meta.env.VITE_API_URL}/shopify/auth?shop=${encodeURIComponent(shopifyShop)}&embedded=1`
-      // window.location.href = apiUrl
-      // Return next() to prevent the Vue Router warning, even though we're redirecting
+      // User is authenticated, proceed
       return next()
     }
   }
@@ -277,9 +310,9 @@ router.beforeEach(async (to, from, next) => {
         // Clear stored redirect
         localStorage.removeItem('shopifyRedirect')
         // Redirect to backend Shopify auth endpoint with embedded param
-        const apiUrl = `${import.meta.env.VITE_API_URL}/shopify/auth?shop=${encodeURIComponent(shopifyParams.shop)}&embedded=1`
+        const apiUrl = `${getApiUrl()}/shopify/auth?shop=${encodeURIComponent(shopifyParams.shop)}&embedded=1`
         window.location.href = apiUrl
-        return next()
+        return next(false) // Cancel Vue Router navigation since we're doing a full page redirect
       }
     } catch (e) {
       console.error('Error parsing Shopify redirect params:', e)

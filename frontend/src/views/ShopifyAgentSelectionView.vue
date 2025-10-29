@@ -40,8 +40,8 @@
                   type="radio"
                   name="agent-selection"
                   :value="agent.id"
-                  :checked="selectedAgent === agent.id"
-                  @change="selectAgent(agent.id)"
+                  v-model="selectedAgent"
+                  @change="onAgentChange(agent.id)"
                 />
               </div>
               <div class="agent-info">
@@ -50,6 +50,9 @@
                 <div class="agent-meta">
                   <span class="badge" :class="{ 'active': agent.is_active }">
                     {{ agent.is_active ? 'Active' : 'Inactive' }}
+                  </span>
+                  <span class="badge" style="background: #e3e3e3; color: #666;">
+                    ID: {{ agent.id ? agent.id.substring(0, 8) : 'N/A' }}
                   </span>
                 </div>
               </div>
@@ -94,11 +97,22 @@
             @click="saveConfiguration"
             class="btn-primary"
             :disabled="!selectedAgent || saving"
+            :title="!selectedAgent ? 'Please select an agent first' : 'Click to connect selected agent'"
           >
             <div v-if="saving" class="btn-spinner"></div>
             <span v-if="saving">Connecting...</span>
             <span v-else>Connect Agent</span>
           </button>
+        </div>
+        <!-- Debug info (remove after testing) -->
+        <div v-if="true" style="margin-top: 10px; padding: 10px; font-size: 12px; color: #333; background: #f5f5f5; border-radius: 4px;">
+          <div><strong>🔍 Debug Info:</strong></div>
+          <div>Selected Agent ID: <code>{{ selectedAgent || 'NONE' }}</code></div>
+          <div>Type: <code>{{ typeof selectedAgent }}</code></div>
+          <div>Button Disabled: <code>{{ !selectedAgent || saving }}</code></div>
+          <div>Saving: <code>{{ saving }}</code></div>
+          <div>Agents Count: <code>{{ agents.length }}</code></div>
+          <div v-if="agents.length > 0">First Agent ID: <code>{{ agents[0]?.id }}</code></div>
         </div>
       </div>
 
@@ -130,9 +144,40 @@ const widgetId = ref<string | null>(null)
 const loading = ref(true)
 const saving = ref(false)
 const error = ref<string | null>(null)
+const isEmbedded = ref(false)
+const shopifyApp = ref<any>(null)
 
 const shopDomain = computed(() => route.query.shop as string)
 const shopId = computed(() => route.query.shop_id as string)
+
+// Initialize Shopify App Bridge for embedded apps
+const initializeShopifyAppBridge = () => {
+  try {
+    // Check if we're in an embedded context
+    const urlParams = new URLSearchParams(window.location.search)
+    const host = urlParams.get('host')
+    
+    if (host || window.self !== window.top) {
+      isEmbedded.value = true
+      
+      // App Bridge is already loaded in index.html
+      const AppBridge = (window as any)['app-bridge']
+      if (AppBridge && AppBridge.default) {
+        const apiKey = (window.APP_CONFIG as any)?.VITE_SHOPIFY_API_KEY || ''
+        shopifyApp.value = AppBridge.default.createApp({
+          apiKey: apiKey,
+          host: host || '',
+          forceRedirect: true
+        })
+        console.log('Shopify App Bridge initialized in agent selection')
+      } else {
+        console.warn('App Bridge not available')
+      }
+    }
+  } catch (err) {
+    console.error('Failed to initialize Shopify App Bridge:', err)
+  }
+}
 
 // Load agents from API
 const loadAgents = async () => {
@@ -141,15 +186,25 @@ const loadAgents = async () => {
   
   try {
     agents.value = await agentService.getOrganizationAgents()
+    console.log('Loaded agents:', agents.value)
     
     if (agents.value.length === 0) {
       loading.value = false
       return
     }
     
-    // Auto-select the first agent by default
-    if (agents.value.length > 0) {
+    // Filter out only active agents for selection
+    const activeAgents = agents.value.filter(agent => agent.is_active !== false)
+    
+    // Auto-select the first active agent by default
+    if (activeAgents.length > 0) {
+      selectedAgent.value = activeAgents[0].id
+      console.log('Auto-selected first agent:', selectedAgent.value)
+      await loadWidgetForAgent(activeAgents[0].id)
+    } else if (agents.value.length > 0) {
+      // If no active agents, select the first one anyway
       selectedAgent.value = agents.value[0].id
+      console.log('Auto-selected first agent (no active filter):', selectedAgent.value)
       await loadWidgetForAgent(agents.value[0].id)
     }
     
@@ -180,9 +235,21 @@ const loadWidgetForAgent = async (agentId: string) => {
   }
 }
 
-// Select agent (radio button behavior)
+// Called when agent selection changes
+const onAgentChange = async (agentId: string) => {
+  console.log('🔵 Agent changed to:', agentId)
+  console.log('🔵 Type of agentId:', typeof agentId)
+  console.log('🔵 selectedAgent.value before:', selectedAgent.value)
+  // v-model already updates selectedAgent, just load widget
+  await loadWidgetForAgent(agentId)
+  console.log('🔵 selectedAgent.value after:', selectedAgent.value)
+}
+
+// Select agent (radio button behavior) - keeping for backward compatibility
 const selectAgent = async (agentId: string) => {
+  console.log('🟢 Selecting agent:', agentId)
   selectedAgent.value = agentId
+  console.log('🟢 Selected agent is now:', selectedAgent.value)
   await loadWidgetForAgent(agentId)
 }
 
@@ -197,15 +264,26 @@ const saveConfiguration = async () => {
     // Enable Shopify for the selected agent
     await enableShopifyForAgents([selectedAgent.value], shopId.value)
     
-    // Show success message and redirect with widget ID
-    router.push({
-      name: 'shopify-success',
-      query: {
-        shop: shopDomain.value,
-        agents_connected: '1',
-        widget_id: widgetId.value || ''
-      }
-    })
+    // Build success URL
+    const successUrl = `/shopify/success?shop=${shopDomain.value}&shop_id=${shopId.value}&agents_connected=1${widgetId.value ? `&widget_id=${widgetId.value}` : ''}`
+    
+    // For embedded apps, use App Bridge redirect
+    if (isEmbedded.value && shopifyApp.value) {
+      const Redirect = (window as any)['app-bridge'].actions.Redirect
+      const redirect = Redirect.create(shopifyApp.value)
+      redirect.dispatch(Redirect.Action.APP, successUrl)
+    } else {
+      // For non-embedded apps, use router navigation
+      router.push({
+        name: 'shopify-success',
+        query: {
+          shop: shopDomain.value,
+          shop_id: shopId.value,
+          agents_connected: '1',
+          widget_id: widgetId.value || ''
+        }
+      })
+    }
     
   } catch (err: any) {
     console.error('Failed to save Shopify configuration:', err)
@@ -227,6 +305,9 @@ const goToAgents = () => {
 }
 
 onMounted(async () => {
+  // Initialize Shopify App Bridge for embedded apps
+  initializeShopifyAppBridge()
+  
   // If we have shop info in query params, use it
   if (shopDomain.value && shopId.value) {
     loadAgents()
