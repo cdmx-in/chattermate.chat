@@ -24,9 +24,10 @@ from sqlalchemy.orm import Session
 import uuid
 
 from app.core.application import app  # Import FastAPI app before SocketIO wrapping
-from app.api.shopify_embedded import router
+from app.api import shopify_embedded
 from app.models.shopify import ShopifyShop
 from app.database import get_db
+from app.core.config import settings
 
 
 @pytest.fixture
@@ -39,6 +40,16 @@ def mock_db():
 @pytest.fixture
 def api_client(mock_db):
     """Create a TestClient for the FastAPI app with mocked database"""
+    # Include the shopify_embedded router if not already included
+    # Check if the router is already included by looking for a test route
+    route_paths = [route.path for route in app.routes]
+    if f"{settings.API_V1_STR}/shopify/home" not in route_paths:
+        app.include_router(
+            shopify_embedded.router,
+            prefix=f"{settings.API_V1_STR}/shopify",
+            tags=["shopify-embedded"]
+        )
+    
     # Override the get_db dependency to return our mock
     app.dependency_overrides[get_db] = lambda: mock_db
     
