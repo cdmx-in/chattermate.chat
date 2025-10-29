@@ -266,7 +266,7 @@ async def enable_agent(
     if not shop_id or not agent_ids:
         raise HTTPException(status_code=400, detail="shop_id and agent_ids required")
     
-    # Enable Shopify for agents
+    # Enable Shopify for agents (create or update if already exists)
     config_repository = AgentShopifyConfigRepository(db)
     
     for agent_id in agent_ids:
@@ -275,7 +275,7 @@ async def enable_agent(
                 enabled=True, 
                 shop_id=shop_id
         )
-        config_repository.create_agent_shopify_config(config_create_data)
+        config_repository.create_or_update_agent_shopify_config(config_create_data)
     
     logger.info(f"Enabled Shopify for {len(agent_ids)} agent(s) in shop {shop_id}")
     
