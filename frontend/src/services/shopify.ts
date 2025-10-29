@@ -126,4 +126,22 @@ export const getShopAuthInfo = async (shopDomain: string, embedded: boolean = tr
     console.error('Error getting shop auth info:', error)
     throw error
   }
+}
+
+/**
+ * Get shop configuration status (agents connected, widget ID, etc.)
+ */
+export const getShopConfigStatus = async (shopDomain: string, shopId?: string) => {
+  try {
+    const params = new URLSearchParams({ shop: shopDomain })
+    if (shopId) {
+      params.append('shop_id', shopId)
+    }
+    
+    const response = await api.get(`/shopify/shop-config-status?${params.toString()}`)
+    return response.data
+  } catch (error) {
+    console.error('Error getting shop config status:', error)
+    throw error
+  }
 } 
