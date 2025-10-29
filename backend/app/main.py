@@ -23,7 +23,7 @@ os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, widget_chat, user_groups, roles, analytics, jira, shopify, shopify_embedded, workflow, workflow_node, mcp_tool
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -183,6 +183,12 @@ app.include_router(
     shopify.router,
     prefix=f"{settings.API_V1_STR}/shopify",
     tags=["shopify"]
+)
+
+app.include_router(
+    shopify_embedded.router,
+    prefix=f"{settings.API_V1_STR}/shopify",
+    tags=["shopify-embedded"]
 )
 
 app.include_router(

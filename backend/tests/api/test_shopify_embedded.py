@@ -40,15 +40,7 @@ def mock_db():
 @pytest.fixture
 def api_client(mock_db):
     """Create a TestClient for the FastAPI app with mocked database"""
-    # Include the shopify_embedded router if not already included
-    # Check if the router is already included by looking for a test route
-    route_paths = [route.path for route in app.routes]
-    if f"{settings.API_V1_STR}/shopify/home" not in route_paths:
-        app.include_router(
-            shopify_embedded.router,
-            prefix=f"{settings.API_V1_STR}/shopify",
-            tags=["shopify-embedded"]
-        )
+
     
     # Override the get_db dependency to return our mock
     app.dependency_overrides[get_db] = lambda: mock_db
