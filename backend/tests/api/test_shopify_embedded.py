@@ -461,7 +461,7 @@ class TestEnableAgent:
         assert response.status_code == 200
         assert response.json()["success"] is True
         assert f"Connected {len(agent_ids)} agent(s)" in response.json()["message"]
-        assert mock_config_repo_instance.create_agent_shopify_config.call_count == len(agent_ids)
+        assert mock_config_repo_instance.create_or_update_agent_shopify_config.call_count == len(agent_ids)
     
     @patch('app.api.shopify_embedded.ShopifySessionService.get_session_token_from_request')
     @patch('app.api.shopify_embedded.ShopifySessionService.validate_session_token')

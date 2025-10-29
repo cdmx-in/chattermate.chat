@@ -37,6 +37,13 @@ class AgentShopifyConfigRepository:
         """Get Shopify configuration for an agent."""
         return self.db.query(AgentShopifyConfig).filter(AgentShopifyConfig.agent_id == agent_id).first()
     
+    def get_config_by_agent_and_shop(self, agent_id: str, shop_id: str) -> Optional[AgentShopifyConfig]:
+        """Get Shopify configuration for a specific agent and shop combination."""
+        return self.db.query(AgentShopifyConfig).filter(
+            AgentShopifyConfig.agent_id == agent_id,
+            AgentShopifyConfig.shop_id == shop_id
+        ).first()
+    
     def get_configs_by_shop(self, shop_id: str, enabled_only: bool = False) -> List[AgentShopifyConfig]:
         """Get all agent configurations for a specific shop.
         
@@ -87,6 +94,40 @@ class AgentShopifyConfigRepository:
         self.db.commit()
         self.db.refresh(db_config)
         return db_config
+    
+    def create_or_update_agent_shopify_config(self, config: AgentShopifyConfigCreate) -> AgentShopifyConfig:
+        """Create or update a Shopify configuration for an agent.
+        
+        One agent can only be connected to one shop at a time.
+        If a configuration already exists for this agent (regardless of shop),
+        it will be updated with the new shop_id and enabled status.
+        Otherwise, a new configuration will be created.
+        """
+        # Check if config already exists for this agent (one agent = one shop only)
+        existing_config = self.get_agent_shopify_config(config.agent_id)
+        
+        if existing_config:
+            # Update existing config with new shop_id and enabled status
+            logger.info(f"Updating existing Shopify config for agent {config.agent_id}: "
+                       f"changing shop from {existing_config.shop_id} to {config.shop_id}, enabled={config.enabled}")
+            existing_config.shop_id = config.shop_id
+            existing_config.enabled = config.enabled
+            self.db.commit()
+            self.db.refresh(existing_config)
+            return existing_config
+        else:
+            # Create new config
+            logger.info(f"Creating new Shopify config for agent {config.agent_id} and shop {config.shop_id}")
+            db_config = AgentShopifyConfig(
+                id=str(uuid.uuid4()),
+                agent_id=config.agent_id,
+                shop_id=config.shop_id,
+                enabled=config.enabled
+            )
+            self.db.add(db_config)
+            self.db.commit()
+            self.db.refresh(db_config)
+            return db_config
     
     def update_agent_shopify_config(self, agent_id: str, config: AgentShopifyConfigUpdate) -> Optional[AgentShopifyConfig]:
         """Update an existing Shopify configuration for an agent."""
