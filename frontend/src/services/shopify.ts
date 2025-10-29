@@ -1,4 +1,5 @@
 import api from './api'
+import { getApiUrl } from '@/config/api'
 
 /**
  * Check if Shopify is connected for the current organization
@@ -30,8 +31,11 @@ export const connectToShopify = (shopDomain: string) => {
     shopDomain = `${shopDomain}.myshopify.com`
   }
   
-  // The router will handle the redirection to the backend
-  window.location.href = `/shopify/auth?shop=${encodeURIComponent(shopDomain)}`
+  // Redirect directly to the backend API for OAuth initiation
+  // This bypasses the frontend router which requires authentication
+  // getApiUrl() returns the URL WITH /api/v1 already included
+  const apiUrl = getApiUrl()
+  window.location.href = `${apiUrl}/shopify/auth?shop=${encodeURIComponent(shopDomain)}`
 }
 
 /**

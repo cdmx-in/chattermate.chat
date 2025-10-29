@@ -20,7 +20,17 @@ export const authService = {
       formData.append('username', email)
       formData.append('password', password)
 
-      const response = await api.post<LoginResponse>('/users/login', formData, {
+      // Get shop_id from URL query params if it exists
+      const urlParams = new URLSearchParams(window.location.search)
+      const shopId = urlParams.get('shop_id')
+      
+      // Build the URL with query params if shop_id exists
+      let url = '/users/login'
+      if (shopId) {
+        url += `?shop_id=${encodeURIComponent(shopId)}`
+      }
+
+      const response = await api.post<LoginResponse>(url, formData, {
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
         },

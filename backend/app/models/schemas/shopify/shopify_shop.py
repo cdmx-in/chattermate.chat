@@ -31,6 +31,8 @@ class ShopifyShopCreate(ShopifyShopBase):
     access_token: Optional[str] = Field(None, description="Shopify access token")
     scope: Optional[str] = Field(None, description="Shopify OAuth scopes")
     is_installed: bool = Field(False, description="Whether the app is installed on this shop")
+    oauth_state: Optional[str] = Field(None, description="CSRF protection state parameter")
+    oauth_state_expiry: Optional[datetime] = Field(None, description="CSRF protection state parameter expiry")
 
 class ShopifyShopUpdate(BaseModel):
     """Schema for updating a shopify shop"""
@@ -38,6 +40,8 @@ class ShopifyShopUpdate(BaseModel):
     scope: Optional[str] = None
     is_installed: Optional[bool] = None
     organization_id: Optional[str] = None
+    oauth_state: Optional[str] = None
+    oauth_state_expiry: Optional[datetime] = None
 
 class ShopifyShopInDB(ShopifyShopBase):
     """Schema for shopify shop from database"""
