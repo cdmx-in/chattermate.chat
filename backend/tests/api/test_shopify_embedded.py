@@ -23,9 +23,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 import uuid
 
-from app.main import app
+from app.core.application import app  # Import FastAPI app before SocketIO wrapping
 from app.api.shopify_embedded import router
 from app.models.shopify import ShopifyShop
+from app.database import get_db
 
 
 @pytest.fixture
@@ -36,9 +37,17 @@ def mock_db():
 
 
 @pytest.fixture
-def api_client():
-    """Create a TestClient for the FastAPI app"""
-    return TestClient(app)
+def api_client(mock_db):
+    """Create a TestClient for the FastAPI app with mocked database"""
+    # Override the get_db dependency to return our mock
+    app.dependency_overrides[get_db] = lambda: mock_db
+    
+    client = TestClient(app)
+    
+    yield client
+    
+    # Clean up - remove the override after the test
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
