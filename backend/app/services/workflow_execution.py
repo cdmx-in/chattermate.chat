@@ -965,7 +965,7 @@ class WorkflowExecutionService:
         else:
             # Check if it's a variable reference
             # If the text_source doesn't contain {{}} syntax, wrap it
-            if not text_source.startswith("{{"):
+            if not (text_source.startswith("{{") and text_source.endswith("}}")):
                 text_source = f"{{{{{text_source}}}}}"
             text_to_check = self._process_variables(text_source, workflow_state)
         
