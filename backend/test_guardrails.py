@@ -5,7 +5,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from app.utils.guardrails import check_guardrails, PIIDetector, JailbreakDetector
+from app.utils.guardrails import check_guardrails
 
 def test_pii_detection():
     print("=" * 60)
