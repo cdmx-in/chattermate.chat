@@ -101,7 +101,7 @@ class PIIDetector:
         for pii_type, pattern in PIIDetector.PATTERNS.items():
             matches = re.finditer(pattern, text)
             for match in matches:
-                violations.append(f"{pii_type}: {match.group()[:20]}...")
+                violations.append(f"{pii_type} at position {match.start()} (length {len(match.group())})")
                 
                 # Redact if action is REDACT
                 if action == GuardrailAction.REDACT:
