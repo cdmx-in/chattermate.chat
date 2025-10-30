@@ -141,6 +141,14 @@ class WorkflowExecutionService:
                 workflow_state["variables"]["user_message"] = user_message
                 logger.debug(f"Stored user message in workflow state: {user_message}")
             
+            # Store user message in workflow state if provided
+            # This makes it available to all nodes via {{user_message}} variable
+            if user_message:
+                if "variables" not in workflow_state:
+                    workflow_state["variables"] = {}
+                workflow_state["variables"]["user_message"] = user_message
+                logger.debug(f"Stored user message in workflow state: {user_message}")
+            
             # Determine starting node
             if current_node_id is None:
                 current_node = self._find_start_node(workflow)
@@ -431,6 +439,7 @@ class WorkflowExecutionService:
             
             elif node.node_type == NodeType.LANDING_PAGE:
                 return self._execute_landing_page_node(node, workflow_state, user_message)
+                return self._execute_landing_page_node(node, workflow_state, user_message)
             
             elif node.node_type == NodeType.ACTION:
                 return self._execute_action_node(node, workflow_state)
@@ -446,6 +455,9 @@ class WorkflowExecutionService:
             
             elif node.node_type == NodeType.USER_INPUT:
                 return self._execute_user_input_node(node, workflow_state, user_message, session_id)
+            
+            elif node.node_type == NodeType.GUARDRAILS:
+                return self._execute_guardrails_node(node, workflow, workflow_state, user_message)
             
             elif node.node_type == NodeType.GUARDRAILS:
                 return self._execute_guardrails_node(node, workflow, workflow_state, user_message)
