@@ -31,6 +31,7 @@ import ActionNodeConfig from '@/components/workflow/nodes/ActionNodeConfig.vue'
 import MessageNodeConfig from '@/components/workflow/nodes/MessageNodeConfig.vue'
 import ConditionNodeConfig from '@/components/workflow/nodes/ConditionNodeConfig.vue'
 import UserInputNodeConfig from '@/components/workflow/nodes/UserInputNodeConfig.vue'
+import GuardrailsNodeConfig from '@/components/workflow/nodes/GuardrailsNodeConfig.vue'
 import { ExitCondition } from '@/types/workflow'
 import { listGroups } from '@/services/groups'
 import type { UserGroup } from '@/types/user'
@@ -127,7 +128,13 @@ const nodeForm = ref({
   landing_page_content: '',
   // User Input node
   prompt_message: '',
-  confirmation_message: ''
+  confirmation_message: '',
+  // Guardrails node
+  enabled_guardrails: ['pii', 'jailbreak'] as string[],
+  pii_action: 'block',
+  jailbreak_sensitivity: 0.7,
+  text_source: 'user_message',
+  block_message: ''
 })
 
 const saving = ref(false)
@@ -256,6 +263,13 @@ const updateConditionFormData = (data: any) => {
 
 // Update User Input form data from child component
 const updateUserInputFormData = (data: any) => {
+  Object.assign(nodeForm.value, data)
+  // Trigger auto-save after updating
+  autoSaveToCache()
+}
+
+// Update Guardrails form data from child component
+const updateGuardrailsFormData = (data: any) => {
   Object.assign(nodeForm.value, data)
   // Trigger auto-save after updating
   autoSaveToCache()
@@ -701,7 +715,23 @@ watch(() => props.selectedNode, (newNode) => {
                       '',
       confirmation_message: nodeData.config?.confirmation_message || 
                             nodeData.confirmation_message || 
-                            ''
+                            '',
+      // Guardrails node
+      enabled_guardrails: nodeData.config?.enabled_guardrails || 
+                          nodeData.enabled_guardrails || 
+                          ['pii', 'jailbreak'],
+      pii_action: nodeData.config?.pii_action || 
+                  nodeData.pii_action || 
+                  'block',
+      jailbreak_sensitivity: nodeData.config?.jailbreak_sensitivity !== undefined ? 
+                             nodeData.config?.jailbreak_sensitivity : 
+                             (nodeData.jailbreak_sensitivity !== undefined ? nodeData.jailbreak_sensitivity : 0.7),
+      text_source: nodeData.config?.text_source || 
+                   nodeData.text_source || 
+                   'user_message',
+      block_message: nodeData.config?.block_message || 
+                     nodeData.block_message || 
+                     ''
     }
     
     console.log('Form loaded with values:', nodeForm.value)
@@ -720,7 +750,8 @@ const getNodeTypeName = (type: string) => {
     humanTransfer: 'Human Transfer',
     wait: 'Wait',
     end: 'End',
-    userInput: 'User Input'
+    userInput: 'User Input',
+    guardrails: 'Guardrails'
   }
   return names[type as keyof typeof names] || type
 }
@@ -904,7 +935,8 @@ const mapNodeTypeToBackend = (frontendType: string) => {
     'humanTransfer': 'human_transfer',
     'wait': 'wait',
     'end': 'end',
-    'userInput': 'user_input'
+    'userInput': 'user_input',
+    'guardrails': 'guardrails'
   }
   return mapping[frontendType as keyof typeof mapping] || 'message'
 }
@@ -1199,6 +1231,22 @@ const handleDelete = () => {
                 confirmation_message: nodeForm.confirmation_message
               }"
               @update:model-value="updateUserInputFormData"
+              :validation-errors="validationErrors"
+              @validate-field="validateFieldOnChange"
+            />
+          </template>
+
+          <!-- Guardrails Node -->
+          <template v-if="selectedNode.data.nodeType === 'guardrails'">
+            <GuardrailsNodeConfig
+              :model-value="{
+                enabled_guardrails: nodeForm.enabled_guardrails,
+                pii_action: nodeForm.pii_action,
+                jailbreak_sensitivity: nodeForm.jailbreak_sensitivity,
+                text_source: nodeForm.text_source,
+                block_message: nodeForm.block_message
+              }"
+              @update:model-value="updateGuardrailsFormData"
               :validation-errors="validationErrors"
               @validate-field="validateFieldOnChange"
             />

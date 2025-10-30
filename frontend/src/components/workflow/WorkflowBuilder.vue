@@ -140,6 +140,13 @@ const availableNodeTypes: NodeTypeInfo[] = [
     description: 'Wait for user input with a custom prompt',
     color: '#06B6D4'
   },
+  {
+    type: 'guardrails',
+    label: 'Guardrails',
+    icon: '🛡️',
+    description: 'Check content for PII, jailbreak attempts, and other violations',
+    color: '#EC4899'
+  },
   // {
   //   type: 'action',
   //   label: 'Action',

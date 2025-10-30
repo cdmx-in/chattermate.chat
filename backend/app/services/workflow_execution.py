@@ -133,6 +133,14 @@ class WorkflowExecutionService:
             if workflow_state is None:
                 workflow_state = {}
             
+            # Store user message in workflow state if provided
+            # This makes it available to all nodes via {{user_message}} variable
+            if user_message:
+                if "variables" not in workflow_state:
+                    workflow_state["variables"] = {}
+                workflow_state["variables"]["user_message"] = user_message
+                logger.debug(f"Stored user message in workflow state: {user_message}")
+            
             # Determine starting node
             if current_node_id is None:
                 current_node = self._find_start_node(workflow)
@@ -422,7 +430,7 @@ class WorkflowExecutionService:
                 return self._execute_form_node(node, workflow_state, user_message, session_id)
             
             elif node.node_type == NodeType.LANDING_PAGE:
-                return self._execute_landing_page_node(node, workflow_state)
+                return self._execute_landing_page_node(node, workflow_state, user_message)
             
             elif node.node_type == NodeType.ACTION:
                 return self._execute_action_node(node, workflow_state)
@@ -438,6 +446,9 @@ class WorkflowExecutionService:
             
             elif node.node_type == NodeType.USER_INPUT:
                 return self._execute_user_input_node(node, workflow_state, user_message, session_id)
+            
+            elif node.node_type == NodeType.GUARDRAILS:
+                return self._execute_guardrails_node(node, workflow, workflow_state, user_message)
             
             else:
                 return WorkflowExecutionResult(
@@ -795,9 +806,9 @@ class WorkflowExecutionService:
                 form_data=form_data
             )
     
-    def _execute_landing_page_node(self, node: WorkflowNode, workflow_state: Dict[str, Any]) -> WorkflowExecutionResult:
+    def _execute_landing_page_node(self, node: WorkflowNode, workflow_state: Dict[str, Any], user_message: Optional[str] = None) -> WorkflowExecutionResult:
         """Execute a landing page node"""
-        logger.info(f"Executing landing page node: {node.id}")
+        logger.info(f"Executing landing page node: {node.id}, user_message present: {bool(user_message)}")
         config = node.config or {}
         heading = config.get("landing_page_heading", "Welcome")
         content = config.get("landing_page_content", "Thank you for visiting!")
@@ -811,6 +822,18 @@ class WorkflowExecutionService:
             "heading": heading,
             "content": content
         }
+        
+        # If user message is present, proceed to next node
+        if user_message:
+            logger.info(f"User message received on landing page node, proceeding to next node")
+            next_node_id = self._find_next_node(node)
+            return WorkflowExecutionResult(
+                success=True,
+                message="",  # No text message needed
+                next_node_id=next_node_id,
+                should_continue=True,  # Continue execution
+                landing_page_data=None  # Don't show landing page again
+            )
         
         # Don't find next node immediately - wait for user to proceed
         result = WorkflowExecutionResult(
@@ -898,6 +921,152 @@ class WorkflowExecutionService:
             request_rating=request_rating,
             should_continue=False
         )
+    
+    def _execute_guardrails_node(
+        self,
+        node: WorkflowNode,
+        workflow: Workflow,
+        workflow_state: Dict[str, Any],
+        user_message: str
+    ) -> WorkflowExecutionResult:
+        """
+        Execute a guardrails node to check content against configured guardrails
+        
+        Args:
+            node: Guardrails workflow node
+            workflow: Current workflow
+            workflow_state: Current workflow state
+            user_message: User's message to check
+            
+        Returns:
+            WorkflowExecutionResult with pass/fail status
+        """
+        from app.utils.guardrails import check_guardrails
+        
+        config = node.config or {}
+        
+        # Get guardrail configuration
+        enabled_guardrails = config.get("enabled_guardrails", ["pii", "jailbreak"])
+        pii_action = config.get("pii_action", "block")
+        jailbreak_sensitivity = config.get("jailbreak_sensitivity", 0.7)
+        
+        # Get text to check - either from user message or from a variable
+        text_source = config.get("text_source", "user_message")
+        
+        if text_source == "user_message":
+            # Try to get from parameter first, then from workflow state
+            if user_message:
+                text_to_check = user_message
+            elif "variables" in workflow_state and "user_message" in workflow_state["variables"]:
+                text_to_check = workflow_state["variables"]["user_message"]
+                logger.debug(f"Using user_message from workflow state: {text_to_check}")
+            else:
+                text_to_check = ""
+        else:
+            # Check if it's a variable reference
+            # If the text_source doesn't contain {{}} syntax, wrap it
+            if not text_source.startswith("{{"):
+                text_source = f"{{{{{text_source}}}}}"
+            text_to_check = self._process_variables(text_source, workflow_state)
+        
+        if not text_to_check:
+            logger.warning(f"No text to check in guardrails node {node.id}")
+            # No text to check - pass through
+            next_node_id = self._find_next_node(node)
+            return WorkflowExecutionResult(
+                success=True,
+                message="",
+                next_node_id=next_node_id,
+                should_continue=True
+            )
+        
+        # Run guardrail checks
+        passed, results, block_message = check_guardrails(
+            text=text_to_check,
+            guardrail_types=enabled_guardrails,
+            pii_action=pii_action,
+            jailbreak_sensitivity=jailbreak_sensitivity
+        )
+        
+        # Store results in workflow state
+        if "guardrails" not in workflow_state:
+            workflow_state["guardrails"] = {}
+        
+        workflow_state["guardrails"][str(node.id)] = {
+            "passed": passed,
+            "results": results,
+            "checked_text": text_to_check[:100] + "..." if len(text_to_check) > 100 else text_to_check
+        }
+        
+        logger.info(f"Guardrails node {node.id} - Passed: {passed}, Results: {results}")
+        
+        # Find connections - guardrails nodes can have two outputs: "pass" and "fail"
+        pass_node_id = None
+        fail_node_id = None
+        
+        for connection in node.outgoing_connections:
+            condition_label = connection.label
+            if condition_label and condition_label.lower() == "fail":
+                fail_node_id = connection.target_node_id
+            else:
+                # Default or "pass" label goes to pass path
+                pass_node_id = connection.target_node_id
+        
+        if passed:
+            # Guardrails passed - continue to pass node or default next
+            next_node_id = pass_node_id or self._find_next_node(node)
+            
+            # Check if we should redact and update the message
+            redacted_text = None
+            for result in results:
+                if result.get("redacted_text"):
+                    redacted_text = result["redacted_text"]
+                    break
+            
+            if redacted_text and pii_action == "redact":
+                # Store redacted text in workflow state for use by subsequent nodes
+                workflow_state["last_redacted_message"] = redacted_text
+            
+            # Determine message and continuation based on whether there's a next node
+            message = ""
+            should_continue = True
+            
+            if not next_node_id:
+                # Guardrails passed but this is a terminal node - provide feedback
+                logger.info(f"Guardrails node {node.id} passed - this is a terminal node (no next node configured)")
+                should_continue = False
+                # Optionally provide a success message if this is the end of workflow
+                message = "Content check passed successfully."
+            
+            return WorkflowExecutionResult(
+                success=True,
+                message=message,
+                next_node_id=next_node_id,
+                should_continue=should_continue
+            )
+        else:
+            # Guardrails failed - go to fail node or block
+            if fail_node_id:
+                # Continue to fail handling node
+                next_node_id = fail_node_id
+                return WorkflowExecutionResult(
+                    success=True,
+                    message="",
+                    next_node_id=next_node_id,
+                    should_continue=True
+                )
+            else:
+                # No fail node - block with message
+                block_message_config = config.get("block_message", "")
+                final_message = block_message_config if block_message_config else block_message
+                
+                return WorkflowExecutionResult(
+                    success=True,
+                    message=final_message,
+                    next_node_id=None,
+                    should_continue=False
+                )
+    
     
     def _execute_user_input_node(
         self,
