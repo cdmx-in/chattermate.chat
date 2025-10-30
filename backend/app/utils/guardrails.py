@@ -306,7 +306,6 @@ class GuardrailsEngine:
         if not failed_guardrails:
             return "Your message has been processed successfully."
         
-        guardrail_types = [r.guardrail_type.value for r in failed_guardrails]
         
         if GuardrailType.PII in [r.guardrail_type for r in failed_guardrails]:
             return (
