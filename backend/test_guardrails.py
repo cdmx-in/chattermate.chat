@@ -2,7 +2,8 @@
 Test script for guardrails module
 """
 import sys
-sys.path.insert(0, '/root/chattermate.chat/backend')
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from app.utils.guardrails import check_guardrails, PIIDetector, JailbreakDetector
 
