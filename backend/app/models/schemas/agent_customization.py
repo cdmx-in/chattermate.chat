@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from pydantic import BaseModel
-from typing import Optional, Dict
+from typing import Optional, Dict, List
 from uuid import UUID
 import enum
 
@@ -30,6 +30,16 @@ class ChatStyle(str, enum.Enum):
 class WidgetPosition(str, enum.Enum):
     FLOATING = "FLOATING"
     FIXED = "FIXED"
+
+
+# Predefined chat initiation messages
+DEFAULT_CHAT_INITIATIONS = [
+    "👋 Hi! Need help? Ask me anything!",
+    "💬 Have a question? I'm here to help!",
+    "🤝 Welcome! How can I assist you today?",
+    "✨ Got questions? Let's chat!",
+    "👨‍💼 Need support? Click to chat with us!"
+]
 
 
 class CustomizationBase(BaseModel):
@@ -47,6 +57,7 @@ class CustomizationBase(BaseModel):
     widget_position: Optional[WidgetPosition] = WidgetPosition.FLOATING
     welcome_title: Optional[str] = None
     welcome_subtitle: Optional[str] = None
+    chat_initiation_messages: Optional[List[str]] = None
 
 
 class CustomizationCreate(CustomizationBase):

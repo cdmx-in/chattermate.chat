@@ -8421,7 +8421,8 @@ function th() {
       type: "CUSTOMIZATION_UPDATE",
       data: {
         chat_bubble_color: r.chat_bubble_color || "#f34611",
-        chat_style: r.chat_style
+        chat_style: r.chat_style,
+        chat_initiation_messages: r.chat_initiation_messages || []
       }
     }, "*");
   };

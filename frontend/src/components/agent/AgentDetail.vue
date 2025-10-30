@@ -96,7 +96,7 @@ const isAskAnythingStyle = computed(() => {
 // Computed property for preview wrapper styles
 const previewWrapperStyles = computed(() => {
     const baseStyles = {
-        background: 'var(--background-alt, #f0f0f0)',
+        background: 'transparent',
         borderRadius: 'var(--radius-lg)',
         overflow: 'hidden',
         height: '600px',
@@ -104,15 +104,16 @@ const previewWrapperStyles = computed(() => {
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
-        border: '1px solid var(--border-color)'
+        boxShadow: 'none',
+        border: 'none',
+        maxWidth: '100%'
     }
     
     if (isAskAnythingStyle.value) {
         return {
             ...baseStyles,
-            width: '700px',  // Increased width for ASK_ANYTHING style
-            minWidth: '600px'
+            width: '500px',
+            minWidth: '500px'
         }
     }
     
@@ -946,10 +947,6 @@ onMounted(async () => {
                     </div>
                 </div>
             </div>
-
-
-
-
 
             <!-- Cropper Modal -->
             <div v-if="showCropper" class="cropper-modal">
@@ -1864,16 +1861,14 @@ input:checked + .slider:before {
     display: flex;
     flex-direction: row;
     gap: var(--space-xl);
-    padding: var(--space-xl);
+    padding: var(--space-lg);
     height: 100%;
 }
 
 .preview-header {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    min-width: 300px;
+    max-width: 480px;
+    overflow-y: auto;
 }
 
 .preview-title {
@@ -1885,6 +1880,13 @@ input:checked + .slider:before {
 
 .preview-wrapper {
     /* Base styles are now handled by computed previewWrapperStyles */
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    padding-top: 0;
     transition: all 0.3s ease;
 }
 

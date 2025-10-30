@@ -37,7 +37,10 @@ window.ChatterMate;
     tokenKey: 'ctid', // Key for localStorage
     containerBottom: 100, // Default bottom position
     containerRight: 20, // Default right position
-    containerWidth: 400 // Default width
+    containerWidth: 400, // Default width
+    chatInitiationMessages: [], // Will be populated from widget data
+    initiationMessageId: 'chattermate-initiation',
+    initiationShownKey: 'ctim_shown', // Key for tracking if initiation was shown
   }
 
   // Create and inject styles
@@ -271,6 +274,141 @@ window.ChatterMate;
           display: none !important;
         }
       }
+
+      /* Chat Initiation Message Styles */
+      #${config.initiationMessageId} {
+        position: fixed;
+        bottom: 95px;
+        right: 20px;
+        max-width: 240px;
+        background: white;
+        padding: 12px 36px 12px 14px;
+        border-radius: 14px;
+        box-shadow: 0 3px 16px rgba(0, 0, 0, 0.1);
+        z-index: 999998;
+        cursor: pointer;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(10px) scale(0.95);
+        transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      }
+
+      #${config.initiationMessageId}.show {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0) scale(1);
+        animation: chattermate-bounce-in 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+      }
+
+      @keyframes chattermate-bounce-in {
+        0% {
+          opacity: 0;
+          transform: translateY(20px) scale(0.8);
+        }
+        50% {
+          transform: translateY(-5px) scale(1.02);
+        }
+        100% {
+          opacity: 1;
+          transform: translateY(0) scale(1);
+        }
+      }
+
+      #${config.initiationMessageId}:hover {
+        transform: translateY(-2px) scale(1.02);
+        box-shadow: 0 5px 20px rgba(0, 0, 0, 0.14);
+      }
+
+      #${config.initiationMessageId}::after {
+        content: '';
+        position: absolute;
+        bottom: -7px;
+        right: 30px;
+        width: 14px;
+        height: 14px;
+        background: white;
+        transform: rotate(45deg);
+        box-shadow: 3px 3px 5px rgba(0, 0, 0, 0.06);
+        clip-path: polygon(0 0, 100% 0, 100% 100%);
+      }
+
+      .initiation-message-text {
+        font-size: 13px;
+        line-height: 1.4;
+        color: #374151;
+        margin: 0;
+        position: relative;
+        z-index: 1;
+        padding-right: 4px;
+        min-height: 18px;
+      }
+
+      .initiation-message-text::after {
+        content: '|';
+        animation: blink 1s step-end infinite;
+        margin-left: 2px;
+        color: ${config.chatBubbleColor};
+        font-weight: 500;
+      }
+
+      .initiation-message-text.typing-complete::after {
+        display: none;
+      }
+
+      @keyframes blink {
+        0%, 50% { opacity: 1; }
+        51%, 100% { opacity: 0; }
+      }
+
+      .initiation-close {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 20px;
+        height: 20px;
+        background: rgba(0, 0, 0, 0.04);
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        opacity: 0.5;
+        transition: all 0.2s ease;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+      }
+
+      .initiation-close:hover {
+        opacity: 1;
+        background: rgba(0, 0, 0, 0.08);
+        transform: scale(1.05);
+      }
+
+      .initiation-close::before,
+      .initiation-close::after {
+        content: '';
+        position: absolute;
+        width: 9px;
+        height: 1.5px;
+        background: #4a5568;
+        border-radius: 1px;
+      }
+
+      .initiation-close::before {
+        transform: rotate(45deg);
+      }
+
+      .initiation-close::after {
+        transform: rotate(-45deg);
+      }
+
+      @media (max-width: 768px) {
+        #${config.initiationMessageId} {
+          display: none !important;
+        }
+      }
     `
     // Remove existing style if it exists
     const existingStyle = document.getElementById('chattermate-styles')
@@ -300,6 +438,134 @@ window.ChatterMate;
   // Check if device is mobile
   function isMobileDevice() {
     return window.innerWidth <= 768;
+  }
+
+  // Get a random message from the array
+  function getRandomInitiationMessage() {
+    if (!config.chatInitiationMessages || config.chatInitiationMessages.length === 0) {
+      return null;
+    }
+    const randomIndex = Math.floor(Math.random() * config.chatInitiationMessages.length);
+    return config.chatInitiationMessages[randomIndex];
+  }
+
+  // Check if initiation message should be shown (first visit in session)
+  function shouldShowInitiation() {
+    // Only show on desktop
+    if (isMobileDevice()) return false;
+    
+    // Check if we have messages to show
+    if (!config.chatInitiationMessages || config.chatInitiationMessages.length === 0) {
+      return false;
+    }
+    
+    // Check session storage to see if already shown in this session
+    return !sessionStorage.getItem(config.initiationShownKey);
+  }
+
+  // Mark initiation as shown
+  function markInitiationShown() {
+    sessionStorage.setItem(config.initiationShownKey, 'true');
+  }
+
+  // Create initiation message element
+  function createInitiationMessage() {
+    const message = getRandomInitiationMessage();
+    if (!message) return null;
+
+    const initiationDiv = document.createElement('div');
+    initiationDiv.id = config.initiationMessageId;
+    initiationDiv.innerHTML = `
+      <button class="initiation-close" aria-label="Close"></button>
+      <p class="initiation-message-text"></p>
+    `;
+
+    // Store the full message for typewriting effect
+    initiationDiv.dataset.fullMessage = message;
+
+    return initiationDiv;
+  }
+
+  // Typewriting effect for initiation message
+  function typeWriteMessage(element, text, speed = 50) {
+    const textElement = element.querySelector('.initiation-message-text');
+    if (!textElement) return;
+
+    let index = 0;
+    
+    const typeInterval = setInterval(() => {
+      if (index < text.length) {
+        textElement.textContent += text.charAt(index);
+        index++;
+      } else {
+        clearInterval(typeInterval);
+        // Remove cursor after typing is complete
+        textElement.classList.add('typing-complete');
+        element.typeInterval = null;
+      }
+    }, speed);
+
+    // Store interval ID to clear it if needed
+    element.typeInterval = typeInterval;
+  }
+
+  // Show initiation message with animation
+  function showInitiationMessage(initiationDiv, toggleChatFn) {
+    if (!initiationDiv || !shouldShowInitiation()) return;
+
+    document.body.appendChild(initiationDiv);
+
+    // Show after a short delay for better UX
+    setTimeout(() => {
+      initiationDiv.classList.add('show');
+      
+      // Start typewriting effect after bubble appears
+      setTimeout(() => {
+        const fullMessage = initiationDiv.dataset.fullMessage;
+        if (fullMessage) {
+          typeWriteMessage(initiationDiv, fullMessage, 40);
+        }
+      }, 300);
+    }, 1500);
+
+    // Click on message opens chat
+    initiationDiv.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('initiation-close')) {
+        // Clear typewriting interval if still running
+        if (initiationDiv.typeInterval) {
+          clearInterval(initiationDiv.typeInterval);
+        }
+        hideInitiationMessage(initiationDiv);
+        toggleChatFn();
+        markInitiationShown();
+      }
+    });
+
+    // Close button hides message
+    const closeBtn = initiationDiv.querySelector('.initiation-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Clear typewriting interval if still running
+        if (initiationDiv.typeInterval) {
+          clearInterval(initiationDiv.typeInterval);
+        }
+        hideInitiationMessage(initiationDiv);
+        markInitiationShown();
+      });
+    }
+  }
+
+  // Hide initiation message
+  function hideInitiationMessage(initiationDiv) {
+    if (!initiationDiv) return;
+    
+    initiationDiv.classList.remove('show');
+    setTimeout(() => {
+      if (initiationDiv.parentNode) {
+        initiationDiv.parentNode.removeChild(initiationDiv);
+      }
+    }, 400);
   }
 
   // Initialize function to create and append elements
@@ -349,6 +615,48 @@ window.ChatterMate;
     let isOpen = false
     let iframe = null
     let isLoading = false
+    let initiationMessageElement = null
+
+    function toggleChat() {
+      isOpen = !isOpen
+      container.classList.toggle('active')
+      button.classList.toggle('active')
+      mobileCloseButton.classList.toggle('active')
+
+      // Hide initiation message when chat is opened
+      if (isOpen && initiationMessageElement) {
+        hideInitiationMessage(initiationMessageElement);
+        initiationMessageElement = null;
+        markInitiationShown();
+      }
+
+      // Handle mobile button visibility
+      if (isMobileDevice()) {
+        if (isOpen) {
+          // When opening on mobile, hide the button
+          button.classList.remove('mobile-closed')
+          // Stop bouncing when open
+          button.style.animation = ''
+        } else {
+          // When closing on mobile, show the button
+          button.classList.add('mobile-closed')
+          // Add subtle idle bounce when closed
+          button.style.animation = 'chattermate-bounce 2.2s ease-in-out infinite'
+          // Hide topbar when closing
+          mobileTopbar.classList.remove('active')
+          document.body.classList.remove('ask-anything-mobile')
+        }
+      } else {
+        // On desktop, ensure mobile close button is hidden when widget is open
+        if (isOpen) {
+          mobileCloseButton.classList.remove('active')
+        }
+      }
+
+      if (isOpen && iframe) {
+        iframe.contentWindow.postMessage({ type: 'SCROLL_TO_BOTTOM' }, '*')
+      }
+    }
 
     // Start prefetching the widget data
     async function prefetchWidget() {
@@ -403,39 +711,13 @@ window.ChatterMate;
     // Start prefetching immediately
     prefetchWidget()
 
-    function toggleChat() {
-      isOpen = !isOpen
-      container.classList.toggle('active')
-      button.classList.toggle('active')
-      mobileCloseButton.classList.toggle('active')
-
-      // Handle mobile button visibility
-      if (isMobileDevice()) {
-        if (isOpen) {
-          // When opening on mobile, hide the button
-          button.classList.remove('mobile-closed')
-          // Stop bouncing when open
-          button.style.animation = ''
-        } else {
-          // When closing on mobile, show the button
-          button.classList.add('mobile-closed')
-          // Add subtle idle bounce when closed
-          button.style.animation = 'chattermate-bounce 2.2s ease-in-out infinite'
-          // Hide topbar when closing
-          mobileTopbar.classList.remove('active')
-          document.body.classList.remove('ask-anything-mobile')
-        }
-      } else {
-        // On desktop, ensure mobile close button is hidden when widget is open
-        if (isOpen) {
-          mobileCloseButton.classList.remove('active')
-        }
+    // Show initiation message after widget loads (with delay)
+    setTimeout(() => {
+      if (!isOpen && config.chatInitiationMessages.length > 0) {
+        initiationMessageElement = createInitiationMessage();
+        showInitiationMessage(initiationMessageElement, toggleChat);
       }
-
-      if (isOpen && iframe) {
-        iframe.contentWindow.postMessage({ type: 'SCROLL_TO_BOTTOM' }, '*')
-      }
-    }
+    }, 2000);
 
     // Don't auto-open on mobile devices - let user initiate
     // Mobile users will see the chat button and can tap to open
@@ -489,6 +771,11 @@ window.ChatterMate;
       const customData = event.data.data;
       const newColor = customData.chat_bubble_color;
       config.chatBubbleColor = isValidHexColor(newColor) ? newColor : config.chatBubbleColor;
+      
+      // Store chat initiation messages
+      if (customData.chat_initiation_messages && Array.isArray(customData.chat_initiation_messages)) {
+        config.chatInitiationMessages = customData.chat_initiation_messages;
+      }
       
       // Handle ASK_ANYTHING chat style positioning (desktop only)
       if (!isMobileDevice()) {

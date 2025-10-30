@@ -17,7 +17,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
 from pydantic import BaseModel
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
 
@@ -42,6 +42,7 @@ class AgentCustomizationResponse(BaseModel):
     widget_position: Optional[str] = "FLOATING"
     welcome_title: Optional[str] = None
     welcome_subtitle: Optional[str] = None
+    chat_initiation_messages: Optional[List[str]] = None
 
     @property
     def photo_url_signed(self) -> Optional[str]:

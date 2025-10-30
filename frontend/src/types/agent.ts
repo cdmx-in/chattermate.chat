@@ -79,6 +79,7 @@ export interface AgentCustomization {
   widget_position?: WidgetPosition
   welcome_title?: string
   welcome_subtitle?: string
+  chat_initiation_messages?: string[]
 }
 
 export interface AgentWithCustomization extends AgentResponse {
