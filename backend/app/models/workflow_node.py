@@ -36,6 +36,7 @@ class NodeType(str, enum.Enum):
     END = "end"
     LANDING_PAGE = "landing_page"
     USER_INPUT = "user_input"
+    GUARDRAILS = "guardrails"
 
 
 class ActionType(str, enum.Enum):

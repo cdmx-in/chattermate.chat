@@ -236,7 +236,9 @@ class WorkflowNodeService:
                     'wait_duration', 'wait_unit', 'wait_until_condition',
                     'final_message', 'form_fields', 'form_title', 'form_description', 
                     'submit_button_text', 'form_full_screen',
-                    'landing_page_heading', 'landing_page_content'
+                    'landing_page_heading', 'landing_page_content',
+                    'enabled_guardrails', 'pii_action', 'jailbreak_sensitivity', 
+                    'text_source', 'block_message'
                 ]
                 
                 # Initialize config if not present
@@ -266,7 +268,7 @@ class WorkflowNodeService:
                 config_text_fields = ['message_text', 'system_prompt', 'condition_expression', 
                                      'action_type', 'action_url', 'transfer_department', 'transfer_message',
                                      'final_message', 'form_title', 'form_description', 'submit_button_text',
-                                     'landing_page_heading', 'landing_page_content']
+                                     'landing_page_heading', 'landing_page_content', 'text_source', 'block_message']
                 for field in config_text_fields:
                     if field in node_data_copy['config'] and isinstance(node_data_copy['config'][field], str):
                         node_data_copy['config'][field] = sanitize_utf8_text(node_data_copy['config'][field])
