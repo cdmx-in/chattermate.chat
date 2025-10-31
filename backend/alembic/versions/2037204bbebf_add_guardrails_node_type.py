@@ -19,6 +19,13 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # First, delete or convert any existing GUARDRAILS nodes
+    # Option 1: Delete GUARDRAILS nodes (uncomment if you want to delete them)
+    # op.execute("DELETE FROM workflow_nodes WHERE node_type = 'GUARDRAILS'")
+    
+    # Option 2: Convert GUARDRAILS nodes to ACTION nodes (safer - preserves data)
+    op.execute("UPDATE workflow_nodes SET node_type = 'ACTION' WHERE node_type = 'GUARDRAILS'")
+    
     # Create a new enum without the guardrails value
     op.execute("""
         CREATE TYPE nodetype_new AS ENUM (
