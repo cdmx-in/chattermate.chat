@@ -63,6 +63,7 @@ class AgentCustomization(Base):
     widget_position = Column(SQLEnum(WidgetPosition), default=WidgetPosition.FLOATING, nullable=False)
     welcome_title = Column(String, nullable=True)
     welcome_subtitle = Column(String, nullable=True)
+    chat_initiation_messages = Column(JSON, nullable=True)
 
     # Relationship
     agent = relationship("Agent", back_populates="customization")

@@ -96,7 +96,7 @@ const isAskAnythingStyle = computed(() => {
 // Computed property for preview wrapper styles
 const previewWrapperStyles = computed(() => {
     const baseStyles = {
-        background: 'var(--background-alt, #f0f0f0)',
+        background: 'transparent',
         borderRadius: 'var(--radius-lg)',
         overflow: 'hidden',
         height: '600px',
@@ -104,15 +104,16 @@ const previewWrapperStyles = computed(() => {
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'center',
-        boxShadow: '0 4px 12px rgba(0, 0, 0, 0.08)',
-        border: '1px solid var(--border-color)'
+        boxShadow: 'none',
+        border: 'none',
+        maxWidth: '100%'
     }
     
     if (isAskAnythingStyle.value) {
         return {
             ...baseStyles,
-            width: '700px',  // Increased width for ASK_ANYTHING style
-            minWidth: '600px'
+            width: '500px',
+            minWidth: '500px'
         }
     }
     
@@ -928,7 +929,7 @@ onMounted(async () => {
                                         :agent="agentData"
                                         @preview="handlePreview"
                                         @save="handleCustomizationSave"
-                                        @cancel="() => switchTab('general')"
+                                        @cancel="() => switchTab('agent')"
                                         @chat-style-changed="handleChatStyleChange"
                                     />
                                 </div>
@@ -946,10 +947,6 @@ onMounted(async () => {
                     </div>
                 </div>
             </div>
-
-
-
-
 
             <!-- Cropper Modal -->
             <div v-if="showCropper" class="cropper-modal">
@@ -1864,16 +1861,14 @@ input:checked + .slider:before {
     display: flex;
     flex-direction: row;
     gap: var(--space-xl);
-    padding: var(--space-xl);
+    padding: var(--space-lg);
     height: 100%;
 }
 
 .preview-header {
     flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    min-width: 300px;
+    max-width: 480px;
+    overflow-y: auto;
 }
 
 .preview-title {
@@ -1885,6 +1880,13 @@ input:checked + .slider:before {
 
 .preview-wrapper {
     /* Base styles are now handled by computed previewWrapperStyles */
+    flex: 1;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    padding: var(--space-lg);
+    padding-top: 0;
     transition: all 0.3s ease;
 }
 
@@ -2349,7 +2351,31 @@ input:checked + .slider:before {
 .customization-panel {
     flex: 1;
     max-width: 480px;
+    height: calc(100vh - 250px);
+    max-height: 800px;
     overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: var(--space-xs);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+}
+
+.customization-panel::-webkit-scrollbar {
+    width: 8px;
+}
+
+.customization-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.customization-panel::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.5);
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+}
+
+.customization-panel::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.7);
 }
 
 .customization-preview {
@@ -2455,6 +2481,11 @@ input:checked + .slider:before {
     .customization-tab-layout {
         padding: var(--space-sm);
         gap: var(--space-md);
+    }
+    
+    .customization-panel {
+        height: calc(100vh - 350px);
+        max-height: 600px;
     }
 }
 

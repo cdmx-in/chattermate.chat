@@ -34,7 +34,8 @@ export function useWidgetCustomization() {
             type: 'CUSTOMIZATION_UPDATE',
             data: {
                 chat_bubble_color: newCustomization.chat_bubble_color || '#f34611',
-                chat_style: newCustomization.chat_style
+                chat_style: newCustomization.chat_style,
+                chat_initiation_messages: newCustomization.chat_initiation_messages || []
             }
         }, '*')
     }

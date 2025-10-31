@@ -136,7 +136,8 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
             "chat_style": agent_customization.chat_style.value if agent_customization.chat_style else "CHATBOT",
             "widget_position": agent_customization.widget_position.value if agent_customization.widget_position else "FLOATING",
             "welcome_title": agent_customization.welcome_title,
-            "welcome_subtitle": agent_customization.welcome_subtitle
+            "welcome_subtitle": agent_customization.welcome_subtitle,
+            "chat_initiation_messages": agent_customization.chat_initiation_messages or []
         }
         
 
