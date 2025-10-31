@@ -440,13 +440,25 @@ window.ChatterMate;
     return window.innerWidth <= 768;
   }
 
+  // Sanitize message to remove corrupted emoji characters
+  function sanitizeMessage(message) {
+    if (!message) return '';
+    // Remove replacement characters and other common corruption patterns
+    return message
+      .replace(/\uFFFD/g, '') // Remove replacement character
+      .replace(/[��]/g, '') // Remove common corruption symbols
+      .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
+      .trim();
+  }
+
   // Get a random message from the array
   function getRandomInitiationMessage() {
     if (!config.chatInitiationMessages || config.chatInitiationMessages.length === 0) {
       return null;
     }
     const randomIndex = Math.floor(Math.random() * config.chatInitiationMessages.length);
-    return config.chatInitiationMessages[randomIndex];
+    const message = config.chatInitiationMessages[randomIndex];
+    return message ? sanitizeMessage(message) : null;
   }
 
   // Check if initiation message should be shown (first visit in session)

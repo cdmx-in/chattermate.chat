@@ -26,7 +26,7 @@ import { marked } from 'marked'
 
 const props = defineProps<{
     isActive: boolean
-    customization: AgentCustomization & { showBubblePreview?: boolean }
+    customization: AgentCustomization & { showBubblePreview?: boolean; showInitiationPreview?: boolean }
     agentType: string
     agentName: string
     agentId: string
@@ -35,6 +35,13 @@ console.log('AgentChatPreviewPanel props:', props.customization)
 const isExpanded = ref(true)
 const emailInput = ref('')
 const hasStartedChat = ref(false)
+
+// Chat initiation message state
+const showInitiationMessage = ref(false)
+const initiationMessageText = ref('')
+const isTyping = ref(false)
+const previewMessage = ref('') // Store the message selected for preview
+const isShowingPreview = ref(false) // Prevent multiple simultaneous animations
 
 // Store original messages for restoration when switching back to CHATBOT
 const originalMessages = ref<any[]>([])
@@ -138,6 +145,36 @@ const handleKeyPress = (event: KeyboardEvent) => {
     return
 }
 
+// Watch for showInitiationPreview flag
+watch(() => props.customization.showInitiationPreview, async (newValue) => {
+    // Prevent multiple simultaneous animations
+    if (isShowingPreview.value) {
+        return
+    }
+    
+    if (newValue && hasChatInitiationMessages.value) {
+        isShowingPreview.value = true
+        try {
+            // Pick ONE message for preview and show it with typewriter effect
+            previewMessage.value = getRandomInitiationMessage()
+            if (previewMessage.value) {
+                showInitiationMessage.value = true
+                initiationMessageText.value = ''
+                // Wait for animation then start typing
+                await new Promise(resolve => setTimeout(resolve, 300))
+                await typeWriteMessage(previewMessage.value, 40)
+            }
+        } finally {
+            isShowingPreview.value = false
+        }
+    } else {
+        // Reset when exiting preview
+        hideInitiation()
+        previewMessage.value = ''
+        isShowingPreview.value = false
+    }
+})
+
 // Lifecycle hooks
 onMounted(() => {
     // Set initial chat style
@@ -173,6 +210,13 @@ onMounted(() => {
                 }
             }
         })
+    }
+    
+    // Show initiation message if available
+    if (hasChatInitiationMessages.value) {
+        setTimeout(() => {
+            showInitiation()
+        }, 2000)
     }
 })
 
@@ -378,13 +422,120 @@ const welcomeSubtitle = computed(() => {
     console.log('Welcome subtitle computed:', subtitle)
     return subtitle || "I'm here to help you with anything you need. What can I assist you with today?"
 })
+
+// Computed property to check if chat initiation messages are available
+const hasChatInitiationMessages = computed(() => {
+    return props.customization.chat_initiation_messages && 
+           Array.isArray(props.customization.chat_initiation_messages) && 
+           props.customization.chat_initiation_messages.length > 0
+})
+
+// Sanitize message to remove corrupted emoji characters
+const sanitizeMessage = (message: string): string => {
+    if (!message) return ''
+    // Remove replacement characters and other common corruption patterns
+    return message
+        .replace(/\uFFFD/g, '') // Remove replacement character
+        .replace(/[��]/g, '') // Remove common corruption symbols
+        .replace(/[\x00-\x1F\x7F-\x9F]/g, '') // Remove control characters
+        .trim()
+}
+
+// Get a random initiation message
+const getRandomInitiationMessage = () => {
+    if (!hasChatInitiationMessages.value) return ''
+    const messages = props.customization.chat_initiation_messages || []
+    const randomIndex = Math.floor(Math.random() * messages.length)
+    const message = messages[randomIndex] || ''
+    return sanitizeMessage(message)
+}
+
+// Typewriting effect
+const typeWriteMessage = async (text: string, speed = 50) => {
+    // Check if we should continue typing
+    if (!showInitiationMessage.value || !isShowingPreview.value) {
+        return
+    }
+    
+    isTyping.value = true
+    initiationMessageText.value = ''
+    
+    for (let i = 0; i < text.length; i++) {
+        // Stop if preview was cancelled
+        if (!showInitiationMessage.value || !isShowingPreview.value) {
+            break
+        }
+        initiationMessageText.value += text.charAt(i)
+        await new Promise(resolve => setTimeout(resolve, speed))
+    }
+    
+    isTyping.value = false
+}
+
+// Show initiation message (for non-preview mode - actual chat bubble)
+const showInitiation = async () => {
+    if (!hasChatInitiationMessages.value) return
+    
+    // Don't show if we're in preview mode (preview is handled by watcher)
+    if (props.customization.showInitiationPreview) return
+    
+    const message = getRandomInitiationMessage()
+    if (!message) return
+    
+    showInitiationMessage.value = true
+    
+    // Wait for animation then start typing
+    await new Promise(resolve => setTimeout(resolve, 300))
+    
+    // For actual chat bubble (non-preview), we need different typing logic
+    isTyping.value = true
+    initiationMessageText.value = ''
+    
+    for (let i = 0; i < message.length; i++) {
+        // Stop if message was hidden
+        if (!showInitiationMessage.value) {
+            break
+        }
+        initiationMessageText.value += message.charAt(i)
+        await new Promise(resolve => setTimeout(resolve, 40))
+    }
+    
+    isTyping.value = false
+}
+
+// Hide initiation message
+const hideInitiation = () => {
+    showInitiationMessage.value = false
+    initiationMessageText.value = ''
+    isTyping.value = false
+}
+
+// Handle initiation message click
+const handleInitiationClick = () => {
+    hideInitiation()
+    isExpanded.value = true
+}
 </script>
 
 <template>
     <div class="chat-container" :class="{ collapsed: !isExpanded, 'ask-anything-style': isAskAnythingStyle }" :style="containerStyles">
+        <!-- Chat Initiation Message -->
+        <div 
+            v-if="showInitiationMessage && hasChatInitiationMessages && (customization.showBubblePreview || customization.showInitiationPreview || !isExpanded)" 
+            class="chat-initiation-message"
+            :class="{ show: showInitiationMessage }"
+            @click="handleInitiationClick"
+        >
+            <button class="initiation-close" @click.stop="hideInitiation" aria-label="Close">
+            </button>
+            <p class="initiation-message-text" :class="{ 'typing-complete': !isTyping }">
+                {{ initiationMessageText }}
+            </p>
+        </div>
+        
         <!-- Chat Toggle Button -->
-        <div class="toggle-container" v-if="!isExpanded || customization.showBubblePreview">
-            <button class="chat-toggle" :class="{ preview: customization.showBubblePreview }" :style="chatIconStyles"
+        <div class="toggle-container" v-if="!isExpanded || customization.showBubblePreview || customization.showInitiationPreview">
+            <button class="chat-toggle" :class="{ preview: customization.showBubblePreview || customization.showInitiationPreview }" :style="chatIconStyles"
                 @click="isExpanded = !isExpanded">
                 <svg width="60" height="60" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path
@@ -398,7 +549,7 @@ const welcomeSubtitle = computed(() => {
         </div>
 
         <!-- Welcome Message for ASK_ANYTHING Style -->
-        <div v-if="shouldShowWelcomeMessage && isExpanded && !customization.showBubblePreview" class="welcome-message-section" :style="chatStyles">
+        <div v-if="shouldShowWelcomeMessage && isExpanded && !customization.showBubblePreview && !customization.showInitiationPreview" class="welcome-message-section" :style="chatStyles">
             <div class="welcome-content">
                 <div class="welcome-header">
                     <img 
@@ -447,7 +598,7 @@ const welcomeSubtitle = computed(() => {
         <div class="chat-panel" :class="[
             { disabled: !isActive, 'ask-anything-chat': isAskAnythingStyle },
             `chat-panel-${agentId}`
-        ]" :style="chatStyles" v-if="isExpanded && !customization.showBubblePreview && shouldShowChatPanel">
+        ]" :style="chatStyles" v-if="isExpanded && !customization.showBubblePreview && !customization.showInitiationPreview && shouldShowChatPanel">
             <div v-if="!isAskAnythingStyle" class="chat-header" :style="{
                 background: customization.chat_background_color,
                 ...headerBorderStyles
@@ -568,6 +719,9 @@ const welcomeSubtitle = computed(() => {
     display: flex;
     align-items: center;
     justify-content: center;
+    background: transparent;
+    box-shadow: none;
+    overflow: visible;
 }
 
 .toggle-container {
@@ -621,6 +775,11 @@ const welcomeSubtitle = computed(() => {
     height: 600px;
     transition: all 0.3s ease;
     border-radius: 24px;
+}
+
+.chat-container.collapsed .chat-panel,
+.chat-container.collapsed .welcome-message-section {
+    display: none !important;
 }
 
 .chat-header {
@@ -1290,5 +1449,134 @@ const welcomeSubtitle = computed(() => {
     margin-left: 0 !important;
     margin-right: auto !important;
     justify-content: flex-start !important;
+}
+
+/* Chat Initiation Message Styles */
+.chat-initiation-message {
+    position: absolute;
+    bottom: 215px;
+    right: 20px;
+    max-width: 240px;
+    background: white;
+    padding: 12px 36px 12px 14px;
+    border-radius: 14px;
+    box-shadow: 0 3px 16px rgba(0, 0, 0, 0.1);
+    z-index: 9;
+    cursor: pointer;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(10px) scale(0.95);
+    transition: all 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+.chat-initiation-message.show {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+    animation: bounce-in 0.6s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+@keyframes bounce-in {
+    0% {
+        opacity: 0;
+        transform: translateY(20px) scale(0.8);
+    }
+    50% {
+        transform: translateY(-5px) scale(1.02);
+    }
+    100% {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.chat-initiation-message:hover {
+    transform: translateY(-2px) scale(1.02);
+    box-shadow: 0 5px 20px rgba(0, 0, 0, 0.14);
+}
+
+.chat-initiation-message::after {
+    content: '';
+    position: absolute;
+    bottom: -7px;
+    right: 30px;
+    width: 14px;
+    height: 14px;
+    background: white;
+    transform: rotate(45deg);
+    box-shadow: 3px 3px 5px rgba(0, 0, 0, 0.06);
+    clip-path: polygon(0 0, 100% 0, 100% 100%);
+}
+
+.initiation-message-text {
+    font-size: 13px;
+    line-height: 1.4;
+    color: #374151;
+    margin: 0;
+    position: relative;
+    z-index: 1;
+    padding-right: 4px;
+    min-height: 18px;
+}
+
+.initiation-message-text::after {
+    content: '|';
+    animation: blink 1s step-end infinite;
+    margin-left: 2px;
+    color: v-bind('customization.accent_color || "#f34611"');
+    font-weight: 500;
+}
+
+.initiation-message-text.typing-complete::after {
+    display: none;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+.initiation-close {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    width: 20px;
+    height: 20px;
+    background: rgba(0, 0, 0, 0.04);
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: all 0.2s ease;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+}
+
+.initiation-close:hover {
+    opacity: 1;
+    background: rgba(0, 0, 0, 0.08);
+    transform: scale(1.05);
+}
+
+.initiation-close::before,
+.initiation-close::after {
+    content: '';
+    position: absolute;
+    width: 9px;
+    height: 1.5px;
+    background: #4a5568;
+    border-radius: 1px;
+}
+
+.initiation-close::before {
+    transform: rotate(45deg);
+}
+
+.initiation-close::after {
+    transform: rotate(-45deg);
 }
 </style>

@@ -30,7 +30,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
     (e: 'cancel'): void
-    (e: 'preview', customization: AgentCustomization & { showBubblePreview?: boolean }): void
+    (e: 'preview', customization: AgentCustomization & { showBubblePreview?: boolean; showInitiationPreview?: boolean }): void
     (e: 'chat-style-changed', oldStyle: ChatStyle, newStyle: ChatStyle): void
 }>()
 
@@ -314,6 +314,23 @@ const loadDefaultInitiations = () => {
     customization.value.chat_initiation_messages = [...DEFAULT_CHAT_INITIATIONS]
 }
 
+// Initiation message preview handlers
+const showInitiationPreview = () => {
+    emit('preview', { 
+        ...customization.value, 
+        showBubblePreview: false,
+        showInitiationPreview: true 
+    })
+}
+
+const hideInitiationPreview = () => {
+    emit('preview', { 
+        ...customization.value, 
+        showBubblePreview: false,
+        showInitiationPreview: false 
+    })
+}
+
 // Collapsible sections state
 const expandedSections = ref<Set<string>>(new Set(['chat-style', 'colors']))
 
@@ -535,17 +552,32 @@ const isSectionExpanded = (sectionId: string) => {
                 
                 <!-- Unlocked State -->
                 <div v-else>
-                    <p class="section-description-compact">
-                        Messages appear above the chat bubble to encourage conversations.
+                    <div class="section-description-with-preview">
+                        <p class="section-description-compact">
+                            Messages appear above the chat bubble to encourage conversations.
+                            <button 
+                                v-if="!customization.chat_initiation_messages || customization.chat_initiation_messages.length === 0"
+                                type="button" 
+                                class="load-defaults-link" 
+                                @click="loadDefaultInitiations"
+                            >
+                                Load defaults
+                            </button>
+                        </p>
                         <button 
-                            v-if="!customization.chat_initiation_messages || customization.chat_initiation_messages.length === 0"
+                            v-if="customization.chat_initiation_messages && customization.chat_initiation_messages.length > 0"
                             type="button" 
-                            class="load-defaults-link" 
-                            @click="loadDefaultInitiations"
+                            class="preview-btn-initiation"
+                            @mouseenter="showInitiationPreview"
+                            @mouseleave="hideInitiationPreview"
+                            @focus="showInitiationPreview"
+                            @blur="hideInitiationPreview"
+                            title="Preview initiation message"
                         >
-                            Load defaults
+                            <font-awesome-icon icon="fa-solid fa-eye" />
+                            <span>Preview</span>
                         </button>
-                    </p>
+                    </div>
 
                     <!-- Add New Message - Compact -->
                     <div class="add-message-compact">
@@ -1233,11 +1265,56 @@ const isSectionExpanded = (sectionId: string) => {
 }
 
 /* Compact Description */
+.section-description-with-preview {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-md);
+    margin-bottom: var(--space-sm);
+}
+
 .section-description-compact {
     font-size: var(--text-sm);
     color: var(--text-muted);
-    margin-bottom: var(--space-sm);
+    margin-bottom: 0;
     line-height: 1.4;
+    flex: 1;
+}
+
+.preview-btn-initiation {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    background: var(--background-soft);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    white-space: nowrap;
+}
+
+.preview-btn-initiation:hover {
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(243, 70, 17, 0.2);
+}
+
+.preview-btn-initiation:focus {
+    outline: none;
+    background: var(--primary-color);
+    color: white;
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px rgba(243, 70, 17, 0.1);
+}
+
+.preview-btn-initiation svg {
+    font-size: 14px;
 }
 
 .load-defaults-link {
@@ -1443,5 +1520,24 @@ const isSectionExpanded = (sectionId: string) => {
 .empty-hint svg {
     font-size: 12px;
     opacity: 0.7;
+}
+
+/* Responsive Styles */
+@media (max-width: 640px) {
+    .section-description-with-preview {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: var(--space-sm);
+    }
+    
+    .preview-btn-initiation {
+        align-self: flex-start;
+        font-size: 0.8125rem;
+        padding: 5px 10px;
+    }
+    
+    .preview-btn-initiation span {
+        display: inline;
+    }
 }
 </style>

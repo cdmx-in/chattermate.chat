@@ -929,7 +929,7 @@ onMounted(async () => {
                                         :agent="agentData"
                                         @preview="handlePreview"
                                         @save="handleCustomizationSave"
-                                        @cancel="() => switchTab('general')"
+                                        @cancel="() => switchTab('agent')"
                                         @chat-style-changed="handleChatStyleChange"
                                     />
                                 </div>
@@ -2351,7 +2351,31 @@ input:checked + .slider:before {
 .customization-panel {
     flex: 1;
     max-width: 480px;
+    height: calc(100vh - 250px);
+    max-height: 800px;
     overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: var(--space-xs);
+    scrollbar-width: thin;
+    scrollbar-color: rgba(156, 163, 175, 0.5) transparent;
+}
+
+.customization-panel::-webkit-scrollbar {
+    width: 8px;
+}
+
+.customization-panel::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.customization-panel::-webkit-scrollbar-thumb {
+    background-color: rgba(156, 163, 175, 0.5);
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+}
+
+.customization-panel::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(156, 163, 175, 0.7);
 }
 
 .customization-preview {
@@ -2457,6 +2481,11 @@ input:checked + .slider:before {
     .customization-tab-layout {
         padding: var(--space-sm);
         gap: var(--space-md);
+    }
+    
+    .customization-panel {
+        height: calc(100vh - 350px);
+        max-height: 600px;
     }
 }
 
