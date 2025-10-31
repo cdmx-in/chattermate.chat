@@ -862,6 +862,14 @@ const getNodeSpecificConfig = (nodeType: string) => {
       if (nodeForm.value.prompt_message) config.prompt_message = nodeForm.value.prompt_message
       if (nodeForm.value.confirmation_message) config.confirmation_message = nodeForm.value.confirmation_message
       break
+    
+    case 'guardrails':
+      if (nodeForm.value.enabled_guardrails) config.enabled_guardrails = nodeForm.value.enabled_guardrails
+      if (nodeForm.value.pii_action) config.pii_action = nodeForm.value.pii_action
+      if (nodeForm.value.jailbreak_sensitivity !== undefined) config.jailbreak_sensitivity = nodeForm.value.jailbreak_sensitivity
+      if (nodeForm.value.text_source) config.text_source = nodeForm.value.text_source
+      if (nodeForm.value.block_message) config.block_message = nodeForm.value.block_message
+      break
   }
   
   // Apply additional filtering to remove any blank values
@@ -1248,6 +1256,7 @@ const handleDelete = () => {
               }"
               @update:model-value="updateGuardrailsFormData"
               :validation-errors="validationErrors"
+              :available-variables="availableVariables"
               @validate-field="validateFieldOnChange"
             />
           </template>

@@ -27,9 +27,18 @@ interface GuardrailsNodeData {
   block_message: string
 }
 
+interface Variable {
+  nodeId: string
+  nodeName: string
+  fieldName: string
+  fieldType: string
+  fieldLabel: string
+}
+
 const props = defineProps<{
   modelValue: GuardrailsNodeData
   validationErrors: Record<string, string>
+  availableVariables?: Variable[]
 }>()
 
 const emit = defineEmits<{
@@ -71,6 +80,22 @@ const toggleGuardrail = (type: string) => {
 
 const isGuardrailEnabled = (type: string) => {
   return (formData.value.enabled_guardrails || []).includes(type)
+}
+
+// Helper to get variable syntax
+const getVariableSyntax = (fieldName: string) => {
+  return `{{${fieldName}}}`
+}
+
+// Copy variable to clipboard
+const copyVariableToClipboard = async (variable: Variable) => {
+  const syntax = getVariableSyntax(variable.fieldName)
+  try {
+    await navigator.clipboard.writeText(syntax)
+    // Could add a toast notification here if needed
+  } catch (err) {
+    console.error('Failed to copy variable:', err)
+  }
 }
 </script>
 
@@ -171,8 +196,38 @@ const isGuardrailEnabled = (type: string) => {
         placeholder="user_message or user_input_input"
       />
       <small class="help-text">
-        Specify what text to check. Use "user_message" for the latest user input, or reference a variable like "user_input_input" or "{{user_input_input}}"
+        Specify what text to check. Use "user_message" for the latest user input, or reference a variable like "user_input_input" or use double curly braces syntax
       </small>
+    </div>
+
+    <!-- Available Variables Section -->
+    <div v-if="availableVariables && availableVariables.length > 0" class="variables-section">
+      <div class="variables-header">
+        <span class="variables-title">Available Variables</span>
+        <span class="variables-count">{{ availableVariables.length }}</span>
+      </div>
+      
+      <div class="variables-list">
+        <div
+          v-for="variable in availableVariables"
+          :key="`${variable.nodeId}-${variable.fieldName}`"
+          class="variable-item"
+          @click="copyVariableToClipboard(variable)"
+          :title="`Click to copy ${getVariableSyntax(variable.fieldName)} to clipboard`"
+        >
+          <div class="variable-info">
+            <div class="variable-name">{{ variable.fieldName }}</div>
+            <div class="variable-source">from {{ variable.nodeName }}</div>
+          </div>
+          <div class="variable-syntax">
+            <code>{{ getVariableSyntax(variable.fieldName) }}</code>
+          </div>
+        </div>
+      </div>
+      
+      <div class="variables-help">
+        <small>Click on any variable to copy it to clipboard</small>
+      </div>
     </div>
 
     <div class="form-group">
@@ -190,14 +245,7 @@ const isGuardrailEnabled = (type: string) => {
       </small>
     </div>
 
-    <div class="info-box routing-info">
-      <p><strong>Routing:</strong></p>
-      <p>Connect two outputs from this node:</p>
-      <ul>
-        <li><strong>Pass</strong> - Content passed all guardrails</li>
-        <li><strong>Fail</strong> (label as "fail") - Content violated guardrails</li>
-      </ul>
-    </div>
+
   </div>
 </template>
 
@@ -325,8 +373,8 @@ const isGuardrailEnabled = (type: string) => {
 }
 
 .form-range::-webkit-slider-thumb {
-  -webkit-appearance: none;
   appearance: none;
+  -webkit-appearance: none;
   width: 18px;
   height: 18px;
   border-radius: 50%;
@@ -369,5 +417,120 @@ const isGuardrailEnabled = (type: string) => {
 
 .form-checkbox {
   cursor: pointer;
+}
+
+/* Variables Section */
+.variables-section {
+  margin-top: var(--space-sm);
+  padding: var(--space-sm);
+  background: var(--background-soft);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.variables-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-xs);
+}
+
+.variables-title {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.variables-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--primary-color);
+  color: white;
+  border-radius: 10px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.variables-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-xs);
+}
+
+.variable-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-xs);
+  padding: var(--space-sm);
+  background: var(--background-color);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.variable-item:hover {
+  background: var(--background-alt);
+  border-color: var(--primary-color);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+.variable-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.variable-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-color);
+  word-break: break-word;
+}
+
+.variable-source {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin: 2px 0;
+}
+
+.variable-syntax {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.variable-syntax code {
+  background: var(--background-soft);
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  font-size: 0.75rem;
+  color: var(--text-color);
+  border: 1px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.variables-help {
+  padding: var(--space-sm);
+  background: var(--background-soft);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  margin-top: var(--space-xs);
+}
+
+.variables-help small {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  line-height: 1.3;
 }
 </style>

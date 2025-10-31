@@ -379,6 +379,25 @@ const handleDrop = (event: DragEvent) => {
 
   const nodeType = availableNodeTypes.find(t => t.type === type)
   const uniqueName = generateUniqueNodeName(nodeType?.label || 'Node')
+  
+  // Get default config for node type
+  const getDefaultConfig = (nodeType: string) => {
+    switch (nodeType) {
+      case 'guardrails':
+        return {
+          enabled_guardrails: ['pii', 'jailbreak'],
+          pii_action: 'block',
+          jailbreak_sensitivity: 0.7,
+          text_source: 'user_message',
+          block_message: ''
+        }
+      default:
+        return {}
+    }
+  }
+  
+  const defaultConfig = getDefaultConfig(type)
+  
   const newNode: Node = {
     id: generateNodeId(type),
     type: 'default', // Use default Vue Flow node type
@@ -387,7 +406,7 @@ const handleDrop = (event: DragEvent) => {
       label: `${nodeType?.icon || '📄'} ${uniqueName}`, // Display with icon and unique name
       cleanName: uniqueName, // Store unique clean name for backend
       description: '',
-      config: {},
+      config: defaultConfig,
       nodeType: type, // Store the original type for later use
       icon: nodeType?.icon || '📄',
       color: nodeType?.color || '#6B7280'
@@ -409,7 +428,7 @@ const handleDrop = (event: DragEvent) => {
     description: '',
     position_x: newNode.position.x,
     position_y: newNode.position.y,
-    config: {}
+    config: defaultConfig
   }
   workflowNodeService.createNodeInCache(props.workflow.id, cacheNodeData)
   
@@ -431,7 +450,7 @@ const autoConnectToLastNode = (newNode: Node) => {
   const otherNodes = nodes.filter(n => n.id !== newNode.id)
   
   // Find nodes that don't have any outgoing edges (no edges where they are the source)
-  // For condition nodes, check if they have less than 2 outgoing connections
+  // For condition and guardrails nodes, check if they have less than 2 outgoing connections
   const nodesWithoutOutgoing = otherNodes.filter(node => {
     const outgoingConnections = edges.filter(edge => edge.source === node.id)
     if (node.data.nodeType === 'condition') {

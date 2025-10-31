@@ -249,13 +249,32 @@ class WorkflowExecutionService:
             if (final_result.landing_page_data or 
                 final_result.form_data or 
                 (current_node and current_node.node_type == NodeType.USER_INPUT and not final_result.should_continue) or
-                (current_node and current_node.node_type == NodeType.LLM and not final_result.should_continue and not final_result.transfer_to_human and not final_result.end_chat)):
+                (current_node and current_node.node_type == NodeType.LLM and not final_result.should_continue and not final_result.transfer_to_human and not final_result.end_chat and final_result.next_node_id is not None)):
                 # We're displaying a landing page, form, waiting for user input, or staying on LLM node - stay on current node
+                # Note: LLM nodes only stay on current node if there's a next node (continuous execution)
                 self._update_session_workflow_state(session_id, current_node.id if current_node else None, workflow_state)
             elif final_result.transfer_to_human:
                 # Transfer to human requested - stay on current node and let the chat handler manage the transfer
                 self._update_session_workflow_state(session_id, current_node.id if current_node else None, workflow_state)
                 logger.info(f"Transfer to human requested from node {current_node.id if current_node else 'unknown'}, staying on current node")
+            elif current_node and current_node.node_type == NodeType.LLM and final_result.next_node_id is None and not final_result.end_chat:
+                # Check if this is single execution - if so, reset workflow to restart from beginning
+                config = current_node.config or {}
+                exit_condition = config.get("exit_condition", ExitCondition.SINGLE_EXECUTION)
+                if isinstance(exit_condition, str):
+                    try:
+                        exit_condition = ExitCondition(exit_condition)
+                    except ValueError:
+                        exit_condition = ExitCondition.SINGLE_EXECUTION
+                
+                if exit_condition == ExitCondition.SINGLE_EXECUTION:
+                    # Single execution LLM node that is the last node - reset workflow to restart from beginning
+                    logger.info(f"LLM node {current_node.id} is last node with single execution - resetting workflow to restart")
+                    self._update_session_workflow_state(session_id, None, {})
+                else:
+                    # Continuous execution - stay on current node
+                    logger.info(f"LLM node {current_node.id} is last node with continuous execution - staying on current node")
+                    self._update_session_workflow_state(session_id, current_node.id, workflow_state)
             else:
                 # Normal flow - move to next node (or end workflow if end_chat)
                 self._update_session_workflow_state(session_id, final_result.next_node_id, workflow_state)
@@ -446,9 +465,6 @@ class WorkflowExecutionService:
             
             elif node.node_type == NodeType.USER_INPUT:
                 return self._execute_user_input_node(node, workflow_state, user_message, session_id)
-            
-            elif node.node_type == NodeType.GUARDRAILS:
-                return self._execute_guardrails_node(node, workflow, workflow_state, user_message)
             
             elif node.node_type == NodeType.GUARDRAILS:
                 return self._execute_guardrails_node(node, workflow, workflow_state, user_message)

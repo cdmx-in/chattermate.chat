@@ -215,6 +215,16 @@ export function useWorkflowValidation() {
         // Removed prompt_message validation - it's now optional
         break
       
+      case 'guardrails':
+        if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
+          errors.push(`${nodeType} node: Name is required`)
+        }
+        const enabledGuardrails = nodeData.enabled_guardrails || nodeData.config?.enabled_guardrails || []
+        if (!enabledGuardrails || enabledGuardrails.length === 0) {
+          errors.push(`${nodeType} node "${nodeData.cleanName || 'Unnamed'}": At least one guardrail must be enabled`)
+        }
+        break
+      
       default:
         if (!nodeData.cleanName || nodeData.cleanName.trim() === '') {
           errors.push(`${nodeType} node: Name is required`)
