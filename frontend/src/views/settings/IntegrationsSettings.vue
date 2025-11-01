@@ -186,42 +186,22 @@ const handleConnectShopify = () => {
   }
 }
 
-// Disconnect from Shopify
-const handleDisconnectShopify = async () => {
+// Disconnect from Shopify - redirect to Shopify admin to uninstall
+const handleDisconnectShopify = () => {
   try {
-    shopifyLoading.value = true
-    // Get shop ID from the shop domain - we'll need to fetch it
-    const shops = await getShopifyShops() as ShopifyShop[]
-    const shop = shops.find((s: ShopifyShop) => s.shop_domain === shopifyShopDomain.value)
+    // Close the modal
+    showDisconnectConfirm.value = false
+    disconnectingIntegration.value = null
     
-    if (shop) {
-      await disconnectShopify(shop.id)
-      shopifyConnected.value = false
-      shopifyShopDomain.value = ''
-      
-      // Reset the form
-      shopifyForm.value = {
-        shopDomain: '',
-        isSubmitting: false,
-        error: ''
-      }
-      
-      toast.success('Shopify disconnected successfully')
-    } else {
-      throw new Error('Shop not found')
-    }
+    // Open Shopify admin apps page in a new tab where user can uninstall the app
+    const shopifyAdminUrl = `https://${shopifyShopDomain.value}/admin/apps`
+    window.open(shopifyAdminUrl, '_blank')
+    
+    // Show a helpful toast message
+    toast.info('Please uninstall the ChatterMate app from your Shopify admin to complete the disconnection.')
   } catch (error: any) {
-    console.error('Error disconnecting from Shopify:', error)
-    let errorMessage = 'Error disconnecting from Shopify'
-    
-    // Try to extract a more detailed error message if available
-    if (error.response && error.response.data && error.response.data.detail) {
-      errorMessage = error.response.data.detail
-    }
-    
-    toast.error(errorMessage)
-  } finally {
-    shopifyLoading.value = false
+    console.error('Error opening Shopify admin:', error)
+    toast.error('Error opening Shopify admin')
     showDisconnectConfirm.value = false
     disconnectingIntegration.value = null
   }
@@ -553,11 +533,12 @@ onMounted(async () => {
         </div>
         
         <div v-if="disconnectingIntegration === 'shopify'" class="integration-specific-warning">
-          <p>Disconnecting Shopify will:</p>
+          <p>To disconnect Shopify:</p>
           <ul>
-            <li>Remove your Shopify store connection</li>
-            <li>Disable product management functionality</li>
-            <li>Require you to reconnect your Shopify store if you want to use it again</li>
+            <li>You'll be redirected to your Shopify admin</li>
+            <li>Uninstall the ChatterMate app from your Shopify store</li>
+            <li>This ensures the disconnection is synchronized on both platforms</li>
+            <li>You'll need to reinstall the app if you want to use it again</li>
           </ul>
         </div>
       </div>
@@ -576,10 +557,9 @@ onMounted(async () => {
           v-if="disconnectingIntegration === 'shopify'" 
           class="btn-disconnect" 
           @click="handleDisconnectShopify"
-          :disabled="shopifyLoading"
         >
-          <span v-if="shopifyLoading" class="loading-spinner"></span>
-          <span v-else>Disconnect Shopify</span>
+          <span class="btn-icon">↗</span>
+          <span>Open Shopify Admin</span>
         </button>
       </div>
     </div>
