@@ -276,23 +276,15 @@ async def shopify_callback(
                     detail="This app must be accessed through your Shopify admin. Please open it from Apps section in your Shopify dashboard."
                 )
             # Embedded app (Shopify always provides host parameter)
-            # If user is not authenticated, redirect to login first
+            # If user is not authenticated and shop has no organization, show connect page
             if not organization and not db_shop.organization_id:
-                logger.info(f"User not authenticated, redirecting to login")
-                frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
-                
-                # Build return URL based on agent configuration
-                if agents_connected > 0:
-                    # Has agents configured - return to success page after login
-                    return_url = f"/shopify/success?shop={shop}&shop_id={str(db_shop.id)}&agents_connected={agents_connected}"
-                else:
-                    # No agents - return to agent selection after login
-                    return_url = f"/shopify/agent-selection?shop={shop}&shop_id={str(db_shop.id)}"
-                
-                # Redirect to login with return URL and shop_id for updating after login
-                login_url = f"{frontend_url}/login?redirect={quote(return_url)}&shop_id={str(db_shop.id)}"
-                logger.info(f"Redirecting to login: {login_url}")
-                return RedirectResponse(login_url)            
+                logger.info(f"Shop not connected to organization, showing connect account page")
+                return ShopifyHelperService.generate_connect_account_page(
+                    shop=shop,
+                    shop_id=str(db_shop.id),
+                    api_key=settings.SHOPIFY_API_KEY,
+                    host=host
+                )            
             # Render embedded app response
             logger.info(f"Embedded app callback (already authenticated), rendering page directly")
             return ShopifyHelperService.handle_embedded_app_response(
@@ -457,6 +449,48 @@ async def delete_shop(
         raise HTTPException(status_code=500, detail="Failed to delete shop")
     
     return {"status": "success", "message": "Shop successfully disconnected"}
+
+@router.post("/link-shop/{shop_id}")
+async def link_shop_to_organization(
+    shop_id: str,
+    db: Session = Depends(get_db),
+    organization: Organization = Depends(get_current_organization),
+    current_user: User = Depends(require_permissions("manage_organization"))
+):
+    """
+    Link a Shopify shop to the current organization after user logs in.
+    This is called after successful login from the embedded app flow.
+    """
+    try:
+        shop_repository = ShopifyShopRepository(db)
+        db_shop = shop_repository.get_shop(shop_id)
+        
+        if not db_shop:
+            raise HTTPException(status_code=404, detail="Shop not found")
+        
+        # Link shop to organization if not already linked
+        if not db_shop.organization_id:
+            org_id_str = str(organization.id)
+            shop_update = ShopifyShopUpdate(organization_id=org_id_str)
+            db_shop = shop_repository.update_shop(shop_id, shop_update)
+            db.commit()
+            logger.info(f"Linked shop {shop_id} to organization {org_id_str}")
+        
+        return {
+            "success": True,
+            "shop_id": str(db_shop.id),
+            "shop_domain": db_shop.shop_domain,
+            "organization_id": str(db_shop.organization_id)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error linking shop to organization: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error linking shop to organization"
+        )
 
 @router.get("/status")
 async def check_connection(

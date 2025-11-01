@@ -92,6 +92,39 @@ const handleLogin = async () => {
 
         await authService.login(email.value, password.value)
        
+        // Check if this is an embedded Shopify login (opened in popup)
+        const isEmbedded = router.currentRoute.value.query.embedded === 'true'
+        const shopId = router.currentRoute.value.query.shop_id as string
+        
+        if (isEmbedded && shopId && window.opener) {
+            // This is a popup for Shopify embedded app
+            console.log('Login successful in popup, notifying parent window')
+            
+            // Show success state
+            isLoading.value = true
+            error.value = ''
+            
+            // Notify the parent window of successful login
+            if (window.opener && !window.opener.closed) {
+                window.opener.postMessage(
+                    { type: 'login_success', shop_id: shopId },
+                    window.location.origin
+                )
+                
+                // Close the popup after a brief delay to ensure message is sent
+                setTimeout(() => {
+                    window.close()
+                }, 300)
+            } else {
+                // If opener is gone, just close the window
+                setTimeout(() => {
+                    window.close()
+                }, 300)
+            }
+            
+            return
+        }
+       
         // Check if there's a Shopify redirect pending in localStorage
         const shopifyRedirectData = localStorage.getItem('shopifyRedirect')
         if (shopifyRedirectData) {
@@ -138,7 +171,21 @@ const handleLogin = async () => {
 }
 
 const navigateToSignup = () => {
-    router.push('/signup')
+    // Preserve embedded and shop_id query params if present
+    const isEmbedded = router.currentRoute.value.query.embedded
+    const shopId = router.currentRoute.value.query.shop_id
+    
+    if (isEmbedded && shopId) {
+        router.push({
+            path: '/signup',
+            query: {
+                embedded: isEmbedded,
+                shop_id: shopId
+            }
+        })
+    } else {
+        router.push('/signup')
+    }
 }
 
 const openForgotPasswordModal = () => {
@@ -205,7 +252,8 @@ const handleVerifyAndResetPassword = async () => {
                         </div>
 
                         <button type="submit" class="submit-btn" :disabled="isLoading">
-                            {{ isLoading ? 'Signing in...' : 'Sign In' }}
+                            <span v-if="isLoading">{{ router.currentRoute.value.query.embedded === 'true' ? 'Connecting...' : 'Signing in...' }}</span>
+                            <span v-else>Sign In</span>
                         </button>
                         
                         <div v-if="hasEnterpriseModule" class="signup-link-container">
