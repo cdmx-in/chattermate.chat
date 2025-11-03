@@ -395,195 +395,30 @@ class ShopifyHelperService:
             HTMLResponse with either success page or agent selection page
         """
         if agents_connected > 0:
-            # Has agents: render success page
-            logger.info(f"Shop has {agents_connected} agents, rendering success page")
+            # Has agents: redirect to success page
+            logger.info(f"Shop has {agents_connected} agents, redirecting to success page")
             widget_id = ShopifyHelperService.get_shop_widget_id(db, configs)
             
-            html_content = ShopifyAuthService.generate_success_page_html(
+            return ShopifyAuthService.generate_success_redirect(
                 shop=shop,
                 shop_id=shop_id,
                 agents_connected=agents_connected,
                 widget_id=widget_id,
-                api_key=api_key
+                frontend_url=settings.FRONTEND_URL
             )
-            return HTMLResponse(content=html_content, status_code=200)
         else:
-            # No agents: render agent selection page
-            logger.info(f"Shop has 0 agents, rendering agent selection page")
+            # No agents: redirect to agent selection page
+            logger.info(f"Shop has 0 agents, redirecting to agent selection page")
             logger.debug(f"Organization ID: {organization_id}")
-            agents_list = ShopifyHelperService.get_shop_agents_list(db, organization_id)
             
-            # Render agent selection page directly
-            html_content = ShopifyAuthService.generate_agent_selection_page_html(
+            return ShopifyAuthService.generate_agent_selection_redirect(
                 shop=shop,
                 shop_id=shop_id,
-                agents=agents_list,
-                api_key=api_key,
-                host=host
+                frontend_url=settings.FRONTEND_URL
             )
-            return HTMLResponse(content=html_content, status_code=200)
 
-    @staticmethod
-    def handle_non_embedded_app_redirect(
-        db: Session,
-        shop: str,
-        shop_id: str,
-        agents_connected: int,
-        configs: list,
-        organization: Optional[Organization] = None
-    ) -> RedirectResponse:
-        """
-        Handle redirect for non-embedded Shopify apps.
-        
-        Args:
-            db: Database session
-            shop: Shop domain
-            shop_id: Shop ID (string UUID)
-            agents_connected: Number of agents already configured
-            configs: List of agent Shopify configs
-            organization: Organization object (if user is authenticated)
-            
-        Returns:
-            RedirectResponse to appropriate frontend URL
-        """
-        frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
-        
-        if not organization:
-            logger.info(f"User not authenticated, redirecting to login")
-            # Build the return URL - will check agent config after login
-            if agents_connected > 0:
-                # Get widget ID for success page
-                widget_id = ShopifyHelperService.get_shop_widget_id(db, configs)
-                
-                return_url = f"/shopify/success?shop={shop}&shop_id={shop_id}&agents_connected={agents_connected}"
-                if widget_id:
-                    return_url += f"&widget_id={widget_id}"
-            else:
-                return_url = f"/shopify/agent-selection?shop={shop}&shop_id={shop_id}"
-            
-            target_path = f"{frontend_url}/login?redirect={quote(return_url)}"
-        else:
-            # User is authenticated, check if agents are configured
-            if agents_connected > 0:
-                # Agents already configured - redirect to success page
-                logger.info(f"Agents already configured, redirecting to success page")
-                
-                # Get widget ID for success page
-                widget_id = ShopifyHelperService.get_shop_widget_id(db, configs)
-                
-                target_path = f"{frontend_url}/shopify/success?shop={shop}&shop_id={shop_id}&agents_connected={agents_connected}"
-                if widget_id:
-                    target_path += f"&widget_id={widget_id}"
-            else:
-                # No agents configured - redirect to agent selection
-                logger.info(f"No agents configured, redirecting to agent selection")
-                target_path = f"{frontend_url}/shopify/agent-selection?shop={shop}&shop_id={shop_id}"
-        
-        return RedirectResponse(target_path)
-
-    @staticmethod
-    def generate_oauth_redirect_html(auth_url: str, api_key: str, host: str = '') -> str:
-        """
-        Generate HTML page with App Bridge that redirects to Shopify OAuth.
-        This is used for embedded apps to break out of iframe for OAuth.
-        
-        Args:
-            auth_url: The Shopify OAuth authorization URL
-            api_key: Shopify API key
-            host: Shopify host parameter (optional)
-            
-        Returns:
-            HTML content as string
-        """
-        html_content = f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="shopify-api-key" content="{api_key}" />
-    <title>ChatterMate - Authorizing...</title>
-    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }}
-        .loader {{
-            text-align: center;
-            color: white;
-        }}
-        .spinner {{
-            border: 3px solid rgba(255,255,255,0.3);
-            border-top-color: white;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 0.8s linear infinite;
-            margin: 0 auto 15px;
-        }}
-        @keyframes spin {{
-            to {{ transform: rotate(360deg); }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="loader">
-        <div class="spinner"></div>
-        <h2>ChatterMate</h2>
-        <p>Connecting to Shopify...</p>
-    </div>
-    
-    <script>
-        (function() {{
-            try {{
-                var AppBridge = window['app-bridge'];
-                if (!AppBridge || !AppBridge.default) {{
-                    // Fallback if App Bridge not loaded
-                    window.top.location.href = '{auth_url}';
-                    return;
-                }}
-                
-                var createApp = AppBridge.default;
-                var Redirect = AppBridge.actions.Redirect;
-                
-                // Get host from URL
-                var urlParams = new URLSearchParams(window.location.search);
-                var host = urlParams.get('host') || '{host}';
-                
-                if (!host) {{
-                    // No host, use top-level redirect
-                    window.top.location.href = '{auth_url}';
-                    return;
-                }}
-                
-                // Create App Bridge instance
-                var app = createApp({{
-                    apiKey: '{api_key}',
-                    host: host
-                }});
-                
-                // Use REMOTE redirect to break out of iframe for OAuth
-                var redirect = Redirect.create(app);
-                redirect.dispatch(Redirect.Action.REMOTE, '{auth_url}');
-                
-                console.log('Redirecting to OAuth via App Bridge');
-                
-            }} catch (error) {{
-                console.error('App Bridge error:', error);
-                // Fallback to top-level redirect
-                window.top.location.href = '{auth_url}';
-            }}
-        }})();
-    </script>
-</body>
-</html>"""
-        return html_content
-
+ 
+ 
     @staticmethod
     def exchange_oauth_code_for_token(shop: str, code: str) -> tuple[str, str]:
         """

@@ -22,11 +22,6 @@
 
       <!-- Agent Selection -->
       <div v-else-if="agents.length > 0" class="agent-selection">
-        <div class="selection-header">
-          <h2>Select AI Agent</h2>
-          <p class="selection-subtitle">Choose one agent to connect with your Shopify store</p>
-        </div>
-
         <div class="agent-list">
           <div
             v-for="agent in agents"
@@ -51,36 +46,10 @@
                   <span class="badge" :class="{ 'active': agent.is_active }">
                     {{ agent.is_active ? 'Active' : 'Inactive' }}
                   </span>
-                  <span class="badge" style="background: #e3e3e3; color: #666;">
-                    ID: {{ agent.id ? agent.id.substring(0, 8) : 'N/A' }}
-                  </span>
+
                 </div>
               </div>
             </label>
-          </div>
-        </div>
-
-        <!-- Widget ID Display -->
-        <div v-if="widgetId" class="widget-info">
-          <div class="info-icon">📋</div>
-          <div class="widget-content">
-            <strong>Widget ID:</strong>
-            <code class="widget-id">{{ widgetId }}</code>
-            <p class="widget-hint">This widget ID will be used for your Shopify integration</p>
-          </div>
-        </div>
-
-        <!-- Info Box -->
-        <div class="info-box">
-          <div class="info-icon">ℹ️</div>
-          <div class="info-content">
-            <strong>What will selected agents be able to do?</strong>
-            <ul>
-              <li>Search and display products from your Shopify store</li>
-              <li>Check order status and tracking information</li>
-              <li>Provide product recommendations</li>
-              <li>Answer customer questions about products and orders</li>
-            </ul>
           </div>
         </div>
 
@@ -103,16 +72,6 @@
             <span v-if="saving">Connecting...</span>
             <span v-else>Connect Agent</span>
           </button>
-        </div>
-        <!-- Debug info (remove after testing) -->
-        <div v-if="true" style="margin-top: 10px; padding: 10px; font-size: 12px; color: #333; background: #f5f5f5; border-radius: 4px;">
-          <div><strong>🔍 Debug Info:</strong></div>
-          <div>Selected Agent ID: <code>{{ selectedAgent || 'NONE' }}</code></div>
-          <div>Type: <code>{{ typeof selectedAgent }}</code></div>
-          <div>Button Disabled: <code>{{ !selectedAgent || saving }}</code></div>
-          <div>Saving: <code>{{ saving }}</code></div>
-          <div>Agents Count: <code>{{ agents.length }}</code></div>
-          <div v-if="agents.length > 0">First Agent ID: <code>{{ agents[0]?.id }}</code></div>
         </div>
       </div>
 
