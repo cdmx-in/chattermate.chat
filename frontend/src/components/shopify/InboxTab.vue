@@ -1,87 +1,114 @@
 <template>
-  <div class="inbox-tab">
+  <div class="inbox-wrapper">
+    <!-- Header with filters -->
     <div class="inbox-header">
-      <h2>Conversations</h2>
-      <div class="inbox-filters">
-        <button 
-          class="filter-btn" 
-          :class="{ active: localStatus === 'open' }"
-          @click="handleStatusChange('open')"
-        >
-          Open
-        </button>
-        <button 
-          class="filter-btn" 
-          :class="{ active: localStatus === 'closed' }"
-          @click="handleStatusChange('closed')"
-        >
-          Closed
-        </button>
+      <div class="header-content">
+        <div class="header-left">
+          <h2 class="conversations-title">Conversations</h2>
+          <p class="conversations-count">
+            {{ conversations.length }} {{ localStatus }} conversation{{ conversations.length !== 1 ? 's' : '' }}
+          </p>
+        </div>
+        <!-- Filter controls matching ConversationsList design -->
+        <div class="filter-controls">
+          <button 
+            class="filter-btn" 
+            :class="{ active: localStatus === 'open' }"
+            @click="handleStatusChange('open')"
+          >
+            Open
+          </button>
+          <button 
+            class="filter-btn" 
+            :class="{ active: localStatus === 'closed' }"
+            @click="handleStatusChange('closed')"
+          >
+            Closed
+          </button>
+        </div>
       </div>
     </div>
 
-    <div v-if="loading" class="loading-state">
+    <!-- Loading state -->
+    <s-text v-if="loading" alignment="center" tone="subdued" class="state-message">
       Loading conversations...
+    </s-text>
+
+    <!-- Empty state -->
+    <div v-else-if="conversations.length === 0" class="empty-state-container">
+      <s-empty-state heading="No conversations">
+        <s-text>No {{ localStatus }} conversations yet.</s-text>
+      </s-empty-state>
     </div>
-    <div v-else-if="conversations.length === 0" class="empty-state">
-      No {{ localStatus }} conversations yet.
-    </div>
-    <div v-else class="conversations-container">
+
+    <!-- Conversations grid -->
+    <div v-else class="conversations-grid">
+      <!-- Conversations List -->
       <div class="conversations-list">
-        <div 
-          v-for="conv in conversations" 
+        <div
+          v-for="conv in conversations"
           :key="conv.session_id"
           class="conversation-item"
           :class="{ active: selectedId === conv.session_id }"
           @click="emit('select-conversation', conv.session_id)"
         >
-          <div class="conversation-header">
-            <h3>{{ conv.customer.full_name || conv.customer.email }}</h3>
-            <span class="timestamp">{{ formatTimeAgo(conv.updated_at) }}</span>
-          </div>
-          <div class="conversation-preview">
-            <span class="agent-name">{{ conv.agent.name }}:</span>
-            <p class="last-message">{{ conv.last_message }}</p>
-          </div>
-          <div class="conversation-footer">
-            <span class="message-count">{{ conv.message_count }} messages</span>
-            <span class="conversation-status" :class="conv.status">
-              {{ conv.status }}
-            </span>
-          </div>
-        </div>
-      </div>
-      
-      <div class="conversation-detail">
-        <div v-if="selectedConversation" class="chat-detail">
-          <div class="chat-header">
-            <h3>{{ selectedConversation.customer.full_name || selectedConversation.customer.email }}</h3>
-            <span class="chat-status" :class="selectedConversation.status">
-              {{ selectedConversation.status }}
-            </span>
+          <div class="conv-header">
+            <div class="conv-title">{{ conv.customer.full_name || conv.customer.email }}</div>
+            <div class="conv-time">{{ formatTimeAgo(conv.updated_at) }}</div>
           </div>
           
-          <div class="messages-container">
-            <div 
-              v-for="(message, index) in selectedConversation.messages" 
-              :key="index"
-              class="message-item"
-              :class="{ 'customer-message': message.sender === 'customer', 'agent-message': message.sender !== 'customer' }"
-            >
-              <div class="message-sender">
-                {{ message.sender === 'customer' ? (selectedConversation.customer.full_name || 'Customer') : message.sender }}
-              </div>
-              <div class="message-content">
-                {{ message.message }}
-              </div>
-              <div class="message-time">
-                {{ formatMessageTime(message.timestamp) }}
-              </div>
+          <div class="conv-preview">
+            <span class="conv-agent">{{ conv.agent.name }}:</span>
+            <span class="conv-message">{{ conv.last_message }}</span>
+          </div>
+          
+          <div class="conv-footer">
+            <span class="conv-count">{{ conv.message_count }} messages</span>
+            <div class="conversation-status" :class="conv.status">
+              {{ conv.status }}
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Conversation Detail -->
+      <div class="conversation-detail">
+        <template v-if="selectedConversation">
+          <!-- Chat Header -->
+          <div class="chat-header">
+            <div class="chat-title">
+              {{ selectedConversation.customer.full_name || selectedConversation.customer.email }}
+            </div>
+            <div class="conversation-status" :class="selectedConversation.status">
+              {{ selectedConversation.status }}
+            </div>
+          </div>
+          
+          <!-- Messages Container -->
+          <div class="messages-container">
+            <div
+              v-for="(message, index) in selectedConversation.messages"
+              :key="index"
+              class="message-item"
+              :class="message.message_type === 'user' ? 'user-message' : 'agent-message'"
+            >
+              <div class="message-sender">
+                {{ message.message_type === 'user' ? (selectedConversation.customer.full_name || 'Customer') : (message.agent_name || 'Agent') }}
+              </div>
+              <div class="message-bubble">
+                {{ message.message }}
+              </div>
+              <div class="message-time">
+                {{ formatMessageTime(message.created_at) }}
+              </div>
+            </div>
+          </div>
+        </template>
+        
         <div v-else class="no-selection">
-          Select a conversation to view details
+          <s-text alignment="center" tone="subdued">
+            Select a conversation to view details
+          </s-text>
         </div>
       </div>
     </div>
@@ -89,10 +116,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import type { Conversation, ChatDetail } from '@/types/chat'
 
-defineProps<{
+const props = defineProps<{
   conversations: Conversation[]
   loading: boolean
   status: 'open' | 'closed'
@@ -105,7 +132,12 @@ const emit = defineEmits<{
   (e: 'select-conversation', sessionId: string): void
 }>()
 
-const localStatus = ref<'open' | 'closed'>('open')
+const localStatus = ref<'open' | 'closed'>(props.status)
+
+// Watch for status prop changes and sync with local state
+watch(() => props.status, (newStatus) => {
+  localStatus.value = newStatus
+}, { immediate: true })
 
 const handleStatusChange = (status: 'open' | 'closed') => {
   localStatus.value = status
@@ -139,214 +171,251 @@ const formatMessageTime = (timestamp: string): string => {
 </script>
 
 <style scoped>
-.inbox-tab {
+.inbox-wrapper {
   max-width: 100%;
 }
 
 .inbox-header {
+  margin-bottom: 20px;
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--background-color);
+}
+
+.header-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #E5E7EB;
+  width: 100%;
 }
 
-.inbox-header h2 {
-  margin: 0;
-  font-size: 1.5rem;
-  color: #111827;
-}
-
-.inbox-filters {
+.header-left {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.conversations-title {
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  font-family: var(--font-family);
+}
+
+.conversations-count {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  margin: 0;
+}
+
+/* Filter controls matching ConversationsList exactly */
+.filter-controls {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
 }
 
 .filter-btn {
-  padding: 8px 16px;
-  background-color: #F3F4F6;
-  border: 1px solid #D1D5DB;
-  border-radius: 6px;
+  flex: 1;
+  min-width: 70px;
+  padding: 8px 6px;
+  background: var(--background-color);
+  border: 1px solid var(--border-color);
+  color: var(--text-muted);
+  font-size: 11px;
   cursor: pointer;
-  font-size: 0.9rem;
-  color: #6B7280;
-  transition: all 0.2s;
+  transition: all var(--transition-fast);
+  margin: 0 -1px;
+  font-family: var(--font-family);
 }
 
-.filter-btn:hover {
-  background-color: #E5E7EB;
+.filter-btn:first-child {
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  margin-left: 0;
+}
+
+.filter-btn:last-child {
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  margin-right: 0;
+}
+
+.filter-btn:not(:first-child) {
+  border-left: none;
 }
 
 .filter-btn.active {
-  background-color: #F24611;
+  background: var(--primary-color);
   color: white;
-  border-color: #F24611;
+  border-color: var(--primary-color);
+  z-index: 1;
+  position: relative;
 }
 
-.conversations-container {
+.state-message {
+  padding: 40px 0;
+}
+
+.empty-state-container {
+  padding: 40px 0;
+}
+
+.conversations-grid {
   display: grid;
-  grid-template-columns: 350px 1fr;
-  gap: 20px;
-  height: 600px;
+  grid-template-columns: 380px 1fr;
+  gap: 16px;
+  margin-top: 0;
 }
 
 .conversations-list {
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
   overflow-y: auto;
+  height: 550px;
+  background: var(--background-color);
 }
 
 .conversation-item {
-  padding: 16px;
-  border-bottom: 1px solid #E5E7EB;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: all var(--transition-fast);
+  min-height: 72px;
 }
 
 .conversation-item:hover {
-  background-color: #F9FAFB;
+  background: var(--background-soft);
 }
 
 .conversation-item.active {
-  background-color: #FEF3F2;
-  border-left: 3px solid #F24611;
+  background: var(--background-soft);
+  border-left: 2px solid var(--primary-color);
 }
 
-.conversation-header {
+.conv-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-xs);
 }
 
-.conversation-header h3 {
-  margin: 0;
-  font-size: 0.95rem;
-  color: #111827;
-}
-
-.timestamp {
-  font-size: 0.8rem;
-  color: #9CA3AF;
-}
-
-.conversation-preview {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 8px;
-}
-
-.agent-name {
+.conv-title {
+  font-size: 13px;
   font-weight: 500;
-  color: #6B7280;
-  font-size: 0.85rem;
-}
-
-.last-message {
-  color: #9CA3AF;
-  font-size: 0.85rem;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  margin: 0;
+  max-width: 170px;
 }
 
-.conversation-footer {
+.conv-time {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.conv-preview {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 4px;
+  font-size: 12px;
+  align-items: center;
+}
+
+.conv-agent {
+  font-weight: 500;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.conv-message {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+
+.conv-footer {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.message-count {
-  font-size: 0.8rem;
-  color: #9CA3AF;
+.conv-count {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 
+/* Conversation status matching ConversationsList design */
 .conversation-status {
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 12px;
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
   text-transform: uppercase;
+  margin-top: 4px;
+  display: inline-block;
   font-weight: 500;
 }
 
 .conversation-status.open {
-  background-color: #D1FAE5;
-  color: #065F46;
+  background-color: rgba(16, 185, 129, 0.1);
+  color: var(--success-color);
 }
 
 .conversation-status.closed {
-  background-color: #FEE2E2;
-  color: #991B1B;
+  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--error-color);
+}
+
+.conversation-status.transferred {
+  background-color: rgba(245, 158, 11, 0.1);
+  color: var(--warning-color);
 }
 
 .conversation-detail {
-  border: 1px solid #E5E7EB;
-  border-radius: 8px;
-  background-color: white;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--background-color);
   display: flex;
   flex-direction: column;
+  height: 550px;
   overflow: hidden;
-}
-
-.chat-detail {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
 }
 
 .chat-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 20px;
-  border-bottom: 1px solid #E5E7EB;
-  background-color: #F9FAFB;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--background-soft);
 }
 
-.chat-header h3 {
-  margin: 0;
-  font-size: 1rem;
-  color: #111827;
-  font-weight: 600;
-}
-
-.chat-status {
-  font-size: 0.75rem;
-  padding: 4px 10px;
-  border-radius: 12px;
-  text-transform: uppercase;
-  font-weight: 600;
-}
-
-.chat-status.open {
-  background-color: #D1FAE5;
-  color: #065F46;
-}
-
-.chat-status.closed {
-  background-color: #FEE2E2;
-  color: #991B1B;
+.chat-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
 }
 
 .messages-container {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .message-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  max-width: 75%;
+  max-width: 70%;
 }
 
-.customer-message {
+.user-message {
   align-self: flex-start;
 }
 
@@ -355,52 +424,81 @@ const formatMessageTime = (timestamp: string): string => {
 }
 
 .message-sender {
-  font-size: 0.75rem;
+  font-size: 11px;
   font-weight: 600;
-  color: #6B7280;
+  color: var(--text-muted);
   padding: 0 8px;
 }
 
-.message-content {
-  padding: 10px 14px;
+.message-bubble {
+  padding: 10px 12px;
   border-radius: 12px;
-  font-size: 0.9rem;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.4;
   word-wrap: break-word;
 }
 
-.customer-message .message-content {
-  background-color: #F3F4F6;
-  color: #111827;
+.user-message .message-bubble {
+  background-color: var(--background-mute);
+  color: var(--text-primary);
   border-bottom-left-radius: 4px;
 }
 
-.agent-message .message-content {
-  background-color: #F24611;
+.agent-message .message-bubble {
+  background-color: var(--primary-color);
   color: white;
   border-bottom-right-radius: 4px;
 }
 
 .message-time {
-  font-size: 0.7rem;
-  color: #9CA3AF;
+  font-size: 11px;
+  color: var(--text-muted);
   padding: 0 8px;
 }
 
 .no-selection {
-  color: #9CA3AF;
-  font-size: 0.95rem;
   display: flex;
   align-items: center;
   justify-content: center;
   height: 100%;
+  padding: 40px 20px;
 }
 
-.loading-state,
-.empty-state {
-  text-align: center;
-  padding: 40px;
-  color: #9CA3AF;
+@media (max-width: 1024px) {
+  .conversations-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .conversations-list {
+    height: 350px;
+  }
+  
+  .conversation-detail {
+    height: 450px;
+  }
+}
+
+@media (max-width: 768px) {
+  .header-content {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  
+  .filter-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+  
+  .filter-buttons {
+    flex: 1;
+    max-width: 200px;
+  }
+  
+  .filter-button {
+    flex: 1;
+    min-width: auto;
+  }
 }
 </style>
 

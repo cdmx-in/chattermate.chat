@@ -3,99 +3,155 @@
     <s-link href="https://chattermate.chat" target="_blank" rel="home">Home</s-link>
     <s-link href="https://chattermate.chat/pricing.html" target="_blank">Pricing</s-link>
   </s-app-nav>
-  <div class="shopify-management-page">
-    <div class="management-container">
-      <!-- Header -->
-      <div class="page-header">
-        <div class="header-content">
-          <div>
-            <h1>Shopify Integration Management</h1>
-            <p class="shop-name">{{ shopName }}</p>
+  
+  <s-page>
+    <!-- Header Section -->
+    <s-section>
+      <div class="panel-header">
+        <div class="header-layout">
+          <div class="agent-header">
+            <div v-if="selectedAgent" class="agent-avatar" @click="triggerPhotoUpload">
+              <input type="file" ref="photoInput" accept="image/jpeg,image/png,image/webp" class="hidden"
+                @change="handlePhotoChange">
+              <img :src="currentPhotoUrl" :alt="selectedAgent.display_name || selectedAgent.name" 
+                :class="{ 'opacity-50': uploadingPhoto }">
+              <div class="upload-overlay" v-if="!uploadingPhoto">
+                <span>Change Photo</span>
+              </div>
+              <div class="upload-overlay" v-else>
+                <span>Uploading...</span>
+              </div>
+            </div>
+            <div class="agent-info">
+              <div class="name-section">
+                <div v-if="!editingAgentName" class="name-display">
+                  <h3>{{ selectedAgent?.display_name || selectedAgent?.name }}</h3>
+                  <button class="edit-icon-button" @click="startEditAgentName" title="Edit name">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                      <path d="m18.5 2.5 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                    </svg>
+                  </button>
+                </div>
+                <div v-else class="name-edit">
+                  <input 
+                    v-model="tempAgentName" 
+                    class="name-input"
+                    placeholder="Enter display name"
+                    @keyup.enter="saveAgentName"
+                    @keyup.escape="cancelEditAgentName"
+                    ref="agentNameInput"
+                  >
+                  <div class="edit-actions">
+                    <button class="save-icon-button" @click="saveAgentName" title="Save">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="20,6 9,17 4,12"></polyline>
+                      </svg>
+                    </button>
+                    <button class="cancel-icon-button" @click="cancelEditAgentName" title="Cancel">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="status-and-mode">
+                <div class="status-toggle">
+                  <label class="status-switch">
+                    <input 
+                      type="checkbox" 
+                      :checked="selectedAgent?.is_active || false"
+                      @change="handleStatusToggle"
+                    >
+                    <span class="status-slider"></span>
+                  </label>
+                  <span class="status-text">{{ selectedAgent?.is_active ? 'Online' : 'Offline' }}</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <button class="advanced-settings-btn" @click="goToDashboard">
-            Advanced Settings
-          </button>
         </div>
       </div>
+    </s-section>
 
-      <!-- Tab Navigation -->
-      <div class="tabs-navigation">
-        <button 
-          class="tab-button" 
-          :class="{ active: activeTab === 'setup' }"
-          @click="switchTab('setup')"
-        >
-          Setup Instructions
-        </button>
-        <button 
-          class="tab-button" 
-          :class="{ active: activeTab === 'customization' }"
-          @click="switchTab('customization')"
-        >
-          Agent Customization
-        </button>
-        <button 
-          class="tab-button" 
-          :class="{ active: activeTab === 'inbox' }"
-          @click="switchTab('inbox')"
-        >
-          Inbox
-        </button>
-      </div>
-
-      <!-- Tab Content -->
-      <div class="tab-content">
-        <!-- Setup Tab -->
-        <SetupTab 
-          v-if="activeTab === 'setup'" 
-          :agents-connected="agentsConnected"
-          :widget-id="widgetId"
-          @open-theme-editor="openShopifyThemeEditor"
-        />
-
-        <!-- Customization Tab -->
-        <CustomizationTab 
-          v-if="activeTab === 'customization'"
-          :agent="selectedAgent"
-          :loading="loadingAgent"
-          :saving="savingAgent"
-          :uploading="uploadingPhoto"
-          :photo-url="currentPhotoUrl"
-          @save="saveAgentChanges"
-          @trigger-photo-upload="triggerPhotoUpload"
-        />
+    <!-- Tab Navigation -->
+    <s-section>
+      <div class="tabs-container">
+        <div class="tabs-header">
+          <div class="tabs-left">
+            <button 
+              class="tab-button" 
+              :class="{ active: activeTab === 'setup' }"
+              @click="switchTab('setup')"
+            >
+              Setup Instructions
+            </button>
+            <button 
+              class="tab-button" 
+              :class="{ active: activeTab === 'customization' }"
+              @click="switchTab('customization')"
+            >
+              Agent Customization
+            </button>
+            <button 
+              class="tab-button" 
+              :class="{ active: activeTab === 'inbox' }"
+              @click="switchTab('inbox')"
+            >
+              Inbox
+            </button>
+          </div>
+          
+          <div class="tabs-right">
+            <s-button @click="goToDashboard" class="dashboard-button">
+              Go to ChatterMate
+            </s-button>
+          </div>
+        </div>
         
-        <!-- Hidden file input for photo upload -->
-        <input 
-          type="file" 
-          ref="photoInput" 
-          accept="image/jpeg,image/png,image/webp" 
-          @change="handlePhotoChange" 
-          class="hidden" 
-        />
+        <div class="tab-content">
+          <!-- Setup Tab -->
+          <SetupTab 
+            v-if="activeTab === 'setup'" 
+            :agents-connected="agentsConnected"
+            :widget-id="widgetId"
+            @open-theme-editor="openShopifyThemeEditor"
+          />
 
-        <!-- Inbox Tab -->
-        <InboxTab 
-          v-if="activeTab === 'inbox'"
-          :conversations="conversations"
-          :loading="loadingConversations"
-          :status="conversationStatus"
-          :selected-id="selectedConversationId"
-          :selected-conversation="selectedConversation"
-          @update:status="handleStatusChange"
-          @select-conversation="selectConversation"
-        />
+          <!-- Customization Tab -->
+          <CustomizationTab 
+            v-if="activeTab === 'customization'"
+            :agent="selectedAgent"
+            :loading="loadingAgent"
+            :saving="savingAgent"
+            @save="saveAgentChanges"
+          />
+
+          <!-- Inbox Tab -->
+          <InboxTab 
+            v-if="activeTab === 'inbox'"
+            :conversations="conversations"
+            :loading="loadingConversations"
+            :status="conversationStatus"
+            :selected-id="selectedConversationId"
+            :selected-conversation="selectedConversation"
+            @update:status="handleStatusChange"
+            @select-conversation="selectConversation"
+          />
+        </div>
       </div>
-    </div>
-  </div>
+    </s-section>
+  </s-page>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { agentService } from '@/services/agent'
 import { chatService } from '@/services/chat'
-import type { Agent, AgentWithCustomization } from '@/types/agent'
+import type { Agent, AgentWithCustomization, ChatStyle } from '@/types/agent'
 import type { Conversation, ChatDetail } from '@/types/chat'
 import { toast } from 'vue-sonner'
 import api from '@/services/api'
@@ -126,6 +182,11 @@ const savingAgent = ref(false)
 // Photo upload
 const photoInput = ref<HTMLInputElement | null>(null)
 const uploadingPhoto = ref(false)
+
+// Agent name editing
+const editingAgentName = ref(false)
+const tempAgentName = ref('')
+const agentNameInput = ref<HTMLInputElement | null>(null)
 
 // Conversations
 const conversations = ref<Conversation[]>([])
@@ -208,7 +269,16 @@ const loadSelectedAgent = async () => {
   }
 }
 
-const saveAgentChanges = async (data: { name: string; instructions: string }) => {
+const saveAgentChanges = async (data: { 
+  instructions: string;
+  chat_style: ChatStyle;
+  chat_background_color: string;
+  chat_bubble_color: string;
+  accent_color: string;
+  icon_color: string;
+  welcome_title: string;
+  welcome_subtitle: string;
+}) => {
   if (!selectedAgent.value) return
   
   savingAgent.value = true
@@ -218,10 +288,35 @@ const saveAgentChanges = async (data: { name: string; instructions: string }) =>
       .map(line => line.trim())
       .filter(line => line.length > 0)
     
+    // Update agent instructions
     await agentService.updateAgent(selectedAgent.value.id, {
-      display_name: data.name,
       instructions
     })
+    
+    // Update customization if it exists or create new one
+    const customizationData = {
+      chat_style: data.chat_style,
+      chat_background_color: data.chat_background_color,
+      chat_bubble_color: data.chat_bubble_color,
+      accent_color: data.accent_color,
+      icon_color: data.icon_color,
+      welcome_title: data.welcome_title,
+      welcome_subtitle: data.welcome_subtitle
+    }
+    
+    if (selectedAgent.value.customization?.id) {
+      await agentService.updateCustomization(selectedAgent.value.id, {
+        id: selectedAgent.value.customization.id,
+        agent_id: selectedAgent.value.id,
+        ...customizationData
+      })
+    } else {
+      await agentService.updateCustomization(selectedAgent.value.id, {
+        id: 0,
+        agent_id: selectedAgent.value.id,
+        ...customizationData
+      })
+    }
     
     toast.success('Agent updated successfully')
     
@@ -237,6 +332,67 @@ const saveAgentChanges = async (data: { name: string; instructions: string }) =>
 
 const triggerPhotoUpload = () => {
   photoInput.value?.click()
+}
+
+// Agent name editing functions
+const startEditAgentName = () => {
+  if (!selectedAgent.value) return
+  editingAgentName.value = true
+  tempAgentName.value = selectedAgent.value.display_name || selectedAgent.value.name
+  nextTick(() => {
+    agentNameInput.value?.focus()
+    agentNameInput.value?.select()
+  })
+}
+
+const saveAgentName = async () => {
+  if (!selectedAgent.value || !tempAgentName.value.trim()) {
+    cancelEditAgentName()
+    return
+  }
+  
+  try {
+    await agentService.updateAgent(selectedAgent.value.id, {
+      display_name: tempAgentName.value.trim()
+    })
+    
+    // Update local state
+    selectedAgent.value.display_name = tempAgentName.value.trim()
+    editingAgentName.value = false
+    toast.success('Agent name updated successfully')
+  } catch (error) {
+    console.error('Error updating agent name:', error)
+    toast.error('Failed to update agent name')
+    cancelEditAgentName()
+  }
+}
+
+const cancelEditAgentName = () => {
+  editingAgentName.value = false
+  tempAgentName.value = ''
+}
+
+// Handle status toggle
+const handleStatusToggle = async (event: Event) => {
+  const newStatus = (event.target as HTMLInputElement).checked
+  
+  if (!selectedAgent.value) return
+  
+  try {
+    await agentService.updateAgent(selectedAgent.value.id, {
+      is_active: newStatus
+    })
+    
+    // Update local state
+    selectedAgent.value.is_active = newStatus
+    
+    toast.success(`Agent ${newStatus ? 'activated' : 'deactivated'} successfully`)
+  } catch (error) {
+    console.error('Error updating agent status:', error)
+    toast.error('Failed to update agent status')
+    // Revert the checkbox state on error
+    ;(event.target as HTMLInputElement).checked = selectedAgent.value.is_active
+  }
 }
 
 const handlePhotoChange = async (event: Event) => {
@@ -319,6 +475,9 @@ onMounted(async () => {
   // Load connected agents
   await loadConnectedAgents()
   
+  // Always load selected agent for header display
+  await loadSelectedAgent()
+  
   // Check if there's a tab in query params
   const tabParam = route.query.tab as string
   if (tabParam && ['setup', 'customization', 'inbox'].includes(tabParam)) {
@@ -326,113 +485,335 @@ onMounted(async () => {
   }
   
   // Load data for active tab
-  if (activeTab.value === 'customization') {
-    await loadSelectedAgent()
-  } else if (activeTab.value === 'inbox') {
+  if (activeTab.value === 'inbox') {
     await loadConversations()
   }
 })
 </script>
 
 <style scoped>
-.shopify-management-page {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  line-height: 1.6;
-  color: #1F2937;
-  margin: 0;
-  padding: 20px;
-  min-height: 100vh;
-  background-color: #F9FAFB;
+.hidden {
+  display: none;
 }
 
-.management-container {
-  max-width: 1200px;
-  margin: 0 auto;
-  background-color: white;
-  border-radius: 12px;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+/* Header Styles - Matching AgentDetail.vue */
+.panel-header {
+  padding: var(--space-lg, 24px) var(--space-lg, 24px) var(--space-md, 16px);
+  border-bottom: 1px solid var(--border-color, #e1e3e5);
+  background: var(--background-soft, #f9fafb);
+}
+
+.header-layout {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md, 16px);
+}
+
+.agent-header {
+  display: flex;
+  gap: var(--space-md, 16px);
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-avatar {
+  position: relative;
+  cursor: pointer;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 3px solid white;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  flex-shrink: 0;
+}
+
+.agent-avatar:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.agent-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.upload-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  opacity: 0;
+  transition: all 0.3s ease;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-align: center;
+  backdrop-filter: blur(2px);
+}
+
+.agent-avatar:hover .upload-overlay {
+  opacity: 1;
+  transform: scale(1.02);
+}
+
+.agent-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 8px);
+  min-width: 0;
   overflow: hidden;
 }
 
-.page-header {
-  padding: 30px;
-  border-bottom: 1px solid #E5E7EB;
-  background-color: #F9FAFB;
+.agent-info h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-color, #202223);
+  margin: 0;
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.header-content {
+.name-section {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-sm, 8px);
+  min-width: 0;
+  overflow: hidden;
+}
+
+.name-display {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.name-edit {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+  flex: 1;
+}
+
+.name-input {
+  flex: 1;
+  padding: var(--space-sm, 8px) var(--space-md, 12px);
+  border: 1px solid var(--border-color, #e1e3e5);
+  border-radius: var(--radius-md, 6px);
+  font-size: 1rem;
+  font-weight: 600;
+  background: white;
+  color: var(--text-color, #202223);
+  min-width: 0;
+}
+
+.name-input:focus {
+  outline: none;
+  border-color: var(--primary-color, #2c6ecb);
+  box-shadow: 0 0 0 2px rgba(44, 110, 203, 0.1);
+}
+
+.edit-actions {
+  display: flex;
+  gap: var(--space-xs, 4px);
+}
+
+.edit-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: none;
+  background: var(--background-soft, #f9fafb);
+  border-radius: var(--radius-md, 6px);
+  color: var(--text-muted, #6d7175);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.edit-icon-button:hover {
+  background: var(--background-muted, #f1f2f3);
+  color: var(--text-color, #202223);
+  transform: translateY(-1px);
+}
+
+.save-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--success-color, #22c55e);
+  border-radius: var(--radius-sm, 4px);
+  color: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.save-icon-button:hover {
+  background: var(--success-dark, #16a34a);
+  transform: translateY(-1px);
+}
+
+.cancel-icon-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: var(--background-muted, #f1f2f3);
+  border-radius: var(--radius-sm, 4px);
+  color: var(--text-muted, #6d7175);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cancel-icon-button:hover {
+  background: var(--error-color, #ef4444);
+  color: white;
+  transform: translateY(-1px);
+}
+
+.status-and-mode {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm, 8px);
+}
+
+.status-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm, 8px);
+}
+
+.status-switch {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 22px;
+}
+
+.status-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.status-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: .4s;
+  border-radius: 22px;
+}
+
+.status-slider:before {
+  position: absolute;
+  content: "";
+  height: 16px;
+  width: 16px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .4s;
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.status-switch input:checked + .status-slider {
+  background-color: var(--success-color, #22c55e);
+}
+
+.status-switch input:checked + .status-slider:before {
+  transform: translateX(22px);
+}
+
+.status-text {
+  font-weight: 500;
+  font-size: var(--text-sm, 14px);
+  color: var(--text-muted, #6d7175);
+}
+
+.opacity-50 {
+  opacity: 0.5;
+}
+
+/* Tabs styling using design tokens */
+.tabs-container {
+  margin-top: 0;
+}
+
+.tabs-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  border-bottom: 2px solid var(--border-color);
+  margin-bottom: var(--space-xl);
+  padding-right: var(--space-md);
 }
 
-.page-header h1 {
-  margin: 0 0 8px;
-  font-size: 1.8rem;
-  color: #111827;
-}
-
-.shop-name {
-  color: #6B7280;
-  font-size: 1rem;
-  margin: 0;
-}
-
-.advanced-settings-btn {
-  padding: 10px 20px;
-  background-color: #F24611;
-  color: white;
-  border: none;
-  border-radius: 6px;
-  font-weight: 500;
-  font-size: 0.95rem;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.advanced-settings-btn:hover {
-  background-color: #D93B0A;
-  transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(242, 70, 17, 0.2);
-}
-
-.tabs-navigation {
+.tabs-left {
   display: flex;
-  border-bottom: 1px solid #E5E7EB;
-  background-color: #F9FAFB;
+  gap: 0;
+}
+
+.tabs-right {
+  display: flex;
+  align-items: center;
+}
+
+.dashboard-button {
+  margin-left: var(--space-md);
 }
 
 .tab-button {
-  flex: 1;
-  padding: 16px 24px;
+  padding: var(--space-sm) var(--space-lg);
   background: transparent;
   border: none;
   border-bottom: 3px solid transparent;
   cursor: pointer;
-  font-weight: 500;
-  font-size: 0.95rem;
-  color: #6B7280;
-  transition: all 0.2s;
+  font-weight: 600;
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  transition: all var(--transition-fast);
+  position: relative;
+  margin-bottom: -2px;
+  font-family: var(--font-family);
 }
 
 .tab-button:hover {
-  color: #111827;
-  background-color: #F3F4F6;
+  color: var(--text-primary);
 }
 
 .tab-button.active {
-  color: #F24611;
-  border-bottom-color: #F24611;
-  background-color: white;
+  color: var(--primary-color);
+  border-bottom-color: var(--primary-color);
 }
 
 .tab-content {
-  padding: 30px;
-  min-height: 400px;
-}
-
-.hidden {
-  display: none;
+  padding: 0;
 }
 </style>
+
 

@@ -45,7 +45,18 @@ export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   
   return {
-  plugins: [vue(), vueJsx(), vueDevTools()],
+  plugins: [
+    vue({
+      template: {
+        compilerOptions: {
+          // Treat all tags starting with 's-' as custom elements (Polaris web components)
+          isCustomElement: (tag) => tag.startsWith('s-')
+        }
+      }
+    }), 
+    vueJsx(), 
+    vueDevTools()
+  ],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -55,6 +66,14 @@ export default defineConfig(({ command, mode }) => {
     headers: {
       'Service-Worker-Allowed': '/',
     },
+    // Allow ngrok and other tunnel services for Shopify embedded app development
+    allowedHosts: [
+      'localhost',
+      '.ngrok.app',
+      '.ngrok.io',
+      'frontendchat.ngrok.app',
+      '.chattermate.chat',
+    ],
   },
   publicDir: 'public',
   build: {

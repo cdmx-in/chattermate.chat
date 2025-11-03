@@ -162,7 +162,7 @@ async def create_organization(
             value=access_token,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite="none",  # Changed to "none" for cross-domain support (ngrok)
             max_age=1800  # 30 minutes
         )
         response.set_cookie(
@@ -170,7 +170,7 @@ async def create_organization(
             value=refresh_token,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite="none",  # Changed to "none" for cross-domain support (ngrok)
             max_age=604800  # 7 days
         )
 
@@ -184,7 +184,8 @@ async def create_organization(
                 "organization_id": str(organization.id),
                 "role": admin_role.to_dict()
             }, default=str)),
-            samesite="lax",
+            samesite="none",  # Changed to "none" for cross-domain support (ngrok)
+            secure=True,  # Required when samesite="none"
             max_age=604800  # 7 days
         )
 

@@ -224,7 +224,7 @@ const saveConfiguration = async () => {
     await enableShopifyForAgents([selectedAgent.value], shopId.value)
     
     // Build success URL
-    const successUrl = `/shopify/success?shop=${shopDomain.value}&shop_id=${shopId.value}&agents_connected=1${widgetId.value ? `&widget_id=${widgetId.value}` : ''}`
+    const successUrl = `/shopify/agent-management?shop=${shopDomain.value}&shop_id=${shopId.value}&agents_connected=1${widgetId.value ? `&widget_id=${widgetId.value}` : ''}`
     
     // For embedded apps, use App Bridge redirect
     if (isEmbedded.value && shopifyApp.value) {
@@ -234,7 +234,7 @@ const saveConfiguration = async () => {
     } else {
       // For non-embedded apps, use router navigation
       router.push({
-        name: 'shopify-success',
+        name: 'shopify-agent-management',
         query: {
           shop: shopDomain.value,
           shop_id: shopId.value,
