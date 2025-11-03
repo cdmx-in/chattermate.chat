@@ -3,7 +3,16 @@ import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue({
+      template: {
+        compilerOptions: {
+          // Treat all tags starting with 's-' as custom elements (Polaris web components)
+          isCustomElement: (tag) => tag.startsWith('s-')
+        }
+      }
+    })
+  ],
   build: {
     lib: {
       entry: resolve(__dirname, 'src/webclient/widget.ts'),

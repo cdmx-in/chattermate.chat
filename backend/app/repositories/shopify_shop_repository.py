@@ -82,7 +82,9 @@ class ShopifyShopRepository:
             access_token=shop.access_token,
             scope=shop.scope,
             is_installed=shop.is_installed,
-            organization_id=org_id
+            organization_id=org_id,
+            oauth_state=shop.oauth_state,
+            oauth_state_expiry=shop.oauth_state_expiry
         )
         self.db.add(db_shop)
         self.db.commit()

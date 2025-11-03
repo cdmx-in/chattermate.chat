@@ -130,6 +130,7 @@ async def shopify_auth(
     
     # Store state in database for validation in callback
     if not db_shop:
+        logger.info(f"Creating shop record for {shop} , state: {state}, state_expiry: {state_expiry}")
         # Create shop record if it doesn't exist
         shop_data = ShopifyShopCreate(
             shop_domain=shop,
@@ -138,6 +139,7 @@ async def shopify_auth(
             oauth_state_expiry=state_expiry
         )
         db_shop = shop_repository.create_shop(shop_data)
+ 
     elif db_shop and db_shop.access_token and not token_valid:
         logger.info(f"Clearing invalid token for shop {shop}")
         shop_update_data = ShopifyShopUpdate(
@@ -150,6 +152,7 @@ async def shopify_auth(
         shop_repository.update_shop(db_shop.id, shop_update_data) 
         db.commit()    
     else:
+        logger.info(f"Updating shop record for {shop} , state: {state}, state_expiry: {state_expiry}")
         shop_update = ShopifyShopUpdate(
             oauth_state=state,
             oauth_state_expiry=state_expiry
@@ -209,6 +212,10 @@ async def shopify_callback(
         org_id_str = str(organization.id) if organization and organization.id else None        
         shop_repository = ShopifyShopRepository(db)    
         db_shop = shop_repository.get_shop_by_domain(shop)
+        
+        # Log state validation details for debugging
+        logger.info(f"State validation check - state provided: {state is not None}, db_shop exists: {db_shop is not None}, db_shop.oauth_state: {db_shop.oauth_state if db_shop else 'N/A'}")
+        
         # Validate CSRF state parameter from database
         if state and db_shop and db_shop.oauth_state:
             if db_shop.organization_id:
@@ -235,7 +242,7 @@ async def shopify_callback(
                 raise HTTPException(status_code=400, detail="OAuth state expired - please try again")
                     
 
-            # Update existing shop
+            # Update existing shop with access token
             shop_update = ShopifyShopUpdate( 
                     access_token=access_token,
                     scope=scope,
@@ -245,8 +252,10 @@ async def shopify_callback(
                     oauth_state_expiry=None
             )
             db_shop = shop_repository.update_shop(db_shop.id, shop_update)
-            logger.info(f"Updated existing shop: {shop}")
             db.commit()
+            # Refresh the shop object after commit to ensure we have the latest data
+            db.refresh(db_shop)
+            logger.info(f"Updated shop {shop} with access token and committed to database")
             logger.info(f"OAuth state validated successfully for shop: {shop}")
         
         if db_shop and db_shop.access_token and db_shop.is_installed:
@@ -267,23 +276,15 @@ async def shopify_callback(
                     detail="This app must be accessed through your Shopify admin. Please open it from Apps section in your Shopify dashboard."
                 )
             # Embedded app (Shopify always provides host parameter)
-            # If user is not authenticated, redirect to login first
+            # If user is not authenticated and shop has no organization, show connect page
             if not organization and not db_shop.organization_id:
-                logger.info(f"User not authenticated, redirecting to login")
-                frontend_url = settings.FRONTEND_URL or "https://app.chattermate.chat"
-                
-                # Build return URL based on agent configuration
-                if agents_connected > 0:
-                    # Has agents configured - return to success page after login
-                    return_url = f"/shopify/success?shop={shop}&shop_id={str(db_shop.id)}&agents_connected={agents_connected}"
-                else:
-                    # No agents - return to agent selection after login
-                    return_url = f"/shopify/agent-selection?shop={shop}&shop_id={str(db_shop.id)}"
-                
-                # Redirect to login with return URL and shop_id for updating after login
-                login_url = f"{frontend_url}/login?redirect={quote(return_url)}&shop_id={str(db_shop.id)}"
-                logger.info(f"Redirecting to login: {login_url}")
-                return RedirectResponse(login_url)            
+                logger.info(f"Shop not connected to organization, showing connect account page")
+                return ShopifyHelperService.generate_connect_account_page(
+                    shop=shop,
+                    shop_id=str(db_shop.id),
+                    api_key=settings.SHOPIFY_API_KEY,
+                    host=host
+                )            
             # Render embedded app response
             logger.info(f"Embedded app callback (already authenticated), rendering page directly")
             return ShopifyHelperService.handle_embedded_app_response(
@@ -297,8 +298,12 @@ async def shopify_callback(
                 host=host
             )
         
-        # Shop doesn't have token yet, proceed with OAuth flow
-        logger.info(f"Shop {shop} needs authentication, exchanging code for token")
+        # If we reach here, something went wrong - shop exists but no token
+        logger.error(f"Shop {shop} reached end of callback without proper handling. db_shop exists: {db_shop is not None}, has token: {db_shop.access_token if db_shop else 'N/A'}, oauth_state: {db_shop.oauth_state if db_shop else 'N/A'}")
+        raise HTTPException(
+            status_code=400, 
+            detail="Unable to complete OAuth flow. Please try reconnecting from the beginning."
+        )
         
     except Exception as e:
         logger.error(f"Error processing Shopify callback: {str(e)}")
@@ -444,6 +449,48 @@ async def delete_shop(
         raise HTTPException(status_code=500, detail="Failed to delete shop")
     
     return {"status": "success", "message": "Shop successfully disconnected"}
+
+@router.post("/link-shop/{shop_id}")
+async def link_shop_to_organization(
+    shop_id: str,
+    db: Session = Depends(get_db),
+    organization: Organization = Depends(get_current_organization),
+    current_user: User = Depends(require_permissions("manage_organization"))
+):
+    """
+    Link a Shopify shop to the current organization after user logs in.
+    This is called after successful login from the embedded app flow.
+    """
+    try:
+        shop_repository = ShopifyShopRepository(db)
+        db_shop = shop_repository.get_shop(shop_id)
+        
+        if not db_shop:
+            raise HTTPException(status_code=404, detail="Shop not found")
+        
+        # Link shop to organization if not already linked
+        if not db_shop.organization_id:
+            org_id_str = str(organization.id)
+            shop_update = ShopifyShopUpdate(organization_id=org_id_str)
+            db_shop = shop_repository.update_shop(shop_id, shop_update)
+            db.commit()
+            logger.info(f"Linked shop {shop_id} to organization {org_id_str}")
+        
+        return {
+            "success": True,
+            "shop_id": str(db_shop.id),
+            "shop_domain": db_shop.shop_domain,
+            "organization_id": str(db_shop.organization_id)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error linking shop to organization: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error linking shop to organization"
+        )
 
 @router.get("/status")
 async def check_connection(
@@ -720,36 +767,32 @@ async def shopify_app_uninstalled_webhook(
         
         logger.info(f"Found shop in database: {db_shop.id}")
         
-        # Update shop status to uninstalled
-        db_shop.is_installed = False
-        
-        # Optional: Clear access token for security
-        # Uncomment if you want to remove the token completely
-        # db_shop.access_token = None
-        
-        shop_repo.update(db_shop)
-        logger.info(f"Marked shop {shop_domain} as uninstalled")
-        
-        # Disable all agent configurations for this shop
-        # This prevents agents from trying to use Shopify tools for this shop
+        # Delete all agent configurations for this shop
         configs = config_repo.get_configs_by_shop(str(db_shop.id))
-        disabled_count = 0
+        deleted_configs = 0
         
         for config in configs:
-            if config.enabled:
-                config.enabled = False
-                config_repo.update(config)
-                disabled_count += 1
-                logger.info(f"Disabled Shopify config for agent {config.agent_id}")
+            config_repo.delete_agent_shopify_config(config.agent_id)
+            deleted_configs += 1
+            logger.info(f"Deleted Shopify config for agent {config.agent_id}")
         
-        logger.info(f"Successfully processed uninstall for {shop_domain}. Disabled {disabled_count} agent config(s)")
+        logger.info(f"Deleted {deleted_configs} agent config(s) for shop {shop_domain}")
+        
+        # Delete the shop record from the database
+        shop_repo.delete_shop(str(db_shop.id))
+        logger.info(f"Deleted shop record for {shop_domain}")
+        
+        # Commit the changes
+        db.commit()
+        
+        logger.info(f"Successfully processed uninstall for {shop_domain}. Deleted shop and {deleted_configs} agent config(s)")
         
         # Return 200 OK to acknowledge receipt
         return {
             "success": True,
             "message": f"App uninstalled successfully for {shop_domain}",
-            "shop_id": str(db_shop.id),
-            "configs_disabled": disabled_count
+            "shop_domain": shop_domain,
+            "configs_deleted": deleted_configs
         }
         
     except HTTPException:

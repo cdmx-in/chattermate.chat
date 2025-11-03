@@ -283,15 +283,15 @@ async def login(
             value=access_token,
             httponly=True,
             secure=True,
-            samesite="lax",
-            max_age=1800  # 30 minutes
+            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
+            max_age=180  # 30 minutes
         )
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
             max_age=604800  # 7 days
         )
 
@@ -306,7 +306,8 @@ async def login(
         response.set_cookie(
             key="user_info",
             value=quote(user_info),  # URL encode the JSON string
-            samesite="lax",
+            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
+            secure=True,  # Required when samesite="none"
             max_age=604800  # 7 days
         )
 
@@ -431,7 +432,7 @@ async def refresh_token(
             value=access_token,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
             max_age=1800  # 30 minutes
         )
         response.set_cookie(
@@ -439,7 +440,7 @@ async def refresh_token(
             value=refresh_token,
             httponly=True,
             secure=True,
-            samesite="lax",
+            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
             max_age=604800  # 7 days
         )
 
@@ -454,7 +455,8 @@ async def refresh_token(
         response.set_cookie(
             key="user_info",
             value=quote(user_info),  # URL encode the JSON string
-            samesite="lax",
+            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
+            secure=True,  # Required when samesite="none"
             max_age=604800  # 7 days
         )
 

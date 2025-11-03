@@ -263,9 +263,9 @@ async def test_shopify_callback(mock_get_user, mock_shop_repo, mock_exchange_tok
             # Assert
             # Should update the shop with new token
             mock_shop_repo_instance.update_shop.assert_called()
-            # Should redirect to login since user is not authenticated
-            assert response.status_code in [302, 307]  # RedirectResponse can use 302 or 307
-            assert "login" in response.headers["location"]
+            # Should return HTML page to connect account since user is not authenticated and shop has no organization
+            assert response.status_code == 200  # HTMLResponse for connect account page
+            assert "HTMLResponse" in str(type(response))
 
 
 @pytest.mark.asyncio

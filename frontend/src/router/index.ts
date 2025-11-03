@@ -62,9 +62,9 @@ const baseRoutes = [
     meta: { requiresAuth: true },
   },
   {
-    path: '/shopify/success',
-    name: 'shopify-success',
-    component: () => import('@/views/ShopifySuccessView.vue'),
+    path: '/shopify/agent-management',
+    name: 'shopify-agent-management',
+    component: () => import('@/views/ShopifyAgentManagementView.vue'),
     meta: { requiresAuth: false },
   },
   {
@@ -81,11 +81,11 @@ const baseRoutes = [
         return
       }
       
-      // If embedded=1, redirect to success page instead of backend
+      // If embedded=1, redirect to agent management page instead of backend
       if (embedded === '1') {
-        console.log('Embedded Shopify app detected, redirecting to success page')
+        console.log('Embedded Shopify app detected, redirecting to agent management page')
         return next({ 
-          name: 'shopify-success',
+          name: 'shopify-agent-management',
           query: { shop: shop } 
         })
       }
@@ -250,8 +250,8 @@ router.beforeEach(async (to, from, next) => {
   const isShopifyRequest = !!shopifyShop && shopifyShop.endsWith('.myshopify.com')
   const embedded = to.query.embedded as string
   
-  // If this is the Shopify success page, don't process further
-  if (to.path === '/shopify/success') {
+  // If this is the Shopify agent management page, don't process further
+  if (to.path === '/shopify/agent-management') {
     return next()
   }
   
