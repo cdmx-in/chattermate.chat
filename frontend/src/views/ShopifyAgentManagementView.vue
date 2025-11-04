@@ -344,7 +344,6 @@ const saveAgentChanges = async (data: {
   chat_background_color: string;
   chat_bubble_color: string;
   accent_color: string;
-  icon_color: string;
   welcome_title: string;
   welcome_subtitle: string;
 }) => {
@@ -368,7 +367,6 @@ const saveAgentChanges = async (data: {
       chat_background_color: data.chat_background_color,
       chat_bubble_color: data.chat_bubble_color,
       accent_color: data.accent_color,
-      icon_color: data.icon_color,
       welcome_title: data.welcome_title,
       welcome_subtitle: data.welcome_subtitle
     }
