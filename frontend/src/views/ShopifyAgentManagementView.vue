@@ -1,16 +1,36 @@
 <template>
-  <s-app-nav>
-    <s-link href="https://chattermate.chat" target="_blank" rel="home">Home</s-link>
-    <s-link href="https://chattermate.chat/pricing.html" target="_blank">Pricing</s-link>
-  </s-app-nav>
-  
   <s-page>
+    <!-- Loading State -->
+    <s-section v-if="isInitializing">
+      <div class="loading-container">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Initializing Shopify integration...</p>
+      </div>
+    </s-section>
+
+    <!-- Connect Account Banner -->
+    <s-section v-else-if="showConnectButton">
+      <div class="connect-banner">
+        <div class="connect-content">
+          <h2>Connect Your ChatterMate Account</h2>
+          <p>Link your Shopify store to your ChatterMate organization to enable AI agents.</p>
+          <button class="connect-btn" @click="handleConnectAccount">
+            Connect Account
+          </button>
+        </div>
+      </div>
+    </s-section>
+
     <!-- Header Section -->
-    <s-section>
+    <s-section v-else>
       <div class="panel-header">
-        <div class="header-layout">
+        <div v-if="loadingAgent" class="loading-container">
+          <div class="loading-spinner"></div>
+          <p class="loading-text">Loading agent details...</p>
+        </div>
+        <div v-else-if="selectedAgent" class="header-layout">
           <div class="agent-header">
-            <div v-if="selectedAgent" class="agent-avatar" @click="triggerPhotoUpload">
+            <div class="agent-avatar" @click="triggerPhotoUpload">
               <input type="file" ref="photoInput" accept="image/jpeg,image/png,image/webp" class="hidden"
                 @change="handlePhotoChange">
               <img :src="currentPhotoUrl" :alt="selectedAgent.display_name || selectedAgent.name" 
@@ -73,11 +93,16 @@
             </div>
           </div>
         </div>
+        <div v-else class="no-agent-container">
+          <div class="loading-container">
+            <p class="loading-text">No agent selected</p>
+          </div>
+        </div>
       </div>
     </s-section>
 
     <!-- Tab Navigation -->
-    <s-section>
+    <s-section v-if="!isInitializing && !showConnectButton && selectedAgent">
       <div class="tabs-container">
         <div class="tabs-header">
           <div class="tabs-left">
@@ -114,12 +139,11 @@
         <div class="tab-content">
           <!-- Setup Tab -->
           <SetupTab 
-            v-if="activeTab === 'setup'" 
+            v-if="activeTab === 'setup'"
             :agents-connected="agentsConnected"
-            :widget-id="widgetId"
+            :widget-id="widgetId || undefined"
             @open-theme-editor="openShopifyThemeEditor"
           />
-
           <!-- Customization Tab -->
           <CustomizationTab 
             v-if="activeTab === 'customization'"
@@ -158,19 +182,31 @@ import api from '@/services/api'
 import SetupTab from '@/components/shopify/SetupTab.vue'
 import CustomizationTab from '@/components/shopify/CustomizationTab.vue'
 import InboxTab from '@/components/shopify/InboxTab.vue'
+import { useShopifySession } from '@/composables/useShopifySession'
 
 const route = useRoute()
 const router = useRouter()
 
+// Use Shopify session composable
+const { isEmbedded, getToken } = useShopifySession()
+
 // State
 const activeTab = ref('setup')
+const showConnectButton = ref(false)
+const shopInfo = ref<any>(null)
+const isInitializing = ref(true)
 const shopName = computed(() => {
-  const shop = route.query.shop as string
+  const shop = route?.query?.shop as string
   return shop ? shop.replace('.myshopify.com', '') : 'your store'
 })
-const shopId = computed(() => route.query.shop_id as string)
-const agentsConnected = computed(() => Number(route.query.agents_connected) || 0)
-const widgetId = computed(() => route.query.widget_id as string)
+const shopId = computed(() => route?.query?.shop_id as string)
+const agentsConnected = computed(() => {
+  // Use connected agents count from loaded data, or fallback to URL param
+  const count = connectedAgents.value?.length || Number(route?.query?.agents_connected) || 0
+  console.log('🔢 Agents connected count:', count)
+  return count
+})
+const widgetId = ref<string | null>(null)
 
 // Agent management
 const connectedAgents = ref<Agent[]>([])
@@ -228,25 +264,53 @@ const switchTab = (tab: string) => {
   }
 }
 
+const loadShopConfigStatus = async () => {
+  try {
+    console.log('🔍 Loading shop config status')
+    const response = await api.get('/shopify/shop-config-status')
+    const shopConfig = response.data
+    console.log('✅ Shop config loaded:', shopConfig)
+    
+    // Update widget ID
+    widgetId.value = shopConfig.widget_id
+    console.log('🎯 Widget ID set to:', widgetId.value)
+    
+    return shopConfig
+  } catch (error) {
+    console.error('Error loading shop config status:', error)
+    return null
+  }
+}
+
 const loadConnectedAgents = async () => {
-  if (!shopId.value) return
+  // Use shop_id from shopInfo (token exchange response) or fallback to URL param
+  const currentShopId = shopInfo.value?.shop_id || shopId.value
+  if (!currentShopId) {
+    console.error('No shop ID available')
+    return
+  }
   
   try {
+    console.log('🔍 Loading connected agents for shop:', currentShopId)
     const response = await api.get(`/shopify/connected-agents`, {
-      params: { shop_id: shopId.value }
+      params: { shop_id: currentShopId }
     })
     connectedAgents.value = response.data || []
+    console.log('✅ Connected agents loaded:', connectedAgents.value.length)
     
     if (connectedAgents.value.length > 0) {
       selectedAgentId.value = connectedAgents.value[0].id
+      console.log('👤 Selected agent:', selectedAgentId.value)
     }
   } catch (error) {
     console.error('Error loading connected agents:', error)
     // Fallback: load all organization agents
     try {
+      console.log('🔄 Fallback: loading organization agents')
       connectedAgents.value = await agentService.getOrganizationAgents()
       if (connectedAgents.value.length > 0) {
         selectedAgentId.value = connectedAgents.value[0].id
+        console.log('👤 Selected agent from fallback:', selectedAgentId.value)
       }
     } catch (err) {
       console.error('Error loading organization agents:', err)
@@ -256,11 +320,16 @@ const loadConnectedAgents = async () => {
 }
 
 const loadSelectedAgent = async () => {
-  if (!selectedAgentId.value) return
+  if (!selectedAgentId.value) {
+    console.log('⚠️ No selected agent ID')
+    return
+  }
   
+  console.log('📥 Loading selected agent:', selectedAgentId.value)
   loadingAgent.value = true
   try {
     selectedAgent.value = await agentService.getAgentById(selectedAgentId.value)
+    console.log('✅ Selected agent loaded:', selectedAgent.value?.name)
   } catch (error) {
     console.error('Error loading agent:', error)
     toast.error('Failed to load agent details')
@@ -470,23 +539,116 @@ watch(conversationStatus, () => {
   loadConversations()
 })
 
-// Initialize
-onMounted(async () => {
-  // Load connected agents
-  await loadConnectedAgents()
+// Handle connect account popup
+const handleConnectAccount = () => {
+  if (!shopInfo.value) return
   
-  // Always load selected agent for header display
-  await loadSelectedAgent()
+  const loginUrl = `/login?shopify_flow=1&shop=${shopInfo.value.shop_domain}&shop_id=${shopInfo.value.shop_id}`
+  const popup = window.open(loginUrl, 'shopify-connect', 'width=600,height=700')
   
-  // Check if there's a tab in query params
-  const tabParam = route.query.tab as string
-  if (tabParam && ['setup', 'customization', 'inbox'].includes(tabParam)) {
-    activeTab.value = tabParam
+  const handleMessage = (event: MessageEvent) => {
+    if (event.data.type === 'shopify-connect-complete') {
+      popup?.close()
+      window.removeEventListener('message', handleMessage)
+      // Reload to get fresh organization data
+      window.location.reload()
+    }
   }
   
-  // Load data for active tab
-  if (activeTab.value === 'inbox') {
-    await loadConversations()
+  window.addEventListener('message', handleMessage)
+}
+
+// Initialize
+onMounted(async () => {
+  try {
+    console.log('🚀 ShopifyAgentManagement mounted')
+    
+    // 1. Get session token from App Bridge
+    const sessionToken = await getToken()
+    
+    if (!sessionToken) {
+      // Redirect to bounce page with current path as reload target
+      const currentPath = route.fullPath
+      console.log('⚠️ No session token, redirecting to bounce page')
+      router.replace(`/shopify/session-token-bounce?shopify-reload=${encodeURIComponent(currentPath)}`)
+      return
+    }
+    
+    console.log('✅ Session token obtained')
+    
+    // 2. Exchange token for offline access token
+    try {
+      const response = await api.post('/shopify/exchange-token')
+      shopInfo.value = response.data
+      console.log('✅ Token exchanged successfully:', shopInfo.value)
+    } catch (error: any) {
+      console.error('❌ Token exchange failed:', error)
+      toast.error('Failed to authenticate with Shopify')
+      return
+    }
+    
+    // 3. Check organization linkage
+    if (!shopInfo.value.organization_id) {
+      console.log('⚠️ No organization linked, showing connect button')
+      showConnectButton.value = true
+      isInitializing.value = false
+      return
+    }
+    
+    console.log('✅ Organization linked:', shopInfo.value.organization_id)
+    
+    // 4. Check agent connections
+    try {
+      const agents = await api.get(`/shopify/connected-agents?shop_id=${shopInfo.value.shop_id}`)
+      console.log('📊 Connected agents:', agents.data.length)
+      
+      if (agents.data.length === 0) {
+        console.log('➡️ No agents connected, redirecting to selection')
+        router.push({
+          name: 'shopify-agent-selection',
+          query: { shop: shopInfo.value.shop_domain, shop_id: shopInfo.value.shop_id }
+        })
+        return
+      }
+    } catch (error: any) {
+      console.error('❌ Failed to check connected agents:', error)
+      // Continue anyway, will try to load in next step
+    }
+    
+    // 5. Load management view
+    console.log('📥 Loading agent management view')
+    
+    // Load shop config status to get widget ID
+    await loadShopConfigStatus()
+    
+    await loadConnectedAgents()
+    await loadSelectedAgent()
+    
+    // Check if there's a tab in query params
+    const tabParam = route.query.tab as string
+    if (tabParam && ['setup', 'customization', 'inbox'].includes(tabParam)) {
+      activeTab.value = tabParam
+    }
+    
+    // Load data for active tab
+    if (activeTab.value === 'inbox') {
+      await loadConversations()
+    }
+    
+    console.log('✅ Agent management view loaded successfully')
+    console.log('📊 Final state:', {
+      shopInfo: shopInfo.value,
+      connectedAgents: connectedAgents.value?.length,
+      selectedAgent: selectedAgent.value?.name,
+      widgetId: widgetId.value,
+      showConnectButton: showConnectButton.value,
+      isInitializing: isInitializing.value
+    })
+  } catch (error: any) {
+    console.error('❌ Initialization failed:', error)
+    toast.error('Failed to initialize Shopify integration')
+  } finally {
+    isInitializing.value = false
   }
 })
 </script>
@@ -494,6 +656,78 @@ onMounted(async () => {
 <style scoped>
 .hidden {
   display: none;
+}
+
+/* Loading State */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2xl, 48px);
+  text-align: center;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid var(--border-color, #e1e3e5);
+  border-top: 4px solid var(--primary-color, #f34611);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: var(--space-lg, 24px);
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.loading-text {
+  font-size: var(--text-base, 16px);
+  color: var(--text-muted, #6d7175);
+  margin: 0;
+}
+
+/* Connect Banner */
+.connect-banner {
+  padding: var(--space-2xl, 48px) var(--space-xl, 24px);
+  text-align: center;
+  background: linear-gradient(135deg, rgba(243, 70, 17, 0.05) 0%, rgba(243, 70, 17, 0.02) 100%);
+  border-radius: var(--radius-lg, 12px);
+  border: 2px solid var(--primary-color, #f34611);
+}
+
+.connect-content h2 {
+  font-size: var(--text-xl, 24px);
+  font-weight: 700;
+  color: var(--text-primary, #202223);
+  margin-bottom: var(--space-sm, 8px);
+}
+
+.connect-content p {
+  font-size: var(--text-base, 16px);
+  color: var(--text-muted, #6d7175);
+  margin-bottom: var(--space-lg, 24px);
+}
+
+.connect-btn {
+  padding: var(--space-md, 12px) var(--space-xl, 32px);
+  background: var(--primary-color, #f34611);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md, 8px);
+  font-size: var(--text-base, 16px);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.2s);
+  box-shadow: 0 4px 12px rgba(243, 70, 17, 0.2);
+}
+
+.connect-btn:hover {
+  background: var(--primary-dark, #d93d0e);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(243, 70, 17, 0.3);
 }
 
 /* Header Styles - Matching AgentDetail.vue */

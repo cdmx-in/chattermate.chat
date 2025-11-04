@@ -40,9 +40,12 @@
               💡 Use this Widget ID in your Shopify theme settings to display the chat widget on your store.
             </s-text>
           </s-banner>
+        </s-stack>
+      </s-section>
           
-        <div class="setup-instructions">
-          <s-text variant="heading-sm" fontWeight="semibold">How to Add Widget ID</s-text>
+      <!-- Setup Instructions -->
+      <s-section heading="How to Add Widget ID">
+        <s-stack gap="base">
           <s-ordered-list>
             <s-list-item>Click "Setup Widget in Shopify" button below</s-list-item>
             <s-list-item>In Shopify theme editor, go to "Apps" section</s-list-item>
@@ -55,7 +58,6 @@
             <s-button variant="primary" @click="emit('open-theme-editor')">
               Setup Widget in Shopify
             </s-button>
-          </div>
         </div>
         </s-stack>
       </s-section>
@@ -131,13 +133,6 @@ const emit = defineEmits<{
   word-break: break-all;
   user-select: all;
   font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
-}
-
-.setup-instructions {
-  margin-top: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
 }
 
 .setup-button {

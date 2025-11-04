@@ -19,9 +19,11 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import jwt
 import time
 from typing import Optional, Dict, Any
-from fastapi import Request, HTTPException
+from fastapi import Request, HTTPException, Depends
+from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.database import get_db
 
 logger = get_logger(__name__)
 
@@ -108,94 +110,133 @@ class ShopifySessionService:
         """
         return not request.headers.get("authorization")
     
-    @staticmethod
-    def generate_bounce_page_html(shop: str, redirect_path: str, api_key: str) -> str:
-        """
-        Generate HTML for session token bounce page.
-        This page uses App Bridge to retrieve a fresh session token,
-        then redirects back with the token in the URL.
-        """
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="shopify-api-key" content="{api_key}" />
-    <title>ChatterMate - Loading...</title>
-    <script src="https://cdn.shopify.com/shopifycloud/app-bridge.js"></script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 100vh;
-            margin: 0;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        }}
-        .loader {{
-            text-align: center;
-            color: white;
-        }}
-        .spinner {{
-            border: 3px solid rgba(255,255,255,0.3);
-            border-top-color: white;
-            border-radius: 50%;
-            width: 40px;
-            height: 40px;
-            animation: spin 0.8s linear infinite;
-            margin: 0 auto 15px;
-        }}
-        @keyframes spin {{
-            to {{ transform: rotate(360deg); }}
-        }}
-    </style>
-</head>
-<body>
-    <div class="loader">
-        <div class="spinner"></div>
-        <h2>Loading ChatterMate...</h2>
-        <p>Authenticating...</p>
-    </div>
+
+# FastAPI dependency for session token validation
+async def require_shopify_session(
+    request: Request,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    FastAPI dependency to validate Shopify session token.
+    Extracts shop from token and looks up organization.
+    Returns decoded token with db_shop and organization_id.
     
-    <script>
-        (function() {{
-            try {{
-                // Get App Bridge from window
-                var AppBridge = window['app-bridge'];
-                if (!AppBridge || !AppBridge.default) {{
-                    throw new Error('App Bridge not loaded');
-                }}
-                
-                var createApp = AppBridge.default;
-                var getSessionToken = AppBridge.utilities.getSessionToken;
-                
-                // Create app instance
-                var app = createApp({{
-                    apiKey: '{api_key}',
-                    host: new URLSearchParams(window.location.search).get('host'),
-                }});
-                
-                // Get session token and redirect back with it
-                getSessionToken(app).then(function(token) {{
-                    var redirectUrl = '{redirect_path}';
-                    var separator = redirectUrl.includes('?') ? '&' : '?';
-                    window.location.href = redirectUrl + separator + 'id_token=' + token;
-                }}).catch(function(error) {{
-                    console.error('Failed to get session token:', error);
-                    document.querySelector('p').textContent = 'Authentication failed. Please try again.';
-                }});
-                
-            }} catch (error) {{
-                console.error('App Bridge error:', error);
-                document.querySelector('p').textContent = 'Failed to load. Please refresh the page.';
-            }}
-        }})();
-    </script>
-</body>
-</html>"""
+    Usage:
+        @router.get("/some-endpoint")
+        async def some_endpoint(
+            shopify_session: dict = Depends(require_shopify_session),
+            db: Session = Depends(get_db)
+        ):
+            shop_id = shopify_session['shop_id']
+            org_id = shopify_session['organization_id']
+            db_shop = shopify_session['db_shop']
+            # ... use the shop info
+    """
+    from app.repositories.shopify_shop_repository import ShopifyShopRepository
+    
+    session_token = ShopifySessionService.get_session_token_from_request(request)
+    
+    if not session_token:
+        raise HTTPException(
+            status_code=401,
+            detail="Session token required for embedded app",
+            headers={"X-Shopify-Retry-Invalid-Session-Request": "1"}
+        )
+    
+    # Validate and decode token
+    decoded = ShopifySessionService.validate_session_token(session_token)
+    
+    # Extract shop domain from token
+    shop_domain = decoded.get('dest', '').replace('https://', '').replace('http://', '')
+    
+    # Look up shop in database
+    shop_repository = ShopifyShopRepository(db)
+    db_shop = shop_repository.get_shop_by_domain(shop_domain)
+    
+    if not db_shop or not db_shop.is_installed:
+        raise HTTPException(status_code=403, detail="Shop not installed or not found")
+    
+    # Add shop info to decoded token for easy access
+    decoded['db_shop'] = db_shop
+    decoded['shop_id'] = str(db_shop.id)
+    decoded['organization_id'] = str(db_shop.organization_id) if db_shop.organization_id else None
+    
+    logger.info(f"Session token validated for shop: {shop_domain}, org: {decoded['organization_id']}")
+    
+    return decoded
 
 
-
-
+async def require_shopify_or_jwt_auth(
+    request: Request,
+    db: Session = Depends(get_db)
+) -> Dict[str, Any]:
+    """
+    Hybrid authentication dependency that tries Shopify session token first,
+    then falls back to JWT authentication.
+    Returns authentication info with type indicator.
+    
+    Usage:
+        @router.get("/some-endpoint")
+        async def some_endpoint(
+            auth_info: dict = Depends(require_shopify_or_jwt_auth),
+            db: Session = Depends(get_db)
+        ):
+            if auth_info['auth_type'] == 'shopify_session':
+                org_id = auth_info['organization_id']
+                shop_id = auth_info['shop_id']
+                user_id = None  # No user for session token auth
+            else:  # jwt
+                org_id = auth_info['organization_id']
+                user_id = auth_info['user_id']
+                current_user = auth_info['current_user']
+    """
+    from app.core.auth import get_current_user
+    from app.repositories.shopify_shop_repository import ShopifyShopRepository
+    
+    # First try Shopify session token
+    session_token = ShopifySessionService.get_session_token_from_request(request)
+    
+    if session_token:
+        try:
+            # Validate and decode the session token
+            decoded = ShopifySessionService.validate_session_token(session_token)
+            
+            # Extract shop domain from token
+            shop_domain = decoded.get('dest', '').replace('https://', '').replace('http://', '')
+            
+            if shop_domain:
+                # Look up shop in database
+                shop_repository = ShopifyShopRepository(db)
+                db_shop = shop_repository.get_shop_by_domain(shop_domain)
+                
+                if db_shop and db_shop.is_installed and db_shop.organization_id:
+                    logger.info(f"Using Shopify session token auth for shop: {shop_domain}")
+                    return {
+                        'auth_type': 'shopify_session',
+                        'shop_domain': shop_domain,
+                        'shop_id': str(db_shop.id),
+                        'organization_id': str(db_shop.organization_id),
+                        'db_shop': db_shop,
+                        'decoded_token': decoded,
+                        'user_id': None  # No user_id for session token auth
+                    }
+        except Exception as e:
+            logger.debug(f"Shopify session token validation failed, trying JWT: {str(e)}")
+    
+    # Fall back to JWT authentication
+    try:
+        current_user = await get_current_user(request=request, db=db)
+        logger.info(f"Using JWT auth for user: {current_user.id}")
+        return {
+            'auth_type': 'jwt',
+            'organization_id': str(current_user.organization_id),
+            'user_id': current_user.id,
+            'current_user': current_user
+        }
+    except Exception as e:
+        logger.error(f"Both Shopify session token and JWT authentication failed: {str(e)}")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required"
+        )
 

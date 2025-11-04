@@ -4,7 +4,12 @@ import { agentStorage } from '@/utils/storage'
 
 export const agentService = {
   async getOrganizationAgents(): Promise<Agent[]> {
-    const response = await api.get('/agent/list')
+    // Check if we're in a Shopify context (has shop query param or session token)
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasShopParam = urlParams.has('shop') || urlParams.has('host')
+    
+    const endpoint = hasShopParam ? '/agent/list/shopify' : '/agent/list'
+    const response = await api.get(endpoint)
     // Store agents in local storage
     agentStorage.setAgents(response.data)
     return response.data
@@ -32,7 +37,12 @@ export const agentService = {
     agentId: string,
     data: AgentUpdate
   ): Promise<Agent> {
-    const response = await api.put(`/agent/${agentId}`, data)
+    // Check if we're in a Shopify context
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasShopParam = urlParams.has('shop') || urlParams.has('host')
+    
+    const endpoint = hasShopParam ? `/agent/${agentId}/shopify` : `/agent/${agentId}`
+    const response = await api.put(endpoint, data)
     // Update agent in local storage
     agentStorage.updateAgent(response.data)
     return response.data
@@ -42,7 +52,12 @@ export const agentService = {
     agentId: string,
     customization: AgentCustomization,
   ): Promise<AgentCustomization> {
-    const response = await api.post(`/agent/${agentId}/customization`, customization)
+    // Check if we're in a Shopify context
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasShopParam = urlParams.has('shop') || urlParams.has('host')
+    
+    const endpoint = hasShopParam ? `/agent/${agentId}/customization/shopify` : `/agent/${agentId}/customization`
+    const response = await api.post(endpoint, customization)
 
     // Update agent customization in local storage
     const agents = agentStorage.getAgents()
@@ -65,7 +80,12 @@ export const agentService = {
     const formData = new FormData()
     formData.append('photo', file)
 
-    const response = await api.post(`/agent/${agentId}/customization/photo`, formData, {
+    // Check if we're in a Shopify context
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasShopParam = urlParams.has('shop') || urlParams.has('host')
+    
+    const endpoint = hasShopParam ? `/agent/${agentId}/customization/photo/shopify` : `/agent/${agentId}/customization/photo`
+    const response = await api.post(endpoint, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -94,7 +114,12 @@ export const agentService = {
   },
 
   async getAgentById(agentId: string): Promise<Agent> {
-    const response = await api.get(`/agent/${agentId}`)
+    // Check if we're in a Shopify context
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasShopParam = urlParams.has('shop') || urlParams.has('host')
+    
+    const endpoint = hasShopParam ? `/agent/${agentId}/shopify` : `/agent/${agentId}`
+    const response = await api.get(endpoint)
     return response.data
   },
   

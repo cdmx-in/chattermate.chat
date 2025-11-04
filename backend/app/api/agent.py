@@ -23,6 +23,7 @@ from app.core.logger import get_logger
 from app.database import get_db
 from app.models.user import User, UserGroup
 from app.core.auth import get_current_user, require_permissions
+from app.services.shopify_session import require_shopify_or_jwt_auth
 from app.repositories.agent import AgentRepository
 from app.repositories.knowledge import KnowledgeRepository
 from app.models.schemas.agent import AgentUpdate, AgentResponse, AgentCreate, AgentWithCustomizationResponse
@@ -322,6 +323,7 @@ async def get_organization_agents(
     current_user: User = Depends(require_permissions("view_all", "manage_agents")),
     db: Session = Depends(get_db)
 ):
+    """Get organization agents - supports both JWT and Shopify session token auth"""
     """Get all agents for the current user's organization"""
     try:
         agent_repo = AgentRepository(db)
@@ -581,6 +583,303 @@ async def get_agent_by_id(
             pass
     
     return agent
+
+
+@router.get("/list/shopify", response_model=List[AgentWithCustomizationResponse])
+async def get_organization_agents_shopify(
+    auth_info: dict = Depends(require_shopify_or_jwt_auth),
+    db: Session = Depends(get_db)
+):
+    """Get organization agents - supports both JWT and Shopify session token auth"""
+    try:
+        agent_repo = AgentRepository(db)
+        knowledge_repo = KnowledgeRepository(db)
+        
+        # Get organization ID from auth info
+        organization_id = auth_info['organization_id']
+        agents = agent_repo.get_all_agents(organization_id)
+
+        response = []
+        for agent in agents:
+            knowledge_items = knowledge_repo.get_by_agent(agent.id)
+            
+            # Create a copy of the customization to modify the photo_url
+            customization = agent.customization
+            if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+                # Get signed URL for the photo
+                customization.photo_url = await get_s3_signed_url(customization.photo_url)
+            
+            agent_data = AgentWithCustomizationResponse(
+                id=agent.id,
+                name=agent.name,
+                display_name=agent.display_name,
+                description=agent.description,
+                agent_type=agent.agent_type,
+                instructions=agent.instructions,
+                is_active=agent.is_active,
+                use_workflow=agent.use_workflow,
+                active_workflow_id=agent.active_workflow_id,
+                organization_id=agent.organization_id,
+                customization=customization,
+                transfer_to_human=agent.transfer_to_human,
+                ask_for_rating=agent.ask_for_rating,
+                enable_rate_limiting=agent.enable_rate_limiting,
+                overall_limit_per_ip=agent.overall_limit_per_ip,
+                requests_per_sec=agent.requests_per_sec,
+                knowledge=[{
+                    "id": k.id,
+                    "name": k.source,
+                    "type": k.source_type
+                } for k in knowledge_items],
+                groups=agent.groups
+            )
+            response.append(agent_data)
+
+        return response
+    except Exception as e:
+        logger.error(f"Error getting organization agents: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{agent_id}/shopify", response_model=AgentWithCustomizationResponse)
+async def get_agent_by_id_shopify(
+    agent_id: UUID,
+    auth_info: dict = Depends(require_shopify_or_jwt_auth),
+    db: Session = Depends(get_db)
+):
+    """Get agent by ID with customization - supports both JWT and Shopify session token auth"""
+    agent_repo = AgentRepository(db)
+    agent = agent_repo.get_by_id(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Check if agent belongs to the authenticated organization
+    organization_id = auth_info['organization_id']
+    if str(agent.organization_id) != organization_id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    
+    # Get signed URL for photo if using S3
+    if settings.S3_FILE_STORAGE and agent.customization and agent.customization.photo_url:
+        try:
+            agent.customization.photo_url = await get_s3_signed_url(agent.customization.photo_url)
+        except Exception as e:
+            logger.error(f"Error getting signed URL for agent photo: {str(e)}")
+            # Don't fail the request if we can't get the signed URL
+            pass
+    
+    return agent
+
+
+@router.put("/{agent_id}/shopify", response_model=AgentWithCustomizationResponse)
+async def update_agent_shopify(
+    agent_id: UUID,
+    update_data: AgentUpdate,
+    auth_info: dict = Depends(require_shopify_or_jwt_auth),
+    db: Session = Depends(get_db)
+):
+    """Update agent - supports both JWT and Shopify session token auth"""
+    try:
+        agent_repo = AgentRepository(db)
+        knowledge_repo = KnowledgeRepository(db)
+
+        # Get existing agent
+        agent = agent_repo.get_by_id(agent_id)
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Verify organization access
+        organization_id = auth_info['organization_id']
+        if str(agent.organization_id) != organization_id:
+            raise HTTPException(
+                status_code=403,
+                detail="Not authorized to update this agent"
+            )
+        logger.info(f"Updating agent {agent_id} with data: {update_data}")
+        
+        # Check enterprise subscription limits if enterprise module is available
+        try:
+            from app.enterprise.repositories.subscription import SubscriptionRepository
+            HAS_ENTERPRISE = True
+        except ImportError:
+            HAS_ENTERPRISE = False
+
+        # Update agent with provided fields, excluding photo_url
+        update_dict = update_data.model_dump(
+            exclude={'photo_url'}, exclude_unset=True)
+        
+        # Check rating feature availability and override ask_for_rating if necessary
+        if HAS_ENTERPRISE and auth_info['auth_type'] == 'jwt':
+            from app.enterprise.repositories.plan import PlanRepository
+            subscription_repo = SubscriptionRepository(db)
+            subscription = subscription_repo.get_by_organization(organization_id)
+            
+            if subscription:
+                plan_repo = PlanRepository(db)
+                if not plan_repo.check_feature_availability(str(subscription.plan_id), 'rating'):
+                    update_dict["ask_for_rating"] = False
+        
+        agent = agent_repo.update_agent(agent_id, **update_dict)
+        # Get knowledge sources for response
+        knowledge_items = knowledge_repo.get_by_agent(agent.id)
+
+        # Get signed URL for photo if using S3
+        customization = agent.customization
+        if settings.S3_FILE_STORAGE and customization and customization.photo_url:
+            try:
+                customization.photo_url = await get_s3_signed_url(customization.photo_url)
+            except Exception as e:
+                logger.error(f"Error getting signed URL for agent photo: {str(e)}")
+                # Don't fail the request if we can't get the signed URL
+                pass
+
+        # Prepare response
+        response = AgentWithCustomizationResponse(
+            id=agent.id,
+            name=agent.name,
+            display_name=agent.display_name,
+            description=agent.description,
+            agent_type=agent.agent_type,
+            instructions=agent.instructions,
+            is_active=agent.is_active,
+            use_workflow=agent.use_workflow,
+            active_workflow_id=agent.active_workflow_id,
+            organization_id=agent.organization_id,
+            customization=customization,
+            transfer_to_human=agent.transfer_to_human,
+            ask_for_rating=agent.ask_for_rating,
+            enable_rate_limiting=agent.enable_rate_limiting,
+            overall_limit_per_ip=agent.overall_limit_per_ip,
+            requests_per_sec=agent.requests_per_sec,
+            knowledge=[{
+                "id": k.id,
+                "name": k.source,
+                "type": k.source_type
+            } for k in knowledge_items],
+            groups=agent.groups
+        )
+
+        return response
+
+    except HTTPException as e:
+        # Re-raise HTTP exceptions
+        raise e
+    except Exception as e:
+        logger.error(f"Agent update error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{agent_id}/customization/shopify", response_model=CustomizationResponse)
+async def update_agent_customization_shopify(
+    agent_id: UUID,
+    customization_data: CustomizationCreate,
+    auth_info: dict = Depends(require_shopify_or_jwt_auth),
+    db: Session = Depends(get_db)
+):
+    """Update agent customization - supports both JWT and Shopify session token auth"""
+    try:
+        agent = db.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Verify organization access
+        organization_id = auth_info['organization_id']
+        if str(agent.organization_id) != organization_id:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
+        # Get existing customization or create new one
+        db_customization = db.query(AgentCustomization).filter(
+            AgentCustomization.agent_id == agent_id
+        ).first()
+
+        if db_customization:
+            # Update existing customization
+            for field, value in customization_data.model_dump(exclude_unset=True).items():
+                if field != 'id':  # Don't update the ID
+                    setattr(db_customization, field, value)
+        else:
+            # Create new customization
+            db_customization = AgentCustomization(
+                agent_id=agent_id,
+                **customization_data.model_dump(exclude={'id'})
+            )
+            db.add(db_customization)
+
+        db.commit()
+        db.refresh(db_customization)
+
+        # Generate signed URL if using S3 storage
+        if settings.S3_FILE_STORAGE and db_customization.photo_url:
+            db_customization.photo_url = await get_s3_signed_url(db_customization.photo_url)
+
+        return db_customization
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Customization update error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/{agent_id}/customization/photo/shopify", response_model=CustomizationResponse)
+async def upload_agent_photo_shopify(
+    agent_id: str,
+    photo: UploadFile = File(...),
+    auth_info: dict = Depends(require_shopify_or_jwt_auth),
+    db: Session = Depends(get_db)
+):
+    """Upload agent profile photo - supports both JWT and Shopify session token auth"""
+    try:
+        agent = db.query(Agent).filter(Agent.id == agent_id).first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Verify organization access
+        organization_id = auth_info['organization_id']
+        if str(agent.organization_id) != organization_id:
+            raise HTTPException(status_code=403, detail="Not authorized")
+
+        # Get existing customization to check for old photo
+        db_customization = db.query(AgentCustomization).filter(
+            AgentCustomization.agent_id == agent_id
+        ).first()
+
+        # Delete old photo if it exists
+        if db_customization and db_customization.photo_url:
+            if settings.S3_FILE_STORAGE:
+                from app.core.s3 import delete_file_from_s3
+                await delete_file_from_s3(db_customization.photo_url)
+            else:
+                old_photo_path = db_customization.photo_url.lstrip('/')
+                if os.path.exists(old_photo_path):
+                    os.remove(old_photo_path)
+
+        # Save new photo file
+        photo_url = await save_file(photo, organization_id)
+
+        # Update or create customization
+        if db_customization:
+            db_customization.photo_url = photo_url
+        else:
+            db_customization = AgentCustomization(
+                agent_id=agent_id,
+                photo_url=photo_url
+            )
+            db.add(db_customization)
+
+        db.commit()
+        db.refresh(db_customization)
+
+        # Generate signed URL if using S3 storage
+        if settings.S3_FILE_STORAGE and db_customization.photo_url:
+            db_customization.photo_url = await get_s3_signed_url(db_customization.photo_url)
+
+        return db_customization
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Photo upload error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/generate-instructions", response_model=List[str])

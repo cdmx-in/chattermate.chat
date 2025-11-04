@@ -2,6 +2,8 @@ import axios, { AxiosError } from 'axios'
 import router from '@/router'
 import { getApiUrl } from '@/config/api'
 import { userService } from '@/services/user'
+import { getSessionToken } from '@shopify/app-bridge/utilities'
+import { initShopifyApp } from '@/plugins/shopifyAppBridge'
 
 const api = axios.create({
   baseURL: getApiUrl(),
@@ -10,6 +12,39 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+// Request interceptor to add session token for Shopify embedded app
+api.interceptors.request.use(
+  async (config) => {
+    // Check if we're in embedded Shopify context
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasShopParam = urlParams.has('shop') || urlParams.has('host')
+    
+    // Check if this is a Shopify-related endpoint
+    const isShopifyEndpoint = config.url?.includes('/shopify/') || 
+                             config.url?.endsWith('/shopify') ||
+                             config.url?.includes('/agent/') && hasShopParam ||
+                             config.url?.includes('/chats/') && hasShopParam
+    
+    if (hasShopParam && isShopifyEndpoint) {
+      try {
+        const app = initShopifyApp()
+        if (app) {
+          const token = await getSessionToken(app)
+          if (token) {
+            config.headers.Authorization = `Bearer ${token}`
+            console.log('✅ Added Shopify session token to request:', config.url)
+          }
+        }
+      } catch (error) {
+        console.error('❌ Failed to add session token:', error)
+      }
+    }
+    
+    return config
+  },
+  (error) => Promise.reject(error)
+)
 
 // Response interceptor
 api.interceptors.response.use(

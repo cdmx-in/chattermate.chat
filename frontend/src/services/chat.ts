@@ -14,13 +14,22 @@ interface ChatParams {
 
 export const chatService = {
   async getRecentChats(params?: ChatParams) {
-    // Send the status parameter to the backend
-    const response = await api.get('/chats/recent', { params })
+    // Check if we're in a Shopify context
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasShopParam = urlParams.has('shop') || urlParams.has('host')
+    
+    const endpoint = hasShopParam ? '/chats/recent/shopify' : '/chats/recent'
+    const response = await api.get(endpoint, { params })
     return response.data as Conversation[]
   },
 
   async getChatDetail(sessionId: string) {
-    const response = await api.get<ChatDetail>(`/chats/${sessionId}`)
+    // Check if we're in a Shopify context
+    const urlParams = new URLSearchParams(window.location.search)
+    const hasShopParam = urlParams.has('shop') || urlParams.has('host')
+    
+    const endpoint = hasShopParam ? `/chats/${sessionId}/shopify` : `/chats/${sessionId}`
+    const response = await api.get<ChatDetail>(endpoint)
     return response.data
   },
 

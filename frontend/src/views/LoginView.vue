@@ -23,6 +23,7 @@ import { authService } from '@/services/auth'
 import { permissionChecks } from '@/utils/permissions'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import { useForgotPassword } from '@/composables/useForgotPassword'
+import api from '@/services/api'
 import type { AxiosError } from 'axios'
 
 interface ErrorResponse {
@@ -92,12 +93,47 @@ const handleLogin = async () => {
 
         await authService.login(email.value, password.value)
        
-        // Check if this is an embedded Shopify login (opened in popup)
-        const isEmbedded = router.currentRoute.value.query.embedded === 'true'
-        const shopId = router.currentRoute.value.query.shop_id as string
+        // Check if this is Shopify flow (new managed installation)
+        const urlParams = new URLSearchParams(window.location.search)
+        const isShopifyFlow = urlParams.get('shopify_flow') === '1'
+        const shopId = urlParams.get('shop_id')
         
-        if (isEmbedded && shopId && window.opener) {
-            // This is a popup for Shopify embedded app
+        if (isShopifyFlow && shopId) {
+            console.log('🔗 Shopify flow detected, linking organization')
+            
+            try {
+                // Link shop to user's organization
+                await api.post('/shopify/link-organization', { shop_id: shopId })
+                console.log('✅ Organization linked successfully')
+                
+                // If opened in popup, notify parent window
+                if (window.opener && !window.opener.closed) {
+                    console.log('📤 Notifying parent window of success')
+                    window.opener.postMessage(
+                        { type: 'shopify-connect-complete' },
+                        window.location.origin
+                    )
+                    
+                    // Close popup after brief delay
+                    setTimeout(() => {
+                        window.close()
+                    }, 300)
+                    return
+                }
+            } catch (linkError: any) {
+                console.error('❌ Failed to link organization:', linkError)
+                error.value = linkError.response?.data?.detail || 'Failed to link organization'
+                isLoading.value = false
+                return
+            }
+        }
+        
+        // Check if this is an OLD embedded Shopify login (opened in popup) - for backward compatibility
+        const isEmbedded = router.currentRoute.value.query.embedded === 'true'
+        const legacyShopId = router.currentRoute.value.query.shop_id as string
+        
+        if (isEmbedded && legacyShopId && window.opener) {
+            // This is a popup for Shopify embedded app (old flow)
             console.log('Login successful in popup, notifying parent window')
             
             // Show success state
@@ -107,7 +143,7 @@ const handleLogin = async () => {
             // Notify the parent window of successful login
             if (window.opener && !window.opener.closed) {
                 window.opener.postMessage(
-                    { type: 'login_success', shop_id: shopId },
+                    { type: 'login_success', shop_id: legacyShopId },
                     window.location.origin
                 )
                 
@@ -125,7 +161,21 @@ const handleLogin = async () => {
             return
         }
        
-        // Check if there's a Shopify redirect pending in localStorage
+        // Check for Shopify flow (new simplified flow)
+        if (router.currentRoute.value.query.shopify_flow === '1') {
+            const shop = router.currentRoute.value.query.shop as string
+            const shopId = router.currentRoute.value.query.shop_id as string
+            const host = router.currentRoute.value.query.host as string
+            
+            // Redirect to auth complete page
+            router.push({
+                path: '/shopify/auth-complete',
+                query: { shop, shop_id: shopId, host }
+            })
+            return
+        }
+       
+        // Check if there's a Shopify redirect pending in localStorage (legacy flow)
         const shopifyRedirectData = localStorage.getItem('shopifyRedirect')
         if (shopifyRedirectData) {
             try {
