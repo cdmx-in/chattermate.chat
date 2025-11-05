@@ -43,8 +43,8 @@ async def get_chat_history():
     return {"message": "Chat history endpoint"}
 
 
-@router.get("/recent", response_model=List[ChatOverviewResponse])
 @router.get("/recent/shopify", response_model=List[ChatOverviewResponse])
+@router.get("/recent", response_model=List[ChatOverviewResponse])
 async def get_recent_chats(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
@@ -133,8 +133,8 @@ async def get_recent_chats(
             detail="Failed to fetch recent chats"
         )
 
-@router.get("/{session_id}", response_model=ChatDetailResponse)
 @router.get("/{session_id}/shopify", response_model=ChatDetailResponse)
+@router.get("/{session_id}", response_model=ChatDetailResponse)
 async def get_chat_detail(
     session_id: str,
     auth_info: dict = Depends(get_unified_chat_auth),

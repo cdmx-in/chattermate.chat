@@ -22,7 +22,7 @@ import { useRoute } from 'vue-router'
 import { toast } from 'vue-sonner'
 import DashboardLayout from '@/layouts/DashboardLayout.vue'
 import { checkJiraConnection, getJiraAuthUrl, disconnectJira } from '@/services/jira'
-import { checkShopifyConnection, connectToShopify, disconnectShopify, getShopifyShops } from '@/services/shopify'
+import { checkShopifyConnection, getShopifyShops } from '@/services/shopify'
 
 // Import logos
 import jiraLogo from '@/assets/jira-logo.svg'
@@ -43,20 +43,6 @@ const shopifyConnected = ref(false)
 const shopifyShopDomain = ref('')
 const shopifyLoading = ref(true)
 
-interface ShopifyForm {
-  shopDomain: string;
-  isSubmitting: boolean;
-  error: string;
-}
-
-const shopifyForm = ref<ShopifyForm>({
-  shopDomain: '',
-  isSubmitting: false,
-  error: ''
-})
-
-// Track if user is actively typing in shopify input
-const isShopifyInputActive = ref(false)
 
 const route = useRoute()
 
@@ -146,43 +132,21 @@ const fetchShopifyStatus = async () => {
   }
 }
 
-// Connect to Shopify
-const handleConnectShopify = () => {
+
+// Open Shopify installation page
+const openShopifyInstallation = () => {
   try {
-    console.log('Connecting to Shopify with domain:', shopifyForm.value.shopDomain)
-    // Clear any previous error messages
-    lastConnectionError.value = null
-    shopifyForm.value.error = ''
-    shopifyForm.value.isSubmitting = true
+    // Direct installation URL provided by Shopify
+    const installUrl = 'https://admin.shopify.com/?organization_id=162380510&no_redirect=true&redirect=/oauth/redirect_from_developer_dashboard?client_id%3D280379be88b01dbdde1bcf06c027b1d4'
     
-    // Validate shop domain
-    if (!shopifyForm.value.shopDomain) {
-      shopifyForm.value.error = 'Please enter your Shopify shop domain'
-      toast.error('Please enter your Shopify shop domain')
-      shopifyForm.value.isSubmitting = false
-      return
-    }
+    // Open in new tab
+    window.open(installUrl, '_blank')
     
-    // Clean the domain - remove protocol, www, and .myshopify.com suffix if user added them
-    let cleanDomain = shopifyForm.value.shopDomain.trim()
-    
-    // Remove https:// or http:// protocol
-    cleanDomain = cleanDomain.replace(/^https?:\/\//, '')
-    
-    // Remove www. prefix
-    cleanDomain = cleanDomain.replace(/^www\./, '')
-    
-    // Remove .myshopify.com suffix if user added it
-    if (cleanDomain.endsWith('.myshopify.com')) {
-      cleanDomain = cleanDomain.replace('.myshopify.com', '')
-    }
-    
-    // Connect to Shopify with the cleaned domain
-    connectToShopify(cleanDomain)
-  } catch (error) {
-    console.error('Error connecting to Shopify:', error)
-    toast.error('Error connecting to Shopify')
-    shopifyForm.value.isSubmitting = false
+    // Show helpful message
+    toast.info('Redirected to Shopify for app installation. After installation, refresh this page to see the connection status.')
+  } catch (error: any) {
+    console.error('Error opening Shopify installation:', error)
+    toast.error('Error opening Shopify installation page')
   }
 }
 
@@ -207,14 +171,6 @@ const handleDisconnectShopify = () => {
   }
 }
 
-// Watch for blur event on shopify input to reset active state
-const handleShopifyInputFocus = () => {
-  isShopifyInputActive.value = true
-}
-
-const handleShopifyInputBlur = () => {
-  isShopifyInputActive.value = false
-}
 
 // Define interface for IntegrationCard
 interface IntegrationCard {
@@ -229,8 +185,6 @@ interface IntegrationCard {
   comingSoon?: boolean;
   connectAction?: () => void;
   disconnectAction?: () => void;
-  requiresForm?: boolean;
-  form?: ShopifyForm;
 }
 
 // List of available integrations
@@ -249,15 +203,12 @@ const availableIntegrations = computed(() => [
   {
     id: 'shopify',
     name: 'Shopify',
-    description: 'Connect to Shopify to integrate your store with ChatterMate for product management.',
+    description: 'Install from Shopify App Store to integrate your store with ChatterMate.',
     logo: shopifyLogo,
     connected: shopifyConnected.value,
     shopDomain: shopifyShopDomain.value,
     isLoading: shopifyLoading.value,
-    connectAction: handleConnectShopify,
-    disconnectAction: handleDisconnectShopify,
-    requiresForm: true,
-    form: shopifyForm
+    disconnectAction: handleDisconnectShopify
   },
   // Future integrations
   {
@@ -427,25 +378,6 @@ onMounted(async () => {
               </template>
             </div>
             
-            <!-- Shopify Connection Form -->
-            <div v-if="integration.id === 'shopify' && !integration.connected && integration.requiresForm" class="integration-form">
-              <div class="form-group">
-                <label for="shopify-domain">Shopify Shop Name</label>
-                <div class="input-with-label">
-                  <input 
-                    id="shopify-domain" 
-                    v-model="shopifyForm.shopDomain" 
-                    type="text" 
-                    placeholder="your-store"
-                    :disabled="shopifyForm.isSubmitting"
-                    @focus="handleShopifyInputFocus"
-                    @blur="handleShopifyInputBlur"
-                  />
-                  <span v-if="!isShopifyInputActive && !shopifyForm.shopDomain" class="input-suffix">.myshopify.com</span>
-                </div>
-                <small v-if="shopifyForm.error" class="form-error">{{ shopifyForm.error }}</small>
-              </div>
-            </div>
             
             <div class="integration-actions">
               <!-- Jira connect/disconnect buttons -->
@@ -470,17 +402,16 @@ onMounted(async () => {
                 </button>
               </template>
               
-              <!-- Shopify connect/disconnect buttons -->
+              <!-- Shopify install/disconnect buttons -->
               <template v-else-if="integration.id === 'shopify'">
                 <button 
                   v-if="!integration.connected" 
-                  @click="integration.connectAction" 
+                  @click="openShopifyInstallation" 
                   class="btn btn-primary"
-                  :disabled="integration.isLoading || shopifyForm.isSubmitting"
+                  :disabled="integration.isLoading"
                 >
-                  <span v-if="shopifyForm.isSubmitting" class="loading-spinner"></span>
-                  <span v-else class="btn-icon">+</span>
-                  Connect
+                  <span class="btn-icon">↗</span>
+                  Install
                 </button>
                 <button 
                   v-else 
@@ -771,6 +702,59 @@ onMounted(async () => {
 .status-badge.coming-soon {
   background: linear-gradient(135deg, #9ca3af, #6b7280);
   color: white;
+}
+
+.installation-instructions {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+  border-radius: var(--radius-md);
+  border: 1px solid #bae6fd;
+}
+
+.instructions-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text-color);
+  margin-bottom: var(--space-sm);
+}
+
+.instructions-list {
+  margin: 0;
+  padding-left: var(--space-lg);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.instructions-list li {
+  margin-bottom: var(--space-xs);
+}
+
+.instructions-list li:last-child {
+  margin-bottom: 0;
+}
+
+.shopify-install-note {
+  padding: var(--space-md);
+  background: linear-gradient(135deg, #fef3c7, #fde68a);
+  border-radius: var(--radius-md);
+  border: 1px solid #fcd34d;
+}
+
+.note-text {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--text-color);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  line-height: 1.5;
+}
+
+.note-icon {
+  font-size: 16px;
+  flex-shrink: 0;
 }
 
 .integration-actions {

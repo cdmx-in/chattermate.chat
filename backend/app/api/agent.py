@@ -234,8 +234,8 @@ async def create_agent(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.put("/{agent_id}", response_model=AgentWithCustomizationResponse)
 @router.put("/{agent_id}/shopify", response_model=AgentWithCustomizationResponse)
+@router.put("/{agent_id}", response_model=AgentWithCustomizationResponse)
 async def update_agent(
     agent_id: UUID,
     update_data: AgentUpdate,
@@ -330,8 +330,8 @@ async def update_agent(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/list", response_model=List[AgentWithCustomizationResponse])
 @router.get("/list/shopify", response_model=List[AgentWithCustomizationResponse])
+@router.get("/list", response_model=List[AgentWithCustomizationResponse])
 async def get_organization_agents(
     auth_info: dict = Depends(get_unified_auth),
     db: Session = Depends(get_db)
@@ -388,8 +388,8 @@ async def get_organization_agents(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{agent_id}/customization", response_model=CustomizationResponse)
 @router.post("/{agent_id}/customization/shopify", response_model=CustomizationResponse)
+@router.post("/{agent_id}/customization", response_model=CustomizationResponse)
 async def create_agent_customization(
     agent_id: UUID,
     customization_data: CustomizationCreate,
@@ -442,8 +442,8 @@ async def create_agent_customization(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/{agent_id}/customization/photo", response_model=CustomizationResponse)
 @router.post("/{agent_id}/customization/photo/shopify", response_model=CustomizationResponse)
+@router.post("/{agent_id}/customization/photo", response_model=CustomizationResponse)
 async def upload_agent_photo(
     agent_id: str,
     photo: UploadFile = File(...),
@@ -576,8 +576,8 @@ async def update_agent_groups(
         )
 
 
-@router.get("/{agent_id}", response_model=AgentWithCustomizationResponse)
 @router.get("/{agent_id}/shopify", response_model=AgentWithCustomizationResponse)
+@router.get("/{agent_id}", response_model=AgentWithCustomizationResponse)
 async def get_agent_by_id(
     agent_id: UUID,
     auth_info: dict = Depends(get_unified_auth),
