@@ -2,24 +2,24 @@
   <s-page>
     <s-section>
       <div class="connect-container">
-        <!-- Brand Header -->
-        <div class="brand-header">
-          <div class="brand-logo">
-            <svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <!-- Chat bubble background -->
-              <path 
-                d="M95 20H25C22.2386 20 20 22.2386 20 25V75C20 77.7614 22.2386 80 25 80H45L55 95L65 80H95C97.7614 80 100 77.7614 100 75V25C100 22.2386 97.7614 20 95 20Z" 
-                fill="#f34611"
-                stroke="#EEEEEE"
-                stroke-width="1"
-              />
-              <!-- Letter C -->
-              <path 
-                d="M75 40C75 40 65 35 60 35C50 35 45 42 45 50C45 58 50 65 60 65C65 65 75 60 75 60V52C75 52 68 55 63 55C57 55 53 53 53 50C53 47 57 45 63 45C68 45 75 48 75 48V40Z"
-                fill="#FFFFFF"
-              />
-            </svg>
-          </div>
+      <!-- Brand Header -->
+      <div class="brand-header">
+        <div class="brand-logo">
+          <svg viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- Chat bubble background -->
+            <path 
+              d="M95 20H25C22.2386 20 20 22.2386 20 25V75C20 77.7614 22.2386 80 25 80H45L55 95L65 80H95C97.7614 80 100 77.7614 100 75V25C100 22.2386 97.7614 20 95 20Z" 
+              fill="#f34611"
+              stroke="#EEEEEE"
+              stroke-width="1"
+            />
+            <!-- Letter C -->
+            <path 
+              d="M75 40C75 40 65 35 60 35C50 35 45 42 45 50C45 58 50 65 60 65C65 65 75 60 75 60V52C75 52 68 55 63 55C57 55 53 53 53 50C53 47 57 45 63 45C68 45 75 48 75 48V40Z"
+              fill="#FFFFFF"
+            />
+          </svg>
+        </div>
           
           <s-stack gap="base" alignment="center">
             <s-heading>Welcome to ChatterMate!</s-heading>
@@ -27,23 +27,23 @@
               Connect your ChatterMate account to start using AI-powered chat on your Shopify store.
             </s-text>
           </s-stack>
-        </div>
-        
-        <!-- Connect Button -->
+      </div>
+      
+      <!-- Connect Button -->
         <div class="connect-action">
           <s-button 
             variant="primary" 
             size="large"
-            @click="openLoginPopup" 
-            :disabled="isConnecting"
+        @click="openLoginPopup" 
+        :disabled="isConnecting"
             fullWidth
-          >
-            <span v-if="isConnecting">Connecting...</span>
-            <span v-else>Connect Account</span>
+      >
+        <span v-if="isConnecting">Connecting...</span>
+        <span v-else>Connect Account</span>
           </s-button>
         </div>
-        
-        <!-- Info Box -->
+      
+      <!-- Info Box -->
         <s-card>
           <s-stack gap="base">
             <s-heading variant="heading-sm">What happens next?</s-heading>
@@ -55,7 +55,7 @@
           </s-stack>
         </s-card>
 
-        <!-- Error Message -->
+      <!-- Error Message -->
         <s-banner v-if="errorMessage" tone="critical">
           <s-text>{{ errorMessage }}</s-text>
         </s-banner>
@@ -202,16 +202,16 @@ onMounted(() => {
   .connect-container {
     padding: var(--space-xl, 32px) var(--space-lg, 24px);
   }
-  
+
   .brand-header {
     margin-bottom: var(--space-xl, 32px);
   }
-  
+
   .brand-logo {
     width: 64px;
     height: 64px;
   }
-  
+
   .brand-logo svg {
     width: 44px;
     height: 44px;

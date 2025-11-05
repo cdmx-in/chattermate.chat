@@ -172,3 +172,201 @@ def require_subscription_management(
             detail="User does not have permission to manage subscriptions"
         )
     return current_user
+
+
+# Unified Authentication Functions
+def get_auth_info_from_request(request: Request) -> dict:
+    """Determine if this is a Shopify request based on the URL path"""
+    return {"is_shopify": "/shopify" in str(request.url)}
+
+
+async def get_unified_auth(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Unified authentication that handles both regular JWT and Shopify session tokens"""
+    from app.services.shopify_session import require_shopify_or_jwt_auth
+    
+    try:
+        if "/shopify" in str(request.url):
+            # For Shopify endpoints, use the shopify auth
+            auth_result = await require_shopify_or_jwt_auth(request, db)
+            return {
+                "auth_type": auth_result.get("auth_type", "shopify"),
+                "organization_id": auth_result["organization_id"],
+                "user_id": auth_result.get("user_id"),
+                "current_user": auth_result.get("current_user")
+            }
+        else:
+            # For regular endpoints, use JWT auth - inline the logic to avoid calling dependency as function
+            try:
+                # Get token from cookie or Authorization header
+                access_token = request.cookies.get('access_token')
+                
+                if not access_token or not isinstance(access_token, str):
+                    # Try getting token from Authorization header as fallback
+                    auth_header = request.headers.get('Authorization')
+                    if auth_header and auth_header.startswith('Bearer '):
+                        access_token = auth_header.split(' ')[1]
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Not authenticated",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                payload = verify_token(access_token)
+                if payload is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid authentication token",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                user_id = payload.get("sub")
+                if user_id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid token payload",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                current_user = db.query(User).filter(User.id == user_id).first()
+                if current_user is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User not found",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                if not current_user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User is inactive",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                # Check permissions
+                if not check_permissions(current_user, ["manage_agents"]):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Not enough permissions"
+                    )
+                
+                return {
+                    "auth_type": "jwt",
+                    "organization_id": current_user.organization_id,  # Keep as UUID
+                    "user_id": current_user.id,
+                    "current_user": current_user
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"JWT authentication error in unified auth: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not validate credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is (don't wrap them)
+        raise
+    except Exception as e:
+        logger.error(f"Authentication error: {str(e)}")
+        raise HTTPException(status_code=401, detail="Authentication failed")
+
+
+async def get_unified_chat_auth(request: Request, db: Session = Depends(get_db)) -> dict:
+    """Unified authentication that handles both regular JWT and Shopify session tokens for chat endpoints"""
+    from app.services.shopify_session import require_shopify_or_jwt_auth
+    
+    try:
+        if "/shopify" in str(request.url):
+            # For Shopify endpoints, use the shopify auth
+            auth_result = await require_shopify_or_jwt_auth(request, db)
+            return {
+                "auth_type": auth_result.get("auth_type", "shopify"),
+                "organization_id": auth_result["organization_id"],
+                "user_id": auth_result.get("user_id"),
+                "current_user": auth_result.get("current_user")
+            }
+        else:
+            # For regular endpoints, use JWT auth with chat permissions - inline the logic
+            try:
+                # Get token from cookie or Authorization header
+                access_token = request.cookies.get('access_token')
+                
+                if not access_token or not isinstance(access_token, str):
+                    # Try getting token from Authorization header as fallback
+                    auth_header = request.headers.get('Authorization')
+                    if auth_header and auth_header.startswith('Bearer '):
+                        access_token = auth_header.split(' ')[1]
+                    else:
+                        raise HTTPException(
+                            status_code=status.HTTP_401_UNAUTHORIZED,
+                            detail="Not authenticated",
+                            headers={"WWW-Authenticate": "Bearer"},
+                        )
+
+                payload = verify_token(access_token)
+                if payload is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid authentication token",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                user_id = payload.get("sub")
+                if user_id is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid token payload",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                current_user = db.query(User).filter(User.id == user_id).first()
+                if current_user is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User not found",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                if not current_user.is_active:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="User is inactive",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+
+                # Check chat permissions
+                user_permissions = {p.name for p in current_user.role.permissions}
+                can_view_all = "view_all_chats" in user_permissions
+                can_view_assigned = "view_assigned_chats" in user_permissions
+                
+                if not (can_view_all or can_view_assigned):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="Not enough permissions"
+                    )
+                
+                return {
+                    "auth_type": "jwt",
+                    "organization_id": current_user.organization_id,  # Keep as UUID
+                    "user_id": current_user.id,
+                    "current_user": current_user,
+                    "can_view_all": can_view_all,
+                    "can_view_assigned": can_view_assigned
+                }
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"JWT authentication error in unified chat auth: {str(e)}", exc_info=True)
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Could not validate credentials",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is (don't wrap them)
+        raise
+    except Exception as e:
+        logger.error(f"Chat authentication error: {str(e)}")
+        raise HTTPException(status_code=401, detail="Authentication failed")

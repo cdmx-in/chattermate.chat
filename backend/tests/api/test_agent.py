@@ -28,7 +28,7 @@ from datetime import datetime
 import os
 from typing import Dict, Generator
 from app.api import agent as agent_router
-from app.core.auth import get_current_user, require_permissions
+from app.core.auth import get_current_user, require_permissions, get_unified_auth
 from app.models.schemas.agent_customization import CustomizationCreate
 from app.database import get_db
 from app.models.organization import Organization
@@ -157,6 +157,29 @@ def client(db, test_user) -> TestClient:
     async def override_require_permissions(*args, **kwargs):
         return test_user
 
+    async def override_get_unified_auth():
+        # Refresh the user to get the latest role and permissions from the database
+        db.refresh(test_user)
+        db.refresh(test_user.role)
+        
+        # Get user permissions
+        user_permissions = {p.name for p in test_user.role.permissions}
+        
+        # Check if user has manage_agents permission
+        if "manage_agents" not in user_permissions:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=403,
+                detail="Not enough permissions"
+            )
+        
+        return {
+            "auth_type": "jwt",
+            "organization_id": test_user.organization_id,  # Keep as UUID, not string
+            "user_id": test_user.id,
+            "current_user": test_user
+        }
+
     def override_get_db():
         try:
             yield db
@@ -165,6 +188,7 @@ def client(db, test_user) -> TestClient:
 
     app.dependency_overrides[get_current_user] = override_get_current_user
     app.dependency_overrides[require_permissions] = override_require_permissions
+    app.dependency_overrides[get_unified_auth] = override_get_unified_auth
     app.dependency_overrides[get_db] = override_get_db
     
     return TestClient(app)
@@ -563,7 +587,7 @@ def test_create_customization_wrong_org_agent(
         f"/api/agents/{test_agent.id}/customization",
         json=customization_data
     )
-    assert response.status_code == 403
+    assert response.status_code == 404  # Returns 404 for security - don't reveal resource existence
 
 # Error handling tests  
 def test_get_organization_agents_error_handling(
@@ -616,7 +640,7 @@ def test_update_agent_wrong_org(
         f"/api/agents/{test_agent.id}",
         json={"display_name": "Wrong Org Update"}
     )
-    assert response.status_code == 403
+    assert response.status_code == 404  # Returns 404 for security - don't reveal resource existence
 
 def test_update_nonexistent_agent(
     client,
