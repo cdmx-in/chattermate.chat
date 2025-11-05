@@ -159,7 +159,7 @@ async def require_shopify_session(
     # Add shop info to decoded token for easy access
     decoded['db_shop'] = db_shop
     decoded['shop_id'] = str(db_shop.id)
-    decoded['organization_id'] = str(db_shop.organization_id) if db_shop.organization_id else None
+    decoded['organization_id'] = db_shop.organization_id if db_shop.organization_id else None
     
     logger.info(f"Session token validated for shop: {shop_domain}, org: {decoded['organization_id']}")
     
@@ -215,7 +215,7 @@ async def require_shopify_or_jwt_auth(
                         'auth_type': 'shopify_session',
                         'shop_domain': shop_domain,
                         'shop_id': str(db_shop.id),
-                        'organization_id': str(db_shop.organization_id),
+                        'organization_id': db_shop.organization_id,  # Keep as UUID for consistency
                         'db_shop': db_shop,
                         'decoded_token': decoded,
                         'user_id': None  # No user_id for session token auth
@@ -229,7 +229,7 @@ async def require_shopify_or_jwt_auth(
         logger.info(f"Using JWT auth for user: {current_user.id}")
         return {
             'auth_type': 'jwt',
-            'organization_id': str(current_user.organization_id),
+            'organization_id': current_user.organization_id,  # Keep as UUID for consistency
             'user_id': current_user.id,
             'current_user': current_user
         }
