@@ -41,6 +41,7 @@ from app.repositories.widget import WidgetRepository
 from app.services.shopify import ShopifyService
 from app.services.shopify_auth_service import ShopifyAuthService
 from app.services.shopify_helper_service import ShopifyHelperService
+from app.services.shopify_session import require_shopify_session
 from app.repositories.knowledge import KnowledgeRepository
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
@@ -56,259 +57,156 @@ logger = get_logger(__name__)
 SCOPES = "read_products,read_themes,write_themes,write_script_tags,read_script_tags,read_orders,read_customers"
 
 
-
-@router.get("/auth")
-async def shopify_auth(
+@router.post("/exchange-token")
+async def exchange_session_token(
     request: Request,
-    shop: str = Query(..., description="Shopify shop domain"),
-    hmac: Optional[str] = Query(None, description="HMAC signature for validation"),
-    embedded: Optional[str] = Query(None, description="Whether this is an embedded app request"),
-    timestamp: Optional[str] = Query(None, description="Timestamp"),
-    host: Optional[str] = Query(None, description="Shopify host parameter for embedded apps"),
     db: Session = Depends(get_db)
 ):
     """
-    Initiates the Shopify OAuth process by redirecting to the Shopify authorization URL.
-    This endpoint works for both initial installation and re-authentication.
-    Authentication is handled AFTER OAuth callback, not before.
+    Exchange Shopify session token for offline access token via Shopify token exchange API.
+    Called when app is first loaded in embedded context.
+    Stores offline access token in database for future Shopify API calls.
     """
-    logger.info(f"Shopify auth request received for shop: {shop}, embedded: {embedded}, host: {host}")
-    
-    # # Normalize embedded parameter (Shopify can send "1", "true", or "True")
-    # # Used only for validation of already-installed shops
-    # is_embedded = embedded in ("1", "true", "True")
-    
-    # Validate shop domain
-    if not shop or not shop.endswith('.myshopify.com'):
-        logger.warning(f"Invalid shop domain: {shop}")
-        raise HTTPException(status_code=400, detail="Invalid shop domain")
-    
-    # If HMAC is provided, validate it
-    if hmac:
-        if not ShopifyHelperService.validate_shop_request(request, shop, hmac):
-            logger.warning(f"HMAC validation failed for shop: {shop}")
-            raise HTTPException(status_code=400, detail="Invalid request signature")
-
-    shop_repository = ShopifyShopRepository(db)
-    db_shop = shop_repository.get_shop_by_domain(shop)
-    # Generate CSRF protection state parameter
-    import secrets
-    from datetime import datetime, timedelta
-    
-    state = secrets.token_urlsafe(16)
-    state_expiry = datetime.utcnow() + timedelta(minutes=10)  # State expires in 10 minutes
-    
-    # Check if shop is already installed with valid token
-    token_valid = False
-    if db_shop and db_shop.access_token and db_shop.is_installed:
-        logger.info(f"Shop {shop} is already installed, verifying token...")
-        token_valid = await ShopifyAuthService.verify_shop_token(db, db_shop)
-        logger.info(f"Token valid: {token_valid}")
-    # Build OAuth URL with proper URL encoding
-    redirect_uri = f"{settings.APP_BASE_URL}/api/v1/shopify/auth/callback"
-    auth_url = (
-        f"https://{shop}/admin/oauth/authorize?"
-        f"client_id={settings.SHOPIFY_API_KEY}"
-        f"&scope={SCOPES}"
-        f"&redirect_uri={quote(redirect_uri, safe='')}"
-        f"&state={state}"
-    )
-    
-    logger.info(f"Redirecting to Shopify OAuth: {auth_url}")
-    # If shop is installed with valid token, return to app
-    if db_shop and db_shop.is_installed and token_valid:
-
-       logger.info(f"Shop {shop} has valid token, loading app and updating state")
-       shop_update_data = ShopifyShopUpdate(
-            oauth_state=state,
-            oauth_state_expiry=state_expiry
-        )
-       shop_repository.update_shop(db_shop.id, shop_update_data) 
-       db.commit()
-       return RedirectResponse(auth_url, status_code=302)
+    try:
+        # 1. Get session token from Authorization header
+        from app.services.shopify_session import ShopifySessionService
+        import jwt
         
-    
-    # Store state in database for validation in callback
-    if not db_shop:
-        logger.info(f"Creating shop record for {shop} , state: {state}, state_expiry: {state_expiry}")
-        # Create shop record if it doesn't exist
-        shop_data = ShopifyShopCreate(
-            shop_domain=shop,
-            is_installed=False,
-            oauth_state=state,
-            oauth_state_expiry=state_expiry
-        )
-        db_shop = shop_repository.create_shop(shop_data)
- 
-    elif db_shop and db_shop.access_token and not token_valid:
-        logger.info(f"Clearing invalid token for shop {shop}")
-        shop_update_data = ShopifyShopUpdate(
-            is_installed=False,
-            access_token=None,
-            scope=None,
-            oauth_state=state,
-            oauth_state_expiry=state_expiry
-        )
-        shop_repository.update_shop(db_shop.id, shop_update_data) 
+        session_token = ShopifySessionService.get_session_token_from_request(request)
+        if not session_token:
+            raise HTTPException(status_code=401, detail="Session token required")
+        
+        logger.info("Exchanging session token for offline access token")
+        
+        # 2. Decode (without verification) to extract shop
+        decoded = jwt.decode(session_token, options={"verify_signature": False})
+        shop_domain = decoded.get('dest', '').replace('https://', '').replace('http://', '')
+        
+        if not shop_domain:
+            raise HTTPException(status_code=400, detail="Invalid session token: missing shop domain")
+        
+        logger.info(f"Extracted shop domain from token: {shop_domain}")
+        
+        # 3. Call Shopify token exchange API
+        token_url = f"https://{shop_domain}/admin/oauth/access_token"
+        payload = {
+            "client_id": settings.SHOPIFY_API_KEY,
+            "client_secret": settings.SHOPIFY_API_SECRET,
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": session_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "requested_token_type": "urn:shopify:params:oauth:token-type:offline-access-token"
+        }
+        
+        logger.info(f"Calling Shopify token exchange API for shop: {shop_domain}")
+        response = requests.post(token_url, json=payload)
+        
+        if response.status_code != 200:
+            logger.error(f"Token exchange failed: {response.status_code} - {response.text}")
+            raise HTTPException(
+                status_code=response.status_code,
+                detail=f"Token exchange failed: {response.text}"
+            )
+        
+        token_data = response.json()
+        access_token = token_data.get('access_token')
+        
+        if not access_token:
+            logger.error(f"No access token in response: {token_data}")
+            raise HTTPException(status_code=500, detail="No access token received from Shopify")
+        
+        logger.info(f"Successfully received offline access token for shop: {shop_domain}")
+        
+        # 4. Create or update shop with offline access token
+        shop_repo = ShopifyShopRepository(db)
+        db_shop = shop_repo.get_shop_by_domain(shop_domain)
+        
+        if not db_shop:
+            logger.info(f"Creating new shop record for: {shop_domain}")
+            shop_data = ShopifyShopCreate(
+                shop_domain=shop_domain,
+                access_token=access_token,
+                is_installed=True
+            )
+            db_shop = shop_repo.create_shop(shop_data)
+        else:
+            logger.info(f"Updating existing shop record for: {shop_domain}")
+            shop_update = ShopifyShopUpdate(access_token=access_token, is_installed=True)
+            db_shop = shop_repo.update_shop(db_shop.id, shop_update)
+        
         db.commit()    
-    else:
-        logger.info(f"Updating shop record for {shop} , state: {state}, state_expiry: {state_expiry}")
-        shop_update = ShopifyShopUpdate(
-            oauth_state=state,
-            oauth_state_expiry=state_expiry
-        )
-        shop_repository.update_shop(db_shop.id, shop_update)
-        db.commit()
-    
-    
-    logger.info(f"Generated OAuth state for shop {shop}: {state} (expires at {state_expiry})")
+        db.refresh(db_shop)
+        
+        logger.info(f"Shop record saved successfully. Shop ID: {db_shop.id}, Org ID: {db_shop.organization_id}")
+        
+        return {
+            "shop_id": str(db_shop.id),
+            "shop_domain": db_shop.shop_domain,
+            "organization_id": str(db_shop.organization_id) if db_shop.organization_id else None,
+            "is_installed": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error exchanging session token: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Token exchange error: {str(e)}")
 
-    return RedirectResponse(auth_url, status_code=302)
 
-@router.get("/auth/callback")
-async def shopify_callback(
+@router.post("/link-organization")
+async def link_shop_to_org(
     request: Request,
-    shop: str = Query(..., description="Shopify shop domain"),
-    code: str = Query(..., description="Authorization code"),
-    state: Optional[str] = Query(None, description="State parameter for CSRF verification"),
-    hmac: str = Query(..., description="HMAC signature for validation"),
-    host: Optional[str] = Query(None, description="Shopify host parameter for embedded apps"),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Handles the Shopify OAuth callback, exchanges the code for an access token,
-    and stores the token securely.
-    
-    Flow:
-    1. Validate request (HMAC + state)
-    2. Check if shop already authenticated (prevent code reuse)
-    3. Exchange code for access token
-    4. Store shop details in database
-    5. Render appropriate page (agent selection or success)
+    Link Shopify shop to authenticated user's organization after login.
+    Called after user logs in via popup window.
     """
-    logger.info(f"Shopify callback received for shop: {shop}, host: {host}, state: {state}")
-    
-
-    # Validate the HMAC
-    if not ShopifyHelperService.validate_shop_request(request, shop, hmac):
-        logger.warning(f"Invalid Shopify OAuth callback HMAC: {shop}")
-        raise HTTPException(status_code=400, detail="Invalid request signature")
-    try:    
-
-        # Check if user is authenticated
-        organization = None
-        try:
-            current_user = await get_current_user(request=request, db=db)
-            logger.debug(f"Current user: {current_user}")
-            if check_permissions(current_user, ["manage_organization"]):
-                # Get the organization from the authenticated user
-                if current_user.organization_id:
-                    from app.repositories.organization import OrganizationRepository
-                    org_repo = OrganizationRepository(db)
-                    organization = org_repo.get_organization(str(current_user.organization_id))
-        except Exception as e:
-                logger.info(f"User not authenticated during callback: {str(e)}")
-
-        org_id_str = str(organization.id) if organization and organization.id else None        
-        shop_repository = ShopifyShopRepository(db)    
-        db_shop = shop_repository.get_shop_by_domain(shop)
+    try:
+        # Get shop_id from request body
+        body = await request.json()
+        shop_id = body.get('shop_id')
         
-        # Log state validation details for debugging
-        logger.info(f"State validation check - state provided: {state is not None}, db_shop exists: {db_shop is not None}, db_shop.oauth_state: {db_shop.oauth_state if db_shop else 'N/A'}")
+        if not shop_id:
+            raise HTTPException(status_code=400, detail="shop_id is required")
         
-        # Validate CSRF state parameter from database
-        if state and db_shop and db_shop.oauth_state:
-            if db_shop.organization_id:
-                org_id_str = str(db_shop.organization_id)
-            access_token, scope = ShopifyHelperService.exchange_oauth_code_for_token(shop, code)
-
-            
-            if not db_shop:
-                logger.warning(f"Shop {shop} not found in database during OAuth callback")
-                raise HTTPException(status_code=400, detail="Shop not found")
-            
-            if not db_shop.oauth_state:
-                logger.warning(f"No OAuth state found for shop {shop}")
-                raise HTTPException(status_code=400, detail="Invalid OAuth state - no state found")
-            
-            if db_shop.oauth_state != state:
-                logger.warning(f"Invalid OAuth state for shop {shop}. Expected: {db_shop.oauth_state}, Got: {state}")
-                raise HTTPException(status_code=400, detail="Invalid state parameter - possible CSRF attack")
-            
-            # Check if state has expired
-            from datetime import datetime
-            if db_shop.oauth_state_expiry and datetime.utcnow() > db_shop.oauth_state_expiry:
-                logger.warning(f"OAuth state expired for shop {shop}")
-                raise HTTPException(status_code=400, detail="OAuth state expired - please try again")
-                    
-
-            # Update existing shop with access token
-            shop_update = ShopifyShopUpdate( 
-                    access_token=access_token,
-                    scope=scope,
-                    is_installed=True,
-                    organization_id=org_id_str,
-                    oauth_state=None,
-                    oauth_state_expiry=None
-            )
-            db_shop = shop_repository.update_shop(db_shop.id, shop_update)
-            db.commit()
-            # Refresh the shop object after commit to ensure we have the latest data
-            db.refresh(db_shop)
-            logger.info(f"Updated shop {shop} with access token and committed to database")
-            logger.info(f"OAuth state validated successfully for shop: {shop}")
+        logger.info(f"Linking shop {shop_id} to user {current_user.id}'s organization")
         
-        if db_shop and db_shop.access_token and db_shop.is_installed:
-            logger.info(f"Shop {shop} already has access token, skipping token exchange")
-            
-            # Check if any agents are configured for this shop
-            agent_config_repository = AgentShopifyConfigRepository(db)
-            configs = agent_config_repository.get_configs_by_shop(str(db_shop.id), enabled_only=True)
-            agents_connected = len(configs) if configs else 0
-            
-            logger.info(f"Shop {shop} has {agents_connected} agents configured")
-            
-            # Installed shops should ONLY use embedded flow (accessed via Shopify admin)
-            if not host:
-                logger.warning(f"Installed shop {shop} accessed without host parameter - should use embedded flow")
-                raise HTTPException(
-                    status_code=400, 
-                    detail="This app must be accessed through your Shopify admin. Please open it from Apps section in your Shopify dashboard."
-                )
-            # Embedded app (Shopify always provides host parameter)
-            # If user is not authenticated and shop has no organization, show connect page
-            if not organization and not db_shop.organization_id:
-                logger.info(f"Shop not connected to organization, showing connect account page")
-                return ShopifyHelperService.generate_connect_account_page(
-                    shop=shop,
-                    shop_id=str(db_shop.id),
-                    api_key=settings.SHOPIFY_API_KEY,
-                    host=host
-                )            
-            # Render embedded app response
-            logger.info(f"Embedded app callback (already authenticated), rendering page directly")
-            return ShopifyHelperService.handle_embedded_app_response(
-                db=db,
-                shop=shop,
-                shop_id=str(db_shop.id),
-                organization_id=db_shop.organization_id,
-                agents_connected=agents_connected,
-                configs=configs,
-                api_key=settings.SHOPIFY_API_KEY,
-                host=host
-            )
+        # Verify user has manage_organization permission
+        if not check_permissions(current_user, ["manage_organization"]):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
         
-        # If we reach here, something went wrong - shop exists but no token
-        logger.error(f"Shop {shop} reached end of callback without proper handling. db_shop exists: {db_shop is not None}, has token: {db_shop.access_token if db_shop else 'N/A'}, oauth_state: {db_shop.oauth_state if db_shop else 'N/A'}")
-        raise HTTPException(
-            status_code=400, 
-            detail="Unable to complete OAuth flow. Please try reconnecting from the beginning."
-        )
+        if not current_user.organization_id:
+            raise HTTPException(status_code=400, detail="User not associated with an organization")
         
+        # Get shop from database
+        shop_repo = ShopifyShopRepository(db)
+        db_shop = shop_repo.get_shop(shop_id)
+            
+        if not db_shop:
+            raise HTTPException(status_code=404, detail="Shop not found")
+            
+        # Update shop with organization_id
+        org_id_str = str(current_user.organization_id)
+        shop_update = ShopifyShopUpdate(organization_id=org_id_str)
+        shop_repo.update_shop(shop_id, shop_update)
+        db.commit()
+        
+        logger.info(f"Successfully linked shop {shop_id} to organization {org_id_str}")
+        
+        return {
+            "success": True,
+            "shop_id": shop_id,
+            "organization_id": org_id_str
+        }
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error processing Shopify callback: {str(e)}")
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail="Error processing callback")
+        logger.error(f"Error linking shop to organization: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to link organization: {str(e)}")
+
 
 @router.get("/shops", response_model=list[ShopifyShop])
 async def get_shops(
@@ -526,25 +424,16 @@ async def check_connection(
 
 @router.get("/shop-config-status")
 async def get_shop_config_status(
-    shop: str = Query(..., description="Shopify shop domain"),
-    shop_id: Optional[str] = Query(None, description="Shop ID"),
+    shopify_session: dict = Depends(require_shopify_session),
     db: Session = Depends(get_db)
 ):
     """
     Check configuration status for a shop (agents configured, widget ID, etc.)
-    This endpoint can be called without authentication for embedded apps using session tokens.
+    Uses session token authentication for embedded apps.
     """
     try:
-        shop_repository = ShopifyShopRepository(db)
-        
-        # Get shop by domain or ID
-        if shop_id:
-            db_shop = shop_repository.get_shop(shop_id)
-        else:
-            db_shop = shop_repository.get_shop_by_domain(shop)
-        
-        if not db_shop:
-            raise HTTPException(status_code=404, detail="Shop not found")
+        # Shop info already validated by session token
+        db_shop = shopify_session['db_shop']
         
         # Check if any agents are configured for this shop
         agent_config_repository = AgentShopifyConfigRepository(db)
@@ -577,15 +466,80 @@ async def get_shop_config_status(
             detail="Error retrieving shop configuration status"
         )
 
+@router.get("/connected-agents")
+async def get_connected_agents(
+    shop_id: str = Query(..., description="Shop ID"),
+    shopify_session: dict = Depends(require_shopify_session),
+    db: Session = Depends(get_db)
+):
+    """
+    Get all agents connected to a Shopify shop.
+    Uses session token authentication for embedded apps.
+    """
+    try:
+        # Verify shop_id matches the session
+        if shop_id != shopify_session['shop_id']:
+            raise HTTPException(status_code=403, detail="Shop ID mismatch")
+        
+        # Get agent configurations for this shop
+        agent_config_repository = AgentShopifyConfigRepository(db)
+        configs = agent_config_repository.get_configs_by_shop(shop_id, enabled_only=True)
+        
+        if not configs:
+            return []
+        
+        # Get full agent details for each config
+        from app.repositories.agent import AgentRepository
+        agent_repo = AgentRepository(db)
+        agents = []
+        
+        for config in configs:
+            agent = agent_repo.get_agent(str(config.agent_id))
+            if agent:
+                agents.append({
+                    "id": str(agent.id),
+                    "name": agent.name,
+                    "display_name": agent.display_name,
+                    "description": agent.description,
+                    "is_active": agent.is_active,
+                    "organization_id": str(agent.organization_id)
+                })
+        
+        return agents
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting connected agents: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Error retrieving connected agents"
+        )
+
 @router.get("/agent-config/{agent_id}", response_model=AgentShopifyConfig)
 async def get_agent_shopify_config(
     agent_id: str,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_permissions("manage_organization"))
+    request: Request,
+    db: Session = Depends(get_db)
 ):
     """
     Get Shopify configuration for an agent.
+    Supports both session token auth (embedded) and JWT auth (dashboard).
     """
+    # Try session token first (for embedded apps)
+    try:
+        shopify_session = await require_shopify_session(request, db)
+        # Session token valid - verify agent belongs to shop's organization
+        if not shopify_session['organization_id']:
+            raise HTTPException(status_code=403, detail="Shop not linked to organization")
+        logger.info(f"GET agent-config using session token for org: {shopify_session['organization_id']}")
+    except HTTPException:
+        # Fall back to JWT auth (for dashboard)
+        current_user = await get_current_user(request=request, db=db)
+        if not check_permissions(current_user, ["manage_organization"]):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        logger.info(f"GET agent-config using JWT auth for user: {current_user.id}")
+    
     agent_config_repository = AgentShopifyConfigRepository(db)
     config = agent_config_repository.get_agent_shopify_config(agent_id)
     if not config:
@@ -597,18 +551,38 @@ async def get_agent_shopify_config(
 async def save_agent_shopify_config(
     agent_id: str,
     config: AgentShopifyConfigBase,
-    organization: Organization = Depends(get_current_organization),
-    current_user: User = Depends(require_permissions("manage_organization")),
+    request: Request,
     db: Session = Depends(get_db)
 ):
     """
     Save Shopify configuration for an agent.
     Automatically determines the shop ID for the organization.
+    Supports both session token auth (embedded) and JWT auth (dashboard).
     """
     agent_config_repository = AgentShopifyConfigRepository(db)
     shop_repository = ShopifyShopRepository(db)
     
-    org_id_str = str(organization.id)
+    # Try session token first (for embedded apps)
+    org_id_str = None
+    user_id = None
+    try:
+        shopify_session = await require_shopify_session(request, db)
+        # Session token valid - verify shop is linked to organization
+        if not shopify_session['organization_id']:
+            raise HTTPException(status_code=403, detail="Shop not linked to organization")
+        org_id_str = shopify_session['organization_id']
+        # For session token, we don't have user_id - use None (optional for knowledge queue)
+        logger.info(f"POST agent-config using session token for org: {org_id_str}")
+    except HTTPException:
+        # Fall back to JWT auth (for dashboard)
+        current_user = await get_current_user(request=request, db=db)
+        if not check_permissions(current_user, ["manage_organization"]):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+        if not current_user.organization_id:
+            raise HTTPException(status_code=403, detail="User not linked to organization")
+        org_id_str = str(current_user.organization_id)
+        user_id = current_user.id
+        logger.info(f"POST agent-config using JWT auth for user: {current_user.id}")
     
     # Get the current config for the agent, if it exists
     existing_config = agent_config_repository.get_agent_shopify_config(agent_id)
@@ -678,7 +652,7 @@ async def save_agent_shopify_config(
                         queue_item = KnowledgeQueue(
                             organization_id=org_uuid,
                             agent_id=agent_uuid, # Link to current agent
-                            user_id=current_user.id, # Added user_id
+                            user_id=user_id, # user_id from auth (JWT) or None (session token)
                             source_type=SourceType.WEBSITE,
                             source=shop_domain,
                             status=QueueStatus.PENDING,

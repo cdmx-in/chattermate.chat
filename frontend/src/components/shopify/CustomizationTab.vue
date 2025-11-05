@@ -76,13 +76,7 @@
               </div>
             </div>
 
-            <div class="color-picker">
-              <label>Icon Color</label>
-              <div class="color-input">
-                <input type="color" v-model="localIconColor">
-                <span class="color-value">{{ localIconColor }}</span>
-              </div>
-            </div>
+            
           </div>
         </div>
 
@@ -206,7 +200,6 @@ const emit = defineEmits<{
     chat_background_color: string;
     chat_bubble_color: string;
     accent_color: string;
-    icon_color: string;
     welcome_title: string;
     welcome_subtitle: string;
   }): void
@@ -233,7 +226,6 @@ const localChatStyle = ref<ChatStyle>('CHATBOT')
 const localBackgroundColor = ref('#F8F9FA')
 const localBubbleColor = ref('#E9ECEF')
 const localAccentColor = ref('#f34611')
-const localIconColor = ref('#6C757D')
 const localWelcomeTitle = ref('')
 const localWelcomeSubtitle = ref('')
 
@@ -245,7 +237,6 @@ watch(() => props.agent, (newAgent) => {
     localBackgroundColor.value = newAgent.customization?.chat_background_color || '#F8F9FA'
     localBubbleColor.value = newAgent.customization?.chat_bubble_color || '#E9ECEF'
     localAccentColor.value = newAgent.customization?.accent_color || '#f34611'
-    localIconColor.value = newAgent.customization?.icon_color || '#6C757D'
     localWelcomeTitle.value = newAgent.customization?.welcome_title || ''
     localWelcomeSubtitle.value = newAgent.customization?.welcome_subtitle || ''
   }
@@ -263,7 +254,6 @@ const previewCustomization = computed(() => {
     chat_background_color: localBackgroundColor.value,
     chat_bubble_color: localBubbleColor.value,
     accent_color: localAccentColor.value,
-    icon_color: localIconColor.value,
     welcome_title: localWelcomeTitle.value,
     welcome_subtitle: localWelcomeSubtitle.value,
     font_family: props.agent?.customization?.font_family || 'Inter',
@@ -291,7 +281,6 @@ const handleSave = () => {
     chat_background_color: localBackgroundColor.value,
     chat_bubble_color: localBubbleColor.value,
     accent_color: localAccentColor.value,
-    icon_color: localIconColor.value,
     welcome_title: localWelcomeTitle.value,
     welcome_subtitle: localWelcomeSubtitle.value
   })

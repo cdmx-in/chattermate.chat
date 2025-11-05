@@ -18,11 +18,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 
 import os
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
-from typing import List
+from typing import List, Union
 from app.core.logger import get_logger
 from app.database import get_db
 from app.models.user import User, UserGroup
-from app.core.auth import get_current_user, require_permissions
+from app.core.auth import get_current_user, require_permissions, get_unified_auth, get_auth_info_from_request
+from app.services.shopify_session import require_shopify_or_jwt_auth
 from app.repositories.agent import AgentRepository
 from app.repositories.knowledge import KnowledgeRepository
 from app.models.schemas.agent import AgentUpdate, AgentResponse, AgentCreate, AgentWithCustomizationResponse
@@ -58,6 +59,20 @@ class InstructionPrompt(BaseModel):
 class SetActiveWorkflowRequest(BaseModel):
     workflow_id: UUID
     use_workflow: bool = True
+
+
+# Helper functions for agent access control
+
+
+def verify_agent_access(agent: Agent, auth_info: dict) -> None:
+    """Verify that the authenticated user/session has access to the agent"""
+    # Compare UUIDs directly (auth_info["organization_id"] is now a UUID, not a string)
+    if agent.organization_id != auth_info["organization_id"]:
+        # Return 404 instead of 403 for security - don't reveal resource existence
+        raise HTTPException(
+            status_code=404,
+            detail="Agent not found"
+        )
 
 
 async def save_file(file: UploadFile, organization_id: UUID) -> str:
@@ -220,14 +235,16 @@ async def create_agent(
 
 
 @router.put("/{agent_id}", response_model=AgentWithCustomizationResponse)
+@router.put("/{agent_id}/shopify", response_model=AgentWithCustomizationResponse)
 async def update_agent(
     agent_id: UUID,
     update_data: AgentUpdate,
-    current_user: User = Depends(require_permissions("manage_agents")),
+    auth_info: dict = Depends(get_unified_auth),
     db: Session = Depends(get_db)
 ):
-    """Update agent details"""
+    """Update agent details - supports both JWT and Shopify session token auth"""
     try:
+        
         agent_repo = AgentRepository(db)
         knowledge_repo = KnowledgeRepository(db)
 
@@ -237,11 +254,7 @@ async def update_agent(
             raise HTTPException(status_code=404, detail="Agent not found")
 
         # Verify organization access
-        if agent.organization_id != current_user.organization_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Not authorized to update this agent"
-            )
+        verify_agent_access(agent, auth_info)
         logger.info(f"Updating agent {agent_id} with data: {update_data}")
         
         # Check enterprise subscription limits if enterprise module is available
@@ -256,10 +269,10 @@ async def update_agent(
             exclude={'photo_url'}, exclude_unset=True)
         
         # Check rating feature availability and override ask_for_rating if necessary
-        if HAS_ENTERPRISE:
+        if HAS_ENTERPRISE and auth_info['auth_type'] == 'jwt':
             from app.enterprise.repositories.plan import PlanRepository
             subscription_repo = SubscriptionRepository(db)
-            subscription = subscription_repo.get_by_organization(str(current_user.organization_id))
+            subscription = subscription_repo.get_by_organization(auth_info["organization_id"])
             
             if subscription:
                 plan_repo = PlanRepository(db)
@@ -318,15 +331,17 @@ async def update_agent(
 
 
 @router.get("/list", response_model=List[AgentWithCustomizationResponse])
+@router.get("/list/shopify", response_model=List[AgentWithCustomizationResponse])
 async def get_organization_agents(
-    current_user: User = Depends(require_permissions("view_all", "manage_agents")),
+    auth_info: dict = Depends(get_unified_auth),
     db: Session = Depends(get_db)
 ):
-    """Get all agents for the current user's organization"""
+    """Get organization agents - supports both JWT and Shopify session token auth"""
     try:
+        
         agent_repo = AgentRepository(db)
         knowledge_repo = KnowledgeRepository(db)
-        agents = agent_repo.get_all_agents(current_user.organization_id)
+        agents = agent_repo.get_all_agents(auth_info["organization_id"])
 
         response = []
         for agent in agents:
@@ -374,25 +389,23 @@ async def get_organization_agents(
 
 
 @router.post("/{agent_id}/customization", response_model=CustomizationResponse)
+@router.post("/{agent_id}/customization/shopify", response_model=CustomizationResponse)
 async def create_agent_customization(
     agent_id: UUID,
     customization_data: CustomizationCreate,
-    current_user: User = Depends(require_permissions("manage_agents")),
+    auth_info: dict = Depends(get_unified_auth),
     db: Session = Depends(get_db)
 ):
-    """Create or update agent customization"""
+    """Create or update agent customization - supports both JWT and Shopify session token auth"""
     try:
+        
         # Get agent
         agent = db.query(Agent).filter(Agent.id == agent_id).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
         # Verify organization access
-        if agent.organization_id != current_user.organization_id:
-            raise HTTPException(
-                status_code=403,
-                detail="Not authorized to update this agent"
-            )
+        verify_agent_access(agent, auth_info)
 
         # Get existing customization or create new one
         db_customization = db.query(AgentCustomization).filter(
@@ -400,17 +413,24 @@ async def create_agent_customization(
         ).first()
 
         if db_customization:
-            for key, value in customization_data.model_dump(exclude_unset=True).items():
-                setattr(db_customization, key, value)
+            # Update existing customization
+            for field, value in customization_data.model_dump(exclude_unset=True).items():
+                if field != 'id':  # Don't update the ID
+                    setattr(db_customization, field, value)
         else:
+            # Create new customization
             db_customization = AgentCustomization(
                 agent_id=agent_id,
-                **customization_data.model_dump(exclude_unset=True)
+                **customization_data.model_dump(exclude={'id'})
             )
             db.add(db_customization)
 
         db.commit()
         db.refresh(db_customization)
+
+        # Generate signed URL if using S3 storage
+        if settings.S3_FILE_STORAGE and db_customization.photo_url:
+            db_customization.photo_url = await get_s3_signed_url(db_customization.photo_url)
 
         return db_customization
 
@@ -423,21 +443,22 @@ async def create_agent_customization(
 
 
 @router.post("/{agent_id}/customization/photo", response_model=CustomizationResponse)
+@router.post("/{agent_id}/customization/photo/shopify", response_model=CustomizationResponse)
 async def upload_agent_photo(
     agent_id: str,
     photo: UploadFile = File(...),
-    current_user: User = Depends(require_permissions("manage_agents")),
+    auth_info: dict = Depends(get_unified_auth),
     db: Session = Depends(get_db)
 ):
-    """Upload agent profile photo"""
+    """Upload agent profile photo - supports both JWT and Shopify session token auth"""
     try:
+        
         agent = db.query(Agent).filter(Agent.id == agent_id).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
         # Verify organization access
-        if agent.organization_id != current_user.organization_id:
-            raise HTTPException(status_code=403, detail="Not authorized")
+        verify_agent_access(agent, auth_info)
 
         # Get existing customization to check for old photo
         db_customization = db.query(AgentCustomization).filter(
@@ -455,7 +476,7 @@ async def upload_agent_photo(
                     os.remove(old_photo_path)
 
         # Save new photo file
-        photo_url = await save_file(photo, current_user.organization_id)
+        photo_url = await save_file(photo, auth_info["organization_id"])
 
         # Update or create customization
         if db_customization:
@@ -556,20 +577,21 @@ async def update_agent_groups(
 
 
 @router.get("/{agent_id}", response_model=AgentWithCustomizationResponse)
+@router.get("/{agent_id}/shopify", response_model=AgentWithCustomizationResponse)
 async def get_agent_by_id(
     agent_id: UUID,
-    current_user: User = Depends(require_permissions("view_all", "manage_agents")),
+    auth_info: dict = Depends(get_unified_auth),
     db: Session = Depends(get_db)
 ):
-    """Get agent by ID with customization"""
+    """Get agent by ID with customization - supports both JWT and Shopify session token auth"""
+    
     agent_repo = AgentRepository(db)
     agent = agent_repo.get_by_id(agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     
-    # Check if agent belongs to user's organization
-    if agent.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    # Check if agent belongs to the authenticated organization
+    verify_agent_access(agent, auth_info)
     
     # Get signed URL for photo if using S3
     if settings.S3_FILE_STORAGE and agent.customization and agent.customization.photo_url:
@@ -581,6 +603,16 @@ async def get_agent_by_id(
             pass
     
     return agent
+
+
+
+
+
+
+
+
+
+
 
 
 @router.post("/generate-instructions", response_model=List[str])

@@ -56,13 +56,6 @@
         <!-- Action Buttons -->
         <div class="action-buttons">
           <button
-            @click="cancelInstallation"
-            class="btn-secondary"
-            :disabled="saving"
-          >
-            Cancel
-          </button>
-          <button
             @click="saveConfiguration"
             class="btn-primary"
             :disabled="!selectedAgent || saving"
@@ -93,6 +86,8 @@ import { agentService } from '@/services/agent'
 import { enableShopifyForAgents, getShopAuthInfo } from '@/services/shopify'
 import type { Agent } from '@/types/agent'
 import api from '@/services/api'
+import { useShopifySession } from '@/composables/useShopifySession'
+import { Redirect } from '@shopify/app-bridge/actions'
 
 const router = useRouter()
 const route = useRoute()
@@ -103,40 +98,12 @@ const widgetId = ref<string | null>(null)
 const loading = ref(true)
 const saving = ref(false)
 const error = ref<string | null>(null)
-const isEmbedded = ref(false)
-const shopifyApp = ref<any>(null)
 
 const shopDomain = computed(() => route.query.shop as string)
 const shopId = computed(() => route.query.shop_id as string)
 
-// Initialize Shopify App Bridge for embedded apps
-const initializeShopifyAppBridge = () => {
-  try {
-    // Check if we're in an embedded context
-    const urlParams = new URLSearchParams(window.location.search)
-    const host = urlParams.get('host')
-    
-    if (host || window.self !== window.top) {
-      isEmbedded.value = true
-      
-      // App Bridge is already loaded in index.html
-      const AppBridge = (window as any)['app-bridge']
-      if (AppBridge && AppBridge.default) {
-        const apiKey = (window.APP_CONFIG as any)?.VITE_SHOPIFY_API_KEY || ''
-        shopifyApp.value = AppBridge.default.createApp({
-          apiKey: apiKey,
-          host: host || '',
-          forceRedirect: true
-        })
-        console.log('Shopify App Bridge initialized in agent selection')
-      } else {
-        console.warn('App Bridge not available')
-      }
-    }
-  } catch (err) {
-    console.error('Failed to initialize Shopify App Bridge:', err)
-  }
-}
+// Use Shopify session composable
+const { app: shopifyApp, isEmbedded } = useShopifySession()
 
 // Load agents from API
 const loadAgents = async () => {
@@ -227,9 +194,8 @@ const saveConfiguration = async () => {
     const successUrl = `/shopify/agent-management?shop=${shopDomain.value}&shop_id=${shopId.value}&agents_connected=1${widgetId.value ? `&widget_id=${widgetId.value}` : ''}`
     
     // For embedded apps, use App Bridge redirect
-    if (isEmbedded.value && shopifyApp.value) {
-      const Redirect = (window as any)['app-bridge'].actions.Redirect
-      const redirect = Redirect.create(shopifyApp.value)
+    if (isEmbedded.value && shopifyApp) {
+      const redirect = Redirect.create(shopifyApp)
       redirect.dispatch(Redirect.Action.APP, successUrl)
     } else {
       // For non-embedded apps, use router navigation
@@ -251,65 +217,23 @@ const saveConfiguration = async () => {
   }
 }
 
-// Cancel installation
-const cancelInstallation = () => {
-  if (confirm('Are you sure you want to cancel? Shopify integration will not be enabled.')) {
-    router.push({ name: 'ai-agents' })
-  }
-}
-
 // Go to agents page
 const goToAgents = () => {
   router.push({ name: 'ai-agents' })
 }
 
 onMounted(async () => {
-  // Initialize Shopify App Bridge for embedded apps
-  initializeShopifyAppBridge()
+  const shop = route.query.shop
+  const shop_id = route.query.shop_id
   
-  // If we have shop info in query params, use it
-  if (shopDomain.value && shopId.value) {
-    loadAgents()
+  if (!shop || !shop_id) {
+    error.value = 'Missing shop information. Please return to Shopify and try again.'
+    loading.value = false
     return
   }
   
-  // Otherwise, try to get shop info from the URL or from an API call
-  // For embedded Shopify apps, the shop param might be in the URL differently
-  const urlParams = new URLSearchParams(window.location.search)
-  const shopFromUrl = urlParams.get('shop')
-  
-  if (shopFromUrl) {
-    // Try to fetch shop info from backend
-    try {
-      loading.value = true
-      const shopAuthData = await getShopAuthInfo(shopFromUrl, true)
-      
-      if (shopAuthData.status === 'already_installed') {
-        console.log('Shop already installed, redirecting to agent selection page')
-        // Update the URL with the shop info and reload
-        await router.replace({
-          name: 'shopify-agent-selection',
-          query: {
-            shop: shopAuthData.shop,
-            shop_id: shopAuthData.shop_id
-          }
-        })
-        
-        // Now load agents
-        await loadAgents()
-      } else {
-        error.value = 'Shop not connected. Please complete the installation first.'
-        loading.value = false
-      }
-    } catch (err: any) {
-      console.error('Failed to get shop info:', err)
-      error.value = 'Failed to connect to Shopify. Please try again.'
-      loading.value = false
-    }
-  } else {
-    error.value = 'Missing Shopify store information. Please try installing again.'
-    loading.value = false
-  }
+  console.log('📥 Loading agents for shop:', shop)
+  await loadAgents()
 })
 </script>
 
