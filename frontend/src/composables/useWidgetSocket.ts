@@ -19,6 +19,7 @@ export function useWidgetSocket() {
     const MAX_RETRIES = 5
     const humanAgent = ref<HumanAgent>({})
     const currentForm = ref<any>(null)
+    const currentSessionId = ref<string>('')
 
     let socket: Socket | null = null
     let onTakeoverCallback: ((data: { session_id: string, user_name: string }) => void) | null = null
@@ -64,6 +65,14 @@ export function useWidgetSocket() {
 
         socket.on('chat_response', (data) => {
             loading.value = false // Stop loading indicator first
+            
+            // Capture session_id from response for file attachments
+            if (data.session_id) {
+                console.log('Captured session_id from chat_response:', data.session_id)
+                currentSessionId.value = data.session_id
+            } else {
+                console.warn('No session_id in chat_response data:', data)
+            }
 
             if (data.type === 'agent_message') {
                 // Handle human agent messages (no change needed here)
@@ -141,6 +150,7 @@ export function useWidgetSocket() {
         socket.on('error', handleError)
         socket.on('chat_history', handleChatHistory)
         socket.on('rating_submitted', handleRatingSubmitted)
+        socket.on('files_attached', handleFilesAttached)
         socket.on('display_form', handleDisplayForm)
         socket.on('form_submitted', handleFormSubmitted)
         socket.on('workflow_state', handleWorkflowState)
@@ -233,7 +243,8 @@ export function useWidgetSocket() {
                     session_id: '',
                     agent_name: msg.agent_name || '',
                     user_name: msg.user_name || '',
-                    attributes: msg.attributes || {}
+                    attributes: msg.attributes || {},
+                    attachments: msg.attachments || [] // Include attachments
                 }
 
                 // Check if message has Shopify data in attributes
@@ -269,6 +280,23 @@ export function useWidgetSocket() {
                 created_at: new Date().toISOString(),
                 session_id: ''
             })
+        }
+    }
+
+    // Handle files attached to message
+    const handleFilesAttached = (data: { success: boolean, message_id: number, file_count: number, attachments?: Array<{ filename: string, file_url: string, content_type: string, file_size: number }> }) => {
+        console.log('handleFilesAttached called with:', data)
+        if (data.success && data.attachments && messages.value.length > 0) {
+            // Find the last message and add attachments to it
+            const lastMessage = messages.value[messages.value.length - 1]
+            lastMessage.attachments = data.attachments.map((att, idx) => ({
+                id: data.message_id * 1000 + idx,
+                filename: att.filename,
+                file_url: att.file_url,
+                content_type: att.content_type,
+                file_size: att.file_size
+            }))
+            console.log('Updated message with attachments:', lastMessage)
         }
     }
 
@@ -388,24 +416,57 @@ export function useWidgetSocket() {
     }
 
     // Send message function
-    const sendMessage = async (newMessage: string, email: string) => {
-        if (!socket || !newMessage.trim()) return
+    const sendMessage = async (newMessage: string, email: string, attachments: Array<{url: string, filename: string, type: string, size?: number}> = []) => {
+        if (!socket || (!newMessage.trim() && attachments.length === 0)) return
         
         if(!humanAgent.value.human_agent_name) 
            loading.value = true
-        messages.value.push({
+        
+        // Add user message to display
+        const userMessage: any = {
             message: newMessage,
             message_type: 'user',
             created_at: new Date().toISOString(),
             session_id: ''
-        })
+        }
+        
+        messages.value.push(userMessage)
 
+        // Emit to socket WITHOUT attachments (files will be sent separately)
         socket.emit('chat', {
             message: newMessage,
-            email: email
+            email: email,
+            attachments: []
         })
 
         hasStartedChat.value = true
+    }
+    
+    const sendFileAttachments = async (sessionId: string, attachments: Array<{url: string, filename: string, type: string, size?: number}>) => {
+        if (!socket || !sessionId || attachments.length === 0) {
+            console.log('sendFileAttachments skipped - socket:', !!socket, 'sessionId:', sessionId, 'attachments:', attachments.length)
+            return
+        }
+        
+        console.log('Emitting message_files event with:', {
+            session_id: sessionId,
+            files: attachments.map(f => ({
+                url: f.url,
+                filename: f.filename,
+                type: f.type,
+                size: f.size || 0
+            }))
+        })
+        
+        socket.emit('message_files', {
+            session_id: sessionId,
+            files: attachments.map(f => ({
+                url: f.url,
+                filename: f.filename,
+                type: f.type,
+                size: f.size || 0
+            }))
+        })
     }
 
     // Chat history functions
@@ -442,6 +503,7 @@ export function useWidgetSocket() {
         hasStartedChat,
         connectionStatus,
         sendMessage,
+        sendFileAttachments,
         loadChatHistory,
         connect,
         reconnect,
@@ -454,6 +516,7 @@ export function useWidgetSocket() {
         getWorkflowState,
         proceedWorkflow,
         onWorkflowState,
-        onWorkflowProceeded
+        onWorkflowProceeded,
+        currentSessionId
     }
 } 

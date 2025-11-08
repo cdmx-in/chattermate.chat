@@ -47,7 +47,7 @@ renderer.link = (href, title, text) => {
 marked.use({ renderer })
 
 const props = defineProps<{
-    widgetId: string
+    widgetId?: string | null
 }>()
 
 // Get widget ID from props or initial data
@@ -69,6 +69,7 @@ const {
     hasStartedChat,
     connectionStatus,
     sendMessage: socketSendMessage,
+    sendFileAttachments,
     loadChatHistory,
     connect,
     reconnect,
@@ -81,7 +82,8 @@ const {
     getWorkflowState,
     proceedWorkflow,
     onWorkflowState,
-    onWorkflowProceeded
+    onWorkflowProceeded,
+    currentSessionId
 } = useWidgetSocket()
 
 const newMessage = ref('')
@@ -268,6 +270,12 @@ if (initialData?.initialToken) {
     hasConversationToken.value = true
 }
 
+// Initialize allowAttachments from __INITIAL_DATA__
+const allowAttachments = ref(false)
+if (initialData?.allowAttachments !== undefined) {
+    allowAttachments.value = initialData.allowAttachments
+}
+
 // Add after socket initialization
 const messagesContainer = ref<HTMLElement | null>(null)
 
@@ -312,21 +320,45 @@ const isMessageInputEnabled = computed(() => {
 })
 
 const placeholderText = computed(() => {
-    return connectionStatus.value === 'connected' ? (isAskAnythingStyle.value ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'
+    return connectionStatus.value === 'connected' ? 
+           (isAskAnythingStyle.value ? 'Ask me anything or paste a screenshot...' : 'Type a message or paste a screenshot...') : 
+           'Connecting...'
 })
 
 // Update the sendMessage function
 const sendMessage = async () => {
-    if (!newMessage.value.trim()) return
+    if (!newMessage.value.trim() && uploadedAttachments.value.length === 0) return
     
     // If first message, fetch customization with email first
     if (!hasStartedChat.value && emailInput.value) {
         await checkAuthorization()
     }
 
-    await socketSendMessage(newMessage.value, emailInput.value)
+    // Store attachments before clearing
+    const filesToAttach = uploadedAttachments.value.length > 0 ? [...uploadedAttachments.value] : []
+    
+    // Send message first
+    await socketSendMessage(newMessage.value, emailInput.value, [])
+    
+    // Then send files separately if any (following ConversationChat pattern)
+    if (filesToAttach.length > 0) {
+        try {
+            // Wait a bit for the chat_response to arrive and set currentSessionId
+            await new Promise(resolve => setTimeout(resolve, 100))
+            
+            console.log('Attempting to send file attachments, currentSessionId:', currentSessionId.value)
+            
+            // Use the session ID from the composable (captured from chat_response)
+            if (currentSessionId.value) {
+                await sendFileAttachments(currentSessionId.value, filesToAttach)
+            }
+        } catch (error) {
+            console.error('Error sending file attachments:', error)
+        }
+    }
     
     newMessage.value = ''
+    uploadedAttachments.value = []
     
     // Also clear the actual DOM input field to ensure it's visually cleared
     const inputField = document.querySelector('input[placeholder*="Type a message"]') as HTMLInputElement
@@ -412,6 +444,14 @@ const checkAuthorization = async () => {
             humanAgent.value = data.human_agent
         }
         
+        // Set allow_attachments flag from agent data
+        if (data.agent?.allow_attachments !== undefined) {
+            allowAttachments.value = data.agent.allow_attachments
+            // allowAttachments already set from __INITIAL_DATA__
+        } else {
+            // fallback if not in initial data
+        }
+        
         // Update workflow status in initial data if received from backend
         if (data.agent?.workflow !== undefined) {
             window.__INITIAL_DATA__ = window.__INITIAL_DATA__ || {}
@@ -420,7 +460,6 @@ const checkAuthorization = async () => {
 
         // Get workflow state after successful connection
         if (data.agent?.workflow) {
-            console.log('Getting workflow state after authorization')
             await getWorkflowState()
         }
         
@@ -493,7 +532,6 @@ const handleReconnect = async () => {
 const showRatingDialog = ref(false)
 const currentRating = ref(0)
 const ratingFeedback = ref('')
-const currentSessionId = ref('')
 
 // Add these refs for star rating
 const hoverRating = ref(0)
@@ -916,6 +954,205 @@ const removeUrls = (text) => {
     return processedText;
 }
 
+// Format file size helper
+const formatFileSize = (bytes: number | undefined | null): string => {
+  if (!bytes || bytes < 1024) return '0 Bytes'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+// Check if attachment is an image
+const isImageAttachment = (contentType: string | undefined | null): boolean => {
+  return contentType ? contentType.startsWith('image/') : false
+}
+
+// Generate download URL for attachments
+const getDownloadUrl = (fileUrl: string | undefined | null): string => {
+  if (!fileUrl) return ''
+  
+  console.log('getDownloadUrl input:', fileUrl)
+  
+  // If it's already a download URL, return as-is
+  if (fileUrl.startsWith('/api/v1/files/download/')) {
+    console.log('getDownloadUrl output (already download URL):', fileUrl)
+    return fileUrl
+  }
+  
+  // If fileUrl starts with /api/v1/uploads/, extract the path after that
+  if (fileUrl.startsWith('/api/v1/uploads/')) {
+    const path = fileUrl.replace('/api/v1/uploads/', '')
+    const result = `/api/v1/files/download/${path}`
+    console.log('getDownloadUrl output (type 1):', result)
+    return result
+  }
+  
+  // If fileUrl is already a file path (widget_attachments/... or chat_attachments/...)
+  if (fileUrl.startsWith('widget_attachments/') || fileUrl.startsWith('chat_attachments/')) {
+    const result = `/api/v1/files/download/${fileUrl}`
+    console.log('getDownloadUrl output (type 2):', result)
+    return result
+  }
+  
+  // Fallback: assume it's a complete file path
+  const result = `/api/v1/files/download${fileUrl.startsWith('/') ? fileUrl : '/' + fileUrl}`
+  console.log('getDownloadUrl output (fallback):', result)
+  return result
+}
+
+// File upload functionality
+const uploadedAttachments = ref<Array<{url: string, signedUrl?: string, filename: string, type: string, size?: number}>>([])
+const isUploading = ref(false)
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const dragOver = ref(false)
+
+const maxFiles = 5
+const acceptTypes = 'image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.xls'
+
+// Preview modal
+const previewModal = ref(false)
+const previewFile = ref<{url: string, signedUrl?: string, filename: string, type: string, size?: number} | null>(null)
+
+const canUploadMore = computed(() => {
+  // Attachments only allowed when:
+  // 1. allow_attachments setting is enabled
+  // 2. Chat has been handed over to a human agent
+  const isHandedOverToHuman = !!humanAgent.value?.human_agent_name
+  return allowAttachments.value && isHandedOverToHuman && uploadedAttachments.value.length < maxFiles
+})
+
+// Watch for changes to allowAttachments
+watch(allowAttachments, (newVal) => {
+  console.log('🔍 allowAttachments changed to:', newVal)
+  console.log('   isHandedOverToHuman:', !!humanAgent.value?.human_agent_name)
+  console.log('   canUploadMore:', canUploadMore.value)
+})
+
+const handleFileSelect = async (event: Event) => {
+  const target = event.target as HTMLInputElement
+  if (target.files && target.files.length > 0) {
+    await uploadFiles(Array.from(target.files))
+  }
+}
+
+const handleDrop = async (event: DragEvent) => {
+  event.preventDefault()
+  dragOver.value = false
+  
+  if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
+    await uploadFiles(Array.from(event.dataTransfer.files))
+  }
+}
+
+const handleDragOver = (event: DragEvent) => {
+  event.preventDefault()
+  dragOver.value = true
+}
+
+const handleDragLeave = () => {
+  dragOver.value = false
+}
+
+const handlePaste = async (event: ClipboardEvent) => {
+  const items = event.clipboardData?.items
+  if (!items) return
+  
+  const files: File[] = []
+  for (const item of Array.from(items)) {
+    if (item.kind === 'file') {
+      const file = item.getAsFile()
+      if (file) {
+        files.push(file)
+      }
+    }
+  }
+  
+  if (files.length > 0) {
+    event.preventDefault()
+    await uploadFiles(files)
+  }
+}
+
+const uploadFiles = async (files: File[]) => {
+  if (!canUploadMore.value) {
+    console.error(`Maximum ${maxFiles} files allowed`)
+    return
+  }
+  
+  const remainingSlots = maxFiles - uploadedAttachments.value.length
+  const filesToUpload = files.slice(0, remainingSlots)
+  
+  if (files.length > remainingSlots) {
+    console.warn(`Only ${remainingSlots} more file(s) can be uploaded`)
+  }
+  
+  isUploading.value = true
+  
+  for (const file of filesToUpload) {
+    try {
+      // Store the file size locally from the File object BEFORE uploading
+      const fileSize = file.size
+      
+      const formData = new FormData()
+      formData.append('file', file)
+      
+      const headers: Record<string, string> = {}
+      if (token.value) {
+        headers['Authorization'] = `Bearer ${token.value}`
+      }
+      
+      const response = await fetch(`${widgetEnv.API_URL}/files/upload`, {
+        method: 'POST',
+        headers,
+        body: formData,
+        credentials: 'include'
+      })
+      
+      if (!response.ok) {
+        throw new Error('Upload failed')
+      }
+      
+      const data = await response.json()
+      
+      // Use fileSize as fallback if API doesn't return size
+      const finalSize = data.size || fileSize
+      
+      uploadedAttachments.value.push({
+        url: data.file_url,
+        signedUrl: data.signed_url,
+        filename: data.filename,
+        type: data.content_type || 'application/octet-stream',
+        size: finalSize
+      })
+    } catch (error) {
+      console.error('Upload error:', error)
+    }
+  }
+  
+  isUploading.value = false
+}
+
+const removeAttachment = (index: number) => {
+  uploadedAttachments.value.splice(index, 1)
+}
+
+const openPreview = (file: {url: string, signedUrl?: string, filename: string, type: string, size?: number}) => {
+  previewFile.value = file
+  previewModal.value = true
+}
+
+const closePreview = () => {
+  previewModal.value = false
+  previewFile.value = null
+}
+
+const openFilePicker = () => {
+  fileInputRef.value?.click()
+}
+
+const isImage = (type: string | undefined | null): boolean => {
+  return type ? type.startsWith('image/') : false
+}
+
 // Handle landing page proceed action
 const handleLandingPageProceed = async () => {
     try {
@@ -1198,7 +1435,7 @@ const shouldShowWelcomeMessage = computed(() => {
 </script>
 
 <template>
-    <div class="chat-container" :class="{ collapsed: !isExpanded, 'ask-anything-style': isAskAnythingStyle }" :style="{ ...shadowStyle, ...containerStyles }">
+    <div v-if="widgetId" class="chat-container" :class="{ collapsed: !isExpanded, 'ask-anything-style': isAskAnythingStyle }" :style="{ ...shadowStyle, ...containerStyles }">
         <!-- Loading State -->
         <div v-if="isInitializing" class="initializing-overlay">
             <div class="loading-spinner">
@@ -1844,11 +2081,65 @@ const shouldShowWelcomeMessage = computed(() => {
                             </template>
                             <template v-else>
                                 <div v-html="marked(message.message, { renderer })"></div>
+                                
+                                <!-- Display attachments if present -->
+                                <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
+                                  <div 
+                                    v-for="attachment in message.attachments" 
+                                    :key="attachment.id"
+                                    class="attachment-item"
+                                  >
+                                    <!-- Image attachment - render as image -->
+                                    <template v-if="isImageAttachment(attachment.content_type)">
+                                      <div class="attachment-image-container">
+                                        <img 
+                                          :src="attachment.file_url" 
+                                          :alt="attachment.filename"
+                                          class="attachment-image"
+                                          @click.stop="openPreview({url: attachment.file_url, filename: attachment.filename, type: attachment.content_type, signedUrl: undefined, size: undefined})"
+                                          style="cursor: pointer;"
+                                        />
+                                        <div class="attachment-image-info">
+                                          <a 
+                                            :href="getDownloadUrl(attachment.file_url)" 
+                                            target="_blank"
+                                            class="attachment-link"
+                                          >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                                              <polyline points="7 10 12 15 17 10"></polyline>
+                                              <line x1="12" y1="15" x2="12" y2="3"></line>
+                                            </svg>
+                                            {{ attachment.filename }}
+                                            <span class="attachment-size">({{ formatFileSize(attachment.file_size) }})</span>
+                                          </a>
+                                        </div>
+                                      </div>
+                                    </template>
+                                    <!-- Other file types - render as download link -->
+                                    <template v-else>
+                                      <a 
+                                        :href="getDownloadUrl(attachment.file_url)" 
+                                        target="_blank"
+                                        class="attachment-link"
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                          <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                                        </svg>
+                                        {{ attachment.filename }}
+                                        <span class="attachment-size">({{ formatFileSize(attachment.file_size) }})</span>
+                                      </a>
+                                    </template>
+                                  </div>
+                                </div>
                             </template>
                         </div>
                         <div class="message-info">
                             <span v-if="message.message_type === 'user'" class="agent-name">
                                 You
+                            </span>
+                            <span v-else-if="message.message_type === 'bot' || message.message_type === 'agent'" class="agent-name">
+                                {{ humanAgent.human_agent_name || agentName || 'Bot' }}
                             </span>
                         </div>
                     </div>
@@ -1876,6 +2167,68 @@ const shouldShowWelcomeMessage = computed(() => {
                         }"
                     >
                 </div>
+                
+                <!-- File upload input (hidden) -->
+                <input
+                    ref="fileInputRef"
+                    type="file"
+                    :accept="acceptTypes"
+                    multiple
+                    style="display: none"
+                    @change="handleFileSelect"
+                />
+                
+                <!-- File previews -->
+                <div v-if="uploadedAttachments.length > 0" class="file-previews-widget">
+                    <div
+                        v-for="(file, index) in uploadedAttachments"
+                        :key="index"
+                        class="file-preview-widget"
+                    >
+                        <div class="file-preview-content-widget" style="cursor: pointer;">
+                            <img
+                                v-if="isImage(file.type)"
+                                :src="file.signedUrl || file.url"
+                                :alt="file.filename"
+                                class="file-preview-image-widget"
+                                @click.stop="openPreview(file)"
+                                style="cursor: pointer;"
+                            />
+                            <div v-else class="file-preview-icon-widget" @click.stop="openPreview(file)" style="cursor: pointer;">
+                                <svg
+                                    width="20"
+                                    height="20"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    stroke-width="2"
+                                >
+                                    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path>
+                                    <polyline points="13 2 13 9 20 9"></polyline>
+                                </svg>
+                            </div>
+                        </div>
+                        <div class="file-preview-info-widget">
+                            <div class="file-preview-name-widget">{{ file.filename }}</div>
+                            <div class="file-preview-size-widget">{{ formatFileSize(file.size) }}</div>
+                        </div>
+                        <button
+                            type="button"
+                            class="file-preview-remove-widget"
+                            @click="removeAttachment(index)"
+                            :title="'Remove file'"
+                        >
+                            ×
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Upload progress indicator -->
+                <div v-if="isUploading" class="upload-progress-widget">
+                    <div class="upload-spinner-widget"></div>
+                    <span class="upload-text-widget">Uploading files...</span>
+                </div>
+                
                 <div class="message-input">
                     <input 
                         v-model="newMessage" 
@@ -1884,15 +2237,36 @@ const shouldShowWelcomeMessage = computed(() => {
                         @keypress="handleKeyPress"
                         @input="handleInputSync"
                         @change="handleInputSync"
+                        @paste="handlePaste"
+                        @drop="handleDrop"
+                        @dragover="handleDragOver"
+                        @dragleave="handleDragLeave"
                         :disabled="!isMessageInputEnabled"
                         :class="{ 'disabled': !isMessageInputEnabled, 'ask-anything-field': isAskAnythingStyle }"
                     >
+                    <button 
+                        v-if="canUploadMore"
+                        type="button"
+                        class="attach-button"
+                        :disabled="isUploading"
+                        @click="openFilePicker"
+                        :title="`Attach files (${uploadedAttachments.length}/${maxFiles} used) or paste screenshots`"
+                    >
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" 
+                                stroke="currentColor" 
+                                stroke-width="2.2" 
+                                stroke-linecap="round" 
+                                stroke-linejoin="round"/>
+                        </svg>
+                        <span class="attach-button-glow"></span>
+                    </button>
                     <button 
                         class="send-button" 
                         :class="{ 'ask-anything-send': isAskAnythingStyle }"
                         :style="userBubbleStyles" 
                         @click="sendMessage"
-                        :disabled="!newMessage.trim() || !isMessageInputEnabled"
+                        :disabled="(!newMessage.trim() && uploadedAttachments.length === 0) || !isMessageInputEnabled"
                     >
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <path d="M5 12L3 21L21 12L3 3L5 12ZM5 12L13 12" stroke="currentColor" stroke-width="2"
@@ -1966,6 +2340,20 @@ const shouldShowWelcomeMessage = computed(() => {
                 </div>
             </div>
         </div>
+
+        <!-- Image Preview Modal -->
+        <div v-if="previewModal" class="preview-modal-overlay" @click="closePreview">
+            <div class="preview-modal-content" @click.stop>
+                <button class="preview-modal-close" @click="closePreview">×</button>
+                <div v-if="previewFile && isImage(previewFile.type)" class="preview-modal-image-container">
+                    <img :src="previewFile.signedUrl || previewFile.url" :alt="previewFile.filename" class="preview-modal-image" />
+                    <div class="preview-modal-filename">{{ previewFile.filename }}</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div v-else class="widget-loading">
+        <!-- Widget is initializing, waiting for widgetId -->
     </div>
 </template>
 
@@ -2033,16 +2421,21 @@ const shouldShowWelcomeMessage = computed(() => {
     height: 32px;
     border-radius: 50%;
     object-fit: cover;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    border: 2px solid white;
 }
 
 .header-info {
     display: flex;
     flex-direction: column;
+    gap: 2px;
 }
 
 .header-info h3 {
     margin: 0;
     font-size: var(--text-md);
+    font-weight: 600;
+    line-height: 1.2;
 }
 
 .status {
@@ -2057,10 +2450,32 @@ const shouldShowWelcomeMessage = computed(() => {
     height: 8px;
     border-radius: 50%;
     background: var(--error-color);
+    box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.2);
+    animation: pulse-offline 2s ease-in-out infinite;
+}
+
+@keyframes pulse-offline {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.5;
+    }
 }
 
 .status-indicator.online {
     background: var(--success-color);
+    box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    animation: pulse-online 2s ease-in-out infinite;
+}
+
+@keyframes pulse-online {
+    0%, 100% {
+        box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+    }
+    50% {
+        box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.3);
+    }
 }
 
 .chat-messages {
@@ -2081,6 +2496,18 @@ const shouldShowWelcomeMessage = computed(() => {
     max-width: 85%;
     align-items: flex-start;
     margin-bottom: var(--space-md);
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
 .message-avatar {
@@ -2092,11 +2519,17 @@ const shouldShowWelcomeMessage = computed(() => {
 }
 
 .message-bubble {
-    padding: 2px 14px;
-    border-radius: 20px;
+    padding: 10px 14px;
+    border-radius: 18px;
     line-height: 1.4;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     max-width: 85%;
+    transition: all 0.2s ease;
+    position: relative;
+}
+
+.message-bubble:hover {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
 }
 
 .user-message {
@@ -2105,13 +2538,15 @@ const shouldShowWelcomeMessage = computed(() => {
 }
 
 .user-message .message-bubble {
-    border-bottom-right-radius: 4px;
+    border-bottom-right-radius: 6px;
+    background: linear-gradient(135deg, var(--primary-color) 0%, color-mix(in srgb, var(--primary-color) 90%, black) 100%);
 }
 
-.assistant-message .message-bubble {
-    border-bottom-left-radius: 4px;
-    background-color: #f5f5f5;
-    /* Light gray background for assistant messages */
+.assistant-message .message-bubble,
+.agent-message .message-bubble {
+    border-bottom-left-radius: 6px;
+    background: linear-gradient(135deg, #ffffff 0%, #f9fafb 100%);
+    border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 .chat-input {
@@ -2373,6 +2808,21 @@ const shouldShowWelcomeMessage = computed(() => {
 .loading-spinner {
     display: flex;
     gap: 4px;
+}
+
+.message-info {
+    font-size: 0.75rem;
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.agent-name {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+    opacity: 0.8;
 }
 
 .message-time {
@@ -4031,5 +4481,691 @@ const shouldShowWelcomeMessage = computed(() => {
     margin: 0;
     font-size: var(--text-sm);
     color: var(--text-secondary);
+}
+
+/* Attachment styles */
+.message-attachments {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+}
+
+.attachment-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 13px;
+  transition: all 0.2s;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.attachment-link:hover {
+  background: rgba(0, 0, 0, 0.1);
+  border-color: rgba(0, 0, 0, 0.2);
+}
+
+.attachment-link svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.attachment-size {
+  opacity: 0.7;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.user-message .attachment-link {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: inherit;
+}
+
+.user-message .attachment-link:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+/* Image attachment styles */
+.attachment-image-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 300px;
+  margin-top: 8px;
+}
+
+.attachment-image {
+  width: 100%;
+  max-height: 300px;
+  border-radius: 8px;
+  object-fit: contain;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+  transition: all 0.2s;
+  background: rgba(0, 0, 0, 0.02);
+}
+
+.attachment-image:hover {
+  border-color: rgba(0, 0, 0, 0.2);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.user-message .attachment-image {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.user-message .attachment-image:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.2);
+}
+
+.attachment-image-info {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+}
+
+.attachment-image-info .attachment-link {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+/* File upload styles for widget */
+.file-previews-widget {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px;
+  background: linear-gradient(135deg, rgba(243, 70, 17, 0.03) 0%, rgba(243, 70, 17, 0.01) 100%);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  border: 1px dashed rgba(243, 70, 17, 0.2);
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Modern File Preview Cards */
+.file-preview-widget {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+  border: 2px solid #e5e7eb;
+  border-radius: 14px;
+  font-size: 13px;
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.04),
+    0 1px 2px rgba(0, 0, 0, 0.02);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.file-preview-widget::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg, 
+    #818cf8 0%, 
+    #a78bfa 50%, 
+    #c084fc 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.file-preview-widget:hover {
+  box-shadow: 
+    0 8px 16px rgba(124, 58, 237, 0.12),
+    0 4px 8px rgba(124, 58, 237, 0.08);
+  transform: translateY(-2px);
+  border-color: #c4b5fd;
+}
+
+.file-preview-widget:hover::before {
+  opacity: 1;
+}
+
+.file-preview-content-widget {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f0f4ff 0%, #e9d5ff 100%);
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
+  box-shadow: 
+    0 2px 8px rgba(124, 58, 237, 0.1),
+    inset 0 1px 2px rgba(255, 255, 255, 0.5);
+}
+
+.file-preview-content-widget::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, 
+    rgba(255, 255, 255, 0.4) 0%, 
+    transparent 100%);
+  pointer-events: none;
+}
+
+.file-preview-image-widget {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 10px;
+  position: relative;
+  z-index: 1;
+  transition: transform 0.3s ease;
+}
+
+.file-preview-widget:hover .file-preview-image-widget {
+  transform: scale(1.05);
+}
+
+.file-preview-icon-widget {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #7c3aed;
+  position: relative;
+  z-index: 1;
+  transition: transform 0.3s ease;
+}
+
+.file-preview-widget:hover .file-preview-icon-widget {
+  transform: scale(1.1) rotate(-5deg);
+}
+
+.file-preview-info-widget {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.file-preview-name-widget {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
+}
+
+.file-preview-size-widget {
+  font-size: 11px;
+  color: #9ca3af;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.file-preview-remove-widget {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+  border: 1.5px solid #fca5a5;
+  border-radius: 8px;
+  color: #dc2626;
+  cursor: pointer;
+  font-size: 20px;
+  font-weight: bold;
+  padding: 0;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  line-height: 1;
+  box-shadow: 0 2px 4px rgba(220, 38, 38, 0.1);
+}
+
+.file-preview-remove-widget:hover {
+  background: linear-gradient(135deg, #fca5a5 0%, #f87171 100%);
+  border-color: #ef4444;
+  color: white;
+  transform: scale(1.1) rotate(90deg);
+  box-shadow: 0 4px 8px rgba(220, 38, 38, 0.25);
+}
+
+.file-preview-remove-widget:active {
+  transform: scale(1) rotate(90deg);
+  box-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
+}
+
+/* Modern Attach Button Styling */
+.attach-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+  border: 2px solid #e5e7eb;
+  color: #6b7280;
+  cursor: pointer;
+  border-radius: 50%;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  flex-shrink: 0;
+  position: relative;
+  overflow: visible;
+  box-shadow: 
+    0 2px 4px rgba(0, 0, 0, 0.06),
+    0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.attach-button::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  background: linear-gradient(135deg, 
+    rgba(99, 102, 241, 0.4) 0%, 
+    rgba(168, 85, 247, 0.4) 50%,
+    rgba(236, 72, 153, 0.4) 100%);
+  border-radius: 50%;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  z-index: -1;
+  filter: blur(8px);
+}
+
+.attach-button-glow {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(circle, 
+    rgba(99, 102, 241, 0.2) 0%, 
+    transparent 70%);
+  opacity: 0;
+  transition: all 0.4s ease;
+  pointer-events: none;
+  z-index: -1;
+}
+
+.attach-button:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+  border-color: #a78bfa;
+  color: #7c3aed;
+  transform: translateY(-3px) scale(1.05);
+  box-shadow: 
+    0 8px 16px rgba(124, 58, 237, 0.15),
+    0 4px 8px rgba(124, 58, 237, 0.1),
+    0 0 0 4px rgba(124, 58, 237, 0.1);
+}
+
+.attach-button:hover:not(:disabled)::before {
+  opacity: 1;
+  animation: pulseGlow 2s ease-in-out infinite;
+}
+
+.attach-button:hover:not(:disabled) .attach-button-glow {
+  opacity: 1;
+  width: 150%;
+  height: 150%;
+}
+
+.attach-button:active:not(:disabled) {
+  transform: translateY(-1px) scale(1);
+  box-shadow: 
+    0 4px 8px rgba(124, 58, 237, 0.2),
+    0 0 0 3px rgba(124, 58, 237, 0.15);
+  transition: all 0.1s ease;
+}
+
+.attach-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: #f3f4f6;
+  transform: none;
+  box-shadow: none;
+}
+
+.attach-button svg {
+  position: relative;
+  z-index: 2;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.1));
+}
+
+.attach-button:hover:not(:disabled) svg {
+  transform: rotate(-15deg) scale(1.1);
+  filter: drop-shadow(0 2px 4px rgba(124, 58, 237, 0.3));
+}
+
+.attach-button:active:not(:disabled) svg {
+  transform: rotate(-15deg) scale(1.05);
+}
+
+@keyframes pulseGlow {
+  0%, 100% {
+    opacity: 0.6;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+}
+
+.message-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.message-input input {
+  flex: 1;
+  padding: var(--space-sm) var(--space-md);
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.message-input input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+  box-shadow: 0 0 0 3px rgba(243, 70, 17, 0.1);
+}
+
+.message-input input:disabled {
+  background-color: rgba(0, 0, 0, 0.05);
+  cursor: not-allowed;
+}
+
+.send-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-sm);
+  min-width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  color: white;
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.send-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, transparent 100%);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.send-button:hover:not(:disabled)::before {
+  opacity: 1;
+}
+
+.send-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.send-button:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.send-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.send-button svg {
+  position: relative;
+  z-index: 1;
+}
+
+/* Modern Upload Progress Indicator */
+.upload-progress-widget {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, 
+    rgba(124, 58, 237, 0.08) 0%, 
+    rgba(168, 85, 247, 0.05) 100%);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  border: 2px solid rgba(124, 58, 237, 0.2);
+  animation: uploadPulse 2s ease-in-out infinite;
+  box-shadow: 0 2px 8px rgba(124, 58, 237, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.upload-progress-widget::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, 
+    transparent 0%, 
+    rgba(255, 255, 255, 0.3) 50%, 
+    transparent 100%);
+  animation: shimmer 2s infinite;
+}
+
+@keyframes uploadPulse {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(0.995);
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    left: -100%;
+  }
+  100% {
+    left: 100%;
+  }
+}
+
+.upload-spinner-widget {
+  width: 20px;
+  height: 20px;
+  border: 2.5px solid rgba(124, 58, 237, 0.2);
+  border-top: 2.5px solid #7c3aed;
+  border-radius: 50%;
+  animation: modernSpin 0.8s linear infinite;
+  box-shadow: 0 0 8px rgba(124, 58, 237, 0.3);
+}
+
+@keyframes modernSpin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.upload-text-widget {
+  font-size: 13px;
+  color: #7c3aed;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-shadow: 0 1px 2px rgba(124, 58, 237, 0.1);
+}
+
+/* Attachment restriction message */
+.attachment-restriction-message {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, 
+    rgba(59, 130, 246, 0.08) 0%, 
+    rgba(96, 165, 250, 0.05) 100%);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  box-shadow: 0 2px 6px rgba(59, 130, 246, 0.08);
+}
+
+.restriction-text {
+  font-size: 12px;
+  color: #3b82f6;
+  font-weight: 500;
+  text-align: center;
+  letter-spacing: 0.01em;
+  line-height: 1.4;
+}
+
+/* Preview Modal Styles */
+.preview-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  animation: fadeIn 0.2s ease-in;
+}
+
+.preview-modal-content {
+  position: relative;
+  max-width: 90%;
+  max-height: 90vh;
+  background: white;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  animation: slideUp 0.3s ease-out;
+}
+
+.preview-modal-image-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 20px;
+  max-width: 100%;
+  max-height: 100%;
+}
+
+.preview-modal-image {
+  max-width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.preview-modal-filename {
+  font-size: 14px;
+  color: #666;
+  text-align: center;
+  max-width: 100%;
+  word-break: break-word;
+  padding: 0 12px;
+}
+
+.preview-modal-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  color: white;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  z-index: 10000;
+}
+
+.preview-modal-close:hover {
+  background: rgba(0, 0, 0, 0.8);
+  transform: scale(1.1);
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 </style>
