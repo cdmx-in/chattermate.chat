@@ -5,7 +5,6 @@ This script ensures the S3 bucket exists before the application starts processin
 """
 import sys
 import time
-import logging
 from pathlib import Path
 
 # Add the backend app to the path
