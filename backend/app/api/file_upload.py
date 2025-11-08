@@ -30,7 +30,6 @@ from app.core.security import verify_conversation_token
 from app.models import User
 from app.core.auth import get_current_user
 from app.database import get_db
-from starlette.requests import Request as StarletteRequest
 
 logger = get_logger(__name__)
 
