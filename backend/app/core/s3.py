@@ -184,13 +184,11 @@ async def upload_file_to_s3(
         
     except ClientError as e:
         logger.warning(f"S3 upload failed with ClientError: {str(e)}. Falling back to local storage.")
-        file_content = await file.read()
         return await _save_file_locally(file_content, folder, filename)
     except Exception as e:
         logger.error(f"S3 upload failed with unexpected error: {str(e)}")
         traceback.print_exc()
         logger.warning(f"Falling back to local storage.")
-        file_content = await file.read()
         return await _save_file_locally(file_content, folder, filename)
 
 
