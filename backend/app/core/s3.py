@@ -159,19 +159,16 @@ async def upload_file_to_s3(
             try:
                 s3_client.head_object(Bucket=settings.S3_BUCKET, Key=s3_key)
                 break
-            except s3_client.exceptions.NoSuchKey:
-                logger.error(f"File verification failed: {s3_key}")
-                raise HTTPException(
-                    status_code=500,
-                    detail="File upload verification failed"
-                )
             except Exception as verify_err:
                 if attempt < 2:
                     import time
                     time.sleep(0.5)
                 else:
-                    logger.warning(f"File verification retry failed: {str(verify_err)}")
-        
+                    logger.error(f"File verification failed after retries: {s3_key} - {str(verify_err)}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="File upload verification failed"
+                    )
         # Generate S3 URL (handle both AWS and MinIO URLs)
         # For S3/MinIO, we return the backend proxy URL instead of direct MinIO URL
         if settings.S3_ENDPOINT_URL:
