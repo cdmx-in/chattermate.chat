@@ -3,7 +3,6 @@
 Initialize S3/MinIO bucket for ChatterMate
 This script ensures the S3 bucket exists before the application starts processing files
 """
-import os
 import sys
 import time
 import logging
