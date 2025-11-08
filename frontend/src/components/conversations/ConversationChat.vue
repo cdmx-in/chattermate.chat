@@ -17,11 +17,12 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 -->
 
 <script setup lang="ts">
-import { onMounted, watch, nextTick, ref, computed } from 'vue'
+import { onMounted, watch, nextTick, ref, computed, onBeforeUnmount } from 'vue'
 import type { ChatDetail } from '@/types/chat'
 import { useConversationChat } from '@/composables/useConversationChat'
 import { useJiraTicket } from '@/composables/useJiraTicket'
 import JiraTicketModal from '@/components/jira/JiraTicketModal.vue'
+import FileUpload from '@/components/common/FileUpload.vue'
 import sendIcon from '@/assets/sendbutton.svg'
 import { userService } from '@/services/user'
 import { marked } from 'marked'
@@ -69,7 +70,59 @@ const {
 const showJiraTicketModal = ref(false)
 const ticketSummary = ref('')
 
+// File upload refs
+const fileUploadRef = ref<InstanceType<typeof FileUpload> | null>(null)
+const uploadedFiles = ref<Array<{url: string, filename: string, type: string, size?: number}>>([])
 
+// Handle file uploads
+const handleFilesUploaded = (files: Array<{url: string, filename: string, type: string, size?: number}>) => {
+  uploadedFiles.value = files
+}
+
+const handleFileUploadError = (error: string) => {
+  console.error('File upload error:', error)
+}
+
+// Handle paste events for screenshots
+const handleChatPaste = (event: ClipboardEvent) => {
+  if (fileUploadRef.value) {
+    fileUploadRef.value.handlePaste(event)
+  }
+}
+
+// Wrapper to send message with attachments
+const handleSendMessageWithAttachments = async () => {
+  // Send the message through the normal composable
+  await sendMessage()
+  
+  // If files were uploaded, attach them to the message
+  if (uploadedFiles.value.length > 0) {
+    try {
+      const socketService = (await import('@/services/socket')).socketService
+      
+      // Emit file attachment event with the session
+      socketService.emit('message_files', {
+        session_id: currentChat.value.session_id,
+        files: uploadedFiles.value.map(f => ({
+          url: f.url,
+          filename: f.filename,
+          type: f.type,
+          size: f.size || 0
+        }))
+      })
+    } catch (error) {
+      console.error('Error sending file attachment metadata:', error)
+    }
+  }
+  
+  // Clear uploaded files after sending
+  if (uploadedFiles.value.length > 0) {
+    if (fileUploadRef.value) {
+      fileUploadRef.value.clearFiles()
+    }
+    uploadedFiles.value = []
+  }
+}
 
 // Add marked configuration
 marked.setOptions({
@@ -86,6 +139,49 @@ renderer.link = function({ href, title, text }) {
   return link.replace(/^<a /, '<a target="_blank" rel="nofollow" ')
 }
 marked.use({ renderer })
+
+// Format file size helper
+const formatFileSize = (bytes: number): string => {
+  if (bytes === 0) return '0 Bytes'
+  const k = 1024
+  const sizes = ['Bytes', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
+}
+
+// Check if attachment is an image
+const isImageAttachment = (contentType: string): boolean => {
+  return contentType.startsWith('image/')
+}
+
+// Handle files attached via socket
+const handleFilesAttached = (data: {
+  success: boolean
+  message_id: number
+  file_count: number
+  attachments?: Array<{
+    filename: string
+    file_url: string
+    content_type: string
+    file_size: number
+  }>
+}) => {
+  if (data.success && data.attachments) {
+    // Find the last message by looking at most recent messages
+    const lastMessage = currentChat.value.messages[currentChat.value.messages.length - 1]
+    if (lastMessage) {
+      // Add attachments to the last message
+      lastMessage.attachments = data.attachments.map((att, idx) => ({
+        id: data.message_id * 1000 + idx, // Generate simple ID
+        filename: att.filename,
+        file_url: att.file_url,
+        content_type: att.content_type,
+        file_size: att.file_size
+      }))
+      console.log('[files_attached] Updated message with attachments:', lastMessage)
+    }
+  }
+}
 
 
 
@@ -135,6 +231,24 @@ watch(() => props.chat, (newChat) => {
 onMounted(async () => {
   scrollToBottom()
   await checkJiraStatus()
+  
+  // Listen for files_attached socket event to update messages with attachments
+  try {
+    const { socketService } = await import('@/services/socket')
+    socketService.on('files_attached', handleFilesAttached)
+  } catch (error) {
+    console.error('Error setting up socket listener for files_attached:', error)
+  }
+})
+
+onBeforeUnmount(async () => {
+  // Clean up socket listener
+  try {
+    const { socketService } = await import('@/services/socket')
+    socketService.off('files_attached', handleFilesAttached)
+  } catch (error) {
+    console.error('Error removing socket listener for files_attached:', error)
+  }
 })
 </script>
 
@@ -214,6 +328,49 @@ onMounted(async () => {
               <!-- Regular message with markdown -->
               <template v-else>
                 <div v-html="marked(message.message || '')"></div>
+                
+                <!-- Display attachments if present -->
+                <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
+                  <div 
+                    v-for="attachment in message.attachments" 
+                    :key="attachment.id"
+                    class="attachment-item"
+                  >
+                    <!-- Image attachment - render as image -->
+                    <template v-if="isImageAttachment(attachment.content_type)">
+                      <div class="attachment-image-container">
+                        <img 
+                          :src="attachment.file_url" 
+                          :alt="attachment.filename"
+                          class="attachment-image"
+                        />
+                        <div class="attachment-image-info">
+                          <a 
+                            :href="`/api/v1/files/download${attachment.file_url.replace('/chattermate-dev', '')}`" 
+                            target="_blank"
+                            class="attachment-link"
+                          >
+                            <i class="fas fa-download"></i>
+                            {{ attachment.filename }}
+                            <span class="attachment-size">({{ formatFileSize(attachment.file_size) }})</span>
+                          </a>
+                        </div>
+                      </div>
+                    </template>
+                    <!-- Other file types - render as download link -->
+                    <template v-else>
+                      <a 
+                        :href="`/api/v1/files/download${attachment.file_url.replace('/chattermate-dev', '')}`" 
+                        target="_blank"
+                        class="attachment-link"
+                      >
+                        <i class="fas fa-paperclip"></i>
+                        {{ attachment.filename }}
+                        <span class="attachment-size">({{ formatFileSize(attachment.file_size) }})</span>
+                      </a>
+                    </template>
+                  </div>
+                </div>
               </template>
               <span class="message-time">{{ message.timeAgo }}</span>
             </div>
@@ -237,22 +394,30 @@ onMounted(async () => {
     />
 
     <footer class="chat-input" v-if="!isChatClosed && !handledByAI">
-      <div class="input-container" :class="{ disabled: !canSendMessage }">
-        <input 
-          v-model="newMessage"
-          type="text" 
-          placeholder="Type a message" 
-          class="message-input"
-          @keyup.enter="sendMessage"
-          :disabled="!canSendMessage"
-        >
-        <button 
-          class="send-button" 
-          @click="sendMessage"
-          :disabled="!newMessage.trim() || !canSendMessage"
-        >
-          <img :src="sendIcon" alt="Send" />
-        </button>
+      <div class="input-container" :class="{ disabled: !canSendMessage }" @paste="handleChatPaste">
+        <FileUpload
+          ref="fileUploadRef"
+          :max-files="3"
+          @filesUploaded="handleFilesUploaded"
+          @error="handleFileUploadError"
+        />
+        <div class="message-input-wrapper">
+          <input 
+            v-model="newMessage"
+            type="text" 
+            placeholder="Type a message or paste a screenshot" 
+            class="message-input"
+            @keyup.enter="handleSendMessageWithAttachments"
+            :disabled="!canSendMessage"
+          >
+          <button 
+            class="send-button" 
+            @click="handleSendMessageWithAttachments"
+            :disabled="(!newMessage.trim() && uploadedFiles.length === 0) || !canSendMessage"
+          >
+            <img :src="sendIcon" alt="Send" />
+          </button>
+        </div>
       </div>
       <div v-if="!canSendMessage" class="input-message">
         {{ handledByAI ? 'This chat is being handled by AI' : 
@@ -423,7 +588,7 @@ onMounted(async () => {
 
 .input-container {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 12px;
   background: var(--background-soft);
   padding: 8px 16px;
@@ -434,6 +599,14 @@ onMounted(async () => {
 .input-container.disabled {
   opacity: 0.7;
   background: var(--background-mute);
+}
+
+.message-input-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .message-input {
@@ -709,5 +882,110 @@ onMounted(async () => {
 
 .message-bubble :deep(a:hover) {
   text-decoration: underline;
+}
+
+/* Attachment styles */
+.message-attachments {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.attachment-item {
+  display: flex;
+  align-items: center;
+}
+
+.attachment-link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--background-color);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  color: var(--text-primary);
+  text-decoration: none;
+  font-size: 13px;
+  transition: all 0.2s;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.attachment-link:hover {
+  background: var(--background-mute);
+  border-color: var(--primary-color);
+}
+
+.attachment-link i {
+  font-size: 14px;
+  color: var(--text-muted);
+}
+
+.attachment-size {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.message.user .attachment-link {
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.3);
+  color: var(--background-color);
+}
+
+.message.user .attachment-link:hover {
+  background: rgba(255, 255, 255, 0.3);
+  border-color: rgba(255, 255, 255, 0.5);
+}
+
+.message.user .attachment-link i,
+.message.user .attachment-size {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Image attachment styles */
+.attachment-image-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 350px;
+}
+
+.attachment-image {
+  width: 100%;
+  max-height: 400px;
+  border-radius: 8px;
+  object-fit: contain;
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.attachment-image:hover {
+  border-color: var(--primary-color);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.message.user .attachment-image {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.message.user .attachment-image:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 8px rgba(255, 255, 255, 0.2);
+}
+
+.attachment-image-info {
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+}
+
+.attachment-image-info .attachment-link {
+  margin: 0;
+  padding: 4px 8px;
+  font-size: 12px;
 }
 </style> 

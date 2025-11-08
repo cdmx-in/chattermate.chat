@@ -275,9 +275,11 @@ async def handle_widget_chat(sid, data):
             await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
             return
 
-        # Process message
+        # Process message and attachments
         message = data.get('message', '').strip()
-        if not message:
+        attachments = data.get('attachments', [])  # List of attachment URLs
+        
+        if not message and not attachments:
             return
 
         session_id = session['session_id']
@@ -286,6 +288,36 @@ async def handle_widget_chat(sid, data):
             session['org_id'] != org_id or 
             session['customer_id'] != customer_id):
             raise ValueError("Session mismatch")
+        
+        # Check if attachments are allowed for this agent
+        if attachments:
+            db_temp = next(get_db())
+            try:
+                agent_repo = AgentRepository(db_temp)
+                agent = agent_repo.get_agent(session['agent_id'])
+                if agent and not agent.allow_attachments:
+                    await sio.emit('error', {
+                        'error': 'Attachments are not allowed for this agent',
+                        'type': 'validation_error'
+                    }, room=sid, namespace='/widget')
+                    return
+                
+                # Check if chat is handed over to human agent
+                # Check if there's any agent message in the conversation
+                from app.models import ChatHistory
+                agent_message_exists = db_temp.query(ChatHistory).filter(
+                    ChatHistory.session_id == session_id,
+                    ChatHistory.message_type == 'agent'
+                ).first()
+                
+                if not agent_message_exists:
+                    await sio.emit('error', {
+                        'error': 'Attachments are only available when the chat is handed over to a human agent',
+                        'type': 'validation_error'
+                    }, room=sid, namespace='/widget')
+                    return
+            finally:
+                db_temp.close()
 
         db = next(get_db())
         session_repo = SessionToAgentRepository(db)
@@ -534,6 +566,7 @@ async def handle_widget_chat(sid, data):
             response_payload = {
                 'message': response.message,
                 'type': 'chat_response',
+                'session_id': session_id,
                 'transfer_to_human': response.transfer_to_human,
                 'end_chat': response.end_chat,
                 'end_chat_reason': response.end_chat_reason.value if response.end_chat_reason else None,
@@ -615,14 +648,32 @@ async def get_widget_chat_history(sid):
         )
 
         # Convert datetime to ISO format string
-        formatted_messages = [{
-            'message': msg.message,
-            'message_type': msg.message_type,
-            'timestamp': format_datetime(msg.created_at),
-            'attributes': msg.attributes,
-            'user_name': msg.user.full_name if msg.user else None,
-            'agent_name': msg.agent.display_name or msg.agent.name if msg.agent else None
-        } for msg in messages]
+        formatted_messages = []
+        for msg in messages:
+            msg_dict = {
+                'message': msg.message,
+                'message_type': msg.message_type,
+                'timestamp': format_datetime(msg.created_at),
+                'attributes': msg.attributes,
+                'user_name': msg.user.full_name if msg.user else None,
+                'agent_name': msg.agent.display_name or msg.agent.name if msg.agent else None
+            }
+            
+            # Add attachments with file info if they exist
+            if msg.attachments:
+                attachments = []
+                for attachment in msg.attachments:
+                    att_dict = {
+                        'id': attachment.id,
+                        'filename': attachment.filename,
+                        'file_url': attachment.file_url,
+                        'content_type': attachment.content_type,
+                        'file_size': attachment.file_size
+                    }
+                    attachments.append(att_dict)
+                msg_dict['attachments'] = attachments
+            
+            formatted_messages.append(msg_dict)
 
         await sio.emit('chat_history', {
             'messages': formatted_messages,
@@ -750,6 +801,113 @@ async def handle_agent_message(sid, data):
         await sio.emit('error', {
             'error': 'Failed to send message',
             'type': 'message_error'
+        }, to=sid, namespace='/agent')
+
+# Handle file attachments for messages
+@sio.on('message_files', namespace='/agent')
+async def handle_message_files(sid, data):
+    """Attach files to the most recent message in a session"""
+    try:
+        logger.info(f"Handling message_files for sid {sid} with data: {data}")
+        
+        # Get session data and authenticate
+        session = await sio.get_session(sid, namespace='/agent')
+        if not session or 'user_id' not in session:
+            logger.error(f"No authenticated session for sid {sid}")
+            await sio.emit('error', {
+                'error': 'Not authenticated',
+                'type': 'auth_error'
+            }, to=sid, namespace='/agent')
+            return
+
+        session_id = data.get('session_id')
+        files = data.get('files', [])
+        
+        if not session_id or not files:
+            logger.error(f"Missing session_id or files in data: {data}")
+            await sio.emit('error', {
+                'error': 'Missing required data',
+                'type': 'validation_error'
+            }, to=sid, namespace='/agent')
+            return
+
+        # Get database session
+        db = next(get_db())
+        chat_repo = ChatRepository(db)
+        
+        # Find the most recent message in this session
+        from app.models import ChatHistory
+        latest_message = db.query(ChatHistory).filter(
+            ChatHistory.session_id == session_id
+        ).order_by(ChatHistory.created_at.desc()).first()
+        
+        if not latest_message:
+            logger.error(f"No message found for session {session_id}")
+            await sio.emit('error', {
+                'error': 'No message found',
+                'type': 'not_found_error'
+            }, to=sid, namespace='/agent')
+            return
+        
+        # Create file attachment records
+        from app.models import FileAttachment
+        org_id = session.get('organization_id')
+        user_id = session.get('user_id')
+        
+        for file in files:
+            file_url = file.get('url')
+            filename = file.get('filename')
+            content_type = file.get('type', 'application/octet-stream')
+            
+            if not file_url or not filename:
+                logger.warning(f"Skipping file with missing url or filename: {file}")
+                continue
+            
+            # Create attachment
+            attachment = FileAttachment(
+                file_url=file_url,
+                filename=filename,
+                content_type=content_type,
+                file_size=0,  # Size should have been captured during upload
+                chat_history_id=latest_message.id,
+                organization_id=org_id,
+                uploaded_by_user_id=user_id
+            )
+            db.add(attachment)
+        
+        db.commit()
+        logger.info(f"Successfully attached {len(files)} files to message {latest_message.id}")
+        
+        # Build attachment response data
+        attachments_data = []
+        for file in files:
+            file_url = file.get('url')
+            filename = file.get('filename')
+            content_type = file.get('type', 'application/octet-stream')
+            file_size = file.get('size', 0)
+            
+            if file_url and filename:
+                attachments_data.append({
+                    'filename': filename,
+                    'file_url': file_url,
+                    'content_type': content_type,
+                    'file_size': file_size
+                })
+        
+        # Emit success event with attachment data
+        await sio.emit('files_attached', {
+            'success': True,
+            'message_id': latest_message.id,
+            'file_count': len(files),
+            'attachments': attachments_data
+        }, to=sid, namespace='/agent')
+        
+    except Exception as e:
+        logger.error(f"Error attaching files for sid {sid}: {str(e)}")
+        logger.error(traceback.format_exc())
+        await sio.emit('error', {
+            'error': 'Failed to attach files',
+            'type': 'file_attachment_error'
         }, to=sid, namespace='/agent')
 
 # Add handlers for room management
@@ -1561,4 +1719,138 @@ async def handle_form_submission(sid, data):
         await sio.emit('error', {
             'error': 'Failed to submit form',
             'type': 'form_error'
+        }, to=sid, namespace='/widget')
+
+
+# Handle file attachments for widget messages
+@sio.on('message_files', namespace='/widget')
+async def handle_widget_message_files(sid, data):
+    """Attach files to the most recent message in a widget session"""
+    try:
+        logger.info(f"Handling message_files for widget sid {sid} with data: {data}")
+        
+        # Get session data and authenticate
+        session = await sio.get_session(sid, namespace='/widget')
+        if not session or 'session_id' not in session:
+            logger.error(f"No authenticated session for sid {sid}")
+            await sio.emit('error', {
+                'error': 'Not authenticated',
+                'type': 'auth_error'
+            }, to=sid, namespace='/widget')
+            return
+
+        session_id = data.get('session_id')
+        files = data.get('files', [])
+        
+        if not session_id or not files:
+            logger.error(f"Missing session_id or files in data: {data}")
+            await sio.emit('error', {
+                'error': 'Missing required data',
+                'type': 'validation_error'
+            }, to=sid, namespace='/widget')
+            return
+
+        # Get database session
+        db = next(get_db())
+        
+        # Check if attachments are allowed for this agent
+        agent_repo = AgentRepository(db)
+        agent = agent_repo.get_agent(session.get('agent_id'))
+        if agent and not agent.allow_attachments:
+            logger.warning(f"Attachment attempt for agent {session.get('agent_id')} that doesn't allow attachments")
+            await sio.emit('error', {
+                'error': 'Attachments are not allowed for this agent',
+                'type': 'validation_error'
+            }, to=sid, namespace='/widget')
+            return
+        
+        # Check if chat is handed over to human agent
+        # Check if there's any agent message in the conversation
+        from app.models import ChatHistory
+        agent_message_exists = db.query(ChatHistory).filter(
+            ChatHistory.session_id == session_id,
+            ChatHistory.message_type == 'agent'
+        ).first()
+        
+        if not agent_message_exists:
+            logger.warning(f"Attachment attempt for session {session_id} that is not handed over to a human agent")
+            await sio.emit('error', {
+                'error': 'Attachments are only available when the chat is handed over to a human agent',
+                'type': 'validation_error'
+            }, to=sid, namespace='/widget')
+            return
+        
+        # Find the most recent message in this session
+        latest_message = db.query(ChatHistory).filter(
+            ChatHistory.session_id == session_id
+        ).order_by(ChatHistory.created_at.desc()).first()
+        
+        if not latest_message:
+            logger.error(f"No message found for session {session_id}")
+            await sio.emit('error', {
+                'error': 'No message found',
+                'type': 'not_found_error'
+            }, to=sid, namespace='/widget')
+            return
+        
+        # Create file attachment records
+        from app.models import FileAttachment
+        org_id = session.get('org_id')
+        customer_id = session.get('customer_id')
+        
+        for file in files:
+            file_url = file.get('url')
+            filename = file.get('filename')
+            content_type = file.get('type', 'application/octet-stream')
+            file_size = file.get('size', 0)
+            
+            if not file_url or not filename:
+                logger.warning(f"Skipping file with missing url or filename: {file}")
+                continue
+            
+            # Create attachment
+            attachment = FileAttachment(
+                file_url=file_url,
+                filename=filename,
+                content_type=content_type,
+                file_size=file_size,
+                chat_history_id=latest_message.id,
+                organization_id=org_id,
+                uploaded_by_customer_id=customer_id
+            )
+            db.add(attachment)
+        
+        db.commit()
+        logger.info(f"Successfully attached {len(files)} files to message {latest_message.id}")
+        
+        # Build attachment response data
+        attachments_data = []
+        for file in files:
+            file_url = file.get('url')
+            filename = file.get('filename')
+            content_type = file.get('type', 'application/octet-stream')
+            file_size = file.get('size', 0)
+            
+            if file_url and filename:
+                attachments_data.append({
+                    'filename': filename,
+                    'file_url': file_url,
+                    'content_type': content_type,
+                    'file_size': file_size
+                })
+        
+        # Emit success event with attachment data
+        await sio.emit('files_attached', {
+            'success': True,
+            'message_id': latest_message.id,
+            'file_count': len(files),
+            'attachments': attachments_data
+        }, to=sid, namespace='/widget')
+        
+    except Exception as e:
+        logger.error(f"Error attaching files for widget sid {sid}: {str(e)}")
+        logger.error(traceback.format_exc())
+        await sio.emit('error', {
+            'error': 'Failed to attach files',
+            'type': 'file_attachment_error'
         }, to=sid, namespace='/widget')

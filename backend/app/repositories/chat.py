@@ -122,7 +122,8 @@ class ChatRepository:
             self.db.query(ChatHistory)
             .options(
                 joinedload(ChatHistory.user),
-                joinedload(ChatHistory.agent)
+                joinedload(ChatHistory.agent),
+                joinedload(ChatHistory.attachments)
             )
             .filter(ChatHistory.session_id == session_id)
             .order_by(ChatHistory.created_at.asc())
@@ -361,6 +362,33 @@ class ChatRepository:
         # Get messages for the session
         messages = self.get_session_history(session_id)
         
+        # Build messages list with attachments
+        messages_list = []
+        for msg in messages:
+            msg_dict = {
+                'message': msg.message,
+                'message_type': msg.message_type,
+                'created_at': msg.created_at,
+                'attributes': msg.attributes
+            }
+            
+            # Add attachments with file info if they exist
+            # Note: Signed URLs will be generated on the frontend or via separate API call
+            if msg.attachments:
+                attachments = []
+                for attachment in msg.attachments:
+                    att_dict = {
+                        'id': attachment.id,
+                        'filename': attachment.filename,
+                        'file_url': attachment.file_url,
+                        'content_type': attachment.content_type,
+                        'file_size': attachment.file_size
+                    }
+                    attachments.append(att_dict)
+                msg_dict['attachments'] = attachments
+            
+            messages_list.append(msg_dict)
+        
         # Convert result to dict
         return {
             'customer': {
@@ -380,13 +408,5 @@ class ChatRepository:
             'user_name': result.user_name,
             'created_at': result.created_at,
             'updated_at': result.updated_at,
-            'messages': [
-                {
-                    'message': msg.message,
-                    'message_type': msg.message_type,
-                    'created_at': msg.created_at,
-                    'attributes': msg.attributes
-                }
-                for msg in messages
-            ]
+            'messages': messages_list
         }

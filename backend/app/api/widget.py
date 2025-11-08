@@ -89,7 +89,8 @@ async def get_widget_ui(
                     agent_name=agent.display_name or agent.name,
                     agent_customization=agent.customization,
                     customer_id=customer_id,
-                    agent_workflow=bool(agent.use_workflow and agent.active_workflow_id)
+                    agent_workflow=bool(agent.use_workflow and agent.active_workflow_id),
+                    allow_attachments=agent.allow_attachments
                 ))
         except (JWTError, ValueError) as e:
             # Invalid token, create new one
@@ -111,10 +112,11 @@ async def get_widget_ui(
         agent_customization=agent.customization,
         customer_id=customer_id,
         initial_token=token,
-        agent_workflow=bool(agent.use_workflow and agent.active_workflow_id)
+        agent_workflow=bool(agent.use_workflow and agent.active_workflow_id),
+        allow_attachments=agent.allow_attachments
     ))
 
-async def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None,agent_workflow: bool = False) -> str:
+async def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None, agent_workflow: bool = False, allow_attachments: bool = False) -> str:
     """Generate widget HTML with embedded data"""
     import html
     widget_url = settings.VITE_WIDGET_URL
@@ -158,7 +160,8 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
                     customerId: "{html.escape(customer_id or '')}",
                     initialToken: "{html.escape(initial_token or '')}",
                     customer: {{}},
-                    workflow: {str(agent_workflow).lower()}
+                    workflow: {str(agent_workflow).lower()},
+                    allowAttachments: {str(allow_attachments).lower()}
                 }};
             </script>
         </head>
@@ -300,7 +303,8 @@ async def get_widget_data(
                     "name": agent.name,
                     "display_name": agent.display_name,
                     "customization": customization,
-                    "workflow": bool(agent.use_workflow and agent.active_workflow_id)
+                    "workflow": bool(agent.use_workflow and agent.active_workflow_id),
+                    "allow_attachments": agent.allow_attachments
                 },
                 "token": new_token
             }
@@ -337,7 +341,8 @@ async def get_widget_data(
                         "name": agent.name,
                         "display_name": agent.display_name,
                         "customization": customization,
-                        "workflow": bool(agent.use_workflow and agent.active_workflow_id)
+                        "workflow": bool(agent.use_workflow and agent.active_workflow_id),
+                        "allow_attachments": agent.allow_attachments
                     },
                     "token": new_token
                 }
@@ -374,7 +379,8 @@ async def get_widget_data(
             "name": agent.name,
             "display_name": agent.display_name,
             "customization": customization,
-            "workflow": bool(agent.use_workflow and agent.active_workflow_id)
+            "workflow": bool(agent.use_workflow and agent.active_workflow_id),
+            "allow_attachments": agent.allow_attachments
         }
     }
 
