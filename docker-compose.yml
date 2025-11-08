@@ -73,7 +73,7 @@ services:
     networks:
       - app-network
     # Use watchdog for file change detection and auto-reload
-    command: bash -c "pip install watchdog python-dotenv && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: bash -c "python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     # Keep container running
     stdin_open: true
     tty: true
