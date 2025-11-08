@@ -159,9 +159,6 @@ async def upload_file(
                 detail=f"File size exceeds maximum allowed size of {MAX_FILE_SIZE / (1024*1024)}MB"
             )
         
-        # Reset file pointer for upload
-        await file.seek(0)
-        
         # Generate unique filename
         file_extension = os.path.splitext(file.filename)[1]
         unique_filename = f"{uuid.uuid4()}{file_extension}"
@@ -175,7 +172,7 @@ async def upload_file(
         # Upload to S3/MinIO if enabled, otherwise save locally
         if settings.S3_FILE_STORAGE:
             file_url = await upload_file_to_s3(
-                file=file,
+                file_content=file_content,
                 folder=folder,
                 filename=unique_filename,
                 content_type=file.content_type

@@ -96,19 +96,24 @@ async def get_s3_signed_url(s3_url: str, expiration: int = 2592000) -> str:
         return s3_url
 
 async def upload_file_to_s3(
-    file: UploadFile,
+    file_content: bytes,
     folder: str,
     filename: str,
     content_type: Optional[str] = None
 ) -> str:
     """
     Upload file to S3 bucket
-    Returns the S3 URL of the uploaded file
+    Args:
+        file_content: The file content as bytes
+        folder: The S3 folder path
+        filename: The filename to save as
+        content_type: Optional MIME type
+    Returns:
+        The S3 URL of the uploaded file
     Falls back to local storage if S3 fails
     """
     try:
         s3_client = get_s3_client()
-        file_content = await file.read()
         
         # Construct S3 key (path)
         s3_key = f"{folder}/{filename}"
