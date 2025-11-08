@@ -197,12 +197,18 @@ async def upload_file(
         # Create FileAttachment record for tracking
         try:
             from app.models import FileAttachment
+            
+            # Validate org_id exists before attempting to create attachment
+            org_id = auth_info.get('org_id')
+            if not org_id:
+                raise ValueError("Missing required field: organization_id (org_id not found in auth_info)")
+            
             file_attachment = FileAttachment(
                 file_url=file_url,
                 filename=file.filename,
                 content_type=file.content_type,
                 file_size=file_size,
-                organization_id=auth_info.get('org_id'),
+                organization_id=org_id,
                 uploaded_by_user_id=auth_info.get('user_id') if auth_info.get('type') == 'user' else None,
                 uploaded_by_customer_id=auth_info.get('customer_id') if auth_info.get('type') == 'widget' else None,
             )
