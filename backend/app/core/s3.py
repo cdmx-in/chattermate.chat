@@ -1,7 +1,6 @@
 """
 S3 Storage Utilities
 """
-import os
 import traceback
 import boto3
 from botocore.exceptions import ClientError
