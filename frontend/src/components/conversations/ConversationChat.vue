@@ -346,7 +346,7 @@ onBeforeUnmount(async () => {
                         />
                         <div class="attachment-image-info">
                           <a 
-                            :href="`/api/v1/files/download${attachment.file_url.replace('/chattermate-dev', '')}`" 
+                            :href="attachment.file_url.startsWith('http') ? attachment.file_url : attachment.file_url.startsWith('/api/v1/files/download') ? attachment.file_url : `/api/v1/files/download${attachment.file_url}`" 
                             target="_blank"
                             class="attachment-link"
                           >
@@ -360,7 +360,7 @@ onBeforeUnmount(async () => {
                     <!-- Other file types - render as download link -->
                     <template v-else>
                       <a 
-                        :href="`/api/v1/files/download${attachment.file_url.replace('/chattermate-dev', '')}`" 
+                        :href="attachment.file_url.startsWith('http') ? attachment.file_url : attachment.file_url.startsWith('/api/v1/files/download') ? attachment.file_url : `/api/v1/files/download${attachment.file_url}`" 
                         target="_blank"
                         class="attachment-link"
                       >
