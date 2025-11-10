@@ -112,7 +112,9 @@ async def save_file(file: UploadFile, organization_id: UUID) -> str:
     
     if settings.S3_FILE_STORAGE:
         folder = f"agents/{organization_id}"
-        return await upload_file_to_s3(file, folder, file_name, content_type=file.content_type)
+        file.file.seek(0)
+        content = await file.read()
+        return await upload_file_to_s3(content, folder, file_name, content_type=file.content_type)
     else:
         # Local storage
         upload_dir = f"uploads/agents/{organization_id}"

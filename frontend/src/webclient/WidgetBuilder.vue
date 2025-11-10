@@ -106,37 +106,37 @@ const setupDOMObserver = () => {
     if (domObserver) {
         domObserver.disconnect()
     }
-    
+
     domObserver = new MutationObserver((mutations) => {
         let shouldResetup = false
         let hasNewInputFields = false
-        
+
         mutations.forEach((mutation) => {
             // Check if input fields were added/removed
             if (mutation.type === 'childList') {
-                const addedInputs = Array.from(mutation.addedNodes).some(node => 
-                    node.nodeType === Node.ELEMENT_NODE && 
+                const addedInputs = Array.from(mutation.addedNodes).some(node =>
+                    node.nodeType === Node.ELEMENT_NODE &&
                     ((node as Element).matches('input, textarea') ||
                     (node as Element).querySelector?.('input, textarea'))
                 )
-                
-                const removedInputs = Array.from(mutation.removedNodes).some(node => 
-                    node.nodeType === Node.ELEMENT_NODE && 
+
+                const removedInputs = Array.from(mutation.removedNodes).some(node =>
+                    node.nodeType === Node.ELEMENT_NODE &&
                     ((node as Element).matches('input, textarea') ||
                     (node as Element).querySelector?.('input, textarea'))
                 )
-                
+
                 if (addedInputs) {
                     hasNewInputFields = true
                     shouldResetup = true
                 }
-                
+
                 if (removedInputs) {
                     shouldResetup = true
                 }
             }
         })
-        
+
         if (shouldResetup) {
             // Debounce to avoid excessive calls
             clearTimeout(setupDOMObserver.timeoutId)
@@ -145,7 +145,7 @@ const setupDOMObserver = () => {
             }, hasNewInputFields ? 50 : 100) // Faster setup for new inputs
         }
     })
-    
+
     // Observe the widget container for changes
     const widgetContainer = document.querySelector('.widget-container') || document.body
     domObserver.observe(widgetContainer, {
@@ -164,7 +164,7 @@ let currentInputFields: HTMLElement[] = []
 const setupNativeEventListeners = () => {
     // Clean up existing listeners first
     cleanupNativeEventListeners()
-    
+
     // Try multiple selectors to find input fields
     const selectors = [
         '.widget-container input[type="text"]',
@@ -182,7 +182,7 @@ const setupNativeEventListeners = () => {
         '.chat-input input',
         'input'
     ]
-    
+
     let inputFields = []
     for (const selector of selectors) {
         const fields = document.querySelectorAll(selector)
@@ -191,14 +191,14 @@ const setupNativeEventListeners = () => {
             break
         }
     }
-    
+
     if (inputFields.length === 0) {
         return
     }
-    
+
     // Store reference for cleanup
     currentInputFields = inputFields
-    
+
     inputFields.forEach((input) => {
         // Add native event listeners
         input.addEventListener('input', handleNativeInput, true)
@@ -263,9 +263,9 @@ const initialData = window.__INITIAL_DATA__
 if (initialData?.initialToken) {
     token.value = initialData.initialToken
     // Notify parent window to store token
-    window.parent.postMessage({ 
-        type: 'TOKEN_UPDATE', 
-        token: initialData.initialToken 
+    window.parent.postMessage({
+        type: 'TOKEN_UPDATE',
+        token: initialData.initialToken
     }, '*')
     hasConversationToken.value = true
 }
@@ -293,8 +293,8 @@ const {
 
 // Check if there's an active form being displayed
 const hasActiveForm = computed(() => {
-    return messages.value.some(message => 
-        message.message_type === 'form' && 
+    return messages.value.some(message =>
+        message.message_type === 'form' &&
         (!message.isSubmitted || message.isSubmitted === false)
     )
 })
@@ -306,29 +306,29 @@ const isMessageInputEnabled = computed(() => {
 
         return connectionStatus.value === 'connected' && !loading.value
     }
-    
+
     // For ASK_ANYTHING style, don't require email
     if (isAskAnythingStyle.value) {
 
         return connectionStatus.value === 'connected' && !loading.value
     }
-    
 
 
-    return (isValidEmail(emailInput.value.trim()) && 
+
+    return (isValidEmail(emailInput.value.trim()) &&
            connectionStatus.value === 'connected' && !loading.value)  || window.__INITIAL_DATA__?.workflow
 })
 
 const placeholderText = computed(() => {
-    return connectionStatus.value === 'connected' ? 
-           (isAskAnythingStyle.value ? 'Ask me anything or paste a screenshot...' : 'Type a message or paste a screenshot...') : 
+    return connectionStatus.value === 'connected' ?
+           (isAskAnythingStyle.value ? 'Ask me anything or paste a screenshot...' : 'Type a message or paste a screenshot...') :
            'Connecting...'
 })
 
 // Update the sendMessage function
 const sendMessage = async () => {
     if (!newMessage.value.trim() && uploadedAttachments.value.length === 0) return
-    
+
     // If first message, fetch customization with email first
     if (!hasStartedChat.value && emailInput.value) {
         await checkAuthorization()
@@ -336,18 +336,18 @@ const sendMessage = async () => {
 
     // Store attachments before clearing
     const filesToAttach = uploadedAttachments.value.length > 0 ? [...uploadedAttachments.value] : []
-    
+
     // Send message first
     await socketSendMessage(newMessage.value, emailInput.value, [])
-    
+
     // Then send files separately if any (following ConversationChat pattern)
     if (filesToAttach.length > 0) {
         try {
             // Wait a bit for the chat_response to arrive and set currentSessionId
             await new Promise(resolve => setTimeout(resolve, 100))
-            
+
             console.log('Attempting to send file attachments, currentSessionId:', currentSessionId.value)
-            
+
             // Use the session ID from the composable (captured from chat_response)
             if (currentSessionId.value) {
                 await sendFileAttachments(currentSessionId.value, filesToAttach)
@@ -356,16 +356,16 @@ const sendMessage = async () => {
             console.error('Error sending file attachments:', error)
         }
     }
-    
+
     newMessage.value = ''
     uploadedAttachments.value = []
-    
+
     // Also clear the actual DOM input field to ensure it's visually cleared
     const inputField = document.querySelector('input[placeholder*="Type a message"]') as HTMLInputElement
     if (inputField) {
         inputField.value = ''
     }
-    
+
     // Re-setup native event listeners after message is sent
     // The DOM might have changed, so we need to reattach listeners
     setTimeout(() => {
@@ -412,9 +412,9 @@ const checkAuthorization = async () => {
             hasConversationToken.value = false
             return false
         }
-        
+
         const data = await response.json()
-        
+
         // Update token if new one is provided
         if (data.token) {
             token.value = data.token
@@ -424,7 +424,7 @@ const checkAuthorization = async () => {
         }
 
         hasConversationToken.value = true
-        
+
         // Connect socket and verify connection success
         const connected = await connect()
         if (!connected) {
@@ -433,7 +433,7 @@ const checkAuthorization = async () => {
         }
 
         await fetchChatHistory()
-        
+
         if (data.agent?.customization) {
             applyCustomization(data.agent.customization)
         }
@@ -443,15 +443,12 @@ const checkAuthorization = async () => {
         if (data?.human_agent) {
             humanAgent.value = data.human_agent
         }
-        
+
         // Set allow_attachments flag from agent data
         if (data.agent?.allow_attachments !== undefined) {
             allowAttachments.value = data.agent.allow_attachments
-            // allowAttachments already set from __INITIAL_DATA__
-        } else {
-            // fallback if not in initial data
         }
-        
+
         // Update workflow status in initial data if received from backend
         if (data.agent?.workflow !== undefined) {
             window.__INITIAL_DATA__ = window.__INITIAL_DATA__ || {}
@@ -462,7 +459,7 @@ const checkAuthorization = async () => {
         if (data.agent?.workflow) {
             await getWorkflowState()
         }
-        
+
         return true
     } catch (error) {
         console.error('Error checking authorization:', error)
@@ -515,7 +512,7 @@ watch(() => messages.value, (newMessages) => {
     if (newMessages.length > 0) {
 
         const lastMessage = newMessages[newMessages.length - 1]
-        
+
         handleEndChat(lastMessage)
     }
 }, { deep: true })
@@ -565,7 +562,7 @@ const shouldShowNewConversationOption = computed(() => {
     if (!window.__INITIAL_DATA__?.workflow) {
         return false
     }
-    
+
     // Check if there's a submitted rating message
     const ratingMessage = messages.value.find(msg => msg.message_type === 'rating')
     return ratingMessage?.isSubmitted === true
@@ -576,23 +573,23 @@ const humanAgentPhotoUrl = computed(() => {
     if (!humanAgent.value.human_agent_profile_pic) {
         return ''
     }
-    
+
     // Use signed URL if available (AWS S3)
     if (humanAgent.value.human_agent_profile_pic.includes('amazonaws.com')) {
         return humanAgent.value.human_agent_profile_pic
     }
-    
+
     // For local storage, prepend the API URL
     return `${widgetEnv.API_URL}${humanAgent.value.human_agent_profile_pic}`
 })
 
 // Add this after other methods
 const handleEndChat = (message) => {
-    
+
     if (message.attributes?.end_chat && message.attributes?.request_rating) {
         // Determine the agent name with proper fallbacks
         const displayAgentName = message.agent_name || humanAgent.value?.human_agent_name || agentName.value || 'our agent'
-        
+
         messages.value.push({
             message: `Rate the chat session that you had with ${displayAgentName}`,
             message_type: 'rating',
@@ -634,7 +631,7 @@ const handleSubmitRating = async (sessionId: string, rating: number, feedback: s
     try {
         isSubmittingRating.value = true
         await socketSubmitRating(rating, feedback)
-        
+
         // Instead of removing the rating message, mark it as submitted
         const lastMessage = messages.value.find(msg => msg.message_type === 'rating')
         if (lastMessage) {
@@ -657,7 +654,7 @@ const handleAddToCart = (message) => {
         image: message.product_image,
         vendor: message.product_vendor
     };
-    
+
     if (productData) {
         // Send a message to the parent window (the main shop)
         window.parent.postMessage({
@@ -679,16 +676,16 @@ const handleAddToCartFromCarousel = (product) => {
 // Form validation function
 const validateForm = (formConfig: any): boolean => {
     const errors: Record<string, string> = {}
-    
+
     for (const field of formConfig.fields) {
         const value = formData.value[field.name]
         const error = validateFormField(field, value)
-        
+
         if (error) {
             errors[field.name] = error
         }
     }
-    
+
     formErrors.value = errors
     return Object.keys(errors).length === 0
 }
@@ -696,45 +693,45 @@ const validateForm = (formConfig: any): boolean => {
 // Handle form submission
 const handleFormSubmit = async (formConfig: any) => {
 
-    
+
     if (isSubmittingForm.value) {
         return
     }
-    
+
 
     const isValid = validateForm(formConfig)
- 
-    
+
+
     if (!isValid) {
-       
+
         return
     }
-    
+
     try {
-    
+
         isSubmittingForm.value = true
         await submitForm(formData.value)
-       
-        
+
+
         // Remove the form message from messages array
-        const formIndex = messages.value.findIndex(msg => 
-            msg.message_type === 'form' && 
+        const formIndex = messages.value.findIndex(msg =>
+            msg.message_type === 'form' &&
             (!msg.isSubmitted || msg.isSubmitted === false)
         )
         if (formIndex !== -1) {
             messages.value.splice(formIndex, 1)
-           
+
         }
-        
+
         // Clear form data after successful submission
         formData.value = {}
         formErrors.value = {}
-      
+
     } catch (error) {
         console.error('Failed to submit form:', error)
     } finally {
         isSubmittingForm.value = false
-      
+
     }
 }
 
@@ -743,22 +740,22 @@ const handleFieldChange = (fieldName: string, value: any) => {
 
     formData.value[fieldName] = value
 
-    
+
     // Real-time validation: validate the current field if it has a value
     if (value && value.toString().trim() !== '') {
         // Find the field configuration for real-time validation
         let fieldConfig = null
-        
+
         // Check full screen form first
         if (fullScreenFormData.value?.fields) {
             fieldConfig = fullScreenFormData.value.fields.find(f => f.name === fieldName)
         }
-        
+
         // If not found and there's a current form, check regular form
         if (!fieldConfig && currentForm.value?.fields) {
             fieldConfig = currentForm.value.fields.find(f => f.name === fieldName)
         }
-        
+
         if (fieldConfig) {
             const error = validateFormField(fieldConfig, value)
             if (error) {
@@ -766,7 +763,7 @@ const handleFieldChange = (fieldName: string, value: any) => {
                 console.log(`Validation error for ${fieldName}:`, error)
             } else {
                 delete formErrors.value[fieldName]
-      
+
             }
         }
     } else {
@@ -790,31 +787,31 @@ const validateFormField = (field: any, value: any): string | null => {
     if (field.required && (!value || value.toString().trim() === '')) {
         return `${field.label} is required`
     }
-    
+
     // Skip further validation if field is empty and not required
     if (!value || value.toString().trim() === '') {
         return null
     }
-    
+
     // Email validation
     if (field.type === 'email' && !isValidEmail(value)) {
         return `Please enter a valid email address`
     }
-    
+
     // Phone number validation
     if (field.type === 'tel' && !isValidPhoneNumber(value)) {
         return `Please enter a valid phone number`
     }
-    
+
     // Length validation for text fields
     if ((field.type === 'text' || field.type === 'textarea') && field.minLength && value.length < field.minLength) {
         return `${field.label} must be at least ${field.minLength} characters`
     }
-    
+
     if ((field.type === 'text' || field.type === 'textarea') && field.maxLength && value.length > field.maxLength) {
         return `${field.label} must not exceed ${field.maxLength} characters`
     }
-    
+
     // Number validation
     if (field.type === 'number') {
         const numValue = parseFloat(value)
@@ -828,50 +825,50 @@ const validateFormField = (field: any, value: any): string | null => {
             return `${field.label} must not exceed ${field.maxLength}`
         }
     }
-    
+
     return null
 }
 
 // Handle full screen form submission
 const submitFullScreenForm = async () => {
 
-    
+
     if (isSubmittingForm.value || !fullScreenFormData.value) {
         return
     }
-    
+
     try {
         isSubmittingForm.value = true
         formErrors.value = {}
-        
+
         // Enhanced validation with field-specific rules
         let hasErrors = false
         for (const field of fullScreenFormData.value.fields || []) {
             const value = formData.value[field.name]
             const error = validateFormField(field, value)
-            
+
             if (error) {
                 formErrors.value[field.name] = error
                 hasErrors = true
                 console.log(`Validation error for field ${field.name}:`, error)
             }
         }
-        
-        
+
+
         if (hasErrors) {
             isSubmittingForm.value = false
             console.log('Validation failed, not submitting')
             return
         }
-        
+
         // Submit form data through the workflow
         await submitForm(formData.value)
-        
+
         // Hide full screen form after successful submission
         showFullScreenForm.value = false
         fullScreenFormData.value = null
         formData.value = {}
-        
+
     } catch (error) {
         console.error('Failed to submit full screen form:', error)
     } finally {
@@ -882,15 +879,15 @@ const submitFullScreenForm = async () => {
 
 const handleViewDetails = (product, shopDomain) => {
     console.log('handleViewDetails called with:', { product, shopDomain });
-    
+
     if (!product) {
         console.error('No product provided to handleViewDetails');
         return;
     }
-    
+
     // Try to construct the product URL
     let productUrl = null;
-    
+
     // If product has a handle, construct the URL
     if (product.handle && shopDomain) {
         productUrl = `https://${shopDomain}/products/${product.handle}`;
@@ -906,7 +903,7 @@ const handleViewDetails = (product, shopDomain) => {
         alert('Unable to open product: Product information incomplete.');
         return;
     }
-    
+
     // Open the product URL in new tab
     if (productUrl) {
         console.log('Opening product URL:', productUrl);
@@ -917,12 +914,12 @@ const handleViewDetails = (product, shopDomain) => {
 // Add this function in the script section after the other helper functions
 const removeUrls = (text) => {
     if (!text) return '';
-    
+
     console.log('removeUrls - Input text:', text);
-    
+
     // First, remove markdown images: ![alt text](url)
     let processedText = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '');
-    
+
     // Then, temporarily replace regular markdown links with placeholders to preserve them
     const markdownLinks = [];
     processedText = processedText.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, linkText, url) => {
@@ -931,26 +928,26 @@ const removeUrls = (text) => {
         markdownLinks.push(match);
         return placeholder;
     });
-    
+
     console.log('After replacing markdown links with placeholders:', processedText);
     console.log('Markdown links array:', markdownLinks);
-    
+
     // Now remove standalone URLs (not part of markdown links)
     processedText = processedText.replace(/https?:\/\/[^\s\)]+/g, '[link removed]');
-    
+
     console.log('After removing standalone URLs:', processedText);
-    
+
     // Restore markdown links
     markdownLinks.forEach((link, index) => {
         processedText = processedText.replace(`__MARKDOWN_LINK_${index}__`, link);
         console.log(`Restored markdown link ${index}:`, link);
     });
-    
+
     // Clean up extra whitespace and newlines left after removing images
     processedText = processedText.replace(/\n\s*\n\s*\n/g, '\n\n').trim();
-    
+
     console.log('removeUrls - Final output:', processedText);
-    
+
     return processedText;
 }
 
@@ -969,15 +966,15 @@ const isImageAttachment = (contentType: string | undefined | null): boolean => {
 // Generate download URL for attachments
 const getDownloadUrl = (fileUrl: string | undefined | null): string => {
   if (!fileUrl) return ''
-  
+
   console.log('getDownloadUrl input:', fileUrl)
-  
+
   // If it's already a download URL, return as-is
   if (fileUrl.startsWith('/api/v1/files/download/')) {
     console.log('getDownloadUrl output (already download URL):', fileUrl)
     return fileUrl
   }
-  
+
   // If fileUrl starts with /api/v1/uploads/, extract the path after that
   if (fileUrl.startsWith('/api/v1/uploads/')) {
     const path = fileUrl.replace('/api/v1/uploads/', '')
@@ -985,14 +982,14 @@ const getDownloadUrl = (fileUrl: string | undefined | null): string => {
     console.log('getDownloadUrl output (type 1):', result)
     return result
   }
-  
+
   // If fileUrl is already a file path (widget_attachments/... or chat_attachments/...)
   if (fileUrl.startsWith('widget_attachments/') || fileUrl.startsWith('chat_attachments/')) {
     const result = `/api/v1/files/download/${fileUrl}`
     console.log('getDownloadUrl output (type 2):', result)
     return result
   }
-  
+
   // Fallback: assume it's a complete file path
   const result = `/api/v1/files/download${fileUrl.startsWith('/') ? fileUrl : '/' + fileUrl}`
   console.log('getDownloadUrl output (fallback):', result)
@@ -1037,7 +1034,7 @@ const handleFileSelect = async (event: Event) => {
 const handleDrop = async (event: DragEvent) => {
   event.preventDefault()
   dragOver.value = false
-  
+
   if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
     await uploadFiles(Array.from(event.dataTransfer.files))
   }
@@ -1055,7 +1052,7 @@ const handleDragLeave = () => {
 const handlePaste = async (event: ClipboardEvent) => {
   const items = event.clipboardData?.items
   if (!items) return
-  
+
   const files: File[] = []
   for (const item of Array.from(items)) {
     if (item.kind === 'file') {
@@ -1065,7 +1062,7 @@ const handlePaste = async (event: ClipboardEvent) => {
       }
     }
   }
-  
+
   if (files.length > 0) {
     event.preventDefault()
     await uploadFiles(files)
@@ -1077,45 +1074,45 @@ const uploadFiles = async (files: File[]) => {
     console.error(`Maximum ${maxFiles} files allowed`)
     return
   }
-  
+
   const remainingSlots = maxFiles - uploadedAttachments.value.length
   const filesToUpload = files.slice(0, remainingSlots)
-  
+
   if (files.length > remainingSlots) {
     console.warn(`Only ${remainingSlots} more file(s) can be uploaded`)
   }
-  
+
   isUploading.value = true
-  
+
   for (const file of filesToUpload) {
     try {
       // Store the file size locally from the File object BEFORE uploading
       const fileSize = file.size
-      
+
       const formData = new FormData()
       formData.append('file', file)
-      
+
       const headers: Record<string, string> = {}
       if (token.value) {
         headers['Authorization'] = `Bearer ${token.value}`
       }
-      
+
       const response = await fetch(`${widgetEnv.API_URL}/files/upload`, {
         method: 'POST',
         headers,
         body: formData,
         credentials: 'include'
       })
-      
+
       if (!response.ok) {
         throw new Error('Upload failed')
       }
-      
+
       const data = await response.json()
-      
+
       // Use fileSize as fallback if API doesn't return size
       const finalSize = data.size || fileSize
-      
+
       uploadedAttachments.value.push({
         url: data.file_url,
         signedUrl: data.signed_url,
@@ -1127,7 +1124,7 @@ const uploadFiles = async (files: File[]) => {
       console.error('Upload error:', error)
     }
   }
-  
+
   isUploading.value = false
 }
 
@@ -1172,14 +1169,14 @@ const handleUserInputSubmit = async (message: any) => {
         }
 
         const userInput = message.userInputValue.trim()
-        
+
         // Mark message as submitted
         message.isSubmitted = true
         message.submittedValue = userInput
-        
+
         // Send the user input as a regular message to continue the workflow
         await socketSendMessage(userInput, emailInput.value)
-        
+
     } catch (error) {
         console.error('Failed to submit user input:', error)
         // Reset submission state on error
@@ -1198,14 +1195,14 @@ const initializeWidget = async () => {
             await new Promise(resolve => setTimeout(resolve, 100))
             attempts++
         }
-        
+
         if (!window.__INITIAL_DATA__?.widgetId) {
             console.error('Widget data not available after waiting')
             return false
         }
 
         const isAuthorized = await checkAuthorization()
-        
+
         if (!isAuthorized) {
             connectionStatus.value = 'connected'
             return false
@@ -1245,7 +1242,7 @@ const setupEventListeners = () => {
     onWorkflowState((data) => {
 
         workflowButtonText.value = data.button_text || 'Start Chat'
-        
+
         if (data.type === 'landing_page') {
             landingPageData.value = data.landing_page_data
             showLandingPage.value = true
@@ -1271,16 +1268,16 @@ const setupEventListeners = () => {
                     created_at: new Date().toISOString(),
                     isSubmitted: false
                 }
-                
+
                 // Check if form message already exists to avoid duplicates
-                const existingFormIndex = messages.value.findIndex(msg => 
+                const existingFormIndex = messages.value.findIndex(msg =>
                     msg.message_type === 'form' && !msg.isSubmitted
                 )
-                
+
                 if (existingFormIndex === -1) {
                     messages.value.push(formMessage)
                 }
-                
+
                 showLandingPage.value = false
                 showFullScreenForm.value = false
             }
@@ -1299,7 +1296,7 @@ const setupEventListeners = () => {
 // Start new conversation workflow
 const startNewConversationWorkflow = async () => {
     try {
-       
+
         await initializeWidget()
         await getWorkflowState()
     } catch (error) {
@@ -1318,10 +1315,10 @@ const handleStartNewConversation = async () => {
 onMounted(async () => {
     await initializeWidget()
     setupEventListeners()
-    
+
     // Setup DOM observer to detect changes
     setupDOMObserver()
-    
+
     // Only set up native event listeners if we're in a state where input is expected
     // This avoids unnecessary overhead during workflow navigation
     const shouldSetupListeners = () => {
@@ -1329,10 +1326,10 @@ onMounted(async () => {
         const hasMessages = messages.value.length > 0
         const isConnected = connectionStatus.value === 'connected'
         const hasInputFields = document.querySelector('input[type="text"], textarea') !== null
-        
+
         return hasMessages || isConnected || hasInputFields
     }
-    
+
     // Initial setup with intelligent timing
     if (shouldSetupListeners()) {
         setTimeout(setupNativeEventListeners, 100)
@@ -1348,22 +1345,22 @@ onUnmounted(() => {
             scrollToBottom()
         }
     })
-    
+
     // Clean up DOM observer
     if (domObserver) {
         domObserver.disconnect()
         domObserver = null
     }
-    
+
     // Clear any pending timeouts
     if (setupDOMObserver.timeoutId) {
         clearTimeout(setupDOMObserver.timeoutId)
         setupDOMObserver.timeoutId = null
     }
-    
+
     // Clean up native event listeners
     cleanupNativeEventListeners()
-    
+
     cleanup()
 })
 
@@ -1378,7 +1375,7 @@ const containerStyles = computed(() => {
         height: '580px',
         borderRadius: 'var(--radius-lg)'
     }
-    
+
     // Override for mobile devices
     if (window.innerWidth <= 768) {
         baseStyles.width = '100vw'
@@ -1392,7 +1389,7 @@ const containerStyles = computed(() => {
         baseStyles.maxWidth = '100vw'
         baseStyles.maxHeight = '100vh'
     }
-    
+
     if (isAskAnythingStyle.value) {
         // Mobile responsive adjustments for ASK_ANYTHING style
         if (window.innerWidth <= 768) {
@@ -1425,7 +1422,7 @@ const containerStyles = computed(() => {
             }
         }
     }
-    
+
     return baseStyles
 })
 
@@ -1457,7 +1454,7 @@ const shouldShowWelcomeMessage = computed(() => {
                 </div>
             </div>
             <div v-else-if="connectionStatus === 'failed'" class="failed-message">
-                Connection failed. 
+                Connection failed.
                 <button @click="handleReconnect" class="reconnect-button">
                     Click here to reconnect
                 </button>
@@ -1473,26 +1470,26 @@ const shouldShowWelcomeMessage = computed(() => {
         <div v-if="shouldShowWelcomeMessage" class="welcome-message-section" :style="chatStyles">
             <div class="welcome-content">
                 <div class="welcome-header">
-                    <img 
-                        v-if="photoUrl" 
-                        :src="photoUrl" 
-                        :alt="agentName" 
+                    <img
+                        v-if="photoUrl"
+                        :src="photoUrl"
+                        :alt="agentName"
                         class="welcome-avatar"
                     >
                     <h1 class="welcome-title">{{ customization.welcome_title || `Welcome to ${agentName}` }}</h1>
                     <p class="welcome-subtitle">{{ customization.welcome_subtitle || "I'm here to help you with anything you need. What can I assist you with today?" }}</p>
                 </div>
             </div>
-            
+
             <!-- Welcome Input Container -->
             <div class="welcome-input-container">
                 <div class="email-input" v-if="!hasStartedChat && !hasConversationToken && !isAskAnythingStyle">
-                    <input 
+                    <input
                         v-model="emailInput"
-                        type="email" 
-                        placeholder="Enter your email address" 
+                        type="email"
+                        placeholder="Enter your email address"
                         :disabled="loading || connectionStatus !== 'connected'"
-                        :class="{ 
+                        :class="{
                             'invalid': emailInput.trim() && !isValidEmail(emailInput.trim()),
                             'disabled': connectionStatus !== 'connected'
                         }"
@@ -1500,9 +1497,9 @@ const shouldShowWelcomeMessage = computed(() => {
                     >
                 </div>
                 <div class="welcome-message-input">
-                    <input 
-                        v-model="newMessage" 
-                        type="text" 
+                    <input
+                        v-model="newMessage"
+                        type="text"
                         :placeholder=placeholderText
                         @keypress="handleKeyPress"
                         @input="handleInputSync"
@@ -1511,9 +1508,9 @@ const shouldShowWelcomeMessage = computed(() => {
                         :class="{ 'disabled': !isMessageInputEnabled }"
                         class="welcome-message-field"
                     >
-                    <button 
-                        class="welcome-send-button" 
-                        :style="userBubbleStyles" 
+                    <button
+                        class="welcome-send-button"
+                        :style="userBubbleStyles"
                         @click="sendMessage"
                         :disabled="!newMessage.trim() || !isMessageInputEnabled"
                     >
@@ -1524,7 +1521,7 @@ const shouldShowWelcomeMessage = computed(() => {
                     </button>
                 </div>
             </div>
-            
+
             <!-- Powered by footer for welcome message -->
             <div class="powered-by-welcome" :style="messageNameStyles">
                 <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -1547,7 +1544,7 @@ const shouldShowWelcomeMessage = computed(() => {
                     </div>
                 </div>
                 <div class="landing-page-actions">
-                    <button 
+                    <button
                         class="landing-page-button"
                         @click="handleLandingPageProceed"
                     >
@@ -1574,10 +1571,10 @@ const shouldShowWelcomeMessage = computed(() => {
                         {{ fullScreenFormData.description }}
                     </p>
                 </div>
-                
+
                 <div class="form-fields">
-                    <div 
-                        v-for="field in fullScreenFormData.fields" 
+                    <div
+                        v-for="field in fullScreenFormData.fields"
                         :key="field.name"
                         class="form-field"
                     >
@@ -1585,7 +1582,7 @@ const shouldShowWelcomeMessage = computed(() => {
                             {{ field.label }}
                             <span v-if="field.required" class="required-indicator">*</span>
                         </label>
-                        
+
                         <!-- Text Input -->
                         <input
                             v-if="field.type === 'text' || field.type === 'email' || field.type === 'tel'"
@@ -1603,7 +1600,7 @@ const shouldShowWelcomeMessage = computed(() => {
                             :autocomplete="field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'off'"
                             :inputmode="field.type === 'tel' ? 'tel' : field.type === 'email' ? 'email' : 'text'"
                         />
-                        
+
                         <!-- Number Input -->
                         <input
                             v-else-if="field.type === 'number'"
@@ -1618,7 +1615,7 @@ const shouldShowWelcomeMessage = computed(() => {
                             class="form-input"
                             :class="{ 'error': formErrors[field.name] }"
                         />
-                        
+
                         <!-- Textarea -->
                         <textarea
                             v-else-if="field.type === 'textarea'"
@@ -1633,7 +1630,7 @@ const shouldShowWelcomeMessage = computed(() => {
                             :class="{ 'error': formErrors[field.name] }"
                             rows="4"
                         ></textarea>
-                        
+
                         <!-- Select -->
                         <select
                             v-else-if="field.type === 'select'"
@@ -1645,15 +1642,15 @@ const shouldShowWelcomeMessage = computed(() => {
                             :class="{ 'error': formErrors[field.name] }"
                         >
                             <option value="">{{ field.placeholder || 'Please select...' }}</option>
-                            <option 
-                                v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())" 
-                                :key="option" 
+                            <option
+                                v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())"
+                                :key="option"
                                 :value="option.trim()"
                             >
                                 {{ option.trim() }}
                             </option>
                         </select>
-                        
+
                         <!-- Checkbox -->
                         <label
                             v-else-if="field.type === 'checkbox'"
@@ -1669,14 +1666,14 @@ const shouldShowWelcomeMessage = computed(() => {
                             />
                             <span class="checkbox-label">{{ field.label }}</span>
                         </label>
-                        
+
                         <!-- Radio -->
-                        <div 
+                        <div
                             v-else-if="field.type === 'radio'"
                             class="radio-group"
                         >
-                            <label 
-                                v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())" 
+                            <label
+                                v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())"
                                 :key="option"
                                 class="radio-field"
                             >
@@ -1692,16 +1689,16 @@ const shouldShowWelcomeMessage = computed(() => {
                                 <span class="radio-label">{{ option.trim() }}</span>
                             </label>
                         </div>
-                        
+
                         <!-- Field error -->
                         <div v-if="formErrors[field.name]" class="field-error">
                             {{ formErrors[field.name] }}
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="form-actions">
-                    <button 
+                    <button
                         @click="() => { console.log('Submit button clicked!'); submitFullScreenForm(); }"
                         :disabled="isSubmittingForm"
                         class="submit-form-button"
@@ -1730,10 +1727,10 @@ const shouldShowWelcomeMessage = computed(() => {
         <div v-else-if="!shouldShowWelcomeMessage" class="chat-panel" :class="{ 'ask-anything-chat': isAskAnythingStyle }" :style="chatStyles" v-if="isExpanded">
             <div v-if="!isAskAnythingStyle" class="chat-header" :style="headerBorderStyles">
                 <div class="header-content">
-                    <img 
-                        v-if="humanAgentPhotoUrl || photoUrl" 
-                        :src="humanAgentPhotoUrl || photoUrl" 
-                        :alt="humanAgent.human_agent_name || agentName" 
+                    <img
+                        v-if="humanAgentPhotoUrl || photoUrl"
+                        :src="humanAgentPhotoUrl || photoUrl"
+                        :alt="humanAgent.human_agent_name || agentName"
                         class="header-avatar"
                     >
                     <div class="header-info">
@@ -1747,10 +1744,10 @@ const shouldShowWelcomeMessage = computed(() => {
             </div>
             <div v-else class="ask-anything-top" :style="headerBorderStyles">
                 <div class="ask-anything-header">
-                    <img 
-                        v-if="humanAgentPhotoUrl || photoUrl" 
-                        :src="humanAgentPhotoUrl || photoUrl" 
-                        :alt="humanAgent.human_agent_name || agentName" 
+                    <img
+                        v-if="humanAgentPhotoUrl || photoUrl"
+                        :src="humanAgentPhotoUrl || photoUrl"
+                        :alt="humanAgent.human_agent_name || agentName"
                         class="header-avatar"
                     >
                     <div class="header-info">
@@ -1771,11 +1768,11 @@ const shouldShowWelcomeMessage = computed(() => {
 
             <div class="chat-messages" ref="messagesContainer">
                 <template v-for="(message, index) in messages" :key="index">
-                    <div 
+                    <div
                         :class="[
                             'message',
-                            message.message_type === 'bot' ? 'agent-message' : 
-                            message.message_type === 'agent' ? 'agent-message' : 
+                            message.message_type === 'bot' ? 'agent-message' :
+                            message.message_type === 'agent' ? 'agent-message' :
                             message.message_type === 'system' ? 'system-message' :
                             message.message_type === 'rating' ? 'rating-message' :
                             message.message_type === 'form' ? 'form-message' :
@@ -1783,15 +1780,15 @@ const shouldShowWelcomeMessage = computed(() => {
                             'user-message'
                         ]"
                     >
-                        <div class="message-bubble" 
-                            :style="message.message_type === 'system' || message.message_type === 'rating' || message.message_type === 'product' || message.shopify_output ? {} : 
-                                   message.message_type === 'user' ? userBubbleStyles : 
+                        <div class="message-bubble"
+                            :style="message.message_type === 'system' || message.message_type === 'rating' || message.message_type === 'product' || message.shopify_output ? {} :
+                                   message.message_type === 'user' ? userBubbleStyles :
                                    agentBubbleStyles"
                         >
                             <template v-if="message.message_type === 'rating'">
                                 <div class="rating-content">
                                     <p class="rating-prompt">Rate the chat session that you had with {{ message.agent_name || humanAgent.human_agent_name || agentName || 'our agent' }}</p>
-                                    
+
                                     <!-- Rating stars -->
                                     <div class="star-rating" :class="{ 'submitted': isSubmittingRating || message.isSubmitted }">
                                         <button
@@ -1811,7 +1808,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                             ★
                                         </button>
                                     </div>
-                                    
+
                                     <!-- Feedback input before submission -->
                                     <div v-if="message.showFeedback && !message.isSubmitted" class="feedback-wrapper">
                                         <div class="feedback-section">
@@ -1833,15 +1830,15 @@ const shouldShowWelcomeMessage = computed(() => {
                                             {{ isSubmittingRating ? 'Submitting...' : 'Submit Rating' }}
                                         </button>
                                     </div>
-                                    
+
                                     <!-- Submitted feedback display -->
                                     <div v-if="message.isSubmitted && message.finalFeedback" class="submitted-feedback-wrapper">
                                         <div class="submitted-feedback">
                                             <p class="submitted-feedback-text">{{ message.finalFeedback }}</p>
                                         </div>
-                                        
+
                                     </div>
-                                    
+
                                     <!-- Thank you message if no feedback was provided -->
                                     <div v-else-if="message.isSubmitted" class="submitted-message">
                                         Thank you for your rating!
@@ -1857,8 +1854,8 @@ const shouldShowWelcomeMessage = computed(() => {
                                     </p>
                                 </div>
                                     <div class="form-fields">
-                                        <div 
-                                            v-for="field in message.attributes?.form_data?.fields" 
+                                        <div
+                                            v-for="field in message.attributes?.form_data?.fields"
                                             :key="field.name"
                                             class="form-field"
                                         >
@@ -1866,7 +1863,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                                 {{ field.label }}
                                                 <span v-if="field.required" class="required-indicator">*</span>
                                             </label>
-                                            
+
                                             <!-- Text Input -->
                                             <input
                                                 v-if="field.type === 'text' || field.type === 'email' || field.type === 'tel'"
@@ -1885,7 +1882,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                                 :autocomplete="field.type === 'email' ? 'email' : field.type === 'tel' ? 'tel' : 'off'"
                                                 :inputmode="field.type === 'tel' ? 'tel' : field.type === 'email' ? 'email' : 'text'"
                                             />
-                                            
+
                                             <!-- Number Input -->
                                             <input
                                                 v-else-if="field.type === 'number'"
@@ -1901,7 +1898,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                                 :class="{ 'error': formErrors[field.name] }"
                                                 :disabled="isSubmittingForm"
                                             />
-                                            
+
                                             <!-- Textarea -->
                                             <textarea
                                                 v-else-if="field.type === 'textarea'"
@@ -1917,7 +1914,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                                 :disabled="isSubmittingForm"
                                                 rows="3"
                                             ></textarea>
-                                            
+
                                             <!-- Select -->
                                             <select
                                                 v-else-if="field.type === 'select'"
@@ -1930,15 +1927,15 @@ const shouldShowWelcomeMessage = computed(() => {
                                                 :disabled="isSubmittingForm"
                                             >
                                                 <option value="">{{ field.placeholder || 'Select an option' }}</option>
-                                                <option 
-                                                    v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())" 
-                                                    :key="option.trim()" 
+                                                <option
+                                                    v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())"
+                                                    :key="option.trim()"
                                                     :value="option.trim()"
                                                 >
                                                     {{ option.trim() }}
                                                 </option>
                                             </select>
-                                            
+
                                             <!-- Checkbox -->
                                             <div v-else-if="field.type === 'checkbox'" class="checkbox-field">
                                                 <input
@@ -1953,11 +1950,11 @@ const shouldShowWelcomeMessage = computed(() => {
                                                     {{ field.placeholder || field.label }}
                                                 </label>
                                             </div>
-                                            
+
                                             <!-- Radio buttons -->
                                             <div v-else-if="field.type === 'radio'" class="radio-field">
-                                                <div 
-                                                    v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())" 
+                                                <div
+                                                    v-for="option in (Array.isArray(field.options) ? field.options : field.options?.split('\n') || []).filter(o => o.trim())"
                                                     :key="option.trim()"
                                                     class="radio-option"
                                                 >
@@ -1976,14 +1973,14 @@ const shouldShowWelcomeMessage = computed(() => {
                                                     </label>
                                                 </div>
                                             </div>
-                                            
+
                                             <!-- Error message -->
                                             <div v-if="formErrors[field.name]" class="field-error">
                                                 {{ formErrors[field.name] }}
                                             </div>
                                         </div>
                                     </div>
-                                    
+
                                     <div class="form-actions">
                                         <button
                                             @click="() => { console.log('Regular form submit button clicked!'); handleFormSubmit(message.attributes?.form_data); }"
@@ -1999,13 +1996,13 @@ const shouldShowWelcomeMessage = computed(() => {
                             <template v-else-if="message.message_type === 'user_input'">
                                 <div class="user-input-content">
                                     <!-- Only show prompt if message exists and is not empty -->
-                                    <div 
-                                        v-if="message.attributes?.prompt_message && message.attributes.prompt_message.trim()" 
+                                    <div
+                                        v-if="message.attributes?.prompt_message && message.attributes.prompt_message.trim()"
                                         class="user-input-prompt"
                                     >
                                         {{ message.attributes.prompt_message }}
                                     </div>
-                                    
+
                                     <!-- Show input form if not submitted -->
                                     <div v-if="!message.isSubmitted" class="user-input-form">
                                         <textarea
@@ -2024,12 +2021,12 @@ const shouldShowWelcomeMessage = computed(() => {
                                             Submit
                                         </button>
                                     </div>
-                                    
+
                                     <!-- Show submitted value -->
                                     <div v-else class="user-input-submitted">
                                         <strong>Your input:</strong> {{ message.submittedValue }}
-                                        <div 
-                                            v-if="message.attributes?.confirmation_message && message.attributes.confirmation_message.trim()" 
+                                        <div
+                                            v-if="message.attributes?.confirmation_message && message.attributes.confirmation_message.trim()"
                                             class="user-input-confirmation"
                                         >
                                             {{ message.attributes.confirmation_message }}
@@ -2041,7 +2038,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                 <div class="product-message-container">
                                     <!-- Display the message text, removing images if products are present -->
                                     <div v-if="message.message" v-html="marked(message.shopify_output?.products?.length > 0 ? removeUrls(message.message) : message.message, { renderer })" class="product-message-text"></div>
-                                    
+
                                     <!-- Always use carousel/list display -->
                                     <div v-if="message.shopify_output?.products && message.shopify_output.products.length > 0" class="products-carousel">
                                         <h3 class="carousel-title">Products</h3>
@@ -2057,7 +2054,7 @@ const shouldShowWelcomeMessage = computed(() => {
                                                         <div class="product-price-compact">{{ product.price_formatted || `₹${product.price}` }}</div>
                                                     </div>
                                                     <div class="product-actions-compact">
-                                                        <button 
+                                                        <button
                                                             class="view-details-button-compact"
                                                             @click="handleViewDetails(product, message.shopify_output?.shop_domain)"
                                                         >
@@ -2081,27 +2078,27 @@ const shouldShowWelcomeMessage = computed(() => {
                             </template>
                             <template v-else>
                                 <div v-html="marked(message.message, { renderer })"></div>
-                                
+
                                 <!-- Display attachments if present -->
                                 <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
-                                  <div 
-                                    v-for="attachment in message.attachments" 
+                                  <div
+                                    v-for="attachment in message.attachments"
                                     :key="attachment.id"
                                     class="attachment-item"
                                   >
                                     <!-- Image attachment - render as image -->
                                     <template v-if="isImageAttachment(attachment.content_type)">
                                       <div class="attachment-image-container">
-                                        <img 
-                                          :src="attachment.file_url" 
+                                        <img
+                                          :src="attachment.file_url"
                                           :alt="attachment.filename"
                                           class="attachment-image"
                                           @click.stop="openPreview({url: attachment.file_url, filename: attachment.filename, type: attachment.content_type, signedUrl: undefined, size: undefined})"
                                           style="cursor: pointer;"
                                         />
                                         <div class="attachment-image-info">
-                                          <a 
-                                            :href="getDownloadUrl(attachment.file_url)" 
+                                          <a
+                                            :href="getDownloadUrl(attachment.file_url)"
                                             target="_blank"
                                             class="attachment-link"
                                           >
@@ -2118,8 +2115,8 @@ const shouldShowWelcomeMessage = computed(() => {
                                     </template>
                                     <!-- Other file types - render as download link -->
                                     <template v-else>
-                                      <a 
-                                        :href="getDownloadUrl(attachment.file_url)" 
+                                      <a
+                                        :href="getDownloadUrl(attachment.file_url)"
                                         target="_blank"
                                         class="attachment-link"
                                       >
@@ -2156,18 +2153,18 @@ const shouldShowWelcomeMessage = computed(() => {
             <!-- Chat Input Section (Hidden when conversation is ended in workflow) -->
             <div v-if="!shouldShowNewConversationOption" class="chat-input" :class="{ 'ask-anything-input': isAskAnythingStyle }" :style="agentBubbleStyles">
                 <div class="email-input" v-if="!hasStartedChat && !hasConversationToken && !isAskAnythingStyle">
-                    <input 
+                    <input
                         v-model="emailInput"
-                        type="email" 
-                        placeholder="Enter your email address to begin" 
+                        type="email"
+                        placeholder="Enter your email address to begin"
                         :disabled="loading || connectionStatus !== 'connected'"
-                        :class="{ 
+                        :class="{
                             'invalid': emailInput.trim() && !isValidEmail(emailInput.trim()),
                             'disabled': connectionStatus !== 'connected'
                         }"
                     >
                 </div>
-                
+
                 <!-- File upload input (hidden) -->
                 <input
                     ref="fileInputRef"
@@ -2177,7 +2174,7 @@ const shouldShowWelcomeMessage = computed(() => {
                     style="display: none"
                     @change="handleFileSelect"
                 />
-                
+
                 <!-- File previews -->
                 <div v-if="uploadedAttachments.length > 0" class="file-previews-widget">
                     <div
@@ -2222,18 +2219,18 @@ const shouldShowWelcomeMessage = computed(() => {
                         </button>
                     </div>
                 </div>
-                
+
                 <!-- Upload progress indicator -->
                 <div v-if="isUploading" class="upload-progress-widget">
                     <div class="upload-spinner-widget"></div>
                     <span class="upload-text-widget">Uploading files...</span>
                 </div>
-                
+
                 <div class="message-input">
-                    <input 
-                        v-model="newMessage" 
-                        type="text" 
-                        :placeholder="placeholderText" 
+                    <input
+                        v-model="newMessage"
+                        type="text"
+                        :placeholder="placeholderText"
                         @keypress="handleKeyPress"
                         @input="handleInputSync"
                         @change="handleInputSync"
@@ -2244,7 +2241,7 @@ const shouldShowWelcomeMessage = computed(() => {
                         :disabled="!isMessageInputEnabled"
                         :class="{ 'disabled': !isMessageInputEnabled, 'ask-anything-field': isAskAnythingStyle }"
                     >
-                    <button 
+                    <button
                         v-if="canUploadMore"
                         type="button"
                         class="attach-button"
@@ -2253,18 +2250,18 @@ const shouldShowWelcomeMessage = computed(() => {
                         :title="`Attach files (${uploadedAttachments.length}/${maxFiles} used) or paste screenshots`"
                     >
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" 
-                                stroke="currentColor" 
-                                stroke-width="2.2" 
-                                stroke-linecap="round" 
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"
+                                stroke="currentColor"
+                                stroke-width="2.2"
+                                stroke-linecap="round"
                                 stroke-linejoin="round"/>
                         </svg>
                         <span class="attach-button-glow"></span>
                     </button>
-                    <button 
-                        class="send-button" 
+                    <button
+                        class="send-button"
                         :class="{ 'ask-anything-send': isAskAnythingStyle }"
-                        :style="userBubbleStyles" 
+                        :style="userBubbleStyles"
                         @click="sendMessage"
                         :disabled="(!newMessage.trim() && uploadedAttachments.length === 0) || !isMessageInputEnabled"
                     >
@@ -2280,7 +2277,7 @@ const shouldShowWelcomeMessage = computed(() => {
             <div v-else class="new-conversation-section" :style="agentBubbleStyles">
                 <div class="conversation-ended-message">
                     <p class="ended-text">This chat has ended.</p>
-                    <button 
+                    <button
                         class="start-new-conversation-button"
                         :style="userBubbleStyles"
                         @click="handleStartNewConversation"
@@ -2307,8 +2304,8 @@ const shouldShowWelcomeMessage = computed(() => {
             <div class="rating-content">
                 <h3>Rate your conversation</h3>
                 <div class="star-rating">
-                    <button 
-                        v-for="star in 5" 
+                    <button
+                        v-for="star in 5"
                         :key="star"
                         @click="currentRating = star"
                         :class="{ active: star <= currentRating }"
@@ -2323,7 +2320,7 @@ const shouldShowWelcomeMessage = computed(() => {
                     class="rating-feedback"
                 ></textarea>
                 <div class="rating-actions">
-                    <button 
+                    <button
                         @click="submitRating(currentRating, ratingFeedback)"
                         :disabled="!currentRating"
                         class="submit-button"
@@ -2331,7 +2328,7 @@ const shouldShowWelcomeMessage = computed(() => {
                     >
                         Submit
                     </button>
-                    <button 
+                    <button
                         @click="showRatingDialog = false"
                         class="skip-rating"
                     >
@@ -3236,9 +3233,9 @@ const shouldShowWelcomeMessage = computed(() => {
 }
 
 .product-card-compact {
-    display: flex; 
-    flex-direction: row; 
-    align-items: flex-start; 
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
     border: 1px solid var(--border-color); /* Keep border, ensure it uses token */
     border-radius: var(--radius-lg); /* Slightly larger radius for modern feel */
     overflow: hidden;
@@ -3246,7 +3243,7 @@ const shouldShowWelcomeMessage = computed(() => {
     box-shadow: var(--shadow-sm); /* Use softer shadow */
     padding: var(--space-md); /* Increased padding */
     gap: var(--space-md); /* Increased gap */
-    width: 100%; 
+    width: 100%;
     transition: box-shadow var(--transition-fast); /* Add transition */
 }
 
@@ -3255,13 +3252,13 @@ const shouldShowWelcomeMessage = computed(() => {
 }
 
 .product-card-compact.carousel-item {
-    flex-direction: column; 
+    flex-direction: column;
     align-items: stretch;
-    width: 160px; 
+    width: 160px;
     flex-shrink: 0;
-    padding: 0; 
+    padding: 0;
     gap: 0;
-    height: auto; 
+    height: auto;
     border-radius: var(--radius-md); /* Keep standard radius for carousel */
     box-shadow: var(--shadow-sm);
 }
@@ -3272,7 +3269,7 @@ const shouldShowWelcomeMessage = computed(() => {
 
 .product-card-compact.single-product {
     max-width: 280px; /* Reduced max width */
-    align-self: flex-start; 
+    align-self: flex-start;
     padding: var(--space-sm); /* Reduced padding */
     gap: var(--space-sm); /* Reduced gap */
     display: flex;
@@ -3305,7 +3302,7 @@ const shouldShowWelcomeMessage = computed(() => {
 .product-card-compact.single-product .product-title-compact {
     font-size: var(--text-xs); /* Smaller font */
     font-weight: 500;
-    line-height: 1.3; 
+    line-height: 1.3;
     white-space: normal; /* Allow wrapping */
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -3668,7 +3665,7 @@ const shouldShowWelcomeMessage = computed(() => {
     background: linear-gradient(145deg, #ffffff 0%, #f8f9fa 100%);
     padding: var(--space-xl);
     border-radius: 24px;
-    box-shadow: 
+    box-shadow:
         0 20px 25px -5px rgba(0, 0, 0, 0.1),
         0 10px 10px -5px rgba(0, 0, 0, 0.04),
         0 0 0 1px rgba(255, 255, 255, 0.05);
@@ -3743,22 +3740,22 @@ const shouldShowWelcomeMessage = computed(() => {
         max-width: 100%;
         margin: var(--space-sm) 0;
     }
-    
+
     .form-message .message-bubble {
         padding: var(--space-lg);
         border-radius: 20px;
         margin: 0 var(--space-xs);
     }
-    
+
     .form-title {
         font-size: 24px;
         letter-spacing: -0.01em;
     }
-    
+
     .form-description {
         font-size: var(--text-sm);
     }
-    
+
 
 
 
@@ -3867,18 +3864,18 @@ const shouldShowWelcomeMessage = computed(() => {
         padding: var(--space-sm);
         gap: var(--space-xs);
     }
-    
+
     .user-input-textarea {
         min-height: 60px;
         padding: var(--space-xs) var(--space-sm);
     }
-    
+
     .user-input-submit-button {
         padding: var(--space-xs) var(--space-md);
         font-size: var(--text-xs);
         min-width: 80px;
     }
-    
+
     .user-input-submitted {
         padding: var(--space-sm);
     }
@@ -4339,7 +4336,7 @@ const shouldShowWelcomeMessage = computed(() => {
         right: 0 !important;
         bottom: 0 !important;
     }
-    
+
     .chat-panel.ask-anything-chat {
         max-width: 100% !important;
         width: 100vw !important;
@@ -4348,7 +4345,7 @@ const shouldShowWelcomeMessage = computed(() => {
         margin: 0 !important;
         border-radius: 0 !important;
     }
-    
+
     .chat-container.ask-anything-style .chat-messages {
         padding: var(--space-lg) !important;
         max-width: 100% !important;
@@ -4357,7 +4354,7 @@ const shouldShowWelcomeMessage = computed(() => {
         height: calc(100vh - 60px - 120px) !important; /* topbar + input */
         height: calc(100dvh - 60px - 120px) !important;
     }
-    
+
     .chat-input.ask-anything-input {
         padding: var(--space-lg) !important;
         border-radius: 0 !important;
@@ -4368,57 +4365,57 @@ const shouldShowWelcomeMessage = computed(() => {
         width: 100vw !important;
         box-sizing: border-box !important;
     }
-    
+
     .chat-input.ask-anything-input .message-input,
     .chat-input.ask-anything-input .email-input {
         max-width: 100%;
     }
-    
+
     .ask-anything-field {
         padding: 16px 20px !important;
         font-size: 0.9rem !important;
         border-radius: 12px !important;
     }
-    
+
     .send-button.ask-anything-send {
         padding: 16px !important;
         min-width: 52px !important;
         height: 52px !important;
         border-radius: 12px !important;
     }
-    
+
     .welcome-title {
         font-size: 2rem;
     }
-    
+
     .welcome-subtitle {
         font-size: 1rem;
     }
-    
+
     .welcome-input-container {
         padding: var(--space-lg);
         gap: var(--space-md);
     }
-    
+
     .welcome-email-input,
     .welcome-message-field {
         padding: 16px 20px;
         font-size: 0.9rem;
         border-radius: 12px;
     }
-    
+
     .welcome-send-button {
         padding: 16px;
         min-width: 52px;
         height: 52px;
         border-radius: 12px;
     }
-    
+
     .welcome-avatar {
         width: 64px;
         height: 64px;
     }
-    
+
     .welcome-message-input {
         gap: var(--space-sm);
     }
@@ -4428,36 +4425,36 @@ const shouldShowWelcomeMessage = computed(() => {
     .welcome-title {
         font-size: 1.75rem;
     }
-    
+
     .welcome-subtitle {
         font-size: 0.9rem;
     }
-    
+
     .welcome-input-container {
         padding: var(--space-md);
     }
-    
+
     .welcome-email-input,
     .welcome-message-field {
         padding: 14px 18px;
         font-size: 0.85rem;
     }
-    
+
     .welcome-send-button {
         padding: 14px;
         min-width: 48px;
         height: 48px;
     }
-    
+
     .chat-input.ask-anything-input {
         padding: var(--space-md);
     }
-    
+
     .ask-anything-field {
         padding: 14px 18px !important;
         font-size: 0.85rem !important;
     }
-    
+
     .send-button.ask-anything-send {
         padding: 14px !important;
         min-width: 48px !important;
@@ -4621,7 +4618,7 @@ const shouldShowWelcomeMessage = computed(() => {
   font-size: 13px;
   position: relative;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 
+  box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.04),
     0 1px 2px rgba(0, 0, 0, 0.02);
   max-width: 100%;
@@ -4635,16 +4632,16 @@ const shouldShowWelcomeMessage = computed(() => {
   left: 0;
   width: 4px;
   height: 100%;
-  background: linear-gradient(180deg, 
-    #818cf8 0%, 
-    #a78bfa 50%, 
+  background: linear-gradient(180deg,
+    #818cf8 0%,
+    #a78bfa 50%,
     #c084fc 100%);
   opacity: 0;
   transition: opacity 0.3s ease;
 }
 
 .file-preview-widget:hover {
-  box-shadow: 
+  box-shadow:
     0 8px 16px rgba(124, 58, 237, 0.12),
     0 4px 8px rgba(124, 58, 237, 0.08);
   transform: translateY(-2px);
@@ -4666,7 +4663,7 @@ const shouldShowWelcomeMessage = computed(() => {
   flex-shrink: 0;
   overflow: hidden;
   position: relative;
-  box-shadow: 
+  box-shadow:
     0 2px 8px rgba(124, 58, 237, 0.1),
     inset 0 1px 2px rgba(255, 255, 255, 0.5);
 }
@@ -4678,8 +4675,8 @@ const shouldShowWelcomeMessage = computed(() => {
   left: 0;
   right: 0;
   bottom: 0;
-  background: linear-gradient(135deg, 
-    rgba(255, 255, 255, 0.4) 0%, 
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.4) 0%,
     transparent 100%);
   pointer-events: none;
 }
@@ -4789,7 +4786,7 @@ const shouldShowWelcomeMessage = computed(() => {
   flex-shrink: 0;
   position: relative;
   overflow: visible;
-  box-shadow: 
+  box-shadow:
     0 2px 4px rgba(0, 0, 0, 0.06),
     0 1px 2px rgba(0, 0, 0, 0.04);
 }
@@ -4801,8 +4798,8 @@ const shouldShowWelcomeMessage = computed(() => {
   left: -2px;
   right: -2px;
   bottom: -2px;
-  background: linear-gradient(135deg, 
-    rgba(99, 102, 241, 0.4) 0%, 
+  background: linear-gradient(135deg,
+    rgba(99, 102, 241, 0.4) 0%,
     rgba(168, 85, 247, 0.4) 50%,
     rgba(236, 72, 153, 0.4) 100%);
   border-radius: 50%;
@@ -4820,8 +4817,8 @@ const shouldShowWelcomeMessage = computed(() => {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  background: radial-gradient(circle, 
-    rgba(99, 102, 241, 0.2) 0%, 
+  background: radial-gradient(circle,
+    rgba(99, 102, 241, 0.2) 0%,
     transparent 70%);
   opacity: 0;
   transition: all 0.4s ease;
@@ -4834,7 +4831,7 @@ const shouldShowWelcomeMessage = computed(() => {
   border-color: #a78bfa;
   color: #7c3aed;
   transform: translateY(-3px) scale(1.05);
-  box-shadow: 
+  box-shadow:
     0 8px 16px rgba(124, 58, 237, 0.15),
     0 4px 8px rgba(124, 58, 237, 0.1),
     0 0 0 4px rgba(124, 58, 237, 0.1);
@@ -4853,7 +4850,7 @@ const shouldShowWelcomeMessage = computed(() => {
 
 .attach-button:active:not(:disabled) {
   transform: translateY(-1px) scale(1);
-  box-shadow: 
+  box-shadow:
     0 4px 8px rgba(124, 58, 237, 0.2),
     0 0 0 3px rgba(124, 58, 237, 0.15);
   transition: all 0.1s ease;
@@ -4979,8 +4976,8 @@ const shouldShowWelcomeMessage = computed(() => {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  background: linear-gradient(135deg, 
-    rgba(124, 58, 237, 0.08) 0%, 
+  background: linear-gradient(135deg,
+    rgba(124, 58, 237, 0.08) 0%,
     rgba(168, 85, 247, 0.05) 100%);
   border-radius: 12px;
   margin-bottom: 10px;
@@ -4998,9 +4995,9 @@ const shouldShowWelcomeMessage = computed(() => {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, 
-    transparent 0%, 
-    rgba(255, 255, 255, 0.3) 50%, 
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.3) 50%,
     transparent 100%);
   animation: shimmer 2s infinite;
 }
@@ -5054,8 +5051,8 @@ const shouldShowWelcomeMessage = computed(() => {
   align-items: center;
   justify-content: center;
   padding: 10px 14px;
-  background: linear-gradient(135deg, 
-    rgba(59, 130, 246, 0.08) 0%, 
+  background: linear-gradient(135deg,
+    rgba(59, 130, 246, 0.08) 0%,
     rgba(96, 165, 250, 0.05) 100%);
   border-radius: 10px;
   margin-bottom: 10px;
