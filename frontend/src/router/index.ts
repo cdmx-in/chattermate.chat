@@ -1,9 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import type { RouteLocationNormalized, NavigationGuardNext } from 'vue-router'
 import { userService } from '@/services/user'
 import { getSetupStatus } from '@/services/organization'
-import { permissionChecks, hasAnyPermission } from '@/utils/permissions'
-import { getApiUrl } from '@/config/api'
+import { hasAnyPermission } from '@/utils/permissions'
 import HumanAgentView from '@/views/HumanAgentView.vue'
 import OrganizationSettings from '@/views/settings/OrganizationSettings.vue'
 import AIConfigSettings from '@/views/settings/AIConfigSettings.vue'
@@ -72,7 +70,7 @@ const baseRoutes = [
     path: '/analytics',
     name: 'analytics',
     component: () => import('@/views/AnalyticsView.vue'),
-    meta: { 
+    meta: {
       requiresAuth: true,
       layout: 'dashboard',
       title: 'Analytics Dashboard',
@@ -172,7 +170,7 @@ const allRoutes = hasEnterpriseModule ? [
     path: '/settings/subscription',
     name: 'subscription',
     component: loadEnterpriseComponent(moduleImports.subscriptionView),
-    meta: { 
+    meta: {
       requiresAuth: true,
       layout: 'dashboard',
       title: 'Subscription Plans'
@@ -212,7 +210,7 @@ router.beforeEach(async (to, from, next) => {
   if (to.path.startsWith('/shopify/')) {
     return next()
   }
-  
+
   // Check for standard app conditions
   const isAuthenticated = userService.isAuthenticated()
   // Always check setup status to decide between Setup vs Login/Signup
@@ -235,12 +233,12 @@ router.beforeEach(async (to, from, next) => {
       return next('/setup')
     }
   }
-  
+
   if (requiredPermissions && !hasAnyPermission(requiredPermissions)) {
     // Redirect to 403 page or dashboard if user lacks required permissions
     return next('/403')
   }
-  
+
   return next()
 })
 

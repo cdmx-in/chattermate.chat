@@ -16,9 +16,9 @@ You should have received a copy of the GNU Affero General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Response, Cookie, Header, Query
+from fastapi import APIRouter, Depends, HTTPException, Response, Header, Query
 from fastapi.responses import HTMLResponse
-from sqlalchemy.orm import Session, class_mapper
+from sqlalchemy.orm import Session
 from typing import List, Optional
 from jose import JWTError
 import json
@@ -92,8 +92,7 @@ async def get_widget_ui(
                     agent_workflow=bool(agent.use_workflow and agent.active_workflow_id),
                     allow_attachments=agent.allow_attachments
                 ))
-        except (JWTError, ValueError) as e:
-            # Invalid token, create new one
+        except (JWTError, ValueError):
             pass
 
     # No valid token, create new one

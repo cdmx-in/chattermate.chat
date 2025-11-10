@@ -32,7 +32,6 @@ from app.database import engine, Base
 import asyncio
 from app.core.logger import get_logger
 from contextlib import asynccontextmanager
-import os
 from app.core.socketio import socket_app, configure_socketio, sio
 from app.core.cors import get_cors_origins
 from app.core.application import app, initialize_cors_listener
