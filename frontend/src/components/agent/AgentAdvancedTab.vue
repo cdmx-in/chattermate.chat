@@ -247,7 +247,7 @@ const updateAttachmentsSetting = async (enabled: boolean) => {
         <div class="attachments-info">
           <p v-if="agentRef.allow_attachments" class="helper-text success-text">
             <i class="fas fa-check-circle"></i>
-            File attachments are enabled for this agent. Users can upload and attach files to their messages <strong>when the chat is handed over to a human agent</strong>.
+            File attachments are enabled for this agent. Users can upload and attach files to their messages when the chat is handed over to a human agent.
           </p>
           <p v-else class="helper-text warning-text">
             <i class="fas fa-ban"></i>
