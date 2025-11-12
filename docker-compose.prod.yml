@@ -155,4 +155,4 @@ volumes:
   backend_data:
   # Add new volumes for model caching
   huggingface_cache:
-  torch_cache: 
+  torch_cache:
