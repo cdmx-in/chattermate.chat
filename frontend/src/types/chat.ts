@@ -5,6 +5,7 @@ export interface CustomerInfo {
 }
 
 export interface Message {
+  id?: number
   message?: string
   message_type: string
   created_at: string

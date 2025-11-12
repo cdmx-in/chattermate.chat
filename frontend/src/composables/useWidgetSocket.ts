@@ -75,8 +75,8 @@ export function useWidgetSocket() {
             }
 
             if (data.type === 'agent_message') {
-                // Handle human agent messages (no change needed here)
-                messages.value.push({
+                // Handle human agent messages
+                const agentMessage: any = {
                     message: data.message,
                     message_type: 'agent',
                     created_at: new Date().toISOString(),
@@ -88,7 +88,21 @@ export function useWidgetSocket() {
                         end_chat_description: data.end_chat_description,
                         request_rating: data.request_rating
                     }
-                })
+                }
+                
+                // Add attachments if present
+                if (data.attachments && Array.isArray(data.attachments)) {
+                    agentMessage.id = data.message_id
+                    agentMessage.attachments = data.attachments.map((att: any, idx: number) => ({
+                        id: data.message_id * 1000 + idx,
+                        filename: att.filename,
+                        file_url: att.file_url,
+                        content_type: att.content_type,
+                        file_size: att.file_size
+                    }))
+                }
+                
+                messages.value.push(agentMessage)
             // UPDATED CHECK: Look for the shopify_output object and products array
             } else if (data.shopify_output && typeof data.shopify_output === 'object' && data.shopify_output.products) {
                 // Handle structured Shopify product data
@@ -150,7 +164,6 @@ export function useWidgetSocket() {
         socket.on('error', handleError)
         socket.on('chat_history', handleChatHistory)
         socket.on('rating_submitted', handleRatingSubmitted)
-        socket.on('files_attached', handleFilesAttached)
         socket.on('display_form', handleDisplayForm)
         socket.on('form_submitted', handleFormSubmitted)
         socket.on('workflow_state', handleWorkflowState)
@@ -283,22 +296,6 @@ export function useWidgetSocket() {
         }
     }
 
-    // Handle files attached to message
-    const handleFilesAttached = (data: { success: boolean, message_id: number, file_count: number, attachments?: Array<{ filename: string, file_url: string, content_type: string, file_size: number }> }) => {
-        console.log('handleFilesAttached called with:', data)
-        if (data.success && data.attachments && messages.value.length > 0) {
-            // Find the last message and add attachments to it
-            const lastMessage = messages.value[messages.value.length - 1]
-            lastMessage.attachments = data.attachments.map((att, idx) => ({
-                id: data.message_id * 1000 + idx,
-                filename: att.filename,
-                file_url: att.file_url,
-                content_type: att.content_type,
-                file_size: att.file_size
-            }))
-            console.log('Updated message with attachments:', lastMessage)
-        }
-    }
 
     // Form display handler
     const handleDisplayForm = (data: { form_data: any, session_id: string }) => {
@@ -416,13 +413,13 @@ export function useWidgetSocket() {
     }
 
     // Send message function
-    const sendMessage = async (newMessage: string, email: string, attachments: Array<{url: string, filename: string, type: string, size?: number}> = []) => {
-        if (!socket || (!newMessage.trim() && attachments.length === 0)) return
+    const sendMessage = async (newMessage: string, email: string, files: Array<{content: string, filename: string, content_type: string, size: number}> = []) => {
+        if (!socket || (!newMessage.trim() && files.length === 0)) return
         
         if(!humanAgent.value.human_agent_name) 
            loading.value = true
         
-        // Add user message to display
+        // Add user message to display with temporary blob URLs for images
         const userMessage: any = {
             message: newMessage,
             message_type: 'user',
@@ -430,44 +427,46 @@ export function useWidgetSocket() {
             session_id: ''
         }
         
+        // Add temporary attachments for immediate display (will be replaced with real URLs from backend)
+        if (files.length > 0) {
+            userMessage.attachments = files.map((file, idx) => {
+                // Create temporary blob URL for images
+                let tempUrl = ''
+                if (file.content_type.startsWith('image/')) {
+                    // Convert base64 to blob URL for immediate display
+                    const byteCharacters = atob(file.content)
+                    const byteNumbers = new Array(byteCharacters.length)
+                    for (let i = 0; i < byteCharacters.length; i++) {
+                        byteNumbers[i] = byteCharacters.charCodeAt(i)
+                    }
+                    const byteArray = new Uint8Array(byteNumbers)
+                    const blob = new Blob([byteArray], { type: file.content_type })
+                    tempUrl = URL.createObjectURL(blob)
+                }
+                
+                return {
+                    id: Date.now() * 1000 + idx, // Temporary ID
+                    filename: file.filename,
+                    file_url: tempUrl, // Temporary blob URL, will be replaced
+                    content_type: file.content_type,
+                    file_size: file.size,
+                    _isTemporary: true // Flag to identify temporary attachments
+                }
+            })
+        }
+        
         messages.value.push(userMessage)
 
-        // Emit to socket WITHOUT attachments (files will be sent separately)
+        // Emit to socket WITH files (files will be uploaded on backend)
         socket.emit('chat', {
             message: newMessage,
             email: email,
-            attachments: []
+            files: files  // Send files with base64 content
         })
 
         hasStartedChat.value = true
     }
     
-    const sendFileAttachments = async (sessionId: string, attachments: Array<{url: string, filename: string, type: string, size?: number}>) => {
-        if (!socket || !sessionId || attachments.length === 0) {
-            console.log('sendFileAttachments skipped - socket:', !!socket, 'sessionId:', sessionId, 'attachments:', attachments.length)
-            return
-        }
-        
-        console.log('Emitting message_files event with:', {
-            session_id: sessionId,
-            files: attachments.map(f => ({
-                url: f.url,
-                filename: f.filename,
-                type: f.type,
-                size: f.size || 0
-            }))
-        })
-        
-        socket.emit('message_files', {
-            session_id: sessionId,
-            files: attachments.map(f => ({
-                url: f.url,
-                filename: f.filename,
-                type: f.type,
-                size: f.size || 0
-            }))
-        })
-    }
 
     // Chat history functions
     const loadChatHistory = async () => {
@@ -503,7 +502,6 @@ export function useWidgetSocket() {
         hasStartedChat,
         connectionStatus,
         sendMessage,
-        sendFileAttachments,
         loadChatHistory,
         connect,
         reconnect,

@@ -16,14 +16,7 @@ if [ ! -z "$FIREBASE_CREDENTIALS" ] && [ ! -f "$FIREBASE_CREDENTIALS" ]; then
     echo "Warning: Firebase credentials file not found at $FIREBASE_CREDENTIALS. Continuing without Firebase credentials..."
 fi
 
-# Initialize S3/MinIO storage if enabled
-if [ "$S3_FILE_STORAGE" == "true" ]; then
-    echo "Initializing S3/MinIO storage..."
-    python scripts/init_s3.py
-    if [ $? -ne 0 ]; then
-        echo "Warning: S3/MinIO initialization failed. Uploads may fail or fall back to local storage."
-    fi
-fi
+
 
 # Preload embedding models to avoid runtime issues
 echo "Preloading embedding models..."

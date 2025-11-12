@@ -30,6 +30,8 @@ from app.models.user import User
 from sqlalchemy.orm import joinedload
 from datetime import datetime
 from pydantic import BaseModel
+from app.core.s3 import get_s3_signed_url
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -113,12 +115,12 @@ class ChatRepository:
             self.db.rollback()
             raise
 
-    def get_session_history(self, session_id: str | UUID) -> List[ChatHistory]:
+    async def get_session_history(self, session_id: str | UUID) -> List[ChatHistory]:
         """Get chat history for a session with joined relationships"""
         if isinstance(session_id, str):
             session_id = UUID(session_id)
         
-        return (
+        messages = (
             self.db.query(ChatHistory)
             .options(
                 joinedload(ChatHistory.user),
@@ -129,6 +131,22 @@ class ChatRepository:
             .order_by(ChatHistory.created_at.asc())
             .all()
         )
+        
+        # Generate signed URLs for S3 attachments
+        if settings.S3_FILE_STORAGE:
+            for message in messages:
+                if message.attachments:
+                    for attachment in message.attachments:
+                        if attachment.file_url:
+                            try:
+                                signed_url = await get_s3_signed_url(attachment.file_url)
+                                # Store the signed URL in a temporary attribute
+                                attachment.file_url = signed_url
+                            except Exception as e:
+                                logger.error(f"Error generating signed URL for attachment {attachment.id}: {str(e)}")
+                                
+        
+        return messages
 
     def get_user_history(self, user_id: str | UUID) -> List[ChatHistory]:
         """Get chat history for a user"""
@@ -360,7 +378,7 @@ class ChatRepository:
             return None
 
         # Get messages for the session
-        messages = self.get_session_history(session_id)
+        messages = await self.get_session_history(session_id)
         
         # Build messages list with attachments
         messages_list = []
@@ -373,7 +391,6 @@ class ChatRepository:
             }
             
             # Add attachments with file info if they exist
-            # Note: Signed URLs will be generated on the frontend or via separate API call
             if msg.attachments:
                 attachments = []
                 for attachment in msg.attachments:

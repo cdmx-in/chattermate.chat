@@ -25,7 +25,7 @@ class FileAttachment(Base):
     __tablename__ = "file_attachments"
 
     id = Column(Integer, primary_key=True, index=True)
-    file_url = Column(String, nullable=False)  # S3/MinIO URL or local path
+    file_url = Column(String, nullable=False)  # AWS S3 URL or local path
     filename = Column(String, nullable=False)  # Original filename
     content_type = Column(String, nullable=False)  # MIME type
     file_size = Column(BigInteger, nullable=False)  # File size in bytes

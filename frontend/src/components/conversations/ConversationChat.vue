@@ -20,6 +20,7 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>
 import { onMounted, watch, nextTick, ref, computed, onBeforeUnmount } from 'vue'
 import type { ChatDetail } from '@/types/chat'
 import { useConversationChat } from '@/composables/useConversationChat'
+import { useConversationFiles } from '@/composables/useConversationFiles'
 import { useJiraTicket } from '@/composables/useJiraTicket'
 import JiraTicketModal from '@/components/jira/JiraTicketModal.vue'
 import FileUpload from '@/components/common/FileUpload.vue'
@@ -60,6 +61,20 @@ const {
   endChat
 } = useConversationChat(props.chat, emit)
 
+// Add file handling functionality
+const {
+  fileUploadRef,
+  uploadedFiles,
+  handleFilesUploaded,
+  handleFileUploadError,
+  handleChatPaste,
+  handleSendMessageWithAttachments,
+  formatFileSize,
+  isImageAttachment,
+  getDownloadUrl,
+  getImageUrl
+} = useConversationFiles(currentChat, newMessage, canSendMessage, scrollToBottom)
+
 // Add Jira ticket functionality
 const {
   jiraConnected,
@@ -70,59 +85,6 @@ const {
 const showJiraTicketModal = ref(false)
 const ticketSummary = ref('')
 
-// File upload refs
-const fileUploadRef = ref<InstanceType<typeof FileUpload> | null>(null)
-const uploadedFiles = ref<Array<{url: string, filename: string, type: string, size?: number}>>([])
-
-// Handle file uploads
-const handleFilesUploaded = (files: Array<{url: string, filename: string, type: string, size?: number}>) => {
-  uploadedFiles.value = files
-}
-
-const handleFileUploadError = (error: string) => {
-  console.error('File upload error:', error)
-}
-
-// Handle paste events for screenshots
-const handleChatPaste = (event: ClipboardEvent) => {
-  if (fileUploadRef.value) {
-    fileUploadRef.value.handlePaste(event)
-  }
-}
-
-// Wrapper to send message with attachments
-const handleSendMessageWithAttachments = async () => {
-  // Send the message through the normal composable
-  await sendMessage()
-  
-  // If files were uploaded, attach them to the message
-  if (uploadedFiles.value.length > 0) {
-    try {
-      const socketService = (await import('@/services/socket')).socketService
-      
-      // Emit file attachment event with the session
-      socketService.emit('message_files', {
-        session_id: currentChat.value.session_id,
-        files: uploadedFiles.value.map(f => ({
-          url: f.url,
-          filename: f.filename,
-          type: f.type,
-          size: f.size || 0
-        }))
-      })
-    } catch (error) {
-      console.error('Error sending file attachment metadata:', error)
-    }
-  }
-  
-  // Clear uploaded files after sending
-  if (uploadedFiles.value.length > 0) {
-    if (fileUploadRef.value) {
-      fileUploadRef.value.clearFiles()
-    }
-    uploadedFiles.value = []
-  }
-}
 
 // Add marked configuration
 marked.setOptions({
@@ -140,48 +102,7 @@ renderer.link = function({ href, title, text }) {
 }
 marked.use({ renderer })
 
-// Format file size helper
-const formatFileSize = (bytes: number): string => {
-  if (bytes === 0) return '0 Bytes'
-  const k = 1024
-  const sizes = ['Bytes', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i]
-}
 
-// Check if attachment is an image
-const isImageAttachment = (contentType: string): boolean => {
-  return contentType.startsWith('image/')
-}
-
-// Handle files attached via socket
-const handleFilesAttached = (data: {
-  success: boolean
-  message_id: number
-  file_count: number
-  attachments?: Array<{
-    filename: string
-    file_url: string
-    content_type: string
-    file_size: number
-  }>
-}) => {
-  if (data.success && data.attachments) {
-    // Find the last message by looking at most recent messages
-    const lastMessage = currentChat.value.messages[currentChat.value.messages.length - 1]
-    if (lastMessage) {
-      // Add attachments to the last message
-      lastMessage.attachments = data.attachments.map((att, idx) => ({
-        id: data.message_id * 1000 + idx, // Generate simple ID
-        filename: att.filename,
-        file_url: att.file_url,
-        content_type: att.content_type,
-        file_size: att.file_size
-      }))
-      console.log('[files_attached] Updated message with attachments:', lastMessage)
-    }
-  }
-}
 
 
 
@@ -231,24 +152,6 @@ watch(() => props.chat, (newChat) => {
 onMounted(async () => {
   scrollToBottom()
   await checkJiraStatus()
-  
-  // Listen for files_attached socket event to update messages with attachments
-  try {
-    const { socketService } = await import('@/services/socket')
-    socketService.on('files_attached', handleFilesAttached)
-  } catch (error) {
-    console.error('Error setting up socket listener for files_attached:', error)
-  }
-})
-
-onBeforeUnmount(async () => {
-  // Clean up socket listener
-  try {
-    const { socketService } = await import('@/services/socket')
-    socketService.off('files_attached', handleFilesAttached)
-  } catch (error) {
-    console.error('Error removing socket listener for files_attached:', error)
-  }
 })
 </script>
 
@@ -289,7 +192,7 @@ onBeforeUnmount(async () => {
           v-for="(message, idx) in formattedMessages" 
           :key="idx"
           class="message"
-          :class="message.message_type === 'bot' || message.message_type === 'agent' ? 'bot' : 'user'"
+          :class="message.message_type === 'bot' || message.message_type === 'agent' || message.message_type === 'product' ? 'bot' : 'user'"
         >
           <div class="message-content">
             <div class="message-bubble">
@@ -340,13 +243,13 @@ onBeforeUnmount(async () => {
                     <template v-if="isImageAttachment(attachment.content_type)">
                       <div class="attachment-image-container">
                         <img 
-                          :src="attachment.file_url" 
+                          :src="getImageUrl(attachment.file_url)" 
                           :alt="attachment.filename"
                           class="attachment-image"
                         />
                         <div class="attachment-image-info">
                           <a 
-                            :href="attachment.file_url.startsWith('http') ? attachment.file_url : attachment.file_url.startsWith('/api/v1/files/download') ? attachment.file_url : `/api/v1/files/download${attachment.file_url}`" 
+                            :href="getDownloadUrl(attachment.file_url)" 
                             target="_blank"
                             class="attachment-link"
                           >
@@ -360,7 +263,7 @@ onBeforeUnmount(async () => {
                     <!-- Other file types - render as download link -->
                     <template v-else>
                       <a 
-                        :href="attachment.file_url.startsWith('http') ? attachment.file_url : attachment.file_url.startsWith('/api/v1/files/download') ? attachment.file_url : `/api/v1/files/download${attachment.file_url}`" 
+                        :href="getDownloadUrl(attachment.file_url)" 
                         target="_blank"
                         class="attachment-link"
                       >

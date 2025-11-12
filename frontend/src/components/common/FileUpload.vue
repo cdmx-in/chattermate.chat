@@ -28,16 +28,16 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  (e: 'filesUploaded', files: Array<{url: string, filename: string, type: string}>): void
+  (e: 'filesUploaded', files: Array<{content: string, filename: string, content_type: string, size: number}>): void
   (e: 'error', error: string): void
 }>()
 
 const fileInput = ref<HTMLInputElement | null>(null)
-const uploadedFiles = ref<Array<{url: string, signedUrl: string, filename: string, type: string, size: number}>>([])
+const uploadedFiles = ref<Array<{file: File, content: string, url: string, file_url: string, filename: string, type: string, size: number}>>([])
 const uploading = ref(false)
 const dragOver = ref(false)
 
-const maxFiles = computed(() => props.maxFiles || 5)
+const maxFiles = computed(() => props.maxFiles || 3)
 const acceptTypes = computed(() => props.acceptTypes || 'image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.xls')
 
 const canUploadMore = computed(() => uploadedFiles.value.length < maxFiles.value)
@@ -46,6 +46,8 @@ const handleFileSelect = async (event: Event) => {
   const target = event.target as HTMLInputElement
   if (target.files && target.files.length > 0) {
     await uploadFiles(Array.from(target.files))
+    // Reset the input value to allow selecting the same file again
+    target.value = ''
   }
 }
 
@@ -87,6 +89,77 @@ const handlePaste = async (event: ClipboardEvent) => {
   }
 }
 
+// Compress image if it's too large
+const compressImage = async (file: File, maxSizeKB: number = 500): Promise<{blob: Blob, base64: string}> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        let width = img.width
+        let height = img.height
+        
+        // Calculate new dimensions (max 1920px width/height while maintaining aspect ratio)
+        const maxDimension = 1920
+        if (width > maxDimension || height > maxDimension) {
+          if (width > height) {
+            height = (height / width) * maxDimension
+            width = maxDimension
+          } else {
+            width = (width / height) * maxDimension
+            height = maxDimension
+          }
+        }
+        
+        canvas.width = width
+        canvas.height = height
+        
+        const ctx = canvas.getContext('2d')
+        if (!ctx) {
+          reject(new Error('Failed to get canvas context'))
+          return
+        }
+        
+        ctx.drawImage(img, 0, 0, width, height)
+        
+        // Start with quality 0.9 and reduce if needed
+        let quality = 0.9
+        const tryCompress = () => {
+          canvas.toBlob((blob) => {
+            if (!blob) {
+              reject(new Error('Failed to compress image'))
+              return
+            }
+            
+            const sizeKB = blob.size / 1024
+            
+            // If still too large and quality can be reduced, try again
+            if (sizeKB > maxSizeKB && quality > 0.3) {
+              quality -= 0.1
+              tryCompress()
+            } else {
+              // Convert blob to base64
+              const reader = new FileReader()
+              reader.onload = () => {
+                const base64 = (reader.result as string).split(',')[1]
+                resolve({ blob, base64 })
+              }
+              reader.readAsDataURL(blob)
+            }
+          }, file.type === 'image/png' ? 'image/png' : 'image/jpeg', quality)
+        }
+        
+        tryCompress()
+      }
+      img.onerror = () => reject(new Error('Failed to load image'))
+      img.src = e.target?.result as string
+    }
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
+
 const uploadFiles = async (files: File[]) => {
   if (!canUploadMore.value) {
     emit('error', `Maximum ${maxFiles.value} files allowed`)
@@ -100,65 +173,124 @@ const uploadFiles = async (files: File[]) => {
     emit('error', `Only ${remainingSlots} more file(s) can be uploaded`)
   }
   
-  uploading.value = true
+  const TARGET_SIZE_KB = 500 // Target 500KB after compression
   
+  // Read files and store them temporarily (will be uploaded when message is sent)
   for (const file of filesToUpload) {
     try {
-      const formData = new FormData()
-      formData.append('file', file)
-      
-      const headers: Record<string, string> = {}
-      if (props.authorization) {
-        headers['Authorization'] = props.authorization
-      }
-      if (props.token) {
-        headers['X-Conversation-Token'] = props.token
+      // Check if file with same name already exists
+      const isDuplicate = uploadedFiles.value.some(f => f.filename === file.name)
+      if (isDuplicate) {
+        console.warn(`File ${file.name} is already selected`)
+        emit('error', `File "${file.name}" is already selected`)
+        continue
       }
       
-      const response = await fetch(`${widgetEnv.API_URL}/files/upload`, {
-        method: 'POST',
-        headers,
-        body: formData,
-        credentials: 'include'  // Send cookies for authentication
-      })
+      const isImage = file.type.startsWith('image/')
       
-      if (!response.ok) {
-        throw new Error('Upload failed')
+      if (isImage) {
+        // Compress image before upload
+        try {
+          const { blob, base64 } = await compressImage(file, TARGET_SIZE_KB)
+          const compressedSize = blob.size
+          
+          console.log(`Compressed ${file.name}: ${(file.size / 1024).toFixed(2)}KB → ${(compressedSize / 1024).toFixed(2)}KB`)
+          
+          uploadedFiles.value.push({
+            file: file,
+            content: base64,
+            filename: file.name,
+            type: file.type,
+            size: compressedSize,
+            url: URL.createObjectURL(blob),
+            file_url: URL.createObjectURL(blob)
+          })
+          
+          // Emit the files after compression
+          emit('filesUploaded', uploadedFiles.value.map(f => ({
+            content: f.content,
+            filename: f.filename,
+            content_type: f.type,
+            size: f.size
+          })))
+        } catch (error) {
+          console.error('Image compression failed, uploading original:', error)
+          // Fallback to original file if compression fails
+          const reader = new FileReader()
+          reader.onload = (e) => {
+            const base64Content = e.target?.result as string
+            const base64Data = base64Content.split(',')[1]
+            
+            uploadedFiles.value.push({
+              file: file,
+              content: base64Data,
+              filename: file.name,
+              type: file.type || 'application/octet-stream',
+              size: file.size,
+              url: URL.createObjectURL(file),
+              file_url: URL.createObjectURL(file)
+            })
+            
+            emit('filesUploaded', uploadedFiles.value.map(f => ({
+              content: f.content,
+              filename: f.filename,
+              content_type: f.type,
+              size: f.size
+            })))
+          }
+          reader.readAsDataURL(file)
+        }
+      } else {
+        // For non-images, read as-is
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          const base64Content = e.target?.result as string
+          const base64Data = base64Content.split(',')[1]
+          
+          uploadedFiles.value.push({
+            file: file,
+            content: base64Data,
+            filename: file.name,
+            type: file.type || 'application/octet-stream',
+            size: file.size,
+            url: '',
+            file_url: ''
+          })
+          
+          emit('filesUploaded', uploadedFiles.value.map(f => ({
+            content: f.content,
+            filename: f.filename,
+            content_type: f.type,
+            size: f.size
+          })))
+        }
+        reader.readAsDataURL(file)
       }
-      
-      const data = await response.json()
-      uploadedFiles.value.push({
-        url: data.file_url,
-        signedUrl: data.signed_url,
-        filename: data.filename,
-        type: data.content_type || 'application/octet-stream',
-        size: data.size
-      })
     } catch (error) {
-      console.error('Upload error:', error)
-      emit('error', `Failed to upload ${file.name}`)
+      console.error('File read error:', error)
+      emit('error', `Failed to read ${file.name}`)
     }
-  }
-  
-  uploading.value = false
-  
-  // Emit the uploaded files
-  if (uploadedFiles.value.length > 0) {
-    emit('filesUploaded', uploadedFiles.value.map(f => ({
-      url: f.url,
-      filename: f.filename,
-      type: f.type,
-      size: f.size
-    })))
   }
 }
 
 const removeFile = (index: number) => {
+  const file = uploadedFiles.value[index]
+  if (!file) return
+  
+  // Revoke object URL if it exists to free memory
+  if (file.url && file.url.startsWith('blob:')) {
+    URL.revokeObjectURL(file.url)
+  }
+  if (file.file_url && file.file_url.startsWith('blob:')) {
+    URL.revokeObjectURL(file.file_url)
+  }
+  
+  // Remove from local array
   uploadedFiles.value.splice(index, 1)
   emit('filesUploaded', uploadedFiles.value.map(f => ({
-    url: f.url,
+    content: f.content,
     filename: f.filename,
-    type: f.type,
+    content_type: f.type,
     size: f.size
   })))
 }
@@ -175,6 +307,22 @@ const formatFileSize = (bytes: number): string => {
 
 const isImage = (type: string | undefined | null): boolean => {
   return type ? type.startsWith('image/') : false
+}
+
+// Generate preview URL for file display
+const getPreviewUrl = (file: {url: string, file_url: string}): string => {
+  // If file_url is a blob URL (temporary preview), return as-is
+  if (file.file_url.startsWith('blob:')) {
+    return file.file_url
+  }
+  
+  // If file_url is already a full URL (S3), return as-is
+  if (file.file_url.startsWith('http://') || file.file_url.startsWith('https://')) {
+    return file.file_url
+  }
+  
+  // For local storage, prepend API URL
+  return `${widgetEnv.API_URL}${file.file_url}`
 }
 
 defineExpose({
@@ -255,7 +403,7 @@ defineExpose({
         <div class="file-preview-content">
           <img
             v-if="isImage(file.type)"
-            :src="file.signedUrl"
+            :src="getPreviewUrl(file)"
             :alt="file.filename"
             class="file-preview-image"
           />
@@ -359,82 +507,187 @@ defineExpose({
 
 .file-previews {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 8px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.03) 0%, rgba(59, 130, 246, 0.01) 100%);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  border: 1px dashed rgba(59, 130, 246, 0.2);
+  animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .file-preview {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px;
-  background: #f5f5f5;
-  border-radius: 8px;
+  gap: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
+  border: 2px solid #e5e7eb;
+  border-radius: 14px;
+  font-size: 13px;
+  position: relative;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow:
+    0 2px 4px rgba(0, 0, 0, 0.04),
+    0 1px 2px rgba(0, 0, 0, 0.02);
   max-width: 100%;
+  overflow: hidden;
+}
+
+.file-preview::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 4px;
+  height: 100%;
+  background: linear-gradient(180deg,
+    #3b82f6 0%,
+    #60a5fa 50%,
+    #93c5fd 100%);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.file-preview:hover {
+  box-shadow:
+    0 8px 16px rgba(59, 130, 246, 0.12),
+    0 4px 8px rgba(59, 130, 246, 0.08);
+  transform: translateY(-2px);
+  border-color: #93c5fd;
+}
+
+.file-preview:hover::before {
+  opacity: 1;
 }
 
 .file-preview-content {
-  flex-shrink: 0;
-  width: 40px;
-  height: 40px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: white;
-  border-radius: 4px;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+  flex-shrink: 0;
   overflow: hidden;
+  position: relative;
+  box-shadow:
+    0 2px 8px rgba(59, 130, 246, 0.1),
+    inset 0 1px 2px rgba(255, 255, 255, 0.5);
+}
+
+.file-preview-content::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(135deg,
+    rgba(255, 255, 255, 0.4) 0%,
+    transparent 100%);
+  pointer-events: none;
 }
 
 .file-preview-image {
-  width: 100%;
-  height: 100%;
+  width: 48px;
+  height: 48px;
   object-fit: cover;
+  border-radius: 10px;
+  position: relative;
+  z-index: 1;
+  transition: transform 0.3s ease;
+}
+
+.file-preview:hover .file-preview-image {
+  transform: scale(1.05);
 }
 
 .file-preview-icon {
-  color: #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #3b82f6;
+  position: relative;
+  z-index: 1;
+  transition: transform 0.3s ease;
+}
+
+.file-preview:hover .file-preview-icon {
+  transform: scale(1.1) rotate(-5deg);
 }
 
 .file-preview-info {
-  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
+  flex: 1;
 }
 
 .file-preview-name {
-  font-size: 13px;
-  font-weight: 500;
-  color: #333;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 600;
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 1.4;
+  letter-spacing: -0.01em;
 }
 
 .file-preview-size {
   font-size: 11px;
-  color: #666;
+  color: #9ca3af;
+  font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
 .file-preview-remove {
-  flex-shrink: 0;
-  width: 24px;
-  height: 24px;
-  border: none;
-  background: white;
-  color: #666;
-  cursor: pointer;
-  border-radius: 50%;
-  font-size: 20px;
-  line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+  border: 1.5px solid #fca5a5;
+  border-radius: 8px;
+  color: #dc2626;
+  cursor: pointer;
+  font-size: 20px;
+  font-weight: bold;
+  padding: 0;
+  flex-shrink: 0;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  line-height: 1;
+  box-shadow: 0 2px 4px rgba(220, 38, 38, 0.1);
 }
 
 .file-preview-remove:hover {
-  background: #ff4444;
+  background: linear-gradient(135deg, #fca5a5 0%, #f87171 100%);
+  border-color: #ef4444;
   color: white;
+  transform: scale(1.1) rotate(90deg);
+  box-shadow: 0 4px 8px rgba(220, 38, 38, 0.25);
+}
+
+.file-preview-remove:active {
+  transform: scale(1) rotate(90deg);
+  box-shadow: 0 2px 4px rgba(220, 38, 38, 0.2);
 }
 
 .upload-progress {

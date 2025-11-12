@@ -37,6 +37,7 @@ from app.repositories.customer import CustomerRepository
 import uuid
 from app.services.socket_rate_limit import socket_rate_limit
 from app.services.workflow_chat import WorkflowChatService
+from app.services.file_upload_service import FileUploadService
 
 from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
@@ -56,6 +57,7 @@ except ImportError:
 
 router = APIRouter()
 logger = get_logger(__name__)
+
 
 def format_datetime(dt):
     """Convert datetime to ISO format string"""
@@ -275,11 +277,11 @@ async def handle_widget_chat(sid, data):
             await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
             return
 
-        # Process message and attachments
+        # Process message and files
         message = data.get('message', '').strip()
-        attachments = data.get('attachments', [])  # List of attachment URLs
+        files = data.get('files', [])  # List of file objects with base64 content
         
-        if not message and not attachments:
+        if not message and not files:
             return
 
         session_id = session['session_id']
@@ -289,8 +291,9 @@ async def handle_widget_chat(sid, data):
             session['customer_id'] != customer_id):
             raise ValueError("Session mismatch")
         
-        # Check if attachments are allowed for this agent
-        if attachments:
+        # Upload files if provided
+        uploaded_files = []
+        if files:
             db_temp = next(get_db())
             try:
                 agent_repo = AgentRepository(db_temp)
@@ -316,6 +319,31 @@ async def handle_widget_chat(sid, data):
                         'type': 'validation_error'
                     }, room=sid, namespace='/widget')
                     return
+                
+                # Upload each file
+                for file_data in files:
+                    try:
+                        uploaded_file = await FileUploadService.upload_file(
+                            file_data=file_data,
+                            org_id=org_id,
+                            customer_id=customer_id
+                        )
+                        uploaded_files.append(uploaded_file)
+                    except ValueError as val_err:
+                        # Validation error
+                        logger.error(f"File validation error: {str(val_err)}")
+                        await sio.emit('error', {
+                            'error': str(val_err),
+                            'type': 'validation_error'
+                        }, room=sid, namespace='/widget')
+                        return
+                    except Exception as upload_err:
+                        logger.error(f"Error uploading file: {str(upload_err)}")
+                        await sio.emit('error', {
+                            'error': f"Failed to upload file: {file_data.get('filename', 'unknown')}",
+                            'type': 'upload_error'
+                        }, room=sid, namespace='/widget')
+                        return
             finally:
                 db_temp.close()
 
@@ -428,7 +456,7 @@ async def handle_widget_chat(sid, data):
             logger.debug(f"Transferring chat to human for session {session_id}")
             # Get response from agent transfer ai agent
             chat_repo = ChatRepository(db)
-            chat_repo.create_message({
+            user_msg = chat_repo.create_message({
                 "message": message,
                 "message_type": "user",
                 "session_id": session_id,
@@ -436,8 +464,24 @@ async def handle_widget_chat(sid, data):
                 "agent_id": session['agent_id'],
                 "customer_id": customer_id,
             })
+            
+            # Attach uploaded files to the user message
+            if uploaded_files:
+                from app.models import FileAttachment
+                for file_info in uploaded_files:
+                    file_attachment = FileAttachment(
+                        file_url=file_info['file_url'],
+                        filename=file_info['filename'],
+                        content_type=file_info['content_type'],
+                        file_size=file_info['size'],
+                        chat_history_id=user_msg.id,
+                        organization_id=org_id,
+                        uploaded_by_customer_id=customer_id
+                    )
+                    db.add(file_attachment)
+                db.commit()
             chat_history = []
-            chat_history = chat_repo.get_session_history(session_id)
+            chat_history = await chat_repo.get_session_history(session_id)
             jira_repo = JiraRepository(db)
             agent_data = jira_repo.get_agent_with_jira_config(session['agent_id']) if session['agent_id'] else None
             availability_response = await get_agent_availability_response(
@@ -485,7 +529,7 @@ async def handle_widget_chat(sid, data):
         elif active_session.workflow_id and active_session.user_id is not None:
             # Workflow session but human agent has taken over - handle like regular human takeover
             chat_repo = ChatRepository(db)
-            chat_repo.create_message({
+            user_msg = chat_repo.create_message({
                 "message": message,
                 "message_type": "user",
                 "session_id": session_id,
@@ -494,35 +538,66 @@ async def handle_widget_chat(sid, data):
                 "customer_id": customer_id,
                 "user_id": active_session.user_id,
             })
+            
+            # Attach uploaded files to the user message
+            if uploaded_files:
+                from app.models import FileAttachment
+                for file_info in uploaded_files:
+                    file_attachment = FileAttachment(
+                        file_url=file_info['file_url'],
+                        filename=file_info['filename'],
+                        content_type=file_info['content_type'],
+                        file_size=file_info['size'],
+                        chat_history_id=user_msg.id,
+                        organization_id=org_id,
+                        uploaded_by_customer_id=customer_id
+                    )
+                    db.add(file_attachment)
+                db.commit()
             # Get session data to find assigned user
             session_data = session_repo.get_session(session_id)
             user_id = str(session_data.user_id) if session_data and session_data.user_id else None
             timestamp = format_datetime(datetime.datetime.now())
+            
+            # Prepare attachments data if files were uploaded
+            attachments_data = []
+            if uploaded_files:
+                for file_info in uploaded_files:
+                    attachments_data.append({
+                        'filename': file_info['filename'],
+                        'file_url': file_info['file_url'],
+                        'content_type': file_info['content_type'],
+                        'file_size': file_info['size']
+                    })
 
             if user_id:
                 # Also emit to user-specific room
                 user_room = f"user_{user_id}"
                 await sio.emit('chat_reply', {
                     'message': message,
+                    'message_id': user_msg.id,
                     'type': 'user_message',
                     'transfer_to_human': False,
                     'session_id': session_id,
-                    'created_at': timestamp
+                    'created_at': timestamp,
+                    'attachments': attachments_data if attachments_data else None
                 }, room=user_room, namespace='/agent')
 
             # Emit to both session room and user's personal room
             await sio.emit('chat_reply', {
                 'message': message,
+                'message_id': user_msg.id,
                 'type': 'user_message',
                 'transfer_to_human': False,
                 'session_id': session_id,
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'attachments': attachments_data if attachments_data else None
             }, room=session_id, namespace='/agent')    
 
             return # don't do anything further - human agent handles the conversation
         else:
             chat_repo = ChatRepository(db)
-            chat_repo.create_message({
+            user_msg = chat_repo.create_message({
                 "message": message,
                 "message_type": "user",
                 "session_id": session_id,
@@ -531,31 +606,61 @@ async def handle_widget_chat(sid, data):
                 "customer_id": customer_id,
                 "user_id": active_session.user_id,
             })
+            
+            # Attach uploaded files to the user message
+            if uploaded_files:
+                from app.models import FileAttachment
+                for file_info in uploaded_files:
+                    file_attachment = FileAttachment(
+                        file_url=file_info['file_url'],
+                        filename=file_info['filename'],
+                        content_type=file_info['content_type'],
+                        file_size=file_info['size'],
+                        chat_history_id=user_msg.id,
+                        organization_id=org_id,
+                        uploaded_by_customer_id=customer_id
+                    )
+                    db.add(file_attachment)
+                db.commit()
             # Get session data to find assigned user
             session_data = session_repo.get_session(session_id)
             user_id = str(session_data.user_id) if session_data and session_data.user_id else None
             timestamp = format_datetime(datetime.datetime.now())
-
+            
+            # Prepare attachments data if files were uploaded
+            attachments_data = []
+            if uploaded_files:
+                for file_info in uploaded_files:
+                    attachments_data.append({
+                        'filename': file_info['filename'],
+                        'file_url': file_info['file_url'],
+                        'content_type': file_info['content_type'],
+                        'file_size': file_info['size']
+                    })
             
             if user_id:
                 # Also emit to user-specific room
                 user_room = f"user_{user_id}"
                 await sio.emit('chat_reply', {
                     'message': message,
+                    'message_id': user_msg.id,
                     'type': 'user_message',
                     'transfer_to_human': False,
                     'session_id': session_id,
-                    'created_at': timestamp
+                    'created_at': timestamp,
+                    'attachments': attachments_data if attachments_data else None
                 }, room=user_room, namespace='/agent')
 
 
             # Emit to both session room and user's personal room
             await sio.emit('chat_reply', {
                 'message': message,
+                'message_id': user_msg.id,
                 'type': 'user_message',
                 'transfer_to_human': False,
                 'session_id': session_id,
-                'timestamp': timestamp
+                'timestamp': timestamp,
+                'attachments': attachments_data if attachments_data else None
             }, room=session_id, namespace='/agent')    
 
             return # don't do anything if the session is closed or the user has already taken over
@@ -643,7 +748,7 @@ async def get_widget_chat_history(sid):
 
         # Get chat history for active session
         chat_repo = ChatRepository(db)
-        messages = chat_repo.get_session_history(
+        messages = await chat_repo.get_session_history(
             session_id=active_session.session_id
         )
 
@@ -670,6 +775,11 @@ async def get_widget_chat_history(sid):
                         'content_type': attachment.content_type,
                         'file_size': attachment.file_size
                     }
+                    
+                    # Use signed URL as file_url for S3 files
+                    if hasattr(attachment, 'signed_url'):
+                        att_dict['file_url'] = attachment.signed_url
+                    
                     attachments.append(att_dict)
                 msg_dict['attachments'] = attachments
             
@@ -740,8 +850,38 @@ async def handle_agent_message(sid, data):
         if not session_data or str(session_data.user_id) != session.get('user_id'):
             raise ValueError("Unauthorized")
 
+        # Upload files if provided
+        files = data.get('files', [])
+        uploaded_files = []
+        if files:
+            org_id = session.get('organization_id')
+            user_id = session.get('user_id')
+            
+            for file_data in files:
+                try:
+                    uploaded_file = await FileUploadService.upload_file(
+                        file_data=file_data,
+                        org_id=org_id,
+                        user_id=user_id
+                    )
+                    uploaded_files.append(uploaded_file)
+                except ValueError as val_err:
+                    logger.error(f"File validation error: {str(val_err)}")
+                    await sio.emit('error', {
+                        'error': str(val_err),
+                        'type': 'validation_error'
+                    }, to=sid, namespace='/agent')
+                    return
+                except Exception as upload_err:
+                    logger.error(f"Error uploading file: {str(upload_err)}")
+                    await sio.emit('error', {
+                        'error': f"Failed to upload file: {file_data.get('filename', 'unknown')}",
+                        'type': 'upload_error'
+                    }, to=sid, namespace='/agent')
+                    return
+
         # Store the agent's message
-        message = {
+        message_data = {
             "message": data['message'],
             "message_type": data.get('message_type', "agent"),
             "session_id": session_id,
@@ -758,7 +898,24 @@ async def handle_agent_message(sid, data):
             }
         }
         
-        chat_repo.create_message(message)
+        created_message = chat_repo.create_message(message_data)
+        
+        # Attach uploaded files to the message
+        if uploaded_files:
+            from app.models import FileAttachment
+            for file_info in uploaded_files:
+                file_attachment = FileAttachment(
+                    file_url=file_info['file_url'],
+                    filename=file_info['filename'],
+                    content_type=file_info['content_type'],
+                    file_size=file_info['size'],
+                    chat_history_id=created_message.id,
+                    organization_id=session.get('organization_id'),
+                    uploaded_by_user_id=session.get('user_id')
+                )
+                db.add(file_attachment)
+            db.commit()
+            logger.info(f"Attached {len(uploaded_files)} files to agent message {created_message.id}")
         
         # Check if this is an end chat message
         if data.get('end_chat') is True:
@@ -791,6 +948,19 @@ async def handle_agent_message(sid, data):
                 'product_currency': data.get('product_currency'),
                 'product_image': data.get('product_image'),
             })
+        
+        # Add attachments to response if files were uploaded
+        if uploaded_files:
+            attachments_data = []
+            for file_info in uploaded_files:
+                attachments_data.append({
+                    'filename': file_info['filename'],
+                    'file_url': file_info['file_url'],
+                    'content_type': file_info['content_type'],
+                    'file_size': file_info['size']
+                })
+            response_payload['attachments'] = attachments_data
+            response_payload['message_id'] = created_message.id
             
         await sio.emit('chat_response', response_payload, room=session_id, namespace='/widget')
 
@@ -801,113 +971,6 @@ async def handle_agent_message(sid, data):
         await sio.emit('error', {
             'error': 'Failed to send message',
             'type': 'message_error'
-        }, to=sid, namespace='/agent')
-
-# Handle file attachments for messages
-@sio.on('message_files', namespace='/agent')
-async def handle_message_files(sid, data):
-    """Attach files to the most recent message in a session"""
-    try:
-        logger.info(f"Handling message_files for sid {sid} with data: {data}")
-        
-        # Get session data and authenticate
-        session = await sio.get_session(sid, namespace='/agent')
-        if not session or 'user_id' not in session:
-            logger.error(f"No authenticated session for sid {sid}")
-            await sio.emit('error', {
-                'error': 'Not authenticated',
-                'type': 'auth_error'
-            }, to=sid, namespace='/agent')
-            return
-
-        session_id = data.get('session_id')
-        files = data.get('files', [])
-        
-        if not session_id or not files:
-            logger.error(f"Missing session_id or files in data: {data}")
-            await sio.emit('error', {
-                'error': 'Missing required data',
-                'type': 'validation_error'
-            }, to=sid, namespace='/agent')
-            return
-
-        # Get database session
-        db = next(get_db())
-        chat_repo = ChatRepository(db)
-        
-        # Find the most recent message in this session
-        from app.models import ChatHistory
-        latest_message = db.query(ChatHistory).filter(
-            ChatHistory.session_id == session_id
-        ).order_by(ChatHistory.created_at.desc()).first()
-        
-        if not latest_message:
-            logger.error(f"No message found for session {session_id}")
-            await sio.emit('error', {
-                'error': 'No message found',
-                'type': 'not_found_error'
-            }, to=sid, namespace='/agent')
-            return
-        
-        # Create file attachment records
-        from app.models import FileAttachment
-        org_id = session.get('organization_id')
-        user_id = session.get('user_id')
-        
-        for file in files:
-            file_url = file.get('url')
-            filename = file.get('filename')
-            content_type = file.get('type', 'application/octet-stream')
-            
-            if not file_url or not filename:
-                logger.warning(f"Skipping file with missing url or filename: {file}")
-                continue
-            
-            # Create attachment
-            attachment = FileAttachment(
-                file_url=file_url,
-                filename=filename,
-                content_type=content_type,
-                file_size=0,  # Size should have been captured during upload
-                chat_history_id=latest_message.id,
-                organization_id=org_id,
-                uploaded_by_user_id=user_id
-            )
-            db.add(attachment)
-        
-        db.commit()
-        logger.info(f"Successfully attached {len(files)} files to message {latest_message.id}")
-        
-        # Build attachment response data
-        attachments_data = []
-        for file in files:
-            file_url = file.get('url')
-            filename = file.get('filename')
-            content_type = file.get('type', 'application/octet-stream')
-            file_size = file.get('size', 0)
-            
-            if file_url and filename:
-                attachments_data.append({
-                    'filename': filename,
-                    'file_url': file_url,
-                    'content_type': content_type,
-                    'file_size': file_size
-                })
-        
-        # Emit success event with attachment data
-        await sio.emit('files_attached', {
-            'success': True,
-            'message_id': latest_message.id,
-            'file_count': len(files),
-            'attachments': attachments_data
-        }, to=sid, namespace='/agent')
-        
-    except Exception as e:
-        logger.error(f"Error attaching files for sid {sid}: {str(e)}")
-        logger.error(traceback.format_exc())
-        await sio.emit('error', {
-            'error': 'Failed to attach files',
-            'type': 'file_attachment_error'
         }, to=sid, namespace='/agent')
 
 # Add handlers for room management
@@ -1111,7 +1174,7 @@ async def handle_get_workflow_state(sid):
             raise ValueError("No active session found")
 
         # Check if there's any chat history
-        chat_history = chat_repo.get_session_history(session_id)
+        chat_history = await chat_repo.get_session_history(session_id)
         has_history = len(chat_history) > 0
 
         # If agent uses workflow, handle workflow state
@@ -1721,136 +1784,3 @@ async def handle_form_submission(sid, data):
             'type': 'form_error'
         }, to=sid, namespace='/widget')
 
-
-# Handle file attachments for widget messages
-@sio.on('message_files', namespace='/widget')
-async def handle_widget_message_files(sid, data):
-    """Attach files to the most recent message in a widget session"""
-    try:
-        logger.info(f"Handling message_files for widget sid {sid} with data: {data}")
-        
-        # Get session data and authenticate
-        session = await sio.get_session(sid, namespace='/widget')
-        if not session or 'session_id' not in session:
-            logger.error(f"No authenticated session for sid {sid}")
-            await sio.emit('error', {
-                'error': 'Not authenticated',
-                'type': 'auth_error'
-            }, to=sid, namespace='/widget')
-            return
-
-        session_id = data.get('session_id')
-        files = data.get('files', [])
-        
-        if not session_id or not files:
-            logger.error(f"Missing session_id or files in data: {data}")
-            await sio.emit('error', {
-                'error': 'Missing required data',
-                'type': 'validation_error'
-            }, to=sid, namespace='/widget')
-            return
-
-        # Get database session
-        db = next(get_db())
-        
-        # Check if attachments are allowed for this agent
-        agent_repo = AgentRepository(db)
-        agent = agent_repo.get_agent(session.get('agent_id'))
-        if agent and not agent.allow_attachments:
-            logger.warning(f"Attachment attempt for agent {session.get('agent_id')} that doesn't allow attachments")
-            await sio.emit('error', {
-                'error': 'Attachments are not allowed for this agent',
-                'type': 'validation_error'
-            }, to=sid, namespace='/widget')
-            return
-        
-        # Check if chat is handed over to human agent
-        # Check if there's any agent message in the conversation
-        from app.models import ChatHistory
-        agent_message_exists = db.query(ChatHistory).filter(
-            ChatHistory.session_id == session_id,
-            ChatHistory.message_type == 'agent'
-        ).first()
-        
-        if not agent_message_exists:
-            logger.warning(f"Attachment attempt for session {session_id} that is not handed over to a human agent")
-            await sio.emit('error', {
-                'error': 'Attachments are only available when the chat is handed over to a human agent',
-                'type': 'validation_error'
-            }, to=sid, namespace='/widget')
-            return
-        
-        # Find the most recent message in this session
-        latest_message = db.query(ChatHistory).filter(
-            ChatHistory.session_id == session_id
-        ).order_by(ChatHistory.created_at.desc()).first()
-        
-        if not latest_message:
-            logger.error(f"No message found for session {session_id}")
-            await sio.emit('error', {
-                'error': 'No message found',
-                'type': 'not_found_error'
-            }, to=sid, namespace='/widget')
-            return
-        
-        # Create file attachment records
-        from app.models import FileAttachment
-        org_id = session.get('org_id')
-        customer_id = session.get('customer_id')
-        
-        for file in files:
-            file_url = file.get('url')
-            filename = file.get('filename')
-            content_type = file.get('type', 'application/octet-stream')
-            file_size = file.get('size', 0)
-            
-            if not file_url or not filename:
-                logger.warning(f"Skipping file with missing url or filename: {file}")
-                continue
-            
-            # Create attachment
-            attachment = FileAttachment(
-                file_url=file_url,
-                filename=filename,
-                content_type=content_type,
-                file_size=file_size,
-                chat_history_id=latest_message.id,
-                organization_id=org_id,
-                uploaded_by_customer_id=customer_id
-            )
-            db.add(attachment)
-        
-        db.commit()
-        logger.info(f"Successfully attached {len(files)} files to message {latest_message.id}")
-        
-        # Build attachment response data
-        attachments_data = []
-        for file in files:
-            file_url = file.get('url')
-            filename = file.get('filename')
-            content_type = file.get('type', 'application/octet-stream')
-            file_size = file.get('size', 0)
-            
-            if file_url and filename:
-                attachments_data.append({
-                    'filename': filename,
-                    'file_url': file_url,
-                    'content_type': content_type,
-                    'file_size': file_size
-                })
-        
-        # Emit success event with attachment data
-        await sio.emit('files_attached', {
-            'success': True,
-            'message_id': latest_message.id,
-            'file_count': len(files),
-            'attachments': attachments_data
-        }, to=sid, namespace='/widget')
-        
-    except Exception as e:
-        logger.error(f"Error attaching files for widget sid {sid}: {str(e)}")
-        logger.error(traceback.format_exc())
-        await sio.emit('error', {
-            'error': 'Failed to attach files',
-            'type': 'file_attachment_error'
-        }, to=sid, namespace='/widget')

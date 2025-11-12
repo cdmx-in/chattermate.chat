@@ -24,6 +24,7 @@ import {
 import { marked } from 'marked'
 import { widgetEnv } from './widget-env'
 import { useWidgetStyles } from '../composables/useWidgetStyles'
+import { useWidgetFiles } from '../composables/useWidgetFiles'
 import { useWidgetSocket } from '../composables/useWidgetSocket'
 import { useWidgetCustomization } from '../composables/useWidgetCustomization'
 import { formatDistanceToNow } from 'date-fns'
@@ -291,6 +292,31 @@ const {
     shadowStyle
 } = useWidgetStyles(customization)
 
+// File input ref - must be defined before useWidgetFiles
+const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// File handling functionality
+const {
+    uploadedAttachments,
+    previewModal,
+    previewFile,
+    formatFileSize,
+    isImageAttachment,
+    getDownloadUrl,
+    getPreviewUrl,
+    handleFileSelect,
+    handleDrop,
+    handleDragOver,
+    handleDragLeave,
+    handlePaste,
+    uploadFiles,
+    removeAttachment,
+    openPreview,
+    closePreview,
+    openFilePicker,
+    isImage
+} = useWidgetFiles(token, fileInputRef)
+
 // Check if there's an active form being displayed
 const hasActiveForm = computed(() => {
     return messages.value.some(message =>
@@ -320,9 +346,7 @@ const isMessageInputEnabled = computed(() => {
 })
 
 const placeholderText = computed(() => {
-    return connectionStatus.value === 'connected' ?
-           (isAskAnythingStyle.value ? 'Ask me anything or paste a screenshot...' : 'Type a message or paste a screenshot...') :
-           'Connecting...'
+    return connectionStatus.value === 'connected' ? (isAskAnythingStyle.value ? 'Ask me anything...' : 'Type a message...') : 'Connecting...'
 })
 
 // Update the sendMessage function
@@ -334,28 +358,26 @@ const sendMessage = async () => {
         await checkAuthorization()
     }
 
-    // Store attachments before clearing
-    const filesToAttach = uploadedAttachments.value.length > 0 ? [...uploadedAttachments.value] : []
+    // Prepare files for upload (convert to format expected by backend)
+    const files = uploadedAttachments.value.map(file => ({
+        content: file.content,  // base64 content
+        filename: file.filename,
+        content_type: file.type,
+        size: file.size
+    }))
 
-    // Send message first
-    await socketSendMessage(newMessage.value, emailInput.value, [])
+    // Send message with files in a single emit
+    await socketSendMessage(newMessage.value, emailInput.value, files)
 
-    // Then send files separately if any (following ConversationChat pattern)
-    if (filesToAttach.length > 0) {
-        try {
-            // Wait a bit for the chat_response to arrive and set currentSessionId
-            await new Promise(resolve => setTimeout(resolve, 100))
-
-            console.log('Attempting to send file attachments, currentSessionId:', currentSessionId.value)
-
-            // Use the session ID from the composable (captured from chat_response)
-            if (currentSessionId.value) {
-                await sendFileAttachments(currentSessionId.value, filesToAttach)
-            }
-        } catch (error) {
-            console.error('Error sending file attachments:', error)
+    // Clean up temporary object URLs
+    uploadedAttachments.value.forEach(file => {
+        if (file.url && file.url.startsWith('blob:')) {
+            URL.revokeObjectURL(file.url)
         }
-    }
+        if (file.file_url && file.file_url.startsWith('blob:')) {
+            URL.revokeObjectURL(file.file_url)
+        }
+    })
 
     newMessage.value = ''
     uploadedAttachments.value = []
@@ -951,70 +973,22 @@ const removeUrls = (text) => {
     return processedText;
 }
 
-// Format file size helper
-const formatFileSize = (bytes: number | undefined | null): string => {
-  if (!bytes || bytes < 1024) return '0 Bytes'
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
-}
 
-// Check if attachment is an image
-const isImageAttachment = (contentType: string | undefined | null): boolean => {
-  return contentType ? contentType.startsWith('image/') : false
-}
-
-// Generate download URL for attachments
-const getDownloadUrl = (fileUrl: string | undefined | null): string => {
-  if (!fileUrl) return ''
-
-  console.log('getDownloadUrl input:', fileUrl)
-
-  // If it's already a download URL, return as-is
-  if (fileUrl.startsWith('/api/v1/files/download/')) {
-    console.log('getDownloadUrl output (already download URL):', fileUrl)
-    return fileUrl
-  }
-
-  // If fileUrl starts with /api/v1/uploads/, extract the path after that
-  if (fileUrl.startsWith('/api/v1/uploads/')) {
-    const path = fileUrl.replace('/api/v1/uploads/', '')
-    const result = `/api/v1/files/download/${path}`
-    console.log('getDownloadUrl output (type 1):', result)
-    return result
-  }
-
-  // If fileUrl is already a file path (widget_attachments/... or chat_attachments/...)
-  if (fileUrl.startsWith('widget_attachments/') || fileUrl.startsWith('chat_attachments/')) {
-    const result = `/api/v1/files/download/${fileUrl}`
-    console.log('getDownloadUrl output (type 2):', result)
-    return result
-  }
-
-  // Fallback: assume it's a complete file path
-  const result = `/api/v1/files/download${fileUrl.startsWith('/') ? fileUrl : '/' + fileUrl}`
-  console.log('getDownloadUrl output (fallback):', result)
-  return result
-}
-
-// File upload functionality
-const uploadedAttachments = ref<Array<{url: string, signedUrl?: string, filename: string, type: string, size?: number}>>([])
+// File upload functionality (remaining local state)
 const isUploading = ref(false)
-const fileInputRef = ref<HTMLInputElement | null>(null)
 const dragOver = ref(false)
 
-const maxFiles = 5
+const maxFiles = 3
 const acceptTypes = 'image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.xls'
-
-// Preview modal
-const previewModal = ref(false)
-const previewFile = ref<{url: string, signedUrl?: string, filename: string, type: string, size?: number} | null>(null)
 
 const canUploadMore = computed(() => {
   // Attachments only allowed when:
   // 1. allow_attachments setting is enabled
   // 2. Chat has been handed over to a human agent
+  // 3. Human agent has sent at least one message
   const isHandedOverToHuman = !!humanAgent.value?.human_agent_name
-  return allowAttachments.value && isHandedOverToHuman && uploadedAttachments.value.length < maxFiles
+  const hasAgentMessage = messages.value.some(msg => msg.message_type === 'agent')
+  return allowAttachments.value && isHandedOverToHuman && hasAgentMessage && uploadedAttachments.value.length < maxFiles
 })
 
 // Watch for changes to allowAttachments
@@ -1024,131 +998,9 @@ watch(allowAttachments, (newVal) => {
   console.log('   canUploadMore:', canUploadMore.value)
 })
 
-const handleFileSelect = async (event: Event) => {
-  const target = event.target as HTMLInputElement
-  if (target.files && target.files.length > 0) {
-    await uploadFiles(Array.from(target.files))
-  }
-}
 
-const handleDrop = async (event: DragEvent) => {
-  event.preventDefault()
-  dragOver.value = false
 
-  if (event.dataTransfer?.files && event.dataTransfer.files.length > 0) {
-    await uploadFiles(Array.from(event.dataTransfer.files))
-  }
-}
 
-const handleDragOver = (event: DragEvent) => {
-  event.preventDefault()
-  dragOver.value = true
-}
-
-const handleDragLeave = () => {
-  dragOver.value = false
-}
-
-const handlePaste = async (event: ClipboardEvent) => {
-  const items = event.clipboardData?.items
-  if (!items) return
-
-  const files: File[] = []
-  for (const item of Array.from(items)) {
-    if (item.kind === 'file') {
-      const file = item.getAsFile()
-      if (file) {
-        files.push(file)
-      }
-    }
-  }
-
-  if (files.length > 0) {
-    event.preventDefault()
-    await uploadFiles(files)
-  }
-}
-
-const uploadFiles = async (files: File[]) => {
-  if (!canUploadMore.value) {
-    console.error(`Maximum ${maxFiles} files allowed`)
-    return
-  }
-
-  const remainingSlots = maxFiles - uploadedAttachments.value.length
-  const filesToUpload = files.slice(0, remainingSlots)
-
-  if (files.length > remainingSlots) {
-    console.warn(`Only ${remainingSlots} more file(s) can be uploaded`)
-  }
-
-  isUploading.value = true
-
-  for (const file of filesToUpload) {
-    try {
-      // Store the file size locally from the File object BEFORE uploading
-      const fileSize = file.size
-
-      const formData = new FormData()
-      formData.append('file', file)
-
-      const headers: Record<string, string> = {}
-      if (token.value) {
-        headers['Authorization'] = `Bearer ${token.value}`
-      }
-
-      const response = await fetch(`${widgetEnv.API_URL}/files/upload`, {
-        method: 'POST',
-        headers,
-        body: formData,
-        credentials: 'include'
-      })
-
-      if (!response.ok) {
-        throw new Error('Upload failed')
-      }
-
-      const data = await response.json()
-
-      // Use fileSize as fallback if API doesn't return size
-      const finalSize = data.size || fileSize
-
-      uploadedAttachments.value.push({
-        url: data.file_url,
-        signedUrl: data.signed_url,
-        filename: data.filename,
-        type: data.content_type || 'application/octet-stream',
-        size: finalSize
-      })
-    } catch (error) {
-      console.error('Upload error:', error)
-    }
-  }
-
-  isUploading.value = false
-}
-
-const removeAttachment = (index: number) => {
-  uploadedAttachments.value.splice(index, 1)
-}
-
-const openPreview = (file: {url: string, signedUrl?: string, filename: string, type: string, size?: number}) => {
-  previewFile.value = file
-  previewModal.value = true
-}
-
-const closePreview = () => {
-  previewModal.value = false
-  previewFile.value = null
-}
-
-const openFilePicker = () => {
-  fileInputRef.value?.click()
-}
-
-const isImage = (type: string | undefined | null): boolean => {
-  return type ? type.startsWith('image/') : false
-}
 
 // Handle landing page proceed action
 const handleLandingPageProceed = async () => {
@@ -2090,10 +1942,10 @@ const shouldShowWelcomeMessage = computed(() => {
                                     <template v-if="isImageAttachment(attachment.content_type)">
                                       <div class="attachment-image-container">
                                         <img
-                                          :src="attachment.file_url"
+                                          :src="getDownloadUrl(attachment.file_url)"
                                           :alt="attachment.filename"
                                           class="attachment-image"
-                                          @click.stop="openPreview({url: attachment.file_url, filename: attachment.filename, type: attachment.content_type, signedUrl: undefined, size: undefined})"
+                                          @click.stop="openPreview({url: attachment.file_url, filename: attachment.filename, type: attachment.content_type, file_url: getDownloadUrl(attachment.file_url), size: undefined})"
                                           style="cursor: pointer;"
                                         />
                                         <div class="attachment-image-info">
@@ -2134,9 +1986,6 @@ const shouldShowWelcomeMessage = computed(() => {
                         <div class="message-info">
                             <span v-if="message.message_type === 'user'" class="agent-name">
                                 You
-                            </span>
-                            <span v-else-if="message.message_type === 'bot' || message.message_type === 'agent'" class="agent-name">
-                                {{ humanAgent.human_agent_name || agentName || 'Bot' }}
                             </span>
                         </div>
                     </div>
@@ -2185,7 +2034,7 @@ const shouldShowWelcomeMessage = computed(() => {
                         <div class="file-preview-content-widget" style="cursor: pointer;">
                             <img
                                 v-if="isImage(file.type)"
-                                :src="file.signedUrl || file.url"
+                                :src="getPreviewUrl(file)"
                                 :alt="file.filename"
                                 class="file-preview-image-widget"
                                 @click.stop="openPreview(file)"
@@ -2343,7 +2192,7 @@ const shouldShowWelcomeMessage = computed(() => {
             <div class="preview-modal-content" @click.stop>
                 <button class="preview-modal-close" @click="closePreview">×</button>
                 <div v-if="previewFile && isImage(previewFile.type)" class="preview-modal-image-container">
-                    <img :src="previewFile.signedUrl || previewFile.url" :alt="previewFile.filename" class="preview-modal-image" />
+                    <img :src="getPreviewUrl(previewFile)" :alt="previewFile.filename" class="preview-modal-image" />
                     <div class="preview-modal-filename">{{ previewFile.filename }}</div>
                 </div>
             </div>
@@ -4799,9 +4648,9 @@ const shouldShowWelcomeMessage = computed(() => {
   right: -2px;
   bottom: -2px;
   background: linear-gradient(135deg,
-    rgba(99, 102, 241, 0.4) 0%,
-    rgba(168, 85, 247, 0.4) 50%,
-    rgba(236, 72, 153, 0.4) 100%);
+    rgba(243, 70, 17, 0.4) 0%,
+    rgba(217, 58, 12, 0.4) 50%,
+    rgba(239, 68, 68, 0.4) 100%);
   border-radius: 50%;
   opacity: 0;
   transition: opacity 0.3s ease;
@@ -4818,7 +4667,7 @@ const shouldShowWelcomeMessage = computed(() => {
   height: 100%;
   border-radius: 50%;
   background: radial-gradient(circle,
-    rgba(99, 102, 241, 0.2) 0%,
+    rgba(243, 70, 17, 0.2) 0%,
     transparent 70%);
   opacity: 0;
   transition: all 0.4s ease;
@@ -4828,13 +4677,13 @@ const shouldShowWelcomeMessage = computed(() => {
 
 .attach-button:hover:not(:disabled) {
   background: linear-gradient(135deg, #ffffff 0%, #fafbfc 100%);
-  border-color: #a78bfa;
-  color: #7c3aed;
+  border-color: var(--primary-color);
+  color: var(--primary-color);
   transform: translateY(-3px) scale(1.05);
   box-shadow:
-    0 8px 16px rgba(124, 58, 237, 0.15),
-    0 4px 8px rgba(124, 58, 237, 0.1),
-    0 0 0 4px rgba(124, 58, 237, 0.1);
+    0 8px 16px rgba(243, 70, 17, 0.15),
+    0 4px 8px rgba(243, 70, 17, 0.1),
+    0 0 0 4px rgba(243, 70, 17, 0.1);
 }
 
 .attach-button:hover:not(:disabled)::before {
@@ -4851,8 +4700,8 @@ const shouldShowWelcomeMessage = computed(() => {
 .attach-button:active:not(:disabled) {
   transform: translateY(-1px) scale(1);
   box-shadow:
-    0 4px 8px rgba(124, 58, 237, 0.2),
-    0 0 0 3px rgba(124, 58, 237, 0.15);
+    0 4px 8px rgba(243, 70, 17, 0.2),
+    0 0 0 3px rgba(243, 70, 17, 0.15);
   transition: all 0.1s ease;
 }
 
@@ -4873,7 +4722,7 @@ const shouldShowWelcomeMessage = computed(() => {
 
 .attach-button:hover:not(:disabled) svg {
   transform: rotate(-15deg) scale(1.1);
-  filter: drop-shadow(0 2px 4px rgba(124, 58, 237, 0.3));
+  filter: drop-shadow(0 2px 4px rgba(243, 70, 17, 0.3));
 }
 
 .attach-button:active:not(:disabled) svg {

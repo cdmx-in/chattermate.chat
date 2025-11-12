@@ -23,7 +23,7 @@ os.environ.setdefault('TOKENIZERS_PARALLELISM', 'false')
 # Add users import
 from fastapi.staticfiles import StaticFiles
 import socketio
-from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload
+from app.api import chat, organizations, users, ai_setup, knowledge, agent, notification, widget, user_groups, roles, analytics, jira, shopify, workflow, workflow_node, mcp_tool, file_upload, widget_chat
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
@@ -32,6 +32,7 @@ from app.database import engine, Base
 import asyncio
 from app.core.logger import get_logger
 from contextlib import asynccontextmanager
+import os
 from app.core.socketio import socket_app, configure_socketio, sio
 from app.core.cors import get_cors_origins
 from app.core.application import app, initialize_cors_listener
