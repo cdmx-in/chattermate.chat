@@ -973,15 +973,24 @@ async def handle_agent_message(sid, data):
         if uploaded_files:
             attachments_data = []
             for file_info in uploaded_files:
+                file_url = file_info['file_url']
+
+                # Generate S3 signed URL if S3 storage is enabled
+                if settings.S3_FILE_STORAGE:
+                    try:
+                        file_url = await get_s3_signed_url(file_url)
+                    except Exception as e:
+                        logger.error(f"Error generating signed URL for attachment: {str(e)}")
+
                 attachments_data.append({
                     'filename': file_info['filename'],
-                    'file_url': file_info['file_url'],
+                    'file_url': file_url,
                     'content_type': file_info['content_type'],
                     'file_size': file_info['size']
                 })
             response_payload['attachments'] = attachments_data
             response_payload['message_id'] = created_message.id
-            
+
         await sio.emit('chat_response', response_payload, room=session_id, namespace='/widget')
 
 
