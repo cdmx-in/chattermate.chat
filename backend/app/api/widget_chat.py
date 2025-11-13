@@ -38,6 +38,8 @@ import uuid
 from app.services.socket_rate_limit import socket_rate_limit
 from app.services.workflow_chat import WorkflowChatService
 from app.services.file_upload_service import FileUploadService
+from app.core.config import settings
+from app.core.s3 import get_s3_signed_url
 
 from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
@@ -563,9 +565,18 @@ async def handle_widget_chat(sid, data):
             attachments_data = []
             if uploaded_files:
                 for file_info in uploaded_files:
+                    file_url = file_info['file_url']
+
+                    # Generate S3 signed URL if S3 storage is enabled
+                    if settings.S3_FILE_STORAGE:
+                        try:
+                            file_url = await get_s3_signed_url(file_url)
+                        except Exception as e:
+                            logger.error(f"Error generating signed URL for attachment: {str(e)}")
+
                     attachments_data.append({
                         'filename': file_info['filename'],
-                        'file_url': file_info['file_url'],
+                        'file_url': file_url,
                         'content_type': file_info['content_type'],
                         'file_size': file_info['size']
                     })
@@ -631,13 +642,22 @@ async def handle_widget_chat(sid, data):
             attachments_data = []
             if uploaded_files:
                 for file_info in uploaded_files:
+                    file_url = file_info['file_url']
+
+                    # Generate S3 signed URL if S3 storage is enabled
+                    if settings.S3_FILE_STORAGE:
+                        try:
+                            file_url = await get_s3_signed_url(file_url)
+                        except Exception as e:
+                            logger.error(f"Error generating signed URL for attachment: {str(e)}")
+
                     attachments_data.append({
                         'filename': file_info['filename'],
-                        'file_url': file_info['file_url'],
+                        'file_url': file_url,
                         'content_type': file_info['content_type'],
                         'file_size': file_info['size']
                     })
-            
+
             if user_id:
                 # Also emit to user-specific room
                 user_room = f"user_{user_id}"
