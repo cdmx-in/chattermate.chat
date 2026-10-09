@@ -28,10 +28,106 @@ from app.repositories.agent_shopify_config_repository import AgentShopifyConfigR
 from uuid import UUID
 import json
 import traceback
+import requests
 from app.core.config import settings
 from app.core.redis import get_redis
+from app.tools.shopify_order_access import (
+    MAX_ORDER_RESULTS,
+    ORDER_NOT_FOUND,
+    build_order_search,
+    order_belongs_to,
+    order_lookup_problem,
+    order_number_matches,
+)
 
 logger = get_logger(__name__)
+
+# A slow store must not hold the chat turn open.
+ORDER_SEARCH_TIMEOUT_SECONDS = 20
+
+ORDER_SEARCH_GRAPHQL = """
+query SearchOrders($query: String, $first: Int!) {
+  orders(first: $first, query: $query, sortKey: CREATED_AT, reverse: true) {
+    edges {
+      node {
+        id
+        name
+        email
+        phone
+        createdAt
+        displayFinancialStatus
+        displayFulfillmentStatus
+        subtotalLineItemsQuantity
+        currentSubtotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        currentTotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        originalTotalPriceSet {
+          shopMoney {
+            amount
+            currencyCode
+          }
+        }
+        customer {
+          id
+          firstName
+          lastName
+          email
+        }
+        lineItems(first: 5) {
+          edges {
+            node {
+              title
+              quantity
+              originalUnitPriceSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              variant {
+                id
+                title
+                image {
+                  url
+                }
+              }
+            }
+          }
+        }
+        shippingAddress {
+          address1
+          address2
+          city
+          provinceCode
+          zip
+          country
+        }
+        fulfillments {
+          trackingInfo {
+            company
+            number
+            url
+          }
+          status
+        }
+      }
+    }
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
+  }
+}
+"""
 
 def create_minimal_product(product: dict) -> dict:
     """
@@ -369,7 +465,6 @@ class ShopifyTools(Toolkit):
                 "variables": variables
             }
             
-            import requests
             verify_ssl = settings.VERIFY_SSL_CERTIFICATES
             response = requests.post(url, headers=headers, json=payload, verify=verify_ssl)
             
@@ -500,440 +595,264 @@ class ShopifyTools(Toolkit):
             })
     
    
-    def search_orders(self, query: str = None, customer_email: str = None, order_number: str = None, limit: int = 10) -> str:
+    def search_orders(self, customer_email: str, order_number: Optional[str] = None, limit: int = MAX_ORDER_RESULTS) -> str:
         """
-        Search for orders in the Shopify store using GraphQL API.
-        
+        Find the customer's own orders. Ask the customer for the email address they
+        used at checkout; never guess it or take it from anywhere else.
+
         Args:
-            query: General search query for orders
-            customer_email: Customer's email address to filter orders
-            order_number: Specific order number to search for
-            limit: Maximum number of orders to return (default: 10)
-            
+            customer_email: The email address the customer used at checkout (required)
+            order_number: The order number, e.g. "#1001" (optional, narrows to one order)
+            limit: Maximum number of orders to return (default and maximum: 10)
+
         Returns:
-            str: JSON string with the matching orders or error information
+            str: JSON string with the customer's matching orders or error information
         """
         try:
-            # Validate that at least one search parameter is provided
-            if not query and not customer_email and not order_number:
-                return json.dumps({
-                    "success": False,
-                    "message": "Please provide at least one search parameter: order number, email address, or search query. Ask the user for this information if not provided.",
-                    "requires_user_input": True
-                })
-            
-            # Get the Shopify shop for this agent
+            problem = order_lookup_problem(customer_email, order_number)
+            if problem:
+                return json.dumps({"success": False, "message": problem, "requires_user_input": True})
+
             shop = self._get_shop_for_agent()
-            
             if not shop:
                 return json.dumps({
                     "success": False,
                     "message": "Shopify integration is not enabled for this agent or shop not found"
                 })
 
-            # Construct the search query
-            search_terms = []
-            if query and query.strip():
-                search_terms.append(query.strip())
-            if customer_email and customer_email.strip():
-                search_terms.append(f"email:{customer_email.strip()}")
-            if order_number and order_number.strip():
-                search_terms.append(f"name:{order_number.strip()}")
+            found = self._find_customer_orders(shop, customer_email, order_number, limit)
+            if not found["success"]:
+                return json.dumps(found)
+            orders = found["orders"]
+            if not orders:
+                return json.dumps({"success": False, "message": ORDER_NOT_FOUND})
 
-            # Join search terms with AND operator
-            search_query = " AND ".join(search_terms) if search_terms else ""
-
-            # GraphQL query for orders with correct field names (updated based on Shopify's schema)
-            graphql_query = """
-            query SearchOrders($query: String, $first: Int!) {
-              orders(first: $first, query: $query, sortKey: CREATED_AT, reverse: true) {
-                edges {
-                  node {
-                    id
-                    name
-                    email
-                    phone
-                    createdAt
-                    displayFinancialStatus
-                    displayFulfillmentStatus
-                    subtotalLineItemsQuantity
-                    currentSubtotalPriceSet {
-                      shopMoney {
-                        amount
-                        currencyCode
-                      }
-                    }
-                    currentTotalPriceSet {
-                      shopMoney {
-                        amount
-                        currencyCode
-                      }
-                    }
-                    originalTotalPriceSet {
-                      shopMoney {
-                        amount
-                        currencyCode
-                      }
-                    }
-                    customer {
-                      id
-                      firstName
-                      lastName
-                      email
-                    }
-                    lineItems(first: 5) {
-                      edges {
-                        node {
-                          title
-                          quantity
-                          originalUnitPriceSet {
-                            shopMoney {
-                              amount
-                              currencyCode
-                            }
-                          }
-                          variant {
-                            id
-                            title
-                            image {
-                              url
-                            }
-                          }
-                        }
-                      }
-                    }
-                    shippingAddress {
-                      address1
-                      address2
-                      city
-                      provinceCode
-                      zip
-                      country
-                    }
-                    fulfillments {
-                      trackingInfo {
-                        company
-                        number
-                        url
-                      }
-                      status
-                    }
-                  }
-                }
-                pageInfo {
-                  hasNextPage
-                  endCursor
-                }
-              }
-            }
-            """
-
-            # Execute the GraphQL query
-            url = f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json"
-            headers = {
-                "X-Shopify-Access-Token": shop.access_token,
-                "Content-Type": "application/json"
-            }
-            
-            variables = {
-                "query": search_query,
-                "first": limit
-            }
-            
-            payload = {
-                "query": graphql_query,
-                "variables": variables
-            }
-            
-            import requests
-            verify_ssl = settings.VERIFY_SSL_CERTIFICATES
-            response = requests.post(url, headers=headers, json=payload, verify=verify_ssl)
-            
-            if response.status_code != 200:
-                logger.error(f"Failed to search orders: {response.text}")
-                return json.dumps({
-                    "success": False,
-                    "message": f"Failed to search orders: {response.text}"
-                })
-            
-            result = response.json()
-            
-            # Check for GraphQL errors
-            if "errors" in result:
-                logger.error(f"GraphQL errors: {result['errors']}")
-                return json.dumps({
-                    "success": False,
-                    "message": f"GraphQL errors: {result['errors']}"
-                })
-            
-            # Transform the GraphQL data structure
-            orders_data = result.get("data", {}).get("orders", {})
-            edges = orders_data.get("edges", [])
-            page_info = orders_data.get("pageInfo", {})
-            
-            # Extract orders from edges
-            orders = []
-            for edge in edges:
-                node = edge.get("node", {})
-                
-                # Transform line items
-                line_items = []
-                for item_edge in node.get("lineItems", {}).get("edges", []):
-                    item_node = item_edge.get("node", {})
-                    variant = item_node.get("variant")
-                    original_unit_price_set = item_node.get("originalUnitPriceSet", {}).get("shopMoney", {})
-                    
-                    # Parse price which is now nested
-                    try:
-                        price_amount = float(original_unit_price_set.get("amount")) if original_unit_price_set.get("amount") is not None else None
-                    except (ValueError, TypeError):
-                        price_amount = None
-                    
-                    # Handle case where variant might be None
-                    variant_title = None
-                    image_url = None
-                    if variant:
-                        variant_title = variant.get("title")
-                        image_data = variant.get("image")
-                        if image_data:
-                            image_url = image_data.get("url")
-
-                    line_items.append({
-                        "title": item_node.get("title"),
-                        "quantity": item_node.get("quantity"),
-                        "price": price_amount,
-                        "variant_title": variant_title,
-                        "image_url": image_url
-                    })
-                
-                # Get price information - access via Set and shopMoney
-                current_total_set = node.get("currentTotalPriceSet", {}).get("shopMoney", {})
-                original_total_set = node.get("originalTotalPriceSet", {}).get("shopMoney", {})
-                subtotal_set = node.get("currentSubtotalPriceSet", {}).get("shopMoney", {})
-                
-                # Process tracking information from fulfillments
-                tracking_info = []
-                for fulfillment in node.get("fulfillments", []):
-                    for tracking in fulfillment.get("trackingInfo", []):
-                        tracking_info.append({
-                            "company": tracking.get("company"),
-                            "number": tracking.get("number"),
-                            "url": tracking.get("url")
-                        })
-                
-                # Transform order data
-                order = {
-                    "id": node.get("id").split("/")[-1] if node.get("id") else None,
-                    "name": node.get("name"),
-                    "email": node.get("email"),
-                    "phone": node.get("phone"),
-                    "created_at": node.get("createdAt"),
-                    "financial_status": node.get("displayFinancialStatus"),
-                    "fulfillment_status": node.get("displayFulfillmentStatus"),
-                    "total_items": node.get("subtotalLineItemsQuantity"),
-                    "current_total": current_total_set.get("amount"),
-                    "original_total": original_total_set.get("amount"),
-                    "subtotal": subtotal_set.get("amount"),
-                    "currency": current_total_set.get("currencyCode"),
-                    "customer": {
-                        "id": node.get("customer", {}).get("id"),
-                        "first_name": node.get("customer", {}).get("firstName"),
-                        "last_name": node.get("customer", {}).get("lastName"),
-                        "email": node.get("customer", {}).get("email")
-                    },
-                    "line_items": line_items,
-                    "shipping_address": node.get("shippingAddress"),
-                    "tracking_info": tracking_info
-                }
-                
-                orders.append(order)
-            
-            # Create text summary for LLM
-            if orders:
-                order_summaries = []
-                for idx, order in enumerate(orders, 1):
-                    customer_name = f"{order['customer'].get('first_name', '')} {order['customer'].get('last_name', '')}".strip()
-                    customer_info = customer_name if customer_name else order.get('email', 'N/A')
-                    
-                    summary = (
-                        f"{idx}. Order {order['name']}\n"
-                        f"   - Customer: {customer_info}\n"
-                        f"   - Total: {order['currency']} {order['current_total']}\n"
-                        f"   - Status: {order['financial_status']}\n"
-                        f"   - Fulfillment: {order['fulfillment_status']}\n"
-                        f"   - Items: {order['total_items']}\n"
-                        f"   - Created: {order['created_at']}"
-                    )
-                    
-                    # Add tracking info if available
-                    if order.get('tracking_info'):
-                        tracking_numbers = [t.get('number') for t in order['tracking_info'] if t.get('number')]
-                        if tracking_numbers:
-                            summary += f"\n   - Tracking: {', '.join(tracking_numbers)}"
-                    
-                    order_summaries.append(summary)
-                
-                text_message = (
-                    f"Found {len(orders)} order(s):\n\n"
-                    + "\n\n".join(order_summaries)
-                )
-            else:
-                text_message = "No orders found matching your search criteria."
-            
-            # Return success response with orders and pagination info
             return json.dumps({
                 "success": True,
-                "message": text_message,
+                "message": self._summarise_orders(orders),
                 "orders": orders,
-                "page_info": page_info,
+                "page_info": found["page_info"],
                 "shop_domain": shop.shop_domain
             })
-            
+
         except Exception as e:
             logger.error(f"Error searching orders: {str(e)}")
             logger.error(traceback.format_exc())
-            return json.dumps({
-                "success": False,
-                "message": f"Error searching orders: {str(e)}"
+            return json.dumps({"success": False, "message": "Couldn't search the store's orders right now."})
+
+    def _find_customer_orders(self, shop: ShopifyShop, customer_email: str,
+                              order_number: Optional[str], limit: int) -> Dict[str, Any]:
+        """Orders placed with this email (and number, if given). Shopify's search is
+        fuzzy, so every result is re-checked for an exact email and number match."""
+        limit = max(1, min(int(limit or MAX_ORDER_RESULTS), MAX_ORDER_RESULTS))
+        response = requests.post(
+            f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json",
+            headers={"X-Shopify-Access-Token": shop.access_token, "Content-Type": "application/json"},
+            json={
+                "query": ORDER_SEARCH_GRAPHQL,
+                "variables": {"query": build_order_search(customer_email, order_number), "first": limit},
+            },
+            verify=settings.VERIFY_SSL_CERTIFICATES,
+            timeout=ORDER_SEARCH_TIMEOUT_SECONDS,
+        )
+        if response.status_code != 200:
+            logger.error(f"Failed to search orders: {response.status_code} {response.text}")
+            return {"success": False, "message": "Couldn't reach the store's orders right now."}
+
+        result = response.json()
+        if "errors" in result:
+            logger.error(f"GraphQL errors: {result['errors']}")
+            return {"success": False, "message": "Couldn't search the store's orders right now."}
+
+        orders_data = (result.get("data") or {}).get("orders") or {}
+        orders = [self._order_from_node(edge.get("node") or {}) for edge in orders_data.get("edges", [])]
+        return {
+            "success": True,
+            "orders": [o for o in orders
+                       if order_belongs_to(o, customer_email) and order_number_matches(o, order_number)],
+            "page_info": orders_data.get("pageInfo", {}),
+        }
+
+    @staticmethod
+    def _order_from_node(node: Dict[str, Any]) -> Dict[str, Any]:
+        """Flatten one GraphQL order node into the shape the agent receives."""
+        line_items = []
+        for item_edge in (node.get("lineItems") or {}).get("edges", []):
+            item_node = item_edge.get("node") or {}
+            variant = item_node.get("variant") or {}
+            unit_price = (item_node.get("originalUnitPriceSet") or {}).get("shopMoney") or {}
+            try:
+                price_amount = float(unit_price["amount"]) if unit_price.get("amount") is not None else None
+            except (ValueError, TypeError):
+                price_amount = None
+            line_items.append({
+                "title": item_node.get("title"),
+                "quantity": item_node.get("quantity"),
+                "price": price_amount,
+                "variant_title": variant.get("title"),
+                "image_url": (variant.get("image") or {}).get("url")
             })
-    
-    def get_order_status(self, order_id: str) -> str:
+
+        tracking_info = [
+            {"company": tracking.get("company"), "number": tracking.get("number"), "url": tracking.get("url")}
+            for fulfillment in node.get("fulfillments") or []
+            for tracking in fulfillment.get("trackingInfo") or []
+        ]
+
+        def money(field: str) -> Dict[str, Any]:
+            return (node.get(field) or {}).get("shopMoney") or {}
+
+        customer = node.get("customer") or {}
+        return {
+            "id": node["id"].split("/")[-1] if node.get("id") else None,
+            "name": node.get("name"),
+            "email": node.get("email"),
+            "phone": node.get("phone"),
+            "created_at": node.get("createdAt"),
+            "financial_status": node.get("displayFinancialStatus"),
+            "fulfillment_status": node.get("displayFulfillmentStatus"),
+            "total_items": node.get("subtotalLineItemsQuantity"),
+            "current_total": money("currentTotalPriceSet").get("amount"),
+            "original_total": money("originalTotalPriceSet").get("amount"),
+            "subtotal": money("currentSubtotalPriceSet").get("amount"),
+            "currency": money("currentTotalPriceSet").get("currencyCode"),
+            "customer": {
+                "id": customer.get("id"),
+                "first_name": customer.get("firstName"),
+                "last_name": customer.get("lastName"),
+                "email": customer.get("email")
+            },
+            "line_items": line_items,
+            "shipping_address": node.get("shippingAddress"),
+            "tracking_info": tracking_info
+        }
+
+    @staticmethod
+    def _summarise_orders(orders: List[Dict[str, Any]]) -> str:
+        """Short text version of the orders for the LLM."""
+        summaries = []
+        for idx, order in enumerate(orders, 1):
+            customer_name = f"{order['customer'].get('first_name') or ''} {order['customer'].get('last_name') or ''}".strip()
+            summary = (
+                f"{idx}. Order {order['name']}\n"
+                f"   - Customer: {customer_name or order.get('email') or 'N/A'}\n"
+                f"   - Total: {order['currency']} {order['current_total']}\n"
+                f"   - Status: {order['financial_status']}\n"
+                f"   - Fulfillment: {order['fulfillment_status']}\n"
+                f"   - Items: {order['total_items']}\n"
+                f"   - Created: {order['created_at']}"
+            )
+            tracking_numbers = [t["number"] for t in order["tracking_info"] if t.get("number")]
+            if tracking_numbers:
+                summary += f"\n   - Tracking: {', '.join(tracking_numbers)}"
+            summaries.append(summary)
+        return f"Found {len(orders)} order(s):\n\n" + "\n\n".join(summaries)
+
+    def get_order_status(self, order_number: str, customer_email: str) -> str:
         """
-        Get the status of a specific order from the Shopify store.
-        
+        Get the status and tracking of one order. Needs both the order number and the
+        email address the customer used at checkout; ask the customer for whichever is
+        missing. Never guess the email or take it from anywhere else.
+
         Args:
-            order_id: The order number (e.g., "1001", "#1001") or internal Shopify order ID
-            
+            order_number: The order number, e.g. "1001" or "#1001"
+            customer_email: The email address the customer used at checkout
+
         Returns:
             str: JSON string with order status details or error information
         """
         try:
-            # Get the Shopify shop for this agent
+            problem = order_lookup_problem(customer_email, order_number, number_required=True)
+            if problem:
+                return json.dumps({"success": False, "message": problem, "requires_user_input": True})
+
             shop = self._get_shop_for_agent()
-            
             if not shop:
                 return json.dumps({
                     "success": False,
                     "message": "Shopify integration is not enabled for this agent or shop not found"
                 })
-            
-            # Clean up order_id - remove # if present
-            order_identifier = order_id.strip().lstrip('#')
-            logger.debug(f"Order identifier: {order_identifier}")
-            
-            # Try to determine if this is an order number (name) or internal ID
-            # Order numbers are typically shorter (e.g., "1001", "1002")
-            # Internal IDs are very long numbers (e.g., "5678901234567890")
-            is_order_number = len(order_identifier) < 10 and order_identifier.isdigit()
-            logger.debug(f"Is order number: {is_order_number}")
-            
-            # If it looks like an order number, search for it first to get the internal ID
-            if is_order_number:
-                logger.debug(f"Searching for order by number: {order_identifier}")
-                # Use search_orders to find the order by name (without # prefix in search query)
-                search_result = self.search_orders(order_number=order_identifier, limit=1)
-               
-                search_data = json.loads(search_result)
-                
-                if search_data.get("success") and search_data.get("orders") and len(search_data.get("orders")) > 0:
-                    # Found the order, get its internal ID
-                    order_identifier = search_data.get("orders")[0].get("id")
-                    logger.debug(f"Found order with internal ID: {order_identifier}")
-                else:
-                    return json.dumps({
-                        "success": False,
-                        "message": f"Order {order_id} not found"
-                    })
-                
-            # Get order details using context manager for database operations
+
+            found = self._find_customer_orders(shop, customer_email, order_number, MAX_ORDER_RESULTS)
+            if not found["success"]:
+                return json.dumps(found)
+            if not found["orders"]:
+                return json.dumps({"success": False, "message": ORDER_NOT_FOUND})
+
             with SessionLocal() as db:
-                shopify_service = ShopifyService(db)
-                logger.debug(f"Getting order with internal ID: {order_identifier}")
-                result = shopify_service.get_order(shop, order_identifier)
-            
-            # If successful, extract relevant order status information
-            if result.get("success", False) and result.get("order"):
-                order = result.get("order")
-                
-                # Filter out cancelled fulfillments - only include active ones
-                all_fulfillments = order.get("fulfillments", [])
-                active_fulfillments = [
-                    f for f in all_fulfillments 
-                    if f.get("status") and f.get("status").upper() != "CANCELLED"
-                ]
-                
-                # Extract tracking numbers from active fulfillments only
-                tracking_numbers = []
-                for fulfillment in active_fulfillments:
-                    if fulfillment.get("tracking_number"):
-                        tracking_numbers.append(fulfillment.get("tracking_number"))
-                    elif fulfillment.get("tracking_numbers"):
-                        tracking_numbers.extend(fulfillment.get("tracking_numbers"))
-                
-                # Create text summary for LLM
-                customer = order.get("customer", {})
-                customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
-                customer_info = customer_name if customer_name else customer.get('email', 'N/A')
-                
-                text_message = (
-                    f"Order Status for {order.get('name')}:\n\n"
-                    f"Customer: {customer_info}\n"
-                    f"Total: {order.get('currency', 'USD')} {order.get('total_price')}\n"
-                    f"Payment Status: {order.get('financial_status')}\n"
-                    f"Fulfillment Status: {order.get('fulfillment_status')}\n"
-                    f"Order Date: {order.get('created_at')}\n"
-                )
-                
-                # Add tracking information
-                if tracking_numbers:
-                    text_message += f"Tracking Numbers: {', '.join(tracking_numbers)}\n"
-                
-                # Add shipping address if available
-                shipping_addr = order.get("shipping_address")
-                if shipping_addr:
-                    addr_parts = [
-                        shipping_addr.get("address1"),
-                        shipping_addr.get("city"),
-                        shipping_addr.get("provinceCode"),
-                        shipping_addr.get("zip"),
-                        shipping_addr.get("country")
-                    ]
-                    addr_str = ", ".join([p for p in addr_parts if p])
-                    text_message += f"Shipping Address: {addr_str}\n"
-                
-                status_info = {
-                    "success": True,
-                    "message": text_message,
-                    "order_id": order.get("id"),
-                    "order_number": order.get("name"),
-                    "status": order.get("financial_status"),
-                    "fulfillment_status": order.get("fulfillment_status"),
-                    "created_at": order.get("created_at"),
-                    "processed_at": order.get("processed_at"),
-                    "customer": customer,
-                    "total_price": order.get("total_price"),
-                    "currency": order.get("currency"),
-                    "fulfillments": active_fulfillments,  # Only include active fulfillments
-                    "shipping_address": shipping_addr,
-                    "billing_address": order.get("billing_address"),
-                    "tracking_numbers": tracking_numbers,
-                    "shop_domain": shop.shop_domain
-                }
-                
-                return json.dumps(status_info)
-            
-            # Add shop_domain to error result as well
-            if isinstance(result, dict):
+                result = ShopifyService(db).get_order(shop, found["orders"][0]["id"])
+
+            order = result.get("order") if result.get("success", False) else None
+            if not order:
                 result["shop_domain"] = shop.shop_domain
-            return json.dumps(result)
-            
+                return json.dumps(result)
+            # The full record is fetched separately, so check ownership on it too.
+            if not order_belongs_to(order, customer_email):
+                return json.dumps({"success": False, "message": ORDER_NOT_FOUND})
+
+            # Filter out cancelled fulfillments - only include active ones
+            active_fulfillments = [
+                f for f in order.get("fulfillments") or []
+                if f.get("status") and f.get("status").upper() != "CANCELLED"
+            ]
+
+            # Extract tracking numbers from active fulfillments only
+            tracking_numbers = []
+            for fulfillment in active_fulfillments:
+                if fulfillment.get("tracking_number"):
+                    tracking_numbers.append(fulfillment.get("tracking_number"))
+                elif fulfillment.get("tracking_numbers"):
+                    tracking_numbers.extend(fulfillment.get("tracking_numbers"))
+
+            # Create text summary for LLM
+            customer = order.get("customer") or {}
+            customer_name = f"{customer.get('first_name') or ''} {customer.get('last_name') or ''}".strip()
+            text_message = (
+                f"Order Status for {order.get('name')}:\n\n"
+                f"Customer: {customer_name or customer.get('email') or 'N/A'}\n"
+                f"Total: {order.get('currency', 'USD')} {order.get('total_price')}\n"
+                f"Payment Status: {order.get('financial_status')}\n"
+                f"Fulfillment Status: {order.get('fulfillment_status')}\n"
+                f"Order Date: {order.get('created_at')}\n"
+            )
+            if tracking_numbers:
+                text_message += f"Tracking Numbers: {', '.join(tracking_numbers)}\n"
+
+            shipping_addr = order.get("shipping_address")
+            if shipping_addr:
+                addr_parts = [
+                    shipping_addr.get("address1"),
+                    shipping_addr.get("city"),
+                    shipping_addr.get("provinceCode"),
+                    shipping_addr.get("zip"),
+                    shipping_addr.get("country")
+                ]
+                text_message += f"Shipping Address: {', '.join(p for p in addr_parts if p)}\n"
+
+            return json.dumps({
+                "success": True,
+                "message": text_message,
+                "order_id": order.get("id"),
+                "order_number": order.get("name"),
+                "status": order.get("financial_status"),
+                "fulfillment_status": order.get("fulfillment_status"),
+                "created_at": order.get("created_at"),
+                "processed_at": order.get("processed_at"),
+                "customer": customer,
+                "total_price": order.get("total_price"),
+                "currency": order.get("currency"),
+                "fulfillments": active_fulfillments,
+                "shipping_address": shipping_addr,
+                "billing_address": order.get("billing_address"),
+                "tracking_numbers": tracking_numbers,
+                "shop_domain": shop.shop_domain
+            })
+
         except Exception as e:
             logger.error(f"Error getting order status: {str(e)}")
-            return json.dumps({
-                "success": False,
-                "message": f"Error getting order status: {str(e)}"
-            })
-    
+            logger.error(traceback.format_exc())
+            return json.dumps({"success": False, "message": "Couldn't look up that order right now."})
+
     def recommend_products(self, product_id: Optional[str] = None, product_type: Optional[str] = None, tags: Optional[str] = None, limit: int = 8, cursor: Optional[str] = None, min_price: Optional[float] = None, max_price: Optional[float] = None, vendor: Optional[str] = None) -> str:
         """
         Recommend products based on similarity to a reference product ID, product type, or tags.
@@ -997,7 +916,6 @@ class ShopifyTools(Toolkit):
                     "variables": variables
                 }
                 
-                import requests
                 verify_ssl = settings.VERIFY_SSL_CERTIFICATES
                 response = requests.post(url, headers=headers, json=payload, verify=verify_ssl)
                 
@@ -1189,7 +1107,6 @@ class ShopifyTools(Toolkit):
                 "variables": variables
             }
             
-            import requests
             verify_ssl = settings.VERIFY_SSL_CERTIFICATES
             response = requests.post(url, headers=headers, json=payload, verify=verify_ssl)
             
