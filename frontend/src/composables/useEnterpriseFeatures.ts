@@ -100,6 +100,8 @@ const moduleImports = {
   promoLimitToast: '/src/modules/enterprise/components/promo/PromoLimitToast.vue',
   // Help button for the hosted support chat (renders nothing in open source)
   supportChatButton: '/src/modules/enterprise/components/support/SupportChatButton.vue',
+  // External apps driving channel conversations (settings page)
+  appIntegrationsView: '/src/modules/enterprise/views/AppIntegrationsView.vue',
 }
 
 /** Renders nothing: the open-source stand-in for an enterprise-only surface. */

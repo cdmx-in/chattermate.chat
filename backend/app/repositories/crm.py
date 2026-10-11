@@ -15,7 +15,6 @@ limitations under the License.
 """
 
 import json
-import random
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from uuid import UUID
@@ -29,6 +28,7 @@ from app.models.crm import (
 )
 from app.core.security import encrypt_api_key, decrypt_api_key
 from app.core.logger import get_logger
+from app.utils.backoff import next_attempt_delay
 
 logger = get_logger(__name__)
 
@@ -295,8 +295,10 @@ class CrmSyncJobRepository:
             if job.attempts >= MAX_ATTEMPTS:
                 job.status = CrmSyncJobStatus.FAILED.value
             else:
-                backoff = min(BASE_BACKOFF_SECONDS * (2 ** job.attempts), MAX_BACKOFF_SECONDS)
-                delay = max(retry_after_seconds or 0, backoff) + random.uniform(0, BACKOFF_JITTER_SECONDS)
+                delay = next_attempt_delay(
+                    job.attempts, base_seconds=BASE_BACKOFF_SECONDS,
+                    max_seconds=MAX_BACKOFF_SECONDS, jitter_seconds=BACKOFF_JITTER_SECONDS,
+                    retry_after_seconds=retry_after_seconds)
                 job.status = CrmSyncJobStatus.PENDING.value
                 job.started_at = None
                 job.next_attempt_at = _utcnow() + timedelta(seconds=delay)

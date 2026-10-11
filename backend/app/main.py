@@ -38,6 +38,7 @@ import asyncio
 from app.core.logger import get_logger
 from contextlib import asynccontextmanager
 import os
+from app.channels.app_hooks import load_extensions
 from app.core.socketio import socket_app, configure_socketio, sio
 from app.core.cors import get_cors_origins, get_cors_origin_regex
 from app.core.application import app, initialize_cors_listener
@@ -92,6 +93,10 @@ async def startup_event(api: FastAPI):
     custom lifespan was set. The module-level `app` is rebound to the Socket.IO
     ASGI wrapper below, so the instance has to be passed in."""
     configure_socketio(cors_origins)
+
+    # Channel extensions (e.g. an external-app integration) hook into message
+    # handling; loaded explicitly so other entry points never pull them in.
+    load_extensions()
 
     # Start CORS listener for multi-worker synchronization
     initialize_cors_listener()

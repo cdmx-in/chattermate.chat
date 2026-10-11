@@ -15,7 +15,7 @@ limitations under the License.
 """
 
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Iterable, Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -82,15 +82,34 @@ class ChannelConversationRepository:
             logger.error(f"Error getting latest channel conversation: {str(e)}")
             return None
 
-    def set_extra(self, conversation: ChannelConversation, extra: dict) -> None:
-        """Replace the conversation's extra JSON (per-conversation state such as
-        an awaiting-feedback flag)."""
+    def merge_extra(self, conversation: ChannelConversation, updates: dict,
+                    remove: Iterable[str] = ()) -> Optional[dict]:
+        """Set and drop keys in the conversation's extra JSON (per-conversation
+        state such as email threading headers). Re-reads the row under a lock
+        first, so an inbound and a send updating different keys at once can't
+        overwrite each other's. Returns the extra as it was just before this
+        update (None on failure) — what a caller checks to claim a flag."""
         try:
-            conversation.extra = extra
+            # Anything pending on the instance would be discarded by the re-read
+            self.db.flush()
+            current = (
+                self.db.query(ChannelConversation)
+                .filter(ChannelConversation.id == conversation.id)
+                .with_for_update()
+                .populate_existing()
+                .one()
+            )
+            previous = dict(current.extra or {})
+            extra = {**previous, **updates}
+            for key in remove:
+                extra.pop(key, None)
+            current.extra = extra
             self.db.commit()
+            return previous
         except Exception as e:
             logger.error(f"Error updating conversation extra: {str(e)}")
             self.db.rollback()
+            return None
 
     # Sentinel: "created in response to an inbound message" (the default).
     # None is a meaningful value — an outbound-started conversation has no

@@ -30,6 +30,7 @@ export const createPermissionMocks = (defaultValue = true) => ({
   canManageAgents: vi.fn(() => defaultValue),
   canManageUsers: vi.fn(() => defaultValue),
   canViewChats: vi.fn(() => defaultValue),
+  canViewUnassignedChats: vi.fn(() => defaultValue),
   canViewPeople: vi.fn(() => defaultValue),
   canManagePeople: vi.fn(() => defaultValue),
   canTakeOverChats: vi.fn(() => defaultValue),

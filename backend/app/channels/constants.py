@@ -21,6 +21,7 @@ default. (It buys no import weight: app/channels/__init__ loads the registry
 regardless. It is about where the value belongs, not what it drags in.)
 """
 
+import enum
 from typing import Optional
 
 # The language assumed when a caller doesn't name one. Meta has no default —
@@ -32,6 +33,14 @@ from typing import Optional
 # The frontend's DEFAULT_LANGUAGE (utils/whatsappLanguages.ts) is the
 # unavoidable second copy, on the other side of the wire. Keep the two equal.
 DEFAULT_TEMPLATE_LANGUAGE = "en_US"
+
+
+class MessageSource(str, enum.Enum):
+    """Who wrote a message the business sent (chat_history.attributes.source)."""
+    AI = "ai"
+    HUMAN = "human"
+    SYSTEM = "system"   # canned notices: handover, limits, errors, tickets
+    APP = "app"         # an external app, through a channel extension
 
 
 # The most choices one reply can offer the customer: WhatsApp's list-message

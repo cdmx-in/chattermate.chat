@@ -25,7 +25,7 @@ from app.models.agent import Agent
 from app.models.session_to_agent import SessionToAgent
 from app.repositories.channels import ChannelConversationRepository
 from app.core.logger import get_logger
-from app.channels.constants import is_widget_channel
+from app.channels.constants import is_widget_channel, MessageSource
 from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, decode_sent_choices
 from app.models.user import User
 from app.repositories.customer import CustomerRepository
@@ -73,7 +73,8 @@ class ChatRepository:
     ) -> int:
         """
         Get the total number of bot messages for an organization within a specific date range.
-        Only counts messages with message_type='bot'.
+        Only counts messages with message_type='bot', and not ones an external
+        app sent (attributes.source == 'app'): they cost no AI.
         
         Args:
             org_id: Organization ID
@@ -88,9 +89,12 @@ class ChatRepository:
             
         try:
             # Build filter conditions
+            source = ChatHistory.attributes['source'].as_string()
             conditions = [
                 ChatHistory.organization_id == org_id,
-                ChatHistory.message_type == 'bot'  # Only count bot messages
+                ChatHistory.message_type == 'bot',  # Only count bot messages
+                # NULL-safe: nearly every row has no source at all
+                or_(source.is_(None), source != MessageSource.APP.value),
             ]
             
             # Add date range conditions if they are not None

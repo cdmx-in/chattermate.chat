@@ -76,6 +76,7 @@ const PAGE_TITLES: Record<string, string> = {
     '/settings/organization': 'Organization',
     '/settings/subscription': 'Subscription',
     '/settings/integrations': 'Integrations',
+    '/settings/app-integrations': 'App Integrations',
     '/settings/widget-apps': 'Widget Apps',
     '/settings/ai-config': 'AI Configuration',
     '/settings/user': 'User Settings',

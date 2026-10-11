@@ -54,6 +54,7 @@ export const ROUTE_PERMISSIONS: Record<string, readonly string[]> = {
   '/settings/organization': ORGANIZATION_PERMISSIONS,
   '/settings/ai-config': AI_CONFIG_PERMISSIONS,
   '/settings/integrations': ['manage_organization'],
+  '/settings/app-integrations': ['manage_organization'],
   '/settings/widget-apps': ['manage_organization'],
   // Everyone can reach their own profile, and 403 must never deny itself or
   // the guard has nowhere to send anyone.

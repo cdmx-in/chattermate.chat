@@ -20,6 +20,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.channels.constants import MessageSource
 from app.core.logger import get_logger
 from app.models.investigation import (
     InvestigationRun,
@@ -675,7 +676,7 @@ class TicketService:
                 ),
                 "type": "chat_response",
                 "request_rating": True,
-            })
+            }, source=MessageSource.SYSTEM)
             ticket.csat_requested_at = datetime.now(timezone.utc)
             self._add_activity(
                 ticket, TicketActivityType.CSAT_REQUESTED,
@@ -802,7 +803,7 @@ class TicketService:
                 "message": message,
                 "type": "chat_response",
                 "session_id": str(session_record.session_id),
-            }, message_id=stored.id)
+            }, message_id=stored.id, source=MessageSource.SYSTEM)
             if not delivery.ok:
                 chat_repo.mark_delivery_failed(stored.id, delivery.reason)
             if ticket.first_response_at is None:

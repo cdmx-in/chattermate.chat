@@ -21,6 +21,7 @@ import os
 import re
 from types import SimpleNamespace
 from fastapi import APIRouter
+from app.channels.constants import MessageSource
 from app.core.socketio import sio
 from app.core.logger import get_logger
 import traceback
@@ -49,6 +50,7 @@ from app.core.s3 import get_s3_signed_url
 from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
+from app.services.agent_rooms import is_org_inbox_room, may_join_org_inbox
 from app.services.chat_notifications import notify_new_chat
 from app.services.contact_capture import retain_unstored_email
 from app.services.human_routing import (
@@ -1339,7 +1341,8 @@ async def handle_agent_message(sid, data):
             response_payload['message_id'] = created_message.id
 
         delivery = await deliver_to_customer(db, session_data, response_payload,
-                                             message_id=created_message.id)
+                                             message_id=created_message.id,
+                                             source=MessageSource.HUMAN)
         if not delivery.ok:
             if delivery.reason == 'window_expired':
                 error_message = (
@@ -1401,6 +1404,15 @@ async def handle_join_room(sid, data):
             logger.info(f"Agent {session.get('user_id')} joined ticket room for org {org_id}")
             return
 
+        # Per-org inbox room (live delivery receipts on any of the org's
+        # chats) — for the people who can see chats nobody owns
+        if is_org_inbox_room(session_id):
+            db = next(get_db())
+            if not may_join_org_inbox(db, session, session_id):
+                raise ValueError("Unauthorized to join org inbox room")
+            await sio.enter_room(sid, session_id, namespace='/agent')
+            return
+
         # Verify this agent has permission to join this room
         db = next(get_db())
         session_repo = SessionToAgentRepository(db)
@@ -1454,11 +1466,13 @@ async def handle_leave_room(sid, data):
         await sio.leave_room(sid, session_id, namespace='/agent')
         logger.info(f"Agent {session.get('user_id')} left room: {session_id}")
 
-        # Notify room of leave
-        await sio.emit('room_event', {
-            'type': 'leave',
-            'user_id': str(session.get('user_id')),
-        }, room=session_id, namespace='/agent')
+        # Notify a conversation room of the leave — not the org inbox room,
+        # where the whole team would hear every chat switch
+        if not is_org_inbox_room(session_id):
+            await sio.emit('room_event', {
+                'type': 'leave',
+                'user_id': str(session.get('user_id')),
+            }, room=session_id, namespace='/agent')
 
     except Exception as e:
         logger.error(f"Error leaving room for sid {sid}: {str(e)}")

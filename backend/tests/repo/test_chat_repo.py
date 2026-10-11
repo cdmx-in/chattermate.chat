@@ -320,3 +320,15 @@ async def test_get_chat_detail_exposes_channel_delivery_fields(chat_repo, db, te
     # still encrypted at rest
     db.refresh(sent)
     assert "Yes" not in str(sent.attributes)
+
+
+
+def test_app_sent_messages_cost_no_ai_quota(chat_repo, test_data):
+    common = {"session_id": test_data["session_id"], "organization_id": test_data["org_id"],
+              "message_type": "bot"}
+    before = chat_repo.get_message_count_for_period(test_data["org_id"], None, None)
+    chat_repo.create_message({**common, "message": "AI answer", "attributes": {"source": "ai"}})
+    chat_repo.create_message({**common, "message": "Old reply"})
+    chat_repo.create_message({**common, "message": "Fee reminder", "attributes": {"source": "app"}})
+
+    assert chat_repo.get_message_count_for_period(test_data["org_id"], None, None) == before + 2

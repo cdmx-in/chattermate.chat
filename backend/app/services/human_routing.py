@@ -19,6 +19,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.channels.constants import MessageSource
 from app.core.logger import get_logger
 from app.models.session_to_agent import SessionStatus
 from app.repositories.chat import ChatRepository
@@ -79,7 +80,7 @@ async def notify_customer(
         result = await deliver_to_customer(db, session, {
             'message': message,
             'type': 'chat_response',
-        }, message_id=stored.id)
+        }, message_id=stored.id, source=MessageSource.SYSTEM)
         if not result.ok:
             logger.warning(
                 f"Handover notice not delivered on {session.channel}: {result.reason}")

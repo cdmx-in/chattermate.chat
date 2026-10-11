@@ -42,6 +42,9 @@ from app.database import Base
 from app.models.chat_history import ChatHistory
 from app.models.session_to_agent import SessionToAgent, SessionStatus
 
+# Where an installed extension's models live (see app.channels.app_hooks)
+EXTENSION_PACKAGE = "app.enterprise."
+
 
 def test_round_trip():
     token = encrypt_value("hello customer")
@@ -120,10 +123,13 @@ def test_backfill_script_covers_every_encrypted_column():
     finally:
         sys.path.pop(0)
 
+    # Only the open-source models: an installed extension (app.enterprise)
+    # owns its tables and any backfill they need.
     declared = {
-        (table.name, column.name)
-        for table in Base.metadata.tables.values()
-        for column in table.columns
+        (mapper.local_table.name, column.name)
+        for mapper in Base.registry.mappers
+        if not mapper.class_.__module__.startswith(EXTENSION_PACKAGE)
+        for column in mapper.local_table.columns
         if isinstance(column.type, EncryptedText)
     }
     covered = {
