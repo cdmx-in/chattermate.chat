@@ -229,6 +229,11 @@ class ChannelAdapter(ABC):
         """Show a 'typing…' indicator while the agent composes a reply."""
         return None
 
+    async def mark_read(self, account: ChannelAccount, external_message_id: str) -> None:
+        """Mark a customer's message read without a typing indicator — for a
+        message something other than the AI answers."""
+        return None
+
     async def fetch_profile(self, account: ChannelAccount, external_user_id: str) -> dict:
         """Look up the customer's real name/email from the platform API when the
         webhook payload doesn't include it. Returns {} by default."""

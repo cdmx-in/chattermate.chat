@@ -177,23 +177,24 @@ class WhatsAppAdapter(MetaBaseAdapter):
         an inbound message read, so this also blue-ticks that message. Expires
         after 25s or when the reply is delivered."""
         message_id = (conversation.extra or {}).get("last_inbound_message_id")
-        if not message_id:
-            return
+        if message_id:
+            await self._read_receipt(account, message_id, typing=True)
+
+    async def mark_read(self, account: ChannelAccount, external_message_id: str) -> None:
+        if external_message_id:
+            await self._read_receipt(account, external_message_id, typing=False)
+
+    async def _read_receipt(self, account: ChannelAccount, message_id: str, typing: bool) -> None:
+        payload = {"messaging_product": "whatsapp", "status": "read", "message_id": message_id}
+        if typing:
+            payload["typing_indicator"] = {"type": "text"}
         try:
-            result = await graph_post(
-                f"{account.external_account_id}/messages",
-                self.access_token(account),
-                {
-                    "messaging_product": "whatsapp",
-                    "status": "read",
-                    "message_id": message_id,
-                    "typing_indicator": {"type": "text"},
-                },
-            )
+            result = await graph_post(f"{account.external_account_id}/messages",
+                                      self.access_token(account), payload)
             if not result.ok:
-                logger.debug(f"WhatsApp typing indicator failed (non-critical): {result.error}")
+                logger.debug(f"WhatsApp read receipt failed (non-critical): {result.error}")
         except Exception as e:
-            logger.debug(f"WhatsApp typing indicator failed (non-critical): {e}")
+            logger.debug(f"WhatsApp read receipt failed (non-critical): {e}")
 
     async def send_text(self, account: ChannelAccount, conversation: ChannelConversation, text: str) -> SendResult:
         return await graph_post(

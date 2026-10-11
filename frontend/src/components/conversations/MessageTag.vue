@@ -15,18 +15,22 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-// Marks a customer message that was a tap on a button or list row rather
-// than typed text.
+// A small icon + label above a message saying where it came from (a tapped
+// button, an external app).
+defineProps<{
+  icon: string
+  label: string
+}>()
 </script>
 
 <template>
-  <span class="button-reply-tag">
-    <font-awesome-icon icon="fa-solid fa-hand-pointer" /> Button reply
+  <span class="message-tag">
+    <font-awesome-icon :icon="icon" /> {{ label }}
   </span>
 </template>
 
 <style scoped>
-.button-reply-tag {
+.message-tag {
   display: inline-flex;
   align-items: center;
   gap: 4px;

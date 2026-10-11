@@ -32,6 +32,7 @@ from sqlalchemy.orm import Session
 from app.api.channels.accounts import get_org_account_or_404
 from app.channels import get_adapter
 from app.channels.meta_base import fetch_message_templates, graph_detail, graph_get
+from app.channels.constants import MessageSource
 from app.core.error_handlers import ClientSafeHTTPException
 from app.core.auth import (
     CHAT_MANAGE_PERMISSIONS,
@@ -118,7 +119,7 @@ async def start_whatsapp_conversation(
     service so the Phase-2 scheduler can call the same function."""
     account = _whatsapp_account_or_404(db, account_id, organization)
     try:
-        session_id = await start_outbound_conversation(
+        sent = await start_outbound_conversation(
             db, account,
             to=request.to,
             template_name=request.template_name,
@@ -126,12 +127,13 @@ async def start_whatsapp_conversation(
             components=request.components,
             customer_id=request.customer_id,
             customer_name=request.customer_name,
+            source=MessageSource.HUMAN,
         )
     except OutboundError as e:
         # OutboundError details are written for the operator ("Recipient not on
         # WhatsApp"), so they survive the 5xx sanitizer.
         raise ClientSafeHTTPException(status_code=e.status_code, detail=e.detail)
-    return OutboundConversationOut(session_id=session_id)
+    return OutboundConversationOut(session_id=sent.session_id)
 
 
 @router.post("/whatsapp/{account_id}/send-template")

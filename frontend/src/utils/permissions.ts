@@ -21,6 +21,7 @@ import {
   CHAT_MANAGE_PERMISSIONS,
   CHAT_VIEW_PERMISSIONS,
   KNOWLEDGE_PERMISSIONS,
+  UNASSIGNED_CHAT_VIEW_PERMISSIONS,
   ORGANIZATION_PERMISSIONS,
   PEOPLE_PERMISSIONS,
   SUBSCRIPTION_PERMISSIONS,
@@ -56,6 +57,7 @@ export const permissionChecks = {
   canViewAgents: () => hasAnyPermission(AGENT_PERMISSIONS),
   canManageAgents: () => hasAnyPermission(['manage_agents']),
   canViewChats: () => hasAnyPermission(CHAT_VIEW_PERMISSIONS),
+  canViewUnassignedChats: () => hasAnyPermission(UNASSIGNED_CHAT_VIEW_PERMISSIONS),
   canViewPeople: () => hasAnyPermission(PEOPLE_PERMISSIONS),
   // Correcting a person or marking them a customer is inbox work, not
   // administration — PEOPLE_WRITE_PERMISSIONS equals the read set.

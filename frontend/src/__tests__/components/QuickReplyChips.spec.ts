@@ -17,7 +17,7 @@ limitations under the License.
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import QuickReplyChips from '@/components/conversations/QuickReplyChips.vue'
-import ButtonReplyTag from '@/components/conversations/ButtonReplyTag.vue'
+import MessageTag from '@/components/conversations/MessageTag.vue'
 
 const sent = (asText = false) => ({
   as_text: asText,
@@ -42,9 +42,13 @@ describe('QuickReplyChips', () => {
   })
 })
 
-describe('ButtonReplyTag', () => {
-  it('labels a tapped reply', () => {
-    const tag = mount(ButtonReplyTag, { global: { stubs: { 'font-awesome-icon': true } } })
-    expect(tag.text()).toBe('Button reply')
+describe('MessageTag', () => {
+  it('shows its icon and label', () => {
+    const tag = mount(MessageTag, {
+      props: { icon: 'fa-solid fa-plug', label: 'Sent by CoachIQ' },
+      global: { stubs: { 'font-awesome-icon': true } }
+    })
+    expect(tag.text()).toBe('Sent by CoachIQ')
+    expect(tag.find('font-awesome-icon-stub').attributes('icon')).toBe('fa-solid fa-plug')
   })
 })

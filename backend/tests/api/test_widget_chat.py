@@ -1658,3 +1658,33 @@ async def test_agent_message_tells_the_sender_its_stored_id(db, test_widget, tes
     assert acks[0].args[1] == {"session_id": str(session_id), "client_id": "c-123",
                                "message_id": stored.id}
     assert acks[0].kwargs["to"] == "test_sid"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grant,same_org,joins", [
+    ("view_unassigned_chats", True, True),
+    ("view_all_chats", True, True),
+    (None, True, False),                      # can't see chats nobody owns
+    ("view_unassigned_chats", False, False),  # someone else's org
+])
+async def test_org_inbox_room_is_for_people_who_see_unowned_chats(
+        db, test_user, test_role, test_organization, mock_sio, monkeypatch, grant, same_org, joins):
+    from app.api import widget_chat
+    from app.models.permission import Permission
+
+    test_user.role_id = test_role.id  # this module's test_user has no role
+    if grant:
+        permission = Permission(name=grant)
+        db.add(permission)
+        test_role.permissions = [*test_role.permissions, permission]
+    db.commit()
+    monkeypatch.setattr(widget_chat, "sio", mock_sio)
+    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    mock_sio.enter_room = AsyncMock()
+    mock_sio.get_session.return_value = {
+        "user_id": str(test_user.id), "organization_id": str(test_organization.id)}
+    org = test_organization.id if same_org else uuid4()
+
+    await widget_chat.handle_join_room("sid-1", {"session_id": f"org_inbox_{org}"})
+
+    assert mock_sio.enter_room.await_count == (1 if joins else 0)

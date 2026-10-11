@@ -21,7 +21,9 @@ from sqlalchemy.orm import Session
 
 from app.core.socketio import sio
 from app.channels import ChannelAdapter, SendResult, get_adapter, WindowStatus
+from app.channels.app_hooks import OutboundRecord, emit_channel_event, outbound_event
 from app.channels.base import InteractiveMessage
+from app.channels.constants import MessageSource
 from app.channels.interactive import (
     BODY_MAX, DEFAULT_CHOICES_BODY, to_text_fallback, validate_interactive,
 )
@@ -30,6 +32,7 @@ from app.models.channels import ChannelAccount, ChannelConversation
 from app.models.session_to_agent import SessionToAgent
 from app.repositories.channels import ChannelAccountRepository, ChannelConversationRepository
 from app.repositories.chat import ChatRepository
+from app.services.business_message import forget_business_message
 from app.services.channel_status import record_sent
 from app.core.logger import get_logger
 
@@ -44,6 +47,9 @@ class DeliveryResult:
     reason: Optional[str] = None
     # A WhatsApp template message could reopen the conversation
     can_template: bool = False
+    # The channel's id for the sent message (WhatsApp wamid), for callers that
+    # report it on (the external-app send API)
+    external_message_id: Optional[str] = None
 
 
 @dataclass
@@ -57,7 +63,8 @@ class _Sent:
 
 async def deliver_to_customer(db: Session, session_record: SessionToAgent, payload: dict,
                               message_id: Optional[int] = None,
-                              interactive: Optional[InteractiveMessage] = None) -> DeliveryResult:
+                              interactive: Optional[InteractiveMessage] = None,
+                              *, source: MessageSource) -> DeliveryResult:
     """Route a reply (human or bot) to wherever the customer is.
 
     Widget sessions keep the existing Socket.IO emit unchanged; external
@@ -70,6 +77,8 @@ async def deliver_to_customer(db: Session, session_record: SessionToAgent, paylo
     receipts land on the right message. `interactive` offers choices with the
     reply (its body is the reply text) — buttons where the channel has them, a
     numbered list otherwise; what actually went out is recorded on that row.
+    `source` is who wrote the message; channel sends are announced to
+    extensions as `outbound` events with it.
     """
     session_id = str(session_record.session_id)
     channel = getattr(session_record, 'channel', None)
@@ -81,14 +90,15 @@ async def deliver_to_customer(db: Session, session_record: SessionToAgent, paylo
         return DeliveryResult(ok=True)
 
     result = await _deliver_to_channel(db, session_record, channel, payload,
-                                       message_id, interactive)
+                                       message_id, interactive, source)
     await sio.emit('chat_response', payload, room=session_id, namespace='/widget')
     return result
 
 
 async def _deliver_to_channel(db: Session, session_record: SessionToAgent,
                               channel: str, payload: dict, message_id: Optional[int],
-                              interactive: Optional[InteractiveMessage]) -> DeliveryResult:
+                              interactive: Optional[InteractiveMessage],
+                              source: MessageSource) -> DeliveryResult:
     session_id = str(session_record.session_id)
 
     adapter = get_adapter(channel)
@@ -124,7 +134,19 @@ async def _deliver_to_channel(db: Session, session_record: SessionToAgent,
                               can_template=sent.result.can_template)
     if message_id is not None:
         await _record_delivery(db, adapter, account, message_id, sent)
-    return DeliveryResult(ok=True)
+    if source == MessageSource.HUMAN:
+        # A person has taken the conversation from there; the AI no longer
+        # reads it as a reply to the business's last own message
+        forget_business_message(db, conversation)
+    external_message_id = sent.result.external_message_id
+    await emit_channel_event(outbound_event(
+        organization_id=account.organization_id, channel_account_id=account.id,
+        session_id=session_id,
+        customer_id=str(session_record.customer_id) if session_record.customer_id else None,
+        record=OutboundRecord(message_id=message_id, external_message_id=external_message_id,
+                              source=source, text=text, interactive=sent.choices),
+    ))
+    return DeliveryResult(ok=True, external_message_id=external_message_id)
 
 
 async def _record_delivery(db: Session, adapter: ChannelAdapter, account: ChannelAccount,

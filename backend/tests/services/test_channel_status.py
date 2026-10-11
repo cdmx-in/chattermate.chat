@@ -20,6 +20,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.channels.app_hooks import EventKind, register_event_listener
 from app.channels.base import DeliveryState, StatusEvent
 from sqlalchemy.orm import Session
 
@@ -244,7 +245,8 @@ async def test_receipt_parked_after_the_queue_was_drained_is_still_applied(
 async def test_receipt_reaches_the_handling_agents_inbox(db, account, test_organization, test_user,
                                                          test_agent, test_customer,
                                                          use_test_db, mock_sio, redis):
-    """The inbox listens on the agent's personal room, not the session room."""
+    """Every inbox open on the org hears it (AI-owned chats have no agent),
+    and so does the agent handling the chat."""
     session = SessionToAgentRepository(db).create_session(
         session_id=uuid4(), agent_id=test_agent.id, customer_id=test_customer.id,
         organization_id=test_organization.id, channel="whatsapp")
@@ -259,7 +261,7 @@ async def test_receipt_reaches_the_handling_agents_inbox(db, account, test_organ
     await process_status_event(account.id, _event(DeliveryState.DELIVERED))
 
     rooms = [call.kwargs["room"] for call in mock_sio.emit.await_args_list]
-    assert rooms == [f"user_{test_user.id}", str(message.session_id)]
+    assert rooms == [f"org_inbox_{test_organization.id}", f"user_{test_user.id}"]
 
 
 @pytest.mark.asyncio
@@ -301,3 +303,21 @@ async def test_failed_after_read_changes_nothing(db, account, test_organization,
     assert message.channel_status == "read"
     assert "delivery_status" not in (message.attributes or {})
     mock_sio.emit.assert_awaited_once()  # for the read; the late failure is dropped
+
+
+@pytest.mark.asyncio
+async def test_every_receipt_is_announced_even_for_unknown_messages(
+        db, account, use_test_db, mock_sio, redis):
+    """Usage counting needs receipts for messages ChatterMate never stored."""
+    seen = []
+
+    async def listen(event):
+        seen.append(event)
+    register_event_listener(listen)
+
+    await process_status_event(account.id, _event(DeliveryState.DELIVERED, message_id="wamid.ELSEWHERE"))
+
+    (event,) = seen
+    assert event.kind == EventKind.STATUS
+    assert event.status.external_message_id == "wamid.ELSEWHERE"
+    assert event.event_id == f"{account.id}:wamid.ELSEWHERE:delivered"

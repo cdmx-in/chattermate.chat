@@ -24,6 +24,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.channels.app_hooks import ChannelEvent, EventKind, emit_channel_event, status_event_id
 from app.channels.base import DeliveryState, StatusEvent
 from app.core.logger import get_logger
 from app.core.redis import get_redis
@@ -32,7 +33,7 @@ from app.models.chat_history import ChatHistory
 from app.repositories.channels import ChannelAccountRepository
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
-from app.services.agent_rooms import emit_to_session_agents
+from app.services.agent_rooms import emit_to_org_inbox
 
 logger = get_logger(__name__)
 
@@ -66,6 +67,16 @@ async def process_status_event(account_id: UUID, event: StatusEvent) -> None:
         account = ChannelAccountRepository(db).get_by_id(account_id)
         if account is None:
             return
+        # Announced before matching: extensions count every receipt, including
+        # ones for messages ChatterMate never stored.
+        await emit_channel_event(ChannelEvent(
+            kind=EventKind.STATUS,
+            event_id=status_event_id(account.id, event.external_message_id, event.status.value),
+            organization_id=account.organization_id,
+            channel_account_id=account.id,
+            occurred_at=event.timestamp or datetime.now(timezone.utc),
+            status=event,
+        ))
         chat_repo = ChatRepository(db)
         message = chat_repo.get_by_external_message_id(
             account.organization_id, event.external_message_id)
@@ -111,13 +122,13 @@ async def _apply(db: Session, message: ChatHistory, event: StatusEvent) -> None:
         # that failure becomes visible.
         chat_repo.mark_delivery_failed(message.id, event.error)
     session = SessionToAgentRepository(db).get_session(message.session_id)
-    await emit_to_session_agents('message_status', {
+    await emit_to_org_inbox('message_status', {
         'session_id': str(message.session_id),
         'message_id': message.id,
         'external_message_id': message.external_message_id,
         'channel_status': message.channel_status,
         'delivery_status': (message.attributes or {}).get('delivery_status'),
-    }, message.session_id, session.user_id if session else None)
+    }, message.organization_id, session.user_id if session else None)
 
 
 def _pending_key(account_id: UUID, external_message_id: str) -> str:

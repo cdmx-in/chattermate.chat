@@ -1039,7 +1039,8 @@ class TestOutboundConversation:
         conversation = ChannelConversationRepository(db).get_by_session(session_id)
         # The window lie: no inbound message means no open 24h window.
         assert conversation.last_inbound_at is None
-        assert conversation.extra["outbound_template"] == "Hi Priya, your order A-12 shipped."
+        assert conversation.extra["last_business_message"]["text"] == "Hi Priya, your order A-12 shipped."
+        assert conversation.extra["last_business_message"]["external_message_id"] == "wamid.OUT1"
 
         from uuid import UUID as _UUID
         row = db.query(ChatHistory).filter(
@@ -1060,6 +1061,25 @@ class TestOutboundConversation:
         row = db.query(ChatHistory).filter(
             ChatHistory.session_id == _UUID(r.json()["session_id"])).one()
         assert row.external_message_id == "wamid.OUT1"
+
+    def test_template_send_is_announced_as_the_inbox_users(self, client, db, routed):
+        from app.channels.app_hooks import EventKind, register_event_listener
+        from app.channels.constants import MessageSource
+        seen = []
+
+        async def listen(event):
+            seen.append(event)
+        register_event_listener(listen)
+
+        with patch("app.services.chat_notifications.notify_new_chat", AsyncMock()) as notify:
+            r, _ = self._send(client, routed, customer_name="Priya")
+
+        assert r.status_code == 200
+        (event,) = seen
+        assert event.kind == EventKind.OUTBOUND
+        assert event.outbound.source == MessageSource.HUMAN
+        assert event.outbound.external_message_id == "wamid.OUT1"
+        notify.assert_not_awaited()  # the sender knows; the reply will notify
 
     def test_picked_person_at_someone_elses_number_is_refused(self, client, db, routed):
         """`to` and `customer_id` arrive as independent fields. Binding Alice to

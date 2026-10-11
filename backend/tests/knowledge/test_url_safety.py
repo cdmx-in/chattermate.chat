@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import ipaddress
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +24,7 @@ from app.knowledge.url_safety import (
     BlockedHostError,
     guard_url,
     is_blocked_host,
+    is_public_ip,
     resolves_to_blocked_host,
     safe_get,
 )
@@ -100,3 +102,24 @@ def test_guard_url_raises_on_blocked():
     with patch.object(url_safety, "resolves_to_blocked_host", return_value=True):
         with pytest.raises(BlockedHostError):
             guard_url("http://127.0.0.1/x")
+
+
+@pytest.mark.parametrize("address,public", [
+    ("8.8.8.8", True),
+    ("2001:4860:4860::8888", True),
+    ("100.64.1.1", False),        # carrier-grade NAT
+    ("192.0.2.1", False),         # documentation range
+    ("::ffff:10.0.0.1", False),   # IPv4-mapped private
+    ("::ffff:8.8.8.8", True),     # IPv4-mapped public
+    ("224.0.0.1", False),         # multicast
+    ("fd00::1", False),           # unique local
+    ("64:ff9b::a9fe:a9fe", False),  # NAT64 to the metadata address
+    ("64:ff9b::808:808", True),     # NAT64 to a public address
+    ("::7f00:1", False),            # IPv4-compatible loopback
+    ("2002:a9fe:a9fe::", False),    # 6to4 to link-local
+    ("2002:808:808::", True),       # 6to4 to a public address
+    ("fec0::1", False),             # deprecated site-local
+    ("::1", False),
+])
+def test_is_public_ip(address, public):
+    assert is_public_ip(ipaddress.ip_address(address)) is public

@@ -19,6 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.channels.app_hooks import EventKind, register_event_listener
+from app.channels.constants import MessageSource
 from app.channels.base import SendResult, WindowStatus
 from app.channels.interactive import from_options
 from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, decode_sent_choices
@@ -26,6 +28,7 @@ from app.repositories.channels import ChannelAccountRepository, ChannelConversat
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services import message_delivery
+from app.services.business_message import LAST_BUSINESS_MESSAGE, remember_business_message
 from app.services.message_delivery import deliver_to_customer
 
 
@@ -72,7 +75,7 @@ def make_channel_session(db, test_agent, test_customer, test_organization):
 @pytest.mark.asyncio
 async def test_web_session_uses_socket_emit_only(db, test_agent, test_customer, test_organization, mock_sio):
     session = make_session(db, test_agent, test_customer, test_organization, 'web')
-    result = await deliver_to_customer(db, session, {'message': 'hi'})
+    result = await deliver_to_customer(db, session, {'message': 'hi'}, source=MessageSource.HUMAN)
     assert result.ok is True
     mock_sio.emit.assert_awaited_once_with(
         'chat_response', {'message': 'hi'}, room=str(session.session_id), namespace='/widget')
@@ -87,7 +90,7 @@ async def test_channel_session_routes_to_adapter(db, test_agent, test_customer, 
     adapter.send_text = AsyncMock(return_value=SendResult(ok=True))
     monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
 
-    result = await deliver_to_customer(db, session, {'message': 'hello'})
+    result = await deliver_to_customer(db, session, {'message': 'hello'}, source=MessageSource.HUMAN)
 
     assert result.ok is True
     adapter.send_text.assert_awaited_once()
@@ -103,7 +106,7 @@ async def test_channel_session_window_expired(db, test_agent, test_customer, tes
     adapter.send_text = AsyncMock()
     monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
 
-    result = await deliver_to_customer(db, session, {'message': 'hello'})
+    result = await deliver_to_customer(db, session, {'message': 'hello'}, source=MessageSource.HUMAN)
 
     assert result.ok is False
     assert result.reason == 'window_expired'
@@ -116,7 +119,7 @@ async def test_channel_session_without_conversation_fails(db, test_agent, test_c
     session = make_session(db, test_agent, test_customer, test_organization, 'telegram')
     monkeypatch.setattr(message_delivery, "get_adapter", lambda c: MagicMock())
 
-    result = await deliver_to_customer(db, session, {'message': 'hello'})
+    result = await deliver_to_customer(db, session, {'message': 'hello'}, source=MessageSource.HUMAN)
 
     assert result.ok is False
     assert result.reason == 'no_channel_conversation'
@@ -131,7 +134,7 @@ async def test_send_failure_reported(db, test_agent, test_customer, test_organiz
     adapter.send_text = AsyncMock(return_value=SendResult(ok=False, error='chat not found'))
     monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
 
-    result = await deliver_to_customer(db, session, {'message': 'hello'})
+    result = await deliver_to_customer(db, session, {'message': 'hello'}, source=MessageSource.HUMAN)
 
     assert result.ok is False
     assert result.reason == 'chat not found'
@@ -156,7 +159,7 @@ async def test_quick_replies_go_out_as_buttons(db, test_agent, test_customer, te
     adapter = _channel_adapter(supports_interactive=True)
     monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
 
-    result = await deliver_to_customer(db, session, {'message': 'Confirm?'}, interactive=from_options('Confirm?', ['Yes', 'No']))
+    result = await deliver_to_customer(db, session, {'message': 'Confirm?'}, interactive=from_options('Confirm?', ['Yes', 'No']), source=MessageSource.HUMAN)
 
     assert result.ok
     sent = adapter.send_interactive.await_args.args[2]
@@ -170,7 +173,7 @@ async def test_quick_replies_fall_back_to_text_without_support(db, test_agent, t
     adapter = _channel_adapter(supports_interactive=False)
     monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
 
-    await deliver_to_customer(db, session, {'message': 'Confirm?'}, interactive=from_options('Confirm?', ['Yes', 'No']))
+    await deliver_to_customer(db, session, {'message': 'Confirm?'}, interactive=from_options('Confirm?', ['Yes', 'No']), source=MessageSource.HUMAN)
 
     adapter.send_interactive.assert_not_awaited()
     assert adapter.send_text.await_args.args[2] == 'Confirm?\n\n1. Yes\n2. No'
@@ -183,7 +186,7 @@ async def test_rejected_interactive_send_falls_back_to_text(db, test_agent, test
     adapter.send_interactive = AsyncMock(return_value=SendResult(ok=False, error='bad param'))
     monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
 
-    result = await deliver_to_customer(db, session, {'message': 'Confirm?'}, interactive=from_options('Confirm?', ['Yes']))
+    result = await deliver_to_customer(db, session, {'message': 'Confirm?'}, interactive=from_options('Confirm?', ['Yes']), source=MessageSource.HUMAN)
 
     assert result.ok
     assert adapter.send_text.await_args.args[2] == 'Confirm?\n\n1. Yes'
@@ -199,7 +202,7 @@ async def test_sent_message_id_lands_on_the_given_row(db, test_agent, test_custo
     target = chat_repo.create_message({**common, 'message': 'first'})
     later = chat_repo.create_message({**common, 'message': 'second'})
 
-    await deliver_to_customer(db, session, {'message': 'first'}, message_id=target.id)
+    await deliver_to_customer(db, session, {'message': 'first'}, message_id=target.id, source=MessageSource.HUMAN)
 
     db.refresh(target)
     db.refresh(later)
@@ -220,7 +223,7 @@ async def test_what_was_sent_is_recorded_on_the_row(db, test_agent, test_custome
     row = _bot_row(db, session, test_organization)
 
     await deliver_to_customer(db, session, {'message': 'Confirm?'}, message_id=row.id,
-                              interactive=from_options('Confirm?', ['Yes', 'No']))
+                              interactive=from_options('Confirm?', ['Yes', 'No']), source=MessageSource.HUMAN)
 
     db.refresh(row)
     record = decode_sent_choices(row.attributes[SENT_CHOICES_ATTRIBUTE])
@@ -236,7 +239,7 @@ async def test_a_text_fallback_is_recorded_as_such(db, test_agent, test_customer
     row = _bot_row(db, session, test_organization)
 
     await deliver_to_customer(db, session, {'message': 'Confirm?'}, message_id=row.id,
-                              interactive=from_options('Confirm?', ['Yes']))
+                              interactive=from_options('Confirm?', ['Yes']), source=MessageSource.HUMAN)
 
     db.refresh(row)
     assert decode_sent_choices(row.attributes[SENT_CHOICES_ATTRIBUTE])['as_text'] is True
@@ -251,7 +254,7 @@ async def test_a_long_reply_goes_as_text_then_the_choices(db, test_agent, test_c
     long_reply = 'x' * 1100
 
     await deliver_to_customer(db, session, {'message': long_reply}, message_id=row.id,
-                              interactive=from_options(long_reply, ['Yes', 'No']))
+                              interactive=from_options(long_reply, ['Yes', 'No']), source=MessageSource.HUMAN)
 
     assert adapter.send_text.await_args.args[2] == long_reply
     choices = adapter.send_interactive.await_args.args[2]
@@ -268,7 +271,7 @@ async def test_channels_without_receipts_record_no_message_id(db, test_agent, te
     monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
     row = _bot_row(db, session, test_organization)
 
-    await deliver_to_customer(db, session, {'message': 'hi'}, message_id=row.id)
+    await deliver_to_customer(db, session, {'message': 'hi'}, message_id=row.id, source=MessageSource.HUMAN)
 
     db.refresh(row)
     assert row.external_message_id is None
@@ -281,7 +284,7 @@ async def test_bookkeeping_failure_never_fails_a_delivered_message(db, test_agen
     monkeypatch.setattr(message_delivery, "record_sent", AsyncMock(side_effect=RuntimeError("socket down")))
     row = _bot_row(db, session, test_organization)
 
-    result = await deliver_to_customer(db, session, {'message': 'hi'}, message_id=row.id)
+    result = await deliver_to_customer(db, session, {'message': 'hi'}, message_id=row.id, source=MessageSource.HUMAN)
 
     assert result.ok is True
 
@@ -299,9 +302,72 @@ async def test_long_reply_counts_as_delivered_when_only_its_choices_fail(
     long_reply = 'x' * 1100
 
     result = await deliver_to_customer(db, session, {'message': long_reply}, message_id=row.id,
-                                       interactive=from_options(long_reply, ['Yes', 'No']))
+                                       interactive=from_options(long_reply, ['Yes', 'No']), source=MessageSource.HUMAN)
 
     assert result.ok is True
     db.refresh(row)
     assert row.external_message_id == 'wamid.BODY'
     assert SENT_CHOICES_ATTRIBUTE not in (row.attributes or {})
+
+
+@pytest.fixture
+def outbound_events():
+    seen = []
+
+    async def listen(event):
+        seen.append(event)
+    register_event_listener(listen)
+    return seen
+
+
+@pytest.mark.asyncio
+async def test_a_channel_send_is_announced_with_who_wrote_it(
+        db, test_agent, test_customer, test_organization, mock_sio, monkeypatch, outbound_events):
+    session, account = make_channel_session(db, test_agent, test_customer, test_organization)
+    monkeypatch.setattr(message_delivery, "get_adapter", lambda c: _channel_adapter(False))
+    row = _bot_row(db, session, test_organization, text='hi')
+
+    result = await deliver_to_customer(db, session, {'message': 'hi'}, message_id=row.id,
+                                       source=MessageSource.AI)
+
+    assert result.external_message_id == 'wamid.TXT'
+    (event,) = outbound_events
+    assert event.kind == EventKind.OUTBOUND
+    assert event.channel_account_id == account.id
+    assert (event.outbound.source, event.outbound.message_id, event.outbound.text) == \
+        (MessageSource.AI, row.id, 'hi')
+
+
+@pytest.mark.asyncio
+async def test_failed_and_web_sends_are_not_announced(
+        db, test_agent, test_customer, test_organization, mock_sio, monkeypatch, outbound_events):
+    web = make_session(db, test_agent, test_customer, test_organization, 'web')
+    await deliver_to_customer(db, web, {'message': 'hi'}, source=MessageSource.AI)
+
+    session, _ = make_channel_session(db, test_agent, test_customer, test_organization)
+    adapter = _channel_adapter(False)
+    adapter.send_text = AsyncMock(return_value=SendResult(ok=False, error='blocked'))
+    monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
+    await deliver_to_customer(db, session, {'message': 'hi'}, source=MessageSource.AI)
+
+    assert outbound_events == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source,kept", [
+    (MessageSource.HUMAN, False),   # a person took over from there
+    (MessageSource.AI, True),       # the AI's own turns don't make it stale
+    (MessageSource.SYSTEM, True),   # e.g. a quota notice before the AI could answer
+    (MessageSource.APP, True),
+])
+async def test_only_a_person_replying_ends_the_business_message_context(
+        db, test_agent, test_customer, test_organization, mock_sio, monkeypatch, source, kept):
+    session, _ = make_channel_session(db, test_agent, test_customer, test_organization)
+    monkeypatch.setattr(message_delivery, "get_adapter", lambda c: _channel_adapter(False))
+    conversation = ChannelConversationRepository(db).get_by_session(session.session_id)
+    remember_business_message(db, conversation, "Coming at 5?", "wamid.T")
+
+    await deliver_to_customer(db, session, {'message': 'ok'}, source=source)
+
+    db.refresh(conversation)
+    assert (LAST_BUSINESS_MESSAGE in (conversation.extra or {})) is kept

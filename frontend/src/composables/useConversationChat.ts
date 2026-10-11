@@ -26,6 +26,7 @@ import { canTakeOverChat, chatHandler } from '@/utils/chatState'
 import { routeChatToHuman } from '@/utils/chatActions'
 import { permissionChecks } from '@/utils/permissions'
 import { findMessage, newClientId } from '@/utils/messageMatch'
+import { useOrgInboxRoom } from '@/composables/useOrgInboxRoom'
 
 // Define valid chat statuses
 type ChatStatus = 'open' | 'closed' | 'transferred'
@@ -65,6 +66,8 @@ export function useConversationChat(
   }
 ) {
   const chat = ref<ChatDetail>(initialChat)
+  // Delivery receipts for chats no agent owns arrive through the org room
+  useOrgInboxRoom()
   const newMessage = ref('')
   const messagesContainer = ref<HTMLElement | null>(null)
   const isLoading = ref(false)

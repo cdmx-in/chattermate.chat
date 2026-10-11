@@ -690,3 +690,27 @@ class TestWhatsAppInteractiveSend:
         result = await adapter.send_interactive(
             MagicMock(), MagicMock(), InteractiveMessage(kind=InteractiveKind.BUTTONS, body="x"))
         assert result.ok is False
+
+
+class TestWhatsAppReadReceipts:
+    @pytest.mark.asyncio
+    async def test_mark_read_has_no_typing_indicator(self, graph_client, monkeypatch):
+        adapter = get_adapter("whatsapp")
+        monkeypatch.setattr(adapter, "access_token", lambda account: "WATOKEN")
+        graph_client.response = _FakeResponse(200, {"success": True})
+
+        await adapter.mark_read(MagicMock(), "wamid.IN")
+
+        assert graph_client.calls[0]["json"] == {
+            "messaging_product": "whatsapp", "status": "read", "message_id": "wamid.IN"}
+
+    @pytest.mark.asyncio
+    async def test_typing_marks_read_with_the_indicator(self, graph_client, monkeypatch):
+        adapter = get_adapter("whatsapp")
+        monkeypatch.setattr(adapter, "access_token", lambda account: "WATOKEN")
+        conversation = MagicMock()
+        conversation.extra = {"last_inbound_message_id": "wamid.IN"}
+
+        await adapter.send_typing(MagicMock(), conversation)
+
+        assert graph_client.calls[0]["json"]["typing_indicator"] == {"type": "text"}

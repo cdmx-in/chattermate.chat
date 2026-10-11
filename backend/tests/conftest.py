@@ -99,6 +99,7 @@ from app.core.security import encrypt_api_key, get_password_hash, create_access_
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
+from app.channels import app_hooks
 from app.models.shopify.shopify_shop import ShopifyShop
 from app.models.shopify.agent_shopify_config import AgentShopifyConfig
 import jwt
@@ -399,3 +400,9 @@ def test_agent_shopify_config(db, test_agent, test_shopify_shop):
     yield config
     db.delete(config)
     db.commit() 
+
+@pytest.fixture(autouse=True)
+def _reset_channel_hooks():
+    """No test leaks an extension hook it registered into the next one."""
+    yield
+    app_hooks.reset()
