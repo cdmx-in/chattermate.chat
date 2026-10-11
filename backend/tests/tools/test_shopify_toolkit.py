@@ -18,6 +18,7 @@ import pytest
 import json
 from unittest.mock import patch, MagicMock
 from app.tools.shopify_toolkit import ShopifyTools
+from app.tools.shopify_order_access import ORDER_NOT_FOUND
 from app.models.shopify import AgentShopifyConfig, ShopifyShop
 from app.models.organization import Organization
 from app.models.agent import Agent
@@ -260,133 +261,166 @@ def test_search_products(shopify_tools):
         assert result["shopify_output"]["search_query"] == "test"
         assert "pageInfo" in result["shopify_output"]
 
+OWNER_EMAIL = "john.doe@example.com"
+
+
+def _order_node(name="#1001", email=OWNER_EMAIL, customer=None):
+    """One GraphQL order node as Shopify's order search returns it."""
+    return {
+        "id": "gid://shopify/Order/987654321",
+        "name": name,
+        "email": email,
+        "phone": None,
+        "createdAt": "2023-01-01T00:00:00Z",
+        "displayFinancialStatus": "PAID",
+        "displayFulfillmentStatus": "FULFILLED",
+        "subtotalLineItemsQuantity": 1,
+        "currentSubtotalPriceSet": {"shopMoney": {"amount": "24.99", "currencyCode": "USD"}},
+        "currentTotalPriceSet": {"shopMoney": {"amount": "29.99", "currencyCode": "USD"}},
+        "originalTotalPriceSet": {"shopMoney": {"amount": "29.99", "currencyCode": "USD"}},
+        "customer": customer,
+        "lineItems": {"edges": [{"node": {
+            "title": "Test Product",
+            "quantity": 1,
+            "originalUnitPriceSet": {"shopMoney": {"amount": "19.99", "currencyCode": "USD"}},
+            "variant": {"id": "variant-id", "title": "Default", "image": {"url": "https://example.com/image.jpg"}},
+        }}]},
+        "shippingAddress": {"address1": "123 Test St", "city": "Testville", "provinceCode": "CA",
+                            "zip": "12345", "country": "US"},
+        "fulfillments": [{"trackingInfo": [{"company": "USPS", "number": "12345",
+                                            "url": "https://tracking.usps.com/12345"}],
+                          "status": "SUCCESS"}],
+    }
+
+
+def _orders_response(*nodes):
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {"data": {"orders": {
+        "edges": [{"node": node} for node in nodes],
+        "pageInfo": {"hasNextPage": False, "endCursor": "cursor-value"},
+    }}}
+    return response
+
+
+def _sent_search(mock_post):
+    return mock_post.call_args.kwargs["json"]["variables"]["query"]
+
+
+def test_search_orders(shopify_tools):
+    with patch("requests.post", return_value=_orders_response(_order_node())) as mock_post:
+        result = json.loads(shopify_tools.search_orders(customer_email=" John.Doe@Example.com ", order_number="#1001"))
+
+    assert result["success"] is True
+    assert len(result["orders"]) == 1
+    assert result["orders"][0]["name"] == "#1001"
+    assert result["orders"][0]["financial_status"] == "PAID"
+    assert result["orders"][0]["tracking_info"][0]["number"] == "12345"
+    assert "page_info" in result
+    assert _sent_search(mock_post) == "email:john.doe@example.com AND name:1001"
+
+
+def test_search_orders_matches_the_customer_record_email(shopify_tools):
+    node = _order_node(email="checkout@example.com", customer={"id": "c1", "firstName": "John",
+                                                               "lastName": "Doe", "email": OWNER_EMAIL})
+    with patch("requests.post", return_value=_orders_response(node)):
+        result = json.loads(shopify_tools.search_orders(customer_email=OWNER_EMAIL))
+
+    assert result["success"] is True
+    assert "John Doe" in result["message"]
+
+
+@pytest.mark.parametrize("email", [None, "", "not-an-email", "*@example.com",
+                                   "a@example.com OR name:1001", 'a"@example.com'])
+def test_search_orders_needs_a_plain_email(shopify_tools, email):
+    with patch("requests.post") as mock_post:
+        result = json.loads(shopify_tools.search_orders(customer_email=email, order_number="1001"))
+
+    assert result["success"] is False
+    assert result["requires_user_input"] is True
+    mock_post.assert_not_called()
+
+
+def test_search_orders_hides_other_customers_orders(shopify_tools):
+    # Shopify's search is fuzzy; anything not placed with this exact email is dropped.
+    stranger = _order_node(email="someone.else@example.com")
+    with patch("requests.post", return_value=_orders_response(stranger)):
+        result = json.loads(shopify_tools.search_orders(customer_email=OWNER_EMAIL, order_number="1001"))
+
+    assert result == {"success": False, "message": ORDER_NOT_FOUND}
+
+
+def test_search_orders_needs_the_exact_order_number(shopify_tools):
+    with patch("requests.post", return_value=_orders_response(_order_node(name="#10010"))):
+        result = json.loads(shopify_tools.search_orders(customer_email=OWNER_EMAIL, order_number="1001"))
+
+    assert result == {"success": False, "message": ORDER_NOT_FOUND}
+
+
+def test_search_orders_hides_shopify_error_details(shopify_tools):
+    response = MagicMock(status_code=500, text="internal detail")
+    with patch("requests.post", return_value=response):
+        result = json.loads(shopify_tools.search_orders(customer_email=OWNER_EMAIL))
+
+    assert result["success"] is False
+    assert "internal detail" not in result["message"]
+
+
 def test_get_order_status(shopify_tools, mock_shopify_service):
-    # Use a Shopify GID format to avoid triggering the order number search
-    order_id = "gid://shopify/Order/987654321"
-    
-    # Act
-    result_str = shopify_tools.get_order_status(order_id=order_id)
-    result = json.loads(result_str)
-    
-    # Assert
+    with patch("requests.post", return_value=_orders_response(_order_node())) as mock_post:
+        result = json.loads(shopify_tools.get_order_status(order_number="#1001", customer_email=OWNER_EMAIL))
+
     assert result["success"] is True
     assert result["order_number"] == "#1001"
     assert result["status"] == "paid"
     assert result["fulfillment_status"] == "fulfilled"
-    assert "tracking_numbers" in result
     assert result["tracking_numbers"][0] == "12345"
-    assert "shop_domain" in result
     assert result["shop_domain"] == "test-shop.myshopify.com"
+    assert _sent_search(mock_post) == "email:john.doe@example.com AND name:1001"
     mock_shopify_service.get_order.assert_called_once()
+    assert mock_shopify_service.get_order.call_args.args[1] == "987654321"
 
-def test_search_orders(shopify_tools):
-    # Mock the requests.post response
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "data": {
-            "orders": {
-                "edges": [
-                    {
-                        "node": {
-                            "id": "gid://shopify/Order/987654321",
-                            "name": "#1001",
-                            "email": "customer@example.com",
-                            "phone": "+1234567890",
-                            "createdAt": "2023-01-01T00:00:00Z",
-                            "displayFinancialStatus": "PAID",
-                            "displayFulfillmentStatus": "FULFILLED",
-                            "subtotalLineItemsQuantity": 2,
-                            "currentSubtotalPriceSet": {
-                                "shopMoney": {
-                                    "amount": "24.99",
-                                    "currencyCode": "USD"
-                                }
-                            },
-                            "currentTotalPriceSet": {
-                                "shopMoney": {
-                                    "amount": "29.99",
-                                    "currencyCode": "USD"
-                                }
-                            },
-                            "originalTotalPriceSet": {
-                                "shopMoney": {
-                                    "amount": "29.99",
-                                    "currencyCode": "USD"
-                                }
-                            },
-                            "customer": {
-                                "id": "customer-id",
-                                "firstName": "John",
-                                "lastName": "Doe",
-                                "email": "john.doe@example.com"
-                            },
-                            "lineItems": {
-                                "edges": [
-                                    {
-                                        "node": {
-                                            "title": "Test Product",
-                                            "quantity": 1,
-                                            "originalUnitPriceSet": {
-                                                "shopMoney": {
-                                                    "amount": "19.99",
-                                                    "currencyCode": "USD"
-                                                }
-                                            },
-                                            "variant": {
-                                                "id": "variant-id",
-                                                "title": "Default",
-                                                "image": {
-                                                    "url": "https://example.com/image.jpg"
-                                                }
-                                            }
-                                        }
-                                    }
-                                ]
-                            },
-                            "shippingAddress": {
-                                "address1": "123 Test St",
-                                "city": "Testville",
-                                "provinceCode": "CA",
-                                "zip": "12345",
-                                "country": "US"
-                            },
-                            "fulfillments": [
-                                {
-                                    "trackingInfo": [
-                                        {
-                                            "company": "USPS",
-                                            "number": "12345",
-                                            "url": "https://tracking.usps.com/12345"
-                                        }
-                                    ],
-                                    "status": "SUCCESS"
-                                }
-                            ]
-                        }
-                    }
-                ],
-                "pageInfo": {
-                    "hasNextPage": False,
-                    "endCursor": "cursor-value"
-                }
-            }
-        }
-    }
-    
-    with patch("requests.post", return_value=mock_response):
-        # Act
-        result_str = shopify_tools.search_orders(query="test", limit=10)
-        result = json.loads(result_str)
-        
-        # Assert
-        assert result["success"] is True
-        assert "orders" in result
-        assert len(result["orders"]) == 1
-        assert result["orders"][0]["name"] == "#1001"
-        assert result["orders"][0]["financial_status"] == "PAID"
-        assert "line_items" in result["orders"][0]
-        assert "page_info" in result
+
+@pytest.mark.parametrize("order_number,email", [("1001", None), ("1001", ""), (None, OWNER_EMAIL),
+                                                ("", OWNER_EMAIL), ("10 OR 1", OWNER_EMAIL)])
+def test_get_order_status_needs_number_and_email(shopify_tools, mock_shopify_service, order_number, email):
+    with patch("requests.post") as mock_post:
+        result = json.loads(shopify_tools.get_order_status(order_number=order_number, customer_email=email))
+
+    assert result["success"] is False
+    assert result["requires_user_input"] is True
+    mock_post.assert_not_called()
+    mock_shopify_service.get_order.assert_not_called()
+
+
+def test_get_order_status_wrong_email_looks_like_a_missing_order(shopify_tools, mock_shopify_service):
+    with patch("requests.post", return_value=_orders_response(_order_node())):
+        wrong_email = json.loads(shopify_tools.get_order_status(order_number="1001",
+                                                                customer_email="someone.else@example.com"))
+    with patch("requests.post", return_value=_orders_response()):
+        missing = json.loads(shopify_tools.get_order_status(order_number="9999", customer_email=OWNER_EMAIL))
+
+    assert wrong_email == missing == {"success": False, "message": ORDER_NOT_FOUND}
+    mock_shopify_service.get_order.assert_not_called()
+
+
+def test_get_order_status_rechecks_the_full_record(shopify_tools, mock_shopify_service):
+    mock_shopify_service.get_order.return_value["order"]["customer"]["email"] = "someone.else@example.com"
+    with patch("requests.post", return_value=_orders_response(_order_node())):
+        result = json.loads(shopify_tools.get_order_status(order_number="1001", customer_email=OWNER_EMAIL))
+
+    assert result == {"success": False, "message": ORDER_NOT_FOUND}
+
+
+def test_get_order_status_guest_checkout(shopify_tools, mock_shopify_service):
+    order = mock_shopify_service.get_order.return_value["order"]
+    order["customer"] = None
+    order["email"] = OWNER_EMAIL
+    with patch("requests.post", return_value=_orders_response(_order_node())):
+        result = json.loads(shopify_tools.get_order_status(order_number="1001", customer_email=OWNER_EMAIL))
+
+    assert result["success"] is True
+    assert result["customer"] == {}
 
 def test_recommend_products(shopify_tools):
     # Mock the first requests.post response (product details)

@@ -847,7 +847,8 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 DO NOT include any other fields (shop_domain, total_count, products, etc.) - backend will populate everything from cache
 
                 **Order Tools:**
-                - Ask for order number or email if not provided
+                - Before looking up an order, ask for BOTH the order number and the email address used at checkout. Order details are only shared when both match
+                - Only use an email the customer typed in this chat; never guess one
                 - Use customer-friendly language: "Your order has been shipped" not "FULFILLED"
                 - Make tracking numbers clickable links
                 """
