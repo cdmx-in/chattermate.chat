@@ -161,7 +161,10 @@ class WhatsAppAdapter(MetaBaseAdapter):
             status=state,
             timestamp=self._timestamp(status.get("timestamp")),
             error=_status_error(errors[0]) if errors else None,
+            error_code=str(errors[0]["code"]) if errors and errors[0].get("code") is not None else None,
             pricing_category=pricing.get("category"),
+            pricing_type=pricing.get("type"),
+            pricing_model=pricing.get("pricing_model"),
             billable=pricing.get("billable"),
         )
 

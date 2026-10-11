@@ -120,7 +120,13 @@ class StatusEvent:
     status: DeliveryState
     timestamp: Optional[datetime] = None
     error: Optional[str] = None
-    pricing_category: Optional[str] = None
+    error_code: Optional[str] = None        # the platform's code for `error`
+    pricing_category: Optional[str] = None  # e.g. marketing, utility, service
+    # Per-message pricing: whether this message is charged ("regular") or
+    # free ("free_customer_service", "free_entry_point"); `billable` is the
+    # older flag the platform is retiring in its favour
+    pricing_type: Optional[str] = None
+    pricing_model: Optional[str] = None
     billable: Optional[bool] = None
 
 

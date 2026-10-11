@@ -266,6 +266,19 @@ class TestWhatsAppStatuses:
         assert (e.pricing_category, e.billable) == ("utility", True)
         assert e.timestamp.tzinfo is not None
 
+    def test_parses_per_message_pricing(self):
+        [e] = get_adapter("whatsapp").parse_status_events(_wa_statuses({
+            "id": "wamid.ABC", "status": "delivered", "timestamp": "1720000000", "recipient_id": "447",
+            "pricing": {"billable": False, "pricing_model": "PMP", "category": "service",
+                        "type": "free_customer_service"},
+        }))
+        assert (e.pricing_category, e.pricing_type, e.pricing_model) == ("service", "free_customer_service", "PMP")
+
+    def test_a_status_without_pricing_or_errors_has_none(self):
+        [e] = get_adapter("whatsapp").parse_status_events(_wa_statuses({
+            "id": "wamid.ABC", "status": "sent", "timestamp": "1720000000", "recipient_id": "447"}))
+        assert (e.pricing_type, e.pricing_model, e.error_code) == (None, None, None)
+
     def test_failed_status_carries_the_reason(self):
         events = get_adapter("whatsapp").parse_status_events(_wa_statuses({
             "id": "wamid.X", "status": "failed",
@@ -274,6 +287,7 @@ class TestWhatsAppStatuses:
         }))
         assert events[0].status == DeliveryState.FAILED
         assert events[0].error == "More than 24 hours have passed"
+        assert events[0].error_code == "131047"
 
     def test_unknown_states_and_messages_are_ignored(self):
         adapter = get_adapter("whatsapp")
