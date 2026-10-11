@@ -17,6 +17,16 @@ limitations under the License.
 /**
  * Composable for currency formatting utilities
  */
+/** Decimal places a currency is normally shown with (2 for USD, 0 for JPY). */
+const fractionDigits = (currencyCode?: string): number => {
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currencyCode || 'USD' })
+      .resolvedOptions().maximumFractionDigits ?? 2
+  } catch {
+    return 2 // not an ISO 4217 code
+  }
+}
+
 export function useCurrency() {
   // Currency symbol mapping
   const currencySymbols: Record<string, string> = {
@@ -61,8 +71,15 @@ export function useCurrency() {
     // Get currency symbol, fallback to currency code or empty string
     const symbol = currencyCode ? (currencySymbols[currencyCode] || currencyCode) : '';
 
-    // Format the price
-    const priceValue = typeof price === 'string' ? price : price.toString();
+    // Numbers get the currency's usual decimals ($600.00, ¥600), so a price
+    // that arrives as "600.0" or 600 doesn't render as "$600.0" or "$600".
+    const amount = typeof price === 'number' ? price : Number(price)
+    const priceValue = Number.isFinite(amount)
+      ? amount.toLocaleString('en-US', {
+          minimumFractionDigits: fractionDigits(currencyCode),
+          maximumFractionDigits: fractionDigits(currencyCode)
+        })
+      : String(price)
 
     return symbol ? `${symbol}${priceValue}` : priceValue;
   };
