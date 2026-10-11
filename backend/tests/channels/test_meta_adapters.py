@@ -699,7 +699,7 @@ class TestWhatsAppInteractiveSend:
 
     @pytest.mark.asyncio
     async def test_channels_without_support_refuse(self):
-        adapter = get_adapter("messenger")
+        adapter = get_adapter("slack")
         assert adapter.supports_interactive is False
         result = await adapter.send_interactive(
             MagicMock(), MagicMock(), InteractiveMessage(kind=InteractiveKind.BUTTONS, body="x"))

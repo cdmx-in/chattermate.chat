@@ -15,7 +15,7 @@ limitations under the License.
 """
 
 import traceback
-from typing import Type
+from typing import Optional, Type
 from agno.agent import Agent
 from app.utils.agno_utils import create_model
 from app.core.logger import get_logger
@@ -23,7 +23,8 @@ from app.channels.constants import is_widget_channel
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
 from app.tools.mcp_manager import ChatAgentMCPMixin
 from app.database import get_db, SessionLocal, engine
-from app.agents.choice_prompt import CHOICE_INSTRUCTIONS
+from app.agents.choice_prompt import choice_instructions
+from app.channels.interactive_limits import InteractiveLimits
 from app.agents.encrypted_storage import EncryptedPostgresAgentStorage
 from app.agents.history_memory import BoundedHistoryMemory, run_with_overflow_recovery
 from app.repositories.chat import ChatRepository
@@ -355,7 +356,7 @@ def enrich_shopify_response(response_content: ChatResponse, session_id: str, fal
     return response_content
 
 class ChatAgent(ChatAgentMCPMixin):
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None, source: str = None, channel: str = None, extra_context: str = None, base_url: str = None, offer_choices: bool = False):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None, source: str = None, channel: str = None, extra_context: str = None, base_url: str = None, choice_limits: Optional[InteractiveLimits] = None):
         # NOTE: `source` is a knowledge-base document-name filter (see
         # KnowledgeSearchByAgent), NOT the messaging channel. `channel` is the
         # messaging channel tag ('web', 'telegram', ...) and must never be
@@ -365,7 +366,7 @@ class ChatAgent(ChatAgentMCPMixin):
         self.last_bot_message_id = None
         # Channels that can show tappable choices get a reply schema that
         # offers them (ChannelChatResponse); everyone else's is unchanged.
-        self._response_model = ChannelChatResponse if offer_choices else ChatResponse
+        self._response_model = ChannelChatResponse if choice_limits is not None else ChatResponse
         # Initialize knowledge search tool if org_id and agent_id provided
         logger.debug(f"Initializing chat agent for agent_id: {agent_id} and org_id: {org_id} and source: {source}")
         tools = []
@@ -911,11 +912,12 @@ Keep your responses concise and focused. Provide clear, actionable information i
 
         # Tappable choices, only where the channel can show them — every other
         # surface keeps an unchanged prompt.
-        if offer_choices:
+        if choice_limits is not None:
+            instructions = choice_instructions(choice_limits)
             if isinstance(system_message, list):
-                system_message = [*system_message, CHOICE_INSTRUCTIONS]
+                system_message = [*system_message, instructions]
             else:
-                system_message += "\n\n" + CHOICE_INSTRUCTIONS
+                system_message += "\n\n" + instructions
 
         # Platform guardrail policy — single choke point covering all three
         # branches above (workflow custom prompt, agent instructions, and the
@@ -958,7 +960,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
         self._groq_json_capture = {}
         self._use_groq_json_tool = model_type.upper() == 'GROQ'
         if self._use_groq_json_tool:
-            all_tools.append(build_groq_response_tool(self._groq_json_capture, offer_choices))
+            all_tools.append(build_groq_response_tool(self._groq_json_capture, choice_limits is not None))
             system_message = (system_message or "") + _GROQ_JSON_INSTRUCTION
             response_model = None
             structured_outputs = False

@@ -16,6 +16,7 @@ limitations under the License.
 
 from sqlalchemy.orm import Session
 from typing import Any, Dict, Iterable, List, Optional
+from app.models.channels import ChannelConversation
 from app.models.chat_history import ChatHistory
 from app.models.customer import Customer
 from uuid import UUID
@@ -184,7 +185,10 @@ class ChatRepository:
 
     def set_external_message_id(self, message_id: int, external_message_id: str) -> Optional[ChatHistory]:
         """Record the platform's id for a message we sent, so its delivery
-        receipts can find it. Returns the row, or None if it is gone."""
+        receipts and taps on its choices can find it. Returns the row, or None
+        if it is gone. Some platforms (Telegram) number messages per chat:
+        look those up within the chat (in_channel_chat_by_external_message_id),
+        never organization-wide."""
         try:
             message = self.db.query(ChatHistory).filter(ChatHistory.id == message_id).first()
             if message is None:
@@ -210,6 +214,37 @@ class ChatRepository:
                 ChatHistory.external_message_id == external_message_id,
             )
             .first()
+        )
+
+    def in_channel_chat_by_external_message_id(self, channel_account_id: UUID, external_conversation_id: str,
+                                               external_message_id: str) -> Optional[ChatHistory]:
+        """The message a platform id belongs to, within one customer's chat on
+        one channel account — across its sessions (a chat that closed and
+        reopened is a new session), and never another chat's: some platforms
+        number messages per chat, not globally."""
+        return (
+            self._in_channel_chat(channel_account_id, external_conversation_id)
+            .filter(ChatHistory.external_message_id == external_message_id)
+            .first()
+        )
+
+    def latest_bot_messages_in_channel_chat(self, channel_account_id: UUID, external_conversation_id: str,
+                                            limit: int) -> List[ChatHistory]:
+        """That chat's most recent replies to the customer, newest first."""
+        return (
+            self._in_channel_chat(channel_account_id, external_conversation_id)
+            .filter(ChatHistory.message_type == 'bot')
+            .order_by(ChatHistory.created_at.desc(), ChatHistory.id.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def _in_channel_chat(self, channel_account_id: UUID, external_conversation_id: str):
+        return (
+            self.db.query(ChatHistory)
+            .join(ChannelConversation, ChannelConversation.session_id == ChatHistory.session_id)
+            .filter(ChannelConversation.channel_account_id == channel_account_id,
+                    ChannelConversation.external_conversation_id == external_conversation_id)
         )
 
     def advance_channel_status(self, message_id: int, status: str, at: datetime,
@@ -680,3 +715,4 @@ class ChatRepository:
             'updated_at': result.updated_at,
             'messages': messages_list
         }
+

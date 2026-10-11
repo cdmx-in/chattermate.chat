@@ -23,6 +23,7 @@ from app.channels.app_hooks import EventKind, register_event_listener
 from app.channels.constants import MessageSource
 from app.channels.base import SendResult, WindowStatus
 from app.channels.interactive import from_options
+from app.channels.interactive_limits import INSTAGRAM_LIMITS, WHATSAPP_LIMITS
 from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, decode_sent_choices
 from app.repositories.channels import ChannelAccountRepository, ChannelConversationRepository
 from app.repositories.chat import ChatRepository
@@ -144,6 +145,7 @@ def _channel_adapter(supports_interactive: bool):
     adapter = MagicMock()
     adapter.channel_type = 'whatsapp'
     adapter.supports_interactive = supports_interactive
+    adapter.interactive_limits = WHATSAPP_LIMITS if supports_interactive else None
     adapter.reports_delivery_status = True
     adapter.max_text_length = 4096
     adapter.check_delivery_window.return_value = WindowStatus.OK
@@ -294,6 +296,47 @@ async def test_channels_without_receipts_record_no_message_id(db, test_agent, te
 
     db.refresh(row)
     assert row.external_message_id is None
+
+
+@pytest.mark.asyncio
+async def test_choices_on_a_channel_without_receipts_record_the_offers_id(
+        db, test_agent, test_customer, test_organization, mock_sio, monkeypatch):
+    """A tap is matched back to the message that offered it (Messenger, Telegram)."""
+    session, _ = make_channel_session(db, test_agent, test_customer, test_organization)
+    adapter = _channel_adapter(True)
+    adapter.reports_delivery_status = False
+    monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
+    row = _bot_row(db, session, test_organization)
+
+    await deliver_to_customer(db, session, {'message': 'Coming?'}, message_id=row.id,
+                              interactive=from_options('Coming?', ['Yes', 'No']), source=MessageSource.AI)
+
+    db.refresh(row)
+    assert row.external_message_id == 'wamid.INT'
+    assert decode_sent_choices(row.attributes[SENT_CHOICES_ATTRIBUTE])["numbered"] is False
+
+
+@pytest.mark.asyncio
+async def test_choices_written_into_the_text_split_a_long_reply_and_are_numbered(
+        db, test_agent, test_customer, test_organization, mock_sio, monkeypatch):
+    """Instagram: the reply plus its numbered choices must fit, or the reply
+    goes on its own first — never cut, which would lose the question."""
+    session, _ = make_channel_session(db, test_agent, test_customer, test_organization)
+    adapter = _channel_adapter(True)
+    adapter.interactive_limits = INSTAGRAM_LIMITS
+    adapter.reports_delivery_status = False
+    monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
+    row = _bot_row(db, session, test_organization)
+    reply = 'x' * 960 + ' Which one do you want?'  # fits alone, not with the choices
+
+    await deliver_to_customer(db, session, {'message': reply}, message_id=row.id,
+                              interactive=from_options(reply, ['First', 'Second', 'Third'], INSTAGRAM_LIMITS),
+                              source=MessageSource.AI)
+
+    assert adapter.send_text.await_args.args[2] == reply
+    assert adapter.send_interactive.await_args.args[2].body == 'Choose an option:'
+    db.refresh(row)
+    assert decode_sent_choices(row.attributes[SENT_CHOICES_ATTRIBUTE])["numbered"] is True
 
 
 @pytest.mark.asyncio

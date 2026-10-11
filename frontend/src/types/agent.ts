@@ -28,6 +28,8 @@ export interface Agent {
   transfer_to_human: boolean
   /** Off means the AI never replies: every chat goes straight to the team. */
   ai_replies_enabled: boolean
+  /** The AI's choices as tappable buttons on WhatsApp, Messenger, Instagram and Telegram. */
+  channel_quick_replies: boolean
   ask_for_rating: boolean
   handoff_collect_email: boolean
   handoff_collect_name: boolean
@@ -62,6 +64,7 @@ export interface AgentUpdate {
   is_active?: boolean
   transfer_to_human?: boolean
   ai_replies_enabled?: boolean
+  channel_quick_replies?: boolean
   ask_for_rating?: boolean
   handoff_collect_email?: boolean
   handoff_collect_name?: boolean

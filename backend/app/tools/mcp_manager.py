@@ -19,6 +19,7 @@ from datetime import timedelta
 from time import monotonic
 from typing import List, Optional
 from agno.tools.mcp import MCPTools, SSEClientParams, StreamableHTTPClientParams
+from app.channels.interactive_limits import InteractiveLimits
 from app.database import SessionLocal
 from app.repositories.mcp_tool import MCPToolRepository
 from app.models.mcp_tool import MCPTransportType
@@ -547,7 +548,7 @@ class ChatAgentMCPMixin:
                           session_id: str = None, custom_system_prompt: str = None,
                           transfer_to_human: bool | None = None, source: str = None,
                           channel: str = None, extra_context: str = None, base_url: str = None,
-                          offer_choices: bool = False):
+                          choice_limits: Optional[InteractiveLimits] = None):
         """
         Async factory method to create a ChatAgent with MCP tools initialized.
         """
@@ -579,7 +580,7 @@ class ChatAgentMCPMixin:
             channel=channel,
             extra_context=extra_context,
             base_url=base_url,
-            offer_choices=offer_choices,
+            choice_limits=choice_limits,
         )
         
         # Attach the MCP manager to the instance for cleanup

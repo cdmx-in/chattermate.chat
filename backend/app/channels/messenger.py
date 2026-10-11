@@ -16,7 +16,11 @@ limitations under the License.
 
 from typing import ClassVar, List, Optional
 
-from app.channels.base import InboundMessage, SendResult
+from app.channels.base import (
+    InboundMessage, InteractiveKind, InteractiveMessage, InteractiveReply, InteractiveReplyType, SendResult,
+)
+from app.channels.interactive import to_text_fallback
+from app.channels.interactive_limits import MESSENGER_LIMITS, InteractiveLimits
 from app.channels.meta_base import GRAPH_BASE, MetaBaseAdapter, graph_get, graph_post
 from app.channels.registry import register_adapter
 from app.models.channels import ChannelAccount, ChannelConversation, ChannelType
@@ -25,7 +29,7 @@ from app.core.logger import get_logger
 logger = get_logger(__name__)
 
 # Messenger send API limit
-MAX_MESSAGE_LENGTH = 2000
+MAX_MESSAGE_LENGTH = MESSENGER_LIMITS.body_max
 
 
 class MessengerAdapter(MetaBaseAdapter):
@@ -43,6 +47,9 @@ class MessengerAdapter(MetaBaseAdapter):
     # Extra keys on a send. messaging_type is a Messenger Platform parameter and
     # is not part of Instagram's documented send body, so Instagram sends none.
     send_extras: ClassVar[dict] = {"messaging_type": "RESPONSE"}
+    # Choices go as quick replies (buttons only: no lists or link buttons)
+    interactive_limits: ClassVar[Optional[InteractiveLimits]] = MESSENGER_LIMITS
+    max_text_length: ClassVar[Optional[int]] = MAX_MESSAGE_LENGTH
 
     @staticmethod
     def _event_seconds(raw) -> Optional[int]:
@@ -89,10 +96,31 @@ class MessengerAdapter(MetaBaseAdapter):
                     text=text,
                     profile={},
                     timestamp=self._timestamp(self._event_seconds(event.get("timestamp"))),
+                    interactive=_quick_reply(message),
+                    # Only a swipe-reply carries this; a quick-reply tap doesn't
+                    reply_to_message_id=(message.get("reply_to") or {}).get("mid"),
                 ))
         return messages
 
     async def send_text(self, account: ChannelAccount, conversation: ChannelConversation, text: str) -> SendResult:
+        return await self._send(account, conversation, {"text": text})
+
+    async def send_interactive(self, account: ChannelAccount, conversation: ChannelConversation,
+                               message: InteractiveMessage) -> SendResult:
+        """The choices as quick replies under the text — and, where some of the
+        platform's apps don't show quick replies, written into it as well."""
+        if message.kind != InteractiveKind.BUTTONS:
+            return SendResult(ok=False, error=f"{self.channel_type} only sends choices as quick replies")
+        limits = self.interactive_limits
+        text = to_text_fallback(message, limits.body_max) if limits.options_in_text else message.body
+        return await self._send(account, conversation, {
+            "text": text,
+            "quick_replies": [{"content_type": "text", "title": b.title, "payload": b.id}
+                              for b in message.buttons],
+        })
+
+    async def _send(self, account: ChannelAccount, conversation: ChannelConversation,
+                    message: dict) -> SendResult:
         # `me/messages` resolves to the page/account owning the access token
         return await graph_post(
             "me/messages",
@@ -100,7 +128,7 @@ class MessengerAdapter(MetaBaseAdapter):
             {
                 "recipient": {"id": conversation.external_conversation_id},
                 **self.send_extras,
-                "message": {"text": text},
+                "message": message,
             },
             base=self.graph_base,
         )
@@ -123,7 +151,7 @@ class MessengerAdapter(MetaBaseAdapter):
             logger.debug(f"{self.channel_type} typing_on failed (non-critical): {e}")
 
     def format_outbound(self, markdown: str) -> str:
-        return markdown[:MAX_MESSAGE_LENGTH]
+        return markdown[:self.max_text_length]
 
     async def fetch_profile(self, account: ChannelAccount, external_user_id: str) -> dict:
         """The customer's name, which the webhook never carries — Messenger
@@ -145,6 +173,14 @@ class MessengerAdapter(MetaBaseAdapter):
     @staticmethod
     def _display_name(data: dict) -> str:
         return " ".join(p for p in (data.get("first_name"), data.get("last_name")) if p).strip()
+
+
+def _quick_reply(message: dict) -> Optional[InteractiveReply]:
+    """A tapped quick reply: its payload is the choice's id, the text its title."""
+    payload = (message.get("quick_reply") or {}).get("payload")
+    if not payload:
+        return None
+    return InteractiveReply(type=InteractiveReplyType.BUTTON_REPLY, id=str(payload), title=message.get("text") or "")
 
 
 register_adapter(MessengerAdapter())

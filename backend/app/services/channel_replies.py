@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.channels.base import InboundMessage
 from app.channels.sent_choices import (
-    SENT_CHOICES_ATTRIBUTE, decode_sent_choices, sent_choice_text,
+    SENT_CHOICES_ATTRIBUTE, decode_sent_choices, sent_choice_text, sent_numbered_choice,
 )
 from app.repositories.chat import ChatRepository
 
@@ -33,6 +33,8 @@ from app.repositories.chat import ChatRepository
 # text is already the (encrypted) message, and a shared location's details
 # live there too — nothing customer-identifying goes in plaintext attributes.
 REPLY_ATTRIBUTE = "interactive_reply"
+# How far back a tap without reply context is matched to the reply that offered it
+RECENT_OFFERS = 10
 
 
 def inbound_attributes(inbound: InboundMessage, channel_type: str) -> dict:
@@ -51,23 +53,50 @@ def inbound_attributes(inbound: InboundMessage, channel_type: str) -> dict:
     return attributes
 
 
-def reply_text(db: Session, organization_id: UUID, inbound: InboundMessage) -> str:
+def reply_text(db: Session, channel_account_id: UUID, inbound: InboundMessage) -> str:
     """The text to store and answer for this message.
 
-    A tap arrives as the button's title, which may have been cut to fit; the
-    full choice is in the record of what the offering message sent, found
-    through the reply context.
+    A tap arrives as the button's title, which may have been cut to fit (or,
+    on Telegram, as just the button's id); a reply to choices shown as a
+    numbered list may be just the number. The full choice is in the record
+    of what the offering message sent, looked up within this customer's chat
+    on this account — by the tap's reply context where the platform gives
+    one, otherwise as the latest reply that offered the choice.
     """
-    choice = _tapped_choice(db, organization_id, inbound)
-    return choice if choice is not None else (inbound.text or "")
+    choice = _tapped_choice(db, channel_account_id, inbound) or _numbered_choice(db, channel_account_id, inbound)
+    if choice is not None:
+        return choice
+    return inbound.text or (inbound.interactive.title if inbound.interactive else "") or ""
 
 
-def _tapped_choice(db: Session, organization_id: UUID, inbound: InboundMessage) -> Optional[str]:
-    if inbound.interactive is None or not inbound.reply_to_message_id:
+def _tapped_choice(db: Session, channel_account_id: UUID, inbound: InboundMessage) -> Optional[str]:
+    if inbound.interactive is None:
         return None
-    offered = ChatRepository(db).get_by_external_message_id(
-        organization_id, inbound.reply_to_message_id)
-    if offered is None:
+    repo = ChatRepository(db)
+    if inbound.reply_to_message_id:
+        offered = repo.in_channel_chat_by_external_message_id(
+            channel_account_id, inbound.external_conversation_id, inbound.reply_to_message_id)
+        candidates = [offered] if offered is not None else []
+    else:
+        candidates = repo.latest_bot_messages_in_channel_chat(
+            channel_account_id, inbound.external_conversation_id, RECENT_OFFERS)
+    for offered in candidates:
+        text = sent_choice_text(_record(offered), inbound.interactive.id)
+        if text is not None:
+            return text
+    return None
+
+
+def _numbered_choice(db: Session, channel_account_id: UUID, inbound: InboundMessage) -> Optional[str]:
+    """A bare number answering our latest reply, when that reply showed its
+    choices numbered (as text, or alongside buttons a desktop app hides)."""
+    typed = (inbound.text or "").strip().rstrip(".")
+    if inbound.interactive is not None or not typed.isdigit():
         return None
-    record = decode_sent_choices((offered.attributes or {}).get(SENT_CHOICES_ATTRIBUTE))
-    return sent_choice_text(record, inbound.interactive.id)
+    latest = ChatRepository(db).latest_bot_messages_in_channel_chat(
+        channel_account_id, inbound.external_conversation_id, 1)
+    return sent_numbered_choice(_record(latest[0]), int(typed)) if latest else None
+
+
+def _record(message) -> Optional[dict]:
+    return decode_sent_choices((message.attributes or {}).get(SENT_CHOICES_ATTRIBUTE))

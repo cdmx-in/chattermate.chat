@@ -28,12 +28,14 @@ from app.core.encryption import decrypt_json, encrypt_json
 SENT_CHOICES_ATTRIBUTE = "interactive_sent"
 
 
-def encode_sent_choices(message: InteractiveMessage, as_text: bool) -> dict:
+def encode_sent_choices(message: InteractiveMessage, as_text: bool, numbered: bool = False) -> dict:
     """The record for one sent message; `as_text` when the choices had to go
-    as a numbered list instead of buttons."""
+    as a numbered list instead of buttons; `numbered` when the customer saw
+    them numbered either way (so a bare "2" picks the second)."""
     return encrypt_json({
         "kind": message.kind.value,
         "as_text": as_text,
+        "numbered": as_text or numbered,
         "choices": [{"id": c.id, "text": choice_text(c)} for c in all_choices(message)],
     })
 
@@ -41,6 +43,15 @@ def encode_sent_choices(message: InteractiveMessage, as_text: bool) -> dict:
 def decode_sent_choices(value) -> Optional[dict]:
     record = decrypt_json(value)
     return record if isinstance(record, dict) else None
+
+
+def sent_numbered_choice(record: Optional[dict], number: int) -> Optional[str]:
+    """The full text of the choice shown as `number` (1-based), when the
+    record's choices were shown numbered."""
+    choices = (record or {}).get("choices") or []
+    if not (record or {}).get("numbered") or not 1 <= number <= len(choices):
+        return None
+    return choices[number - 1].get("text")
 
 
 def sent_choice_text(record: Optional[dict], choice_id: str) -> Optional[str]:
