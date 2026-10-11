@@ -20,8 +20,9 @@ from uuid import uuid4
 
 import pytest
 
-from app.channels.base import InboundMessage
+from app.channels.base import InboundMessage, InteractiveReply, InteractiveReplyType
 from app.models.channels import ChannelConversation
+from app.models.chat_history import ChatHistory
 from app.models.agent import AgentType
 from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.repositories.channels import (
@@ -31,7 +32,7 @@ from app.repositories.channels import (
 )
 from app.repositories.agent import AgentRepository
 from app.repositories.chat import ChatRepository
-from app.services import channel_chat
+from app.services import agent_rooms, channel_chat
 from app.services.human_routing import HUMAN_ONLY_ACK
 from app.services.channel_chat import process_channel_message
 from app.services.message_delivery import DeliveryResult
@@ -83,7 +84,7 @@ def use_test_db(db, monkeypatch):
 def mock_sio(monkeypatch):
     sio = MagicMock()
     sio.emit = AsyncMock()
-    monkeypatch.setattr(channel_chat, "sio", sio)
+    monkeypatch.setattr(agent_rooms, "sio", sio)
     return sio
 
 
@@ -123,23 +124,24 @@ async def test_ai_path_creates_session_and_delivers(db, routed_account, use_test
 
 
 def _agent_persisting_reply(db, text="hi there"):
-    """A ChatAgent stub that persists its reply the way the real one does, so
-    the delivery-status read-back has a row to find."""
+    """A ChatAgent stub that persists its reply the way the real one does and
+    reports the row id, so delivery results land on that row."""
     response = SimpleNamespace(message=text, transfer_to_human=False,
                                end_chat=False, request_lead_capture=False)
 
+    fake_agent = MagicMock()
+
     async def _respond(**kwargs):
-        ChatRepository(db).create_message({
+        fake_agent.last_bot_message_id = ChatRepository(db).create_message({
             "message": text,
             "message_type": "bot",
             "session_id": kwargs["session_id"],
             "organization_id": kwargs["org_id"],
             "agent_id": kwargs["agent_id"],
             "customer_id": kwargs["customer_id"],
-        })
+        }).id
         return response
 
-    fake_agent = MagicMock()
     fake_agent.get_response = AsyncMock(side_effect=_respond)
     fake_agent.safe_cleanup_mcp_tools = AsyncMock()
     return fake_agent
@@ -156,8 +158,7 @@ async def test_bot_reply_records_delivery_failure(db, routed_account, use_test_d
          patch.object(channel_chat, "deliver_to_customer", AsyncMock(return_value=failed)):
         await process_channel_message(routed_account.id, make_inbound())
 
-    conversation = db.query(ChannelConversation).one()
-    message = ChatRepository(db).get_latest_bot_message(conversation.session_id)
+    message = db.query(ChatHistory).filter_by(message_type="bot").one()
     assert message.attributes["delivery_status"] == "window_expired"
 
 
@@ -169,25 +170,8 @@ async def test_bot_reply_marks_nothing_when_delivered(db, routed_account, use_te
          patch.object(channel_chat, "deliver_to_customer", AsyncMock(return_value=DeliveryResult(ok=True))):
         await process_channel_message(routed_account.id, make_inbound())
 
-    conversation = db.query(ChannelConversation).one()
-    message = ChatRepository(db).get_latest_bot_message(conversation.session_id)
+    message = db.query(ChatHistory).filter_by(message_type="bot").one()
     assert "delivery_status" not in (message.attributes or {})
-
-
-def test_latest_bot_message_ignores_human_agent_replies(db, test_organization, test_agent):
-    """'agent' is a human's message, never the AI's. A human replying after the
-    bot must not become the row a delivery failure gets stamped on."""
-    chat_repo = ChatRepository(db)
-    session_id = str(uuid4())
-    common = {
-        "session_id": session_id,
-        "organization_id": str(test_organization.id),
-        "agent_id": str(test_agent.id),
-    }
-    bot = chat_repo.create_message({**common, "message": "bot reply", "message_type": "bot"})
-    chat_repo.create_message({**common, "message": "human reply", "message_type": "agent"})
-
-    assert chat_repo.get_latest_bot_message(session_id).id == bot.id
 
 
 @pytest.mark.asyncio
@@ -598,3 +582,118 @@ class TestOutboundContextIsNotAnInstructionChannel:
         text = self._context("A" * 5000)
         assert len(text) < 2000
         assert "…" in text
+
+
+@pytest.fixture
+def whatsapp_account(db, test_organization, test_agent):
+    account = ChannelAccountRepository(db).create_account(
+        organization_id=test_organization.id,
+        channel_type="whatsapp",
+        external_account_id="PN123",
+        credentials={"access_token": "tok"},
+        display_name="+1 555",
+    )
+    AgentChannelConfigRepository(db).set_agent(account.id, test_agent.id)
+    return account
+
+
+def _wa_tap():
+    return InboundMessage(
+        external_account_id="PN123", external_conversation_id="447",
+        external_user_id="447", external_message_id="wamid.IN", text="Tomorrow",
+        profile={"phone": "447"},
+        interactive=InteractiveReply(type=InteractiveReplyType.BUTTON_REPLY,
+                                     id="qr_1", title="Tomorrow"),
+    )
+
+
+class TestChoices:
+    @pytest.mark.asyncio
+    async def test_whatsapp_agent_is_told_it_can_offer_choices(
+            self, db, whatsapp_account, use_test_db, test_ai_config, mock_sio):
+        response = SimpleNamespace(message="When?", transfer_to_human=False, end_chat=False,
+                                   request_lead_capture=False, quick_replies=["Today", "Tomorrow"])
+        fake_agent = MagicMock()
+        fake_agent.get_response = AsyncMock(return_value=response)
+        fake_agent.safe_cleanup_mcp_tools = AsyncMock()
+        fake_agent.last_bot_message_id = 7
+
+        with patch.object(channel_chat.ChatAgent, "create_async", AsyncMock(return_value=fake_agent)) as create_async, \
+             patch.object(channel_chat, "deliver_to_customer",
+                          AsyncMock(return_value=DeliveryResult(ok=True))) as deliver:
+            await process_channel_message(whatsapp_account.id, _wa_tap())
+
+        assert create_async.await_args.kwargs["offer_choices"] is True
+        assert deliver.await_args.kwargs["message_id"] == 7
+        sent = deliver.await_args.kwargs["interactive"]
+        assert [b.title for b in sent.buttons] == ["Today", "Tomorrow"]
+        user_attributes = fake_agent.get_response.await_args.kwargs["user_attributes"]
+        assert user_attributes["interactive_reply"] == {"type": "button_reply", "id": "qr_1"}
+
+    @pytest.mark.asyncio
+    async def test_channels_without_buttons_are_not_offered_choices(
+            self, db, routed_account, use_test_db, test_ai_config, mock_sio):
+        fake_agent = _agent_persisting_reply(db)
+
+        with patch.object(channel_chat.ChatAgent, "create_async", AsyncMock(return_value=fake_agent)) as create_async, \
+             patch.object(channel_chat, "deliver_to_customer", AsyncMock(return_value=DeliveryResult(ok=True))):
+            await process_channel_message(routed_account.id, make_inbound())
+
+        assert create_async.await_args.kwargs["offer_choices"] is False
+
+    @pytest.mark.asyncio
+    async def test_human_path_stores_and_relays_the_tap(self, db, whatsapp_account, use_test_db, mock_sio):
+        with patch.object(channel_chat.AgentRepository, "get_agent",
+                          return_value=SimpleNamespace(ai_replies_enabled=False)), \
+             patch.object(channel_chat, "notify_customer", AsyncMock()):
+            await process_channel_message(whatsapp_account.id, _wa_tap())
+
+        stored = db.query(ChatHistory).filter_by(message_type="user").one()
+        assert stored.attributes["interactive_reply"] == {"type": "button_reply", "id": "qr_1"}
+        relayed = mock_sio.emit.await_args.args[1]
+        assert relayed["message_id"] == stored.id
+        assert relayed["attributes"]["interactive_reply"]["id"] == "qr_1"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_turns_each_deliver_against_their_own_reply(
+        db, routed_account, use_test_db, test_ai_config, mock_sio):
+    """Two messages processed at once on one conversation: each reply's
+    delivery must point at that reply's row, never the other's (the old
+    'latest bot message' read-back could swap them)."""
+    import asyncio
+
+    def _agent():
+        agent = MagicMock()
+        agent.safe_cleanup_mcp_tools = AsyncMock()
+
+        async def _respond(**kwargs):
+            await asyncio.sleep(0)  # let the other turn interleave
+            text = f"re: {kwargs['message']}"
+            agent.last_bot_message_id = ChatRepository(db).create_message({
+                "message": text, "message_type": "bot",
+                "session_id": kwargs["session_id"], "organization_id": kwargs["org_id"],
+                "agent_id": kwargs["agent_id"], "customer_id": kwargs["customer_id"],
+            }).id
+            await asyncio.sleep(0)
+            return SimpleNamespace(message=text, transfer_to_human=False,
+                                   end_chat=False, request_lead_capture=False)
+        agent.get_response = AsyncMock(side_effect=_respond)
+        return agent
+
+    deliveries = []
+
+    async def _deliver(db_, session, payload, message_id=None, interactive=None):
+        deliveries.append((payload["message"], message_id))
+        return DeliveryResult(ok=True)
+
+    first, second = make_inbound("first"), make_inbound("second")
+    second.external_message_id = "43"
+    with patch.object(channel_chat.ChatAgent, "create_async", AsyncMock(side_effect=lambda **_: _agent())), \
+         patch.object(channel_chat, "deliver_to_customer", side_effect=_deliver):
+        await asyncio.gather(process_channel_message(routed_account.id, first),
+                             process_channel_message(routed_account.id, second))
+
+    assert len(deliveries) == 2
+    for text, message_id in deliveries:
+        assert db.get(ChatHistory, message_id).message == text

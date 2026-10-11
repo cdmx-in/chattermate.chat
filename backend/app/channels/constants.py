@@ -34,6 +34,14 @@ from typing import Optional
 DEFAULT_TEMPLATE_LANGUAGE = "en_US"
 
 
+# The most choices one reply can offer the customer: WhatsApp's list-message
+# row cap, the largest interactive form any channel supports.
+MAX_CHOICE_OPTIONS = 10
+# The longest one choice can be: a list row's description, which is where a
+# choice too long for a button or row title is shown in full.
+MAX_CHOICE_LENGTH = 72
+
+
 # Channels served by our own chat widget rather than an external messaging
 # platform. They render our UI, so widget-only features (the rating prompt) work
 # there; on Telegram or WhatsApp the same prompt is a dead end.

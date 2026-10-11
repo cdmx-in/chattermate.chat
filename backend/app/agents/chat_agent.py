@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 import traceback
+from typing import Type
 from agno.agent import Agent
 from app.utils.agno_utils import create_model
 from app.core.logger import get_logger
@@ -22,12 +23,13 @@ from app.channels.constants import is_widget_channel
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
 from app.tools.mcp_manager import ChatAgentMCPMixin
 from app.database import get_db, SessionLocal, engine
+from app.agents.choice_prompt import CHOICE_INSTRUCTIONS
 from app.agents.encrypted_storage import EncryptedPostgresAgentStorage
 from app.agents.history_memory import BoundedHistoryMemory, run_with_overflow_recovery
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
-from app.models.schemas.chat import ChatResponse,TransferReasonType, EndChatReasonType
+from app.models.schemas.chat import ChannelChatResponse, ChatResponse, TransferReasonType, EndChatReasonType
 from app.core.config import settings
 from app.agents.structured_output import (
     build_groq_json_tool,
@@ -108,15 +110,26 @@ _GROQ_JSON_INSTRUCTION = (
 )
 
 
-def build_groq_response_tool(capture: dict):
+# Added to the tool schema only for agents offered choices (see ChannelChatResponse)
+_GROQ_QUICK_REPLIES_PROPERTY = {
+    "type": ["array", "null"], "items": {"type": "string"},
+    "description": ChannelChatResponse.model_fields["quick_replies"].description,
+}
+
+
+def build_groq_response_tool(capture: dict, offer_choices: bool = False):
     """Return an agno `json` tool that captures the final structured turn into `capture`.
 
     `capture` is mutated in place with the model's tool-call arguments; the caller reads
     it after `agent.arun()` and builds the ChatResponse from it.
     """
+    schema = _GROQ_JSON_TOOL_SCHEMA
+    if offer_choices:
+        schema = {**schema, "properties": {**schema["properties"],
+                                           "quick_replies": _GROQ_QUICK_REPLIES_PROPERTY}}
     return build_groq_json_tool(
         capture,
-        _GROQ_JSON_TOOL_SCHEMA,
+        schema,
         description="Return your final structured reply to the visitor. Call this exactly once to end the turn, after any searching.",
     )
 
@@ -128,7 +141,8 @@ _lenient_json_load = lenient_json_load
 _salvage_groq_json_error = salvage_groq_json_error
 
 
-def _build_chat_response_from_capture(capture: dict) -> ChatResponse:
+def _build_chat_response_from_capture(capture: dict,
+                                      model: Type[ChatResponse] = ChatResponse) -> ChatResponse:
     """Build a ChatResponse from the Groq `json` tool arguments.
 
     Drops None values so ChatResponse's own field defaults apply (the model may
@@ -137,10 +151,20 @@ def _build_chat_response_from_capture(capture: dict) -> ChatResponse:
     """
     cleaned = {k: v for k, v in capture.items() if v is not None}
     try:
-        return ChatResponse(**cleaned)
+        return model(**cleaned)
     except Exception as e:
         logger.error(f"Groq json-tool args failed ChatResponse validation: {e}; args={cleaned}")
         return ChatResponse(message=str(cleaned.get("message") or "").strip() or "No response generated")
+
+
+def drop_stale_choices(response_content: ChatResponse, model_message: str) -> None:
+    """Choices belong to the reply the model wrote: not to a canned
+    replacement (the empty-turn fallback or the output guardrail swapped the
+    message), nor to a goodbye."""
+    if not isinstance(response_content, ChannelChatResponse):
+        return
+    if response_content.message != model_message or response_content.end_chat:
+        response_content.quick_replies = None
 
 
 _EMPTY_TURN_FALLBACK = (
@@ -331,12 +355,17 @@ def enrich_shopify_response(response_content: ChatResponse, session_id: str, fal
     return response_content
 
 class ChatAgent(ChatAgentMCPMixin):
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None, source: str = None, channel: str = None, extra_context: str = None, base_url: str = None):
+    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None, source: str = None, channel: str = None, extra_context: str = None, base_url: str = None, offer_choices: bool = False):
         # NOTE: `source` is a knowledge-base document-name filter (see
         # KnowledgeSearchByAgent), NOT the messaging channel. `channel` is the
         # messaging channel tag ('web', 'telegram', ...) and must never be
         # passed as `source`.
         self.channel = channel or 'web'
+        # Row id of the reply the last get_response stored (see get_response)
+        self.last_bot_message_id = None
+        # Channels that can show tappable choices get a reply schema that
+        # offers them (ChannelChatResponse); everyone else's is unchanged.
+        self._response_model = ChannelChatResponse if offer_choices else ChatResponse
         # Initialize knowledge search tool if org_id and agent_id provided
         logger.debug(f"Initializing chat agent for agent_id: {agent_id} and org_id: {org_id} and source: {source}")
         tools = []
@@ -880,6 +909,14 @@ Keep your responses concise and focused. Provide clear, actionable information i
             else:
                 system_message += "\n\n" + extra_context
 
+        # Tappable choices, only where the channel can show them — every other
+        # surface keeps an unchanged prompt.
+        if offer_choices:
+            if isinstance(system_message, list):
+                system_message = [*system_message, CHOICE_INSTRUCTIONS]
+            else:
+                system_message += "\n\n" + CHOICE_INSTRUCTIONS
+
         # Platform guardrail policy — single choke point covering all three
         # branches above (workflow custom prompt, agent instructions, and the
         # no-agent default). Prepends the code-owned policy, appends the
@@ -921,12 +958,12 @@ Keep your responses concise and focused. Provide clear, actionable information i
         self._groq_json_capture = {}
         self._use_groq_json_tool = model_type.upper() == 'GROQ'
         if self._use_groq_json_tool:
-            all_tools.append(build_groq_response_tool(self._groq_json_capture))
+            all_tools.append(build_groq_response_tool(self._groq_json_capture, offer_choices))
             system_message = (system_message or "") + _GROQ_JSON_INSTRUCTION
             response_model = None
             structured_outputs = False
         else:
-            response_model = ChatResponse
+            response_model = self._response_model
             structured_outputs = True
 
         self.agent = Agent(
@@ -1018,17 +1055,17 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 if not salvaged:
                     raise
                 logger.warning("Groq json tool call unparseable (likely truncated); salvaged structured fields")
-                response_content = _build_chat_response_from_capture(salvaged)
+                response_content = _build_chat_response_from_capture(salvaged, self._response_model)
             else:
                 # Groq path returns the structured turn via the `json` tool; everything
                 # else parses agno's native structured output.
                 if self._use_groq_json_tool and self._groq_json_capture:
-                    response_content = _build_chat_response_from_capture(self._groq_json_capture)
+                    response_content = _build_chat_response_from_capture(self._groq_json_capture, self._response_model)
                 elif self._use_groq_json_tool:
                     # Groq finished without the `json` tool — recover its answer text.
                     response_content = recover_groq_no_capture(response)
                 else:
-                    response_content = parse_response_content(response)
+                    response_content = parse_response_content(response, self._response_model)
 
             response_content = ensure_nonempty_message(response_content)
             logger.debug(f"Response content: {response_content}")
@@ -1251,7 +1288,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
             attributes["transfer_group_id"] = transfer_group_id
         
         # Store transfer response
-        chat_repo.create_message({
+        self._store_bot_message(chat_repo, {
             "message": updated_response.message,
             "message_type": "bot",
             "session_id": session_id,
@@ -1304,10 +1341,20 @@ Keep your responses concise and focused. Provide clear, actionable information i
             transfer_group_id=transfer_group_id
         )
 
-    async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None) -> ChatResponse:
+    def _store_bot_message(self, chat_repo: ChatRepository, message_data: dict) -> None:
+        """Persist a reply and remember its row (see get_response). A ChatAgent
+        serves a single turn, so the last one stored is this turn's reply."""
+        self.last_bot_message_id = chat_repo.create_message(message_data).id
+
+    async def get_response(self, message: str, session_id: str = None, org_id: str = None, agent_id: str = None, customer_id: str = None, user_attributes: dict = None) -> ChatResponse:
         """
         Get a response from the agent.
+
+        `user_attributes` are stored on the customer's message row (e.g. the
+        button a channel customer tapped). The stored reply's row id is left
+        on `last_bot_message_id` so a caller can annotate that exact row.
         """
+        self.last_bot_message_id = None
         try:
             # Update session and IDs if provided
             if session_id:
@@ -1343,7 +1390,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
                     "organization_id": org_id,
                     "agent_id": agent_id,
                     "customer_id": customer_id,
-                    "attributes": guardrail_verdict.as_attributes()
+                    "attributes": {**(user_attributes or {}), **guardrail_verdict.as_attributes()}
                 })
 
                 if guardrail_verdict.block:
@@ -1361,7 +1408,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
                         create_ticket=False,
                         shopify_output=None
                     )
-                    chat_repo.create_message({
+                    self._store_bot_message(chat_repo, {
                         "message": guardrail_verdict.reply,
                         "message_type": "bot",
                         "session_id": session_id,
@@ -1394,7 +1441,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
                     if not salvaged:
                         raise
                     logger.warning("Groq json tool call unparseable (likely truncated); salvaged structured fields")
-                    _salvaged_content = _build_chat_response_from_capture(salvaged)
+                    _salvaged_content = _build_chat_response_from_capture(salvaged, self._response_model)
                     response = None
 
                 # Groq path returns the structured turn via the `json` tool; everything
@@ -1402,12 +1449,12 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 if _salvaged_content is not None:
                     response_content = _salvaged_content
                 elif self._use_groq_json_tool and self._groq_json_capture:
-                    response_content = _build_chat_response_from_capture(self._groq_json_capture)
+                    response_content = _build_chat_response_from_capture(self._groq_json_capture, self._response_model)
                 elif self._use_groq_json_tool:
                     # Groq finished without the `json` tool — recover its answer text.
                     response_content = recover_groq_no_capture(response)
                 else:
-                    response_content = parse_response_content(response)
+                    response_content = parse_response_content(response, self._response_model)
 
                 # Attach knowledge-base citations gathered during this turn (overrides any
                 # value the LLM may have produced — this field is system-managed).
@@ -1423,6 +1470,9 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 # clear anything the LLM may have produced.
                 response_content.request_contact = False
 
+                # What the model itself wrote — before an empty-turn fallback or
+                # the guardrail can replace it (see drop_stale_choices)
+                model_message = response_content.message
                 response_content = ensure_nonempty_message(response_content)
                 logger.debug(f"Response content: {response_content}")
 
@@ -1434,6 +1484,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
                     surface=self._guardrail_surface,
                     session_id=session_id,
                 )
+                drop_stale_choices(response_content, model_message)
 
                 # Enrich Shopify response with full product data from Redis
                 response_content = enrich_shopify_response(response_content, session_id, fallback_cache_key=self._shopify_fallback_cache_key())
@@ -1503,7 +1554,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
                     })
                 
                 
-                chat_repo.create_message({
+                self._store_bot_message(chat_repo, {
                     "message": response_content.message,
                     "message_type": "bot",
                     "session_id": session_id,
@@ -1512,7 +1563,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
                     "customer_id": customer_id,
                     "attributes": attributes
                 })
-                
+
                 return response_content
 
         except Exception as e:
@@ -1538,7 +1589,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
             try:
                 with SessionLocal() as db:
                     chat_repo = ChatRepository(db)
-                    chat_repo.create_message({
+                    self._store_bot_message(chat_repo, {
                         "message": error_message,
                         "message_type": "bot",
                         "session_id": session_id,

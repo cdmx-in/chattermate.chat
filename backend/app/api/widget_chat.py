@@ -78,6 +78,10 @@ from app.utils.sanitize import sanitize_message
 router = APIRouter()
 logger = get_logger(__name__)
 
+# The inbox's own id for a message it sends (a UUID), echoed back on the
+# stored-message ack so it can match the row it became
+MAX_CLIENT_ID_LENGTH = 64
+
 
 async def _emit_bot_typing(session_id: str) -> None:
     """Tell the widget a reply is actually being produced.
@@ -1252,7 +1256,17 @@ async def handle_agent_message(sid, data):
         }
         
         created_message = chat_repo.create_message(message_data)
-        
+        # Tell the sender which row their message became, before delivery, so
+        # the inbox can match delivery receipts and errors to it exactly.
+        client_id = data.get('client_id')
+        if not (isinstance(client_id, str) and len(client_id) <= MAX_CLIENT_ID_LENGTH):
+            client_id = None  # only ever echoed back, but never echo junk
+        await sio.emit('agent_message_stored', {
+            'session_id': session_id,
+            'client_id': client_id,
+            'message_id': created_message.id,
+        }, to=sid, namespace='/agent')
+
         # Attach uploaded files to the message
         if uploaded_files:
             from app.models import FileAttachment
@@ -1324,7 +1338,8 @@ async def handle_agent_message(sid, data):
             response_payload['attachments'] = attachments_data
             response_payload['message_id'] = created_message.id
 
-        delivery = await deliver_to_customer(db, session_data, response_payload)
+        delivery = await deliver_to_customer(db, session_data, response_payload,
+                                             message_id=created_message.id)
         if not delivery.ok:
             if delivery.reason == 'window_expired':
                 error_message = (
@@ -1340,6 +1355,8 @@ async def handle_agent_message(sid, data):
                 'error': error_message,
                 'type': 'delivery_error',
                 'session_id': session_id,
+                'client_id': client_id,
+                'message_id': created_message.id,
                 # Lets the inbox offer the template action only when sending one
                 # would actually reopen the conversation.
                 'can_template': delivery.can_template,

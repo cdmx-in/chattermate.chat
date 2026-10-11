@@ -25,6 +25,7 @@ import { canRequestRating, endChatMessage as endChatMessageFor } from '@/utils/e
 import { canTakeOverChat, chatHandler } from '@/utils/chatState'
 import { routeChatToHuman } from '@/utils/chatActions'
 import { permissionChecks } from '@/utils/permissions'
+import { findMessage, newClientId } from '@/utils/messageMatch'
 
 // Define valid chat statuses
 type ChatStatus = 'open' | 'closed' | 'transferred'
@@ -35,6 +36,24 @@ interface DeliveryErrorEvent {
   type?: string
   session_id?: string
   can_template?: boolean
+  client_id?: string | null
+  message_id?: number
+}
+
+/** Tells the sender which stored row their message became. */
+interface AgentMessageStoredEvent {
+  session_id?: string
+  client_id?: string | null
+  message_id?: number
+}
+
+/** A channel's delivery receipt for a stored message (sent → delivered → read). */
+interface MessageStatusEvent {
+  session_id?: string
+  message_id?: number
+  external_message_id?: string | null
+  channel_status?: Message['channel_status']
+  delivery_status?: string | null
 }
 
 export function useConversationChat(
@@ -157,11 +176,15 @@ export function useConversationChat(
 
       // Add message locally first
       const timestamp = new Date().toISOString()
+      // Ties this optimistic message to the row the backend stores, so its
+      // delivery receipts and errors find it exactly (agent_message_stored)
+      const clientId = newClientId()
       const localMessage: Message = {
         message: messageText,
         message_type: 'agent',
         created_at: timestamp,
-        session_id: chat.value.session_id
+        session_id: chat.value.session_id,
+        client_id: clientId
       }
 
       // Update chat with new message
@@ -173,7 +196,8 @@ export function useConversationChat(
         message: messageText,
         session_id: chat.value.session_id,
         message_type: 'agent',
-        created_at: timestamp
+        created_at: timestamp,
+        client_id: clientId
       })
 
       scrollToBottom()
@@ -256,11 +280,13 @@ export function useConversationChat(
 
       // Create end chat message
       const timestamp = new Date().toISOString()
+      const clientId = newClientId()
       const endChatMessage = {
         message: endChatMessageFor(chat.value.channel),
         message_type: "system",
         created_at: timestamp,
         session_id: chat.value.session_id,
+        client_id: clientId,
         end_chat: true,
         request_rating: askRating,
         end_chat_reason: "AGENT_REQUEST",
@@ -281,6 +307,7 @@ export function useConversationChat(
         session_id: chat.value.session_id,
         message_type: endChatMessage.message_type,
         created_at: timestamp,
+        client_id: clientId,
         end_chat: true,
         request_rating: askRating,
         end_chat_reason: "AGENT_REQUEST",
@@ -311,25 +338,16 @@ export function useConversationChat(
     }
   }
 
-  // Mark the message this failure belongs to. It was pushed optimistically and
-  // has no id yet, so it is matched as the newest agent message not already
-  // marked — the one that was just sent. The backend stamps the stored row too,
-  // so a later refetch carries the real reason.
-  const markLatestAgentMessageUndelivered = () => {
-    for (let i = chat.value.messages.length - 1; i >= 0; i--) {
-      const message = chat.value.messages[i]
-      if (message.message_type !== 'agent' || message.attributes?.delivery_status) continue
-      message.attributes = { ...message.attributes, delivery_status: 'failed' }
-      return
-    }
-  }
-
   // On external channels a send can fail after the message is already stored
   // (typically once WhatsApp's 24h window closes). Without this the agent sees
-  // their message sitting in the thread and assumes it arrived.
+  // their message sitting in the thread and assumes it arrived. The event names
+  // the exact message; one not on screen is left for the next refetch.
   const handleDeliveryError = (data: DeliveryErrorEvent) => {
     if (data?.type !== 'delivery_error' || data.session_id !== chat.value.session_id) return
-    markLatestAgentMessageUndelivered()
+    const failed = findMessage(chat.value.messages, { messageId: data.message_id, clientId: data.client_id })
+    if (failed) {
+      failed.attributes = { ...failed.attributes, delivery_status: 'failed' }
+    }
     if (data.can_template) templateCanReopen.value = true
     toast.error('Message not delivered', {
       description: data.error,
@@ -338,12 +356,37 @@ export function useConversationChat(
     })
   }
 
+  // An optimistic message learns its row id, which receipts are keyed by
+  const handleAgentMessageStored = (data: AgentMessageStoredEvent) => {
+    if (data?.session_id !== chat.value.session_id || data.message_id == null) return
+    const message = findMessage(chat.value.messages, { clientId: data.client_id })
+    if (message) message.id = data.message_id
+  }
+
+  const handleMessageStatus = (data: MessageStatusEvent) => {
+    if (data?.session_id !== chat.value.session_id) return
+    const message = findMessage(chat.value.messages, {
+      messageId: data.message_id,
+      externalId: data.external_message_id
+    })
+    if (!message) return
+    message.external_message_id = data.external_message_id ?? message.external_message_id
+    message.channel_status = data.channel_status
+    if (data.delivery_status) {
+      message.attributes = { ...message.attributes, delivery_status: data.delivery_status }
+    }
+  }
+
   const setupSocketListeners = () => {
     socketService.on('error', handleDeliveryError)
+    socketService.on('agent_message_stored', handleAgentMessageStored)
+    socketService.on('message_status', handleMessageStatus)
   }
 
   const cleanupSocketListeners = () => {
     socketService.off('error', handleDeliveryError)
+    socketService.off('agent_message_stored', handleAgentMessageStored)
+    socketService.off('message_status', handleMessageStatus)
   }
 
   const handleSocketReconnect = () => {

@@ -16,13 +16,13 @@ limitations under the License.
 
 import json
 import re
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Optional, Type, Union
 from app.core.logger import get_logger
 from app.models.schemas.chat import ChatResponse
 
 logger = get_logger(__name__)
 
-def parse_response_content(response: Any) -> ChatResponse:
+def parse_response_content(response: Any, model: Type[ChatResponse] = ChatResponse) -> ChatResponse:
     """
     Parse the response content from the LLM into a ChatResponse object.
     Handles various response formats including dictionaries and strings.
@@ -40,12 +40,12 @@ def parse_response_content(response: Any) -> ChatResponse:
         if hasattr(response, 'content'):
             # If content is a dictionary, directly convert to ChatResponse
             if isinstance(response.content, dict):
-                response_content = ChatResponse(**response.content)
+                response_content = model(**response.content)
             # If content is a string, attempt to extract and parse JSON
             elif isinstance(response.content, str):
                 try:
                     logger.info(f"Response content is string: {response.content}")
-                    response_content = extract_json_from_text(response.content)
+                    response_content = extract_json_from_text(response.content, model)
                 except Exception as e:
                     logger.error(f"Failed to parse response content: {e}")
                     response_content = create_basic_chat_response(response.content)
@@ -56,11 +56,11 @@ def parse_response_content(response: Any) -> ChatResponse:
         else:
             # If response is a dictionary, directly convert to ChatResponse
             if isinstance(response, dict):
-                response_content = ChatResponse(**response)
+                response_content = model(**response)
             # If response is a string, attempt to extract and parse JSON
             elif isinstance(response, str):
                 try:
-                    response_content = extract_json_from_text(response)
+                    response_content = extract_json_from_text(response, model)
                 except Exception as e:
                     logger.error(f"Failed to parse response: {e}")
                     response_content = create_basic_chat_response(response)
@@ -78,7 +78,7 @@ def parse_response_content(response: Any) -> ChatResponse:
     
     return response_content
 
-def extract_json_from_text(text: str) -> ChatResponse:
+def extract_json_from_text(text: str, model: Type[ChatResponse] = ChatResponse) -> ChatResponse:
     """
     Extract JSON from a string and convert it to a ChatResponse object.
     
@@ -180,7 +180,7 @@ def extract_json_from_text(text: str) -> ChatResponse:
     # If we successfully extracted a dictionary
     if content_dict:
         try:
-            return ChatResponse(**content_dict)
+            return model(**content_dict)
         except Exception as e:
             logger.error(f"Failed to create ChatResponse from dictionary: {e}")
             # In case of error, use the content dict's message or the original text

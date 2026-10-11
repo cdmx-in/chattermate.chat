@@ -25,6 +25,7 @@ from app.database import get_db
 from app.models.channels import ChannelType
 from app.repositories.channels import ChannelAccountRepository
 from app.services.channel_chat import process_channel_message
+from app.services.channel_status import process_status_event
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -90,5 +91,20 @@ async def meta_webhook(
             logger.info(f"Skipping duplicate {channel_type} message {inbound.external_message_id}")
             continue
         background_tasks.add_task(process_channel_message, account.id, inbound)
+
+    # Meta batches many receipts per number; resolve each account once.
+    accounts = {}
+    for event in adapter.parse_status_events(payload):
+        if event.external_account_id not in accounts:
+            accounts[event.external_account_id] = account_repo.get_by_external_id(
+                channel_type, event.external_account_id)
+        account = accounts[event.external_account_id]
+        if account is None or not account.is_active:
+            continue
+        # Meta redelivers receipts; one per message and state is enough.
+        if is_duplicate_message(channel_type, f"{account.id}:{event.external_message_id}:"
+                                              f"{event.status.value}"):
+            continue
+        background_tasks.add_task(process_status_event, account.id, event)
 
     return {"status": "ok"}

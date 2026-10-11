@@ -23,7 +23,10 @@ from urllib.parse import urlparse
 import pytest
 
 from app.channels import get_adapter
-from app.channels.base import WindowStatus
+from app.channels.base import (
+    DeliveryState, InteractiveButton, InteractiveKind, InteractiveMessage,
+    InteractiveReplyType, InteractiveRow, InteractiveSection, WindowStatus,
+)
 from app.channels.meta_base import (
     verify_meta_signature,
     verify_challenge,
@@ -171,17 +174,114 @@ class TestWhatsAppParse:
     def test_status_callback_yields_nothing(self):
         assert get_adapter("whatsapp").parse_inbound(WHATSAPP_STATUS_PAYLOAD) == []
 
-    def test_button_reply_text(self):
-        payload = {
-            "object": "whatsapp_business_account",
-            "entry": [{"changes": [{"value": {
-                "metadata": {"phone_number_id": "PN123"},
-                "messages": [{"from": "447", "id": "wamid.B", "type": "button",
-                              "button": {"text": "Yes please"}}],
-            }}]}],
-        }
-        messages = get_adapter("whatsapp").parse_inbound(payload)
+    def test_template_quick_reply_keeps_text_and_payload(self):
+        messages = get_adapter("whatsapp").parse_inbound(_wa_message({
+            "type": "button", "button": {"text": "Yes please", "payload": "CONFIRM_42"},
+        }))
         assert messages[0].text == "Yes please"
+        assert messages[0].interactive.type == InteractiveReplyType.TEMPLATE_BUTTON
+        assert messages[0].interactive.id == "CONFIRM_42"
+
+    def test_button_reply_keeps_id_and_reply_context(self):
+        messages = get_adapter("whatsapp").parse_inbound(_wa_message({
+            "type": "interactive",
+            "context": {"from": "15550001111", "id": "wamid.OFFER"},
+            "interactive": {"type": "button_reply",
+                            "button_reply": {"id": "qr_1", "title": "Tomorrow"}},
+        }))
+        m = messages[0]
+        assert m.text == "Tomorrow"
+        assert (m.interactive.type, m.interactive.id) == (InteractiveReplyType.BUTTON_REPLY, "qr_1")
+        assert m.reply_to_message_id == "wamid.OFFER"
+
+    def test_list_reply_keeps_id_and_description(self):
+        messages = get_adapter("whatsapp").parse_inbound(_wa_message({
+            "type": "interactive",
+            "interactive": {"type": "list_reply", "list_reply": {
+                "id": "attendance:present", "title": "Present", "description": "On time"}},
+        }))
+        reply = messages[0].interactive
+        assert reply.type == InteractiveReplyType.LIST_REPLY
+        assert (reply.id, reply.title) == ("attendance:present", "Present")
+
+    def test_location_becomes_readable_text(self):
+        messages = get_adapter("whatsapp").parse_inbound(_wa_message({
+            "type": "location",
+            "location": {"latitude": 51.5, "longitude": -0.12, "name": "Pitch 3"},
+        }))
+        m = messages[0]
+        assert m.location.latitude == 51.5 and m.location.name == "Pitch 3"
+        assert m.text == "Shared location: Pitch 3 (51.5, -0.12)"
+
+    def test_an_untitled_tap_reads_as_its_id_never_empty(self):
+        messages = get_adapter("whatsapp").parse_inbound(_wa_message({
+            "type": "interactive",
+            "interactive": {"type": "button_reply", "button_reply": {"id": "confirm"}},
+        }))
+        assert messages[0].text == "confirm"
+
+    def test_a_tap_with_neither_title_nor_id_is_skipped(self):
+        assert get_adapter("whatsapp").parse_inbound(_wa_message({
+            "type": "interactive", "interactive": {"type": "button_reply", "button_reply": {}},
+        })) == []
+
+    def test_media_is_still_skipped(self):
+        assert get_adapter("whatsapp").parse_inbound(_wa_message({
+            "type": "image", "image": {"id": "MEDIA1"},
+        })) == []
+
+
+def _wa_message(message: dict) -> dict:
+    """A one-message WhatsApp webhook payload."""
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{"changes": [{"value": {
+            "metadata": {"phone_number_id": "PN123"},
+            "messages": [{"from": "447", "id": "wamid.B", **message}],
+        }}]}],
+    }
+
+
+def _wa_statuses(*statuses: dict) -> dict:
+    return {
+        "object": "whatsapp_business_account",
+        "entry": [{"changes": [{"value": {
+            "metadata": {"phone_number_id": "PN123"},
+            "statuses": list(statuses),
+        }}]}],
+    }
+
+
+class TestWhatsAppStatuses:
+    def test_parses_status_with_pricing(self):
+        events = get_adapter("whatsapp").parse_status_events(_wa_statuses({
+            "id": "wamid.ABC", "status": "read", "timestamp": "1720000000",
+            "recipient_id": "447",
+            "pricing": {"billable": True, "pricing_model": "PMP", "category": "utility"},
+        }))
+        assert len(events) == 1
+        e = events[0]
+        assert (e.external_account_id, e.external_message_id) == ("PN123", "wamid.ABC")
+        assert e.status == DeliveryState.READ
+        assert (e.pricing_category, e.billable) == ("utility", True)
+        assert e.timestamp.tzinfo is not None
+
+    def test_failed_status_carries_the_reason(self):
+        events = get_adapter("whatsapp").parse_status_events(_wa_statuses({
+            "id": "wamid.X", "status": "failed",
+            "errors": [{"code": 131047, "title": "Re-engagement message",
+                        "error_data": {"details": "More than 24 hours have passed"}}],
+        }))
+        assert events[0].status == DeliveryState.FAILED
+        assert events[0].error == "More than 24 hours have passed"
+
+    def test_unknown_states_and_messages_are_ignored(self):
+        adapter = get_adapter("whatsapp")
+        assert adapter.parse_status_events(_wa_statuses({"id": "wamid.X", "status": "deleted"})) == []
+        assert adapter.parse_status_events(WHATSAPP_PAYLOAD) == []
+
+    def test_other_channels_report_no_statuses(self):
+        assert get_adapter("messenger").parse_status_events(MESSENGER_PAYLOAD) == []
 
 
 class TestMessengerInstagramParse:
@@ -511,3 +611,82 @@ class TestGraphHelpers:
         assert ok is True
         assert [i["id"] for i in items] == ["1", "2", "3"]
         assert graph_client.calls[1]["params"]["after"] == "c1"
+
+
+class TestWhatsAppInteractiveSend:
+    @pytest.fixture
+    def adapter(self, monkeypatch):
+        adapter = get_adapter("whatsapp")
+        monkeypatch.setattr(adapter, "access_token", lambda account: "WATOKEN")
+        return adapter
+
+    @staticmethod
+    def _conversation():
+        conversation = MagicMock()
+        conversation.external_conversation_id = "447000000001"
+        return conversation
+
+    @pytest.mark.asyncio
+    async def test_reply_buttons_payload(self, graph_client, adapter):
+        graph_client.response = _FakeResponse(200, {"messages": [{"id": "wamid.OUT"}]})
+        message = InteractiveMessage(
+            kind=InteractiveKind.BUTTONS, body="Mark attendance?", footer="CoachIQ",
+            buttons=[InteractiveButton(id="present", title="Present"),
+                     InteractiveButton(id="absent", title="Absent")])
+
+        result = await adapter.send_interactive(MagicMock(), self._conversation(), message)
+
+        assert result.ok and result.external_message_id == "wamid.OUT"
+        body = graph_client.calls[0]["json"]
+        assert body["type"] == "interactive" and body["to"] == "447000000001"
+        assert body["interactive"] == {
+            "type": "button",
+            "body": {"text": "Mark attendance?"},
+            "footer": {"text": "CoachIQ"},
+            "action": {"buttons": [
+                {"type": "reply", "reply": {"id": "present", "title": "Present"}},
+                {"type": "reply", "reply": {"id": "absent", "title": "Absent"}},
+            ]},
+        }
+
+    @pytest.mark.asyncio
+    async def test_list_payload(self, graph_client, adapter):
+        graph_client.response = _FakeResponse(200, {"messages": [{"id": "wamid.OUT"}]})
+        message = InteractiveMessage(
+            kind=InteractiveKind.LIST, body="Pick a session", header="Today",
+            list_button_label="Sessions",
+            sections=[InteractiveSection(title="Morning", rows=[
+                InteractiveRow(id="s1", title="U12 09:00", description="Pitch 3"),
+                InteractiveRow(id="s2", title="U14 10:30"),
+            ])])
+
+        await adapter.send_interactive(MagicMock(), self._conversation(), message)
+
+        interactive = graph_client.calls[0]["json"]["interactive"]
+        assert interactive["type"] == "list"
+        assert interactive["header"] == {"type": "text", "text": "Today"}
+        assert interactive["action"] == {"button": "Sessions", "sections": [{
+            "title": "Morning",
+            "rows": [{"id": "s1", "title": "U12 09:00", "description": "Pitch 3"},
+                     {"id": "s2", "title": "U14 10:30"}],
+        }]}
+
+    @pytest.mark.asyncio
+    async def test_cta_url_payload(self, graph_client, adapter):
+        message = InteractiveMessage(kind=InteractiveKind.CTA_URL, body="Your invoice",
+                                     display_text="Pay now", url="https://pay.example/1")
+
+        await adapter.send_interactive(MagicMock(), self._conversation(), message)
+
+        interactive = graph_client.calls[0]["json"]["interactive"]
+        assert interactive["type"] == "cta_url"
+        assert interactive["action"] == {"name": "cta_url", "parameters": {
+            "display_text": "Pay now", "url": "https://pay.example/1"}}
+
+    @pytest.mark.asyncio
+    async def test_channels_without_support_refuse(self):
+        adapter = get_adapter("messenger")
+        assert adapter.supports_interactive is False
+        result = await adapter.send_interactive(
+            MagicMock(), MagicMock(), InteractiveMessage(kind=InteractiveKind.BUTTONS, body="x"))
+        assert result.ok is False

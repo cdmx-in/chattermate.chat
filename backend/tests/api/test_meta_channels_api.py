@@ -143,6 +143,77 @@ class TestMetaWebhook:
         assert r.status_code == 200
         assert r.json()["status"] == "ignored"
 
+    STATUS_PAYLOAD = {
+        "object": "whatsapp_business_account",
+        "entry": [{"changes": [{"value": {
+            "metadata": {"phone_number_id": "PN123"},
+            "statuses": [{"id": "wamid.OUT", "status": "read", "recipient_id": "447",
+                          "timestamp": "1720000000"}],
+        }}]}],
+    }
+
+    def test_post_routes_receipts_to_status_processor(self, client, whatsapp_account):
+        body, headers = signed(self.STATUS_PAYLOAD)
+        with patch("app.api.webhooks.meta.process_status_event", AsyncMock()) as process, \
+             patch("app.api.webhooks.meta.process_channel_message", AsyncMock()) as message:
+            r = client.post(WEBHOOK, content=body, headers=headers)
+        assert r.status_code == 200
+        message.assert_not_awaited()
+        account_id, event = process.await_args.args
+        assert account_id == whatsapp_account.id
+        assert (event.external_message_id, event.status.value) == ("wamid.OUT", "read")
+
+    def test_several_receipts_and_a_message_in_one_payload(self, client, whatsapp_account):
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [{"changes": [{"value": {
+                "metadata": {"phone_number_id": "PN123"},
+                "messages": [{"from": "447", "id": "wamid.IN9", "type": "text",
+                              "text": {"body": "hi"}, "timestamp": "1720000000"}],
+                "statuses": [
+                    {"id": "wamid.A", "status": "read", "recipient_id": "447"},
+                    {"id": "wamid.A", "status": "delivered", "recipient_id": "447"},
+                    {"id": "wamid.B", "status": "sent", "recipient_id": "447"},
+                ],
+            }}]}],
+        }
+        body, headers = signed(payload)
+        with patch("app.api.webhooks.meta.process_status_event", AsyncMock()) as status, \
+             patch("app.api.webhooks.meta.process_channel_message", AsyncMock()) as message, \
+             patch("app.api.webhooks.meta.is_duplicate_message", return_value=False) as dedupe:
+            r = client.post(WEBHOOK, content=body, headers=headers)
+        assert r.status_code == 200
+        message.assert_awaited_once()
+        assert [(c.args[1].external_message_id, c.args[1].status.value)
+                for c in status.await_args_list] == [("wamid.A", "read"), ("wamid.A", "delivered"),
+                                                      ("wamid.B", "sent")]
+        # One dedupe key per message and state
+        keys = [c.args[1] for c in dedupe.call_args_list]
+        assert f"{whatsapp_account.id}:wamid.A:read" in keys
+        assert f"{whatsapp_account.id}:wamid.A:delivered" in keys
+
+    def test_a_redelivered_receipt_is_processed_once(self, client, whatsapp_account):
+        body, headers = signed(self.STATUS_PAYLOAD)
+        seen = set()
+
+        def _claim(channel, key):
+            duplicate = key in seen
+            seen.add(key)
+            return duplicate
+
+        with patch("app.api.webhooks.meta.process_status_event", AsyncMock()) as status, \
+             patch("app.api.webhooks.meta.is_duplicate_message", side_effect=_claim):
+            client.post(WEBHOOK, content=body, headers=headers)
+            client.post(WEBHOOK, content=body, headers=headers)
+        status.assert_awaited_once()
+
+    def test_receipts_for_unknown_accounts_are_dropped(self, client):
+        body, headers = signed(self.STATUS_PAYLOAD)  # PN123 not connected
+        with patch("app.api.webhooks.meta.process_status_event", AsyncMock()) as process:
+            r = client.post(WEBHOOK, content=body, headers=headers)
+        assert r.status_code == 200
+        process.assert_not_awaited()
+
 
 class TestMetaConnect:
     def test_connect_whatsapp_success(self, client, db):
@@ -978,6 +1049,17 @@ class TestOutboundConversation:
         assert row.attributes["outbound_template"] == "order_update"
 
         adapter.send_template.assert_awaited_once()
+
+    def test_template_row_records_its_message_id(self, client, db, routed):
+        """Receipts for an outbound template find the row it was stored as."""
+        from uuid import UUID as _UUID
+        from app.models.chat_history import ChatHistory
+
+        r, _ = self._send(client, routed, customer_name="Priya")
+
+        row = db.query(ChatHistory).filter(
+            ChatHistory.session_id == _UUID(r.json()["session_id"])).one()
+        assert row.external_message_id == "wamid.OUT1"
 
     def test_picked_person_at_someone_elses_number_is_refused(self, client, db, routed):
         """`to` and `customer_id` arrive as independent fields. Binding Alice to

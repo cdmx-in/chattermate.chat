@@ -18,6 +18,7 @@ import { ref, type Ref } from 'vue'
 import type { ChatDetail } from '@/types/chat'
 import FileUpload from '@/components/common/FileUpload.vue'
 import { apiPath, resolveUploadUrl } from '@/config/api'
+import { newClientId } from '@/utils/messageMatch'
 
 export function useConversationFiles(
   currentChat: Ref<ChatDetail>,
@@ -59,11 +60,15 @@ export function useConversationFiles(
       
       // Add message locally first
       const timestamp = new Date().toISOString()
+      // Ties this optimistic message to the row the backend stores, so its
+      // delivery receipts and errors find it exactly (agent_message_stored)
+      const clientId = newClientId()
       const localMessage: any = {
         message: messageText,
         message_type: 'agent',
         created_at: timestamp,
-        session_id: currentChat.value.session_id
+        session_id: currentChat.value.session_id,
+        client_id: clientId
       }
       
       // Add temporary attachments for immediate display
@@ -112,6 +117,7 @@ export function useConversationFiles(
         session_id: currentChat.value.session_id,
         message_type: 'agent',
         created_at: timestamp,
+        client_id: clientId,
         files: files  // Send files with the message
       })
       

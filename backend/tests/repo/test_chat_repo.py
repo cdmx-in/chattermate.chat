@@ -24,6 +24,9 @@ from app.models.agent import Agent, AgentType
 from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.models.user import User, UserGroup
 from uuid import uuid4, UUID
+from app.channels.interactive import from_options
+from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, encode_sent_choices
+from app.models.schemas.chat import ChatDetailResponse
 
 @pytest.fixture
 def chat_repo(db):
@@ -291,3 +294,29 @@ async def test_get_chat_detail_includes_customer_meta_data(chat_repo, db, test_d
         "student_name": "Aarav Krishnan",
         "center_name": "Special Academy U12"
     } 
+
+@pytest.mark.asyncio
+async def test_get_chat_detail_exposes_channel_delivery_fields(chat_repo, db, test_data):
+    """The inbox matches receipts by id, shows ticks, and reads the sent
+    choices decrypted — and the response schema must not strip any of it."""
+
+    sent = chat_repo.create_message({
+        "message": "Confirm?", "message_type": "bot",
+        "session_id": test_data["session_id"], "organization_id": test_data["org_id"],
+        "external_message_id": "wamid.X",
+        "attributes": {SENT_CHOICES_ATTRIBUTE: encode_sent_choices(
+            from_options("Confirm?", ["Yes", "No"]), as_text=False)},
+    })
+    sent.channel_status = "read"
+    db.commit()
+
+    detail = await chat_repo.get_chat_detail(test_data["session_id"], test_data["org_id"])
+    message = ChatDetailResponse(**detail).model_dump()["messages"][-1]
+
+    assert message["id"] == sent.id
+    assert message["external_message_id"] == "wamid.X"
+    assert message["channel_status"] == "read"
+    assert [c["text"] for c in message["attributes"][SENT_CHOICES_ATTRIBUTE]["choices"]] == ["Yes", "No"]
+    # still encrypted at rest
+    db.refresh(sent)
+    assert "Yes" not in str(sent.attributes)

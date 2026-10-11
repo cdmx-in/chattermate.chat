@@ -1628,3 +1628,33 @@ class TestComplexScenarios:
             assert response_data['product_id'] == "123"
             assert response_data['product_title'] == "Test Product"
             assert response_data['product_price'] == "29.99"
+
+@pytest.mark.asyncio
+async def test_agent_message_tells_the_sender_its_stored_id(db, test_widget, test_customer, test_user,
+                                                            mock_sio, monkeypatch):
+    """The inbox pushes a sent message before it has an id; this ack (keyed by
+    the client's own id) is what lets receipts and errors find it exactly."""
+    from app.api import widget_chat
+    from app.models.chat_history import ChatHistory
+    from app.services import message_delivery
+
+    monkeypatch.setattr(widget_chat, "sio", mock_sio)
+    monkeypatch.setattr(message_delivery, "sio", mock_sio)
+    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    session_id = uuid4()
+    from app.repositories.session_to_agent import SessionToAgentRepository
+    SessionToAgentRepository(db).create_session(
+        session_id=session_id, agent_id=test_widget.agent_id, customer_id=test_customer.id,
+        user_id=test_user.id, organization_id=test_widget.organization_id)
+    mock_sio.get_session.return_value = {
+        "user_id": str(test_user.id), "organization_id": str(test_widget.organization_id)}
+
+    await widget_chat.handle_agent_message("test_sid", {
+        "message": "On it", "session_id": str(session_id), "client_id": "c-123"})
+
+    stored = db.query(ChatHistory).filter_by(session_id=session_id, message_type="agent").one()
+    acks = [c for c in mock_sio.emit.call_args_list if c.args[0] == "agent_message_stored"]
+    assert len(acks) == 1
+    assert acks[0].args[1] == {"session_id": str(session_id), "client_id": "c-123",
+                               "message_id": stored.id}
+    assert acks[0].kwargs["to"] == "test_sid"

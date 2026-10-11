@@ -22,7 +22,8 @@ from sqlalchemy.orm import Session
 
 from app.agents.chat_agent import ChatAgent
 from app.channels import InboundMessage, ChannelInteraction, get_adapter
-from app.core.socketio import sio
+from app.channels.base import InteractiveMessage
+from app.channels.interactive import from_options
 from app.core.security import decrypt_api_key
 from app.core.logger import get_logger
 from app.database import SessionLocal
@@ -43,6 +44,8 @@ from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services.chat_notifications import notify_new_chat
 from app.services.human_routing import HUMAN_ONLY_ACK, notify_customer
 from app.services.lead_capture import record_lead_from_response
+from app.services.agent_rooms import emit_to_session_agents
+from app.services.channel_replies import inbound_attributes, reply_text
 from app.services.message_delivery import DeliveryResult, deliver_to_customer
 
 # Optional enterprise message-limit check (same seam as the widget path)
@@ -116,8 +119,7 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
                 or not ai_replies_enabled):
             stored = _store_customer_message(db, inbound, session_record, agent_id,
                                              customer_id, org_id, account)
-            await _relay_to_human(session_record, inbound,
-                                  created_at=getattr(stored, 'created_at', None))
+            await _relay_to_human(session_record, stored)
 
             # Nothing will answer this on its own, so acknowledge once — on a
             # channel an unanswered message reads as a dead number. Only on the
@@ -143,11 +145,12 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
         if adapter is not None:
             await adapter.send_typing(account, conversation)
 
-        response = await _run_chat_agent(
+        response, bot_message_id = await _run_chat_agent(
             db, account, ai_config, inbound,
             org_id=org_id, agent_id=str(agent_id),
             customer_id=customer_id, session_id=session_id,
             conversation=conversation,
+            offer_choices=bool(adapter and adapter.supports_interactive),
         )
         if response is None:
             # The agent hard-failed. Still send a reply so a typing indicator /
@@ -172,9 +175,9 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
             'type': 'chat_response',
             'transfer_to_human': getattr(response, 'transfer_to_human', False),
             'end_chat': getattr(response, 'end_chat', False),
-        })
-        if not delivery.ok:
-            _record_delivery_failure(db, session_id, delivery)
+        }, message_id=bot_message_id, interactive=_offered_choices(response))
+        if not delivery.ok and bot_message_id is not None:
+            ChatRepository(db).mark_delivery_failed(bot_message_id, delivery.reason)
 
         await _send_channel_prompts(db, adapter, account, conversation, response)
     except Exception as e:
@@ -403,39 +406,36 @@ def _store_customer_message(db: Session, inbound: InboundMessage, session_record
                             agent_id, customer_id: str, org_id: str,
                             account: ChannelAccount):
     """Persist a customer message on the human-handled path (the AI path
-    persists inside ChatAgent.get_response). Returns the stored row so the
-    relay can carry its timestamp."""
+    persists inside ChatAgent.get_response). Returns the stored row for the
+    relay."""
     return ChatRepository(db).create_message({
-        "message": inbound.text or "",
+        "message": reply_text(db, account.organization_id, inbound),
         "message_type": "user",
         "session_id": str(session_record.session_id),
         "organization_id": org_id,
         "agent_id": str(agent_id),
         "customer_id": customer_id,
-        "attributes": {
-            "channel": account.channel_type,
-            "external_message_id": inbound.external_message_id,
-        },
+        "attributes": inbound_attributes(inbound, account.channel_type),
     })
 
 
-async def _relay_to_human(session_record, inbound: InboundMessage,
-                          created_at: Optional[datetime] = None) -> None:
-    """Forward a customer message to the handling agent's dashboard rooms,
-    mirroring the widget's chat_reply events."""
+async def _relay_to_human(session_record, stored) -> None:
+    """Forward a stored customer message to the handling agent's dashboard
+    rooms, mirroring the widget's chat_reply events."""
     session_id = str(session_record.session_id)
     payload = {
-        'message': inbound.text or "",
+        'message': stored.message,
+        'message_id': stored.id,
         'type': 'user_message',
         'transfer_to_human': False,
         'session_id': session_id,
         # The inbox appends the message live off this field; without it the
         # handler builds an invalid Date and the message only shows on refetch.
-        'created_at': (created_at or datetime.now(timezone.utc)).isoformat(),
+        'created_at': (stored.created_at or datetime.now(timezone.utc)).isoformat(),
+        # Carries e.g. the button-reply marker, so the tag shows live too
+        'attributes': stored.attributes or {},
     }
-    if session_record.user_id is not None:
-        await sio.emit('chat_reply', payload, room=f"user_{session_record.user_id}", namespace='/agent')
-    await sio.emit('chat_reply', payload, room=session_id, namespace='/agent')
+    await emit_to_session_agents('chat_reply', payload, session_id, session_record.user_id)
 
 
 async def _within_message_limit(db: Session, org_id: str, ai_config) -> bool:
@@ -499,9 +499,13 @@ def _outbound_context(conversation) -> Optional[str]:
 
 async def _run_chat_agent(db: Session, account: ChannelAccount, ai_config,
                           inbound: InboundMessage, org_id: str, agent_id: str,
-                          customer_id: str, session_id: str, conversation=None):
+                          customer_id: str, session_id: str, conversation=None,
+                          offer_choices: bool = False):
     """Run the AI agent for one turn. Workflow-enabled agents fall back to the
-    plain agent on external channels (workflow forms/buttons are widget-only)."""
+    plain agent on external channels (workflow forms are widget-only).
+
+    Returns (response, id of the stored reply row); response is None when the
+    agent hard-failed."""
     chat_agent = await ChatAgent.create_async(
         api_key=decrypt_api_key(ai_config.encrypted_api_key),
         model_name=ai_config.model_name,
@@ -513,46 +517,47 @@ async def _run_chat_agent(db: Session, account: ChannelAccount, ai_config,
         session_id=session_id,
         channel=account.channel_type,
         extra_context=_outbound_context(conversation),
+        offer_choices=offer_choices,
     )
     try:
-        return await chat_agent.get_response(
-            message=inbound.text or "",
+        response = await chat_agent.get_response(
+            message=reply_text(db, account.organization_id, inbound),
             session_id=session_id,
             org_id=org_id,
             agent_id=agent_id,
             customer_id=customer_id,
+            user_attributes=inbound_attributes(inbound, account.channel_type),
         )
+        return response, chat_agent.last_bot_message_id
     except Exception as e:
         logger.error(f"Chat agent error on {account.channel_type} session {session_id}: {e}")
-        return None
+        return None, None
     finally:
         await chat_agent.safe_cleanup_mcp_tools()
 
 
-async def _deliver(db: Session, session_record, payload: dict) -> DeliveryResult:
+def _offered_choices(response) -> Optional[InteractiveMessage]:
+    """The agent's choices as the interactive message to send with its reply."""
+    options = getattr(response, 'quick_replies', None)
+    return from_options(response.message, options) if options else None
+
+
+async def _deliver(db: Session, session_record, payload: dict,
+                   message_id: Optional[int] = None,
+                   interactive: Optional[InteractiveMessage] = None) -> DeliveryResult:
     """Deliver a reply and log any failure.
 
     Unlike the widget path there is no agent socket to notify here, so a failed
     send would otherwise be silent: the customer gets nothing and nothing says
     so. Callers that have a stored message act further on the result.
     """
-    result = await deliver_to_customer(db, session_record, payload)
+    result = await deliver_to_customer(db, session_record, payload,
+                                       message_id=message_id, interactive=interactive)
     if not result.ok:
         logger.warning(
             f"Undelivered reply on {getattr(session_record, 'channel', 'unknown')} "
             f"session {session_record.session_id}: {result.reason}")
     return result
-
-
-def _record_delivery_failure(db: Session, session_id: str, delivery: DeliveryResult) -> None:
-    """Mark the stored bot reply as undelivered so the inbox shows it never
-    reached the customer. The reply is persisted inside ChatAgent.get_response,
-    so it has to be read back rather than passed down."""
-    chat_repo = ChatRepository(db)
-    message = chat_repo.get_latest_bot_message(session_id)
-    if message is None:
-        return
-    chat_repo.mark_delivery_failed(message.id, delivery.reason)
 
 
 async def _send_via_adapter(db: Session, session_record, text: str) -> None:

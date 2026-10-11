@@ -19,7 +19,9 @@ from uuid import uuid4
 
 import pytest
 
+from app.models.chat_history import ChatHistory
 from app.models.session_to_agent import SessionStatus, SessionToAgent
+from app.services.message_delivery import DeliveryResult
 from app.models.ticket import (
     Ticket,
     TicketPriority,
@@ -261,7 +263,7 @@ class TestCustomerEmailPath:
             service, db, test_organization, session_id=test_session.session_id
         )
         with patch(
-            "app.services.message_delivery.deliver_to_customer"
+            "app.services.ticket.deliver_to_customer"
         ) as deliver, patch(
             "app.services.ticket_email.send_ticket_email", return_value=True
         ) as send:
@@ -282,12 +284,42 @@ class TestCustomerEmailPath:
             service, db, test_organization, session_id=test_session.session_id
         )
         with patch(
-            "app.services.message_delivery.deliver_to_customer"
+            "app.services.ticket.deliver_to_customer"
         ), patch(
             "app.services.ticket_email.send_ticket_email", return_value=True
         ) as send:
             await service.send_customer_message(ticket, "Update on your ticket")
         send.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_undelivered_channel_reply_is_marked_on_its_row(
+        self, service, db, test_organization, test_session
+    ):
+        """A WhatsApp reply refused (e.g. window closed) is stored first and
+        flagged, so the thread never shows it as sent."""
+        test_session.channel = "whatsapp"
+        db.commit()
+        ticket = make_ticket(service, db, test_organization, session_id=test_session.session_id)
+        refused = DeliveryResult(ok=False, reason="window_expired", can_template=True)
+        with patch("app.services.ticket.deliver_to_customer", return_value=refused) as deliver:
+            await service.send_customer_message(ticket, "Your refund is on its way")
+
+        row = db.query(ChatHistory).filter_by(session_id=test_session.session_id).one()
+        assert deliver.await_args.kwargs["message_id"] == row.id
+        assert row.attributes["delivery_status"] == "window_expired"
+
+    @pytest.mark.asyncio
+    async def test_a_send_that_raises_is_marked_undelivered(
+        self, service, db, test_organization, test_session
+    ):
+        test_session.channel = "whatsapp"
+        db.commit()
+        ticket = make_ticket(service, db, test_organization, session_id=test_session.session_id)
+        with patch("app.services.ticket.deliver_to_customer", side_effect=RuntimeError("graph down")):
+            await service.send_customer_message(ticket, "Your refund is on its way")
+
+        row = db.query(ChatHistory).filter_by(session_id=test_session.session_id).one()
+        assert row.attributes["delivery_status"] == "send_failed"
 
     @pytest.mark.asyncio
     async def test_no_contact_is_a_silent_noop(self, service, db, test_organization):

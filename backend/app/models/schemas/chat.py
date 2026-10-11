@@ -14,12 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 from datetime import datetime
 from enum import Enum
 from app.models.session_to_agent import SessionStatus
+from app.channels.constants import MAX_CHOICE_LENGTH, MAX_CHOICE_OPTIONS
 
 
 class CustomerInfo(BaseModel):
@@ -136,10 +137,14 @@ class ShopifyOutputData(BaseModel):
         return self.dict()
 
 class Message(BaseModel):
+    id: Optional[int] = None
     message: Optional[str] = None
     message_type: str
     created_at: datetime
     attributes: Optional[dict] = None
+    # Channel messages: the platform's id and its latest delivery receipt
+    external_message_id: Optional[str] = None
+    channel_status: Optional[str] = None
     shopify_output: Optional[ShopifyOutputData] = None
     end_chat: Optional[bool] = None
     end_chat_reason: Optional[EndChatReasonType] = None
@@ -340,3 +345,42 @@ class ChatResponse(BaseModel):
             
             return normalized
         return data
+
+# Keys a model might wrap a choice in when it returns objects, not strings
+_CHOICE_TEXT_KEYS = ("title", "text", "label")
+
+
+class ChannelChatResponse(ChatResponse):
+    """The reply schema for agents on a channel that can show tappable
+    choices — the only ones whose schema offers them, so every other agent's
+    output contract is unchanged."""
+
+    # A list of plain strings: strict structured outputs handle it on every
+    # provider, unlike a list of objects.
+    quick_replies: Optional[List[str]] = Field(default=None, description="Leave empty unless your instructions tell you to offer choices. The short choices the customer can tap, in order.")
+
+    @field_validator('quick_replies', mode='before')
+    @classmethod
+    def clean_quick_replies(cls, value: Any) -> Optional[List[str]]:
+        """Keep usable options only, never raise: a validation error here
+        would turn the whole reply into the generic error message."""
+        if not isinstance(value, list):
+            return None
+        options: List[str] = []
+        seen = set()
+        for item in value:
+            text = _choice_text(item)
+            if text and text.casefold() not in seen:
+                seen.add(text.casefold())
+                options.append(text)
+        return options[:MAX_CHOICE_OPTIONS] or None
+
+
+def _choice_text(item: Any) -> str:
+    """One choice as clean text: a string, or the text inside an object a
+    model wrapped it in; anything else is dropped rather than shown raw."""
+    if isinstance(item, dict):
+        item = next((item[k] for k in _CHOICE_TEXT_KEYS if isinstance(item.get(k), str)), None)
+    if not isinstance(item, str):
+        return ""
+    return " ".join(item.split())[:MAX_CHOICE_LENGTH]
