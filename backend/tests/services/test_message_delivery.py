@@ -264,6 +264,25 @@ async def test_a_long_reply_goes_as_text_then_the_choices(db, test_agent, test_c
 
 
 @pytest.mark.asyncio
+async def test_both_messages_of_a_split_reply_are_announced(db, test_agent, test_customer, test_organization,
+                                                           mock_sio, monkeypatch):
+    session, _ = make_channel_session(db, test_agent, test_customer, test_organization)
+    monkeypatch.setattr(message_delivery, "get_adapter", lambda c: _channel_adapter(True))
+    seen = []
+
+    async def listen(event):
+        if event.kind == EventKind.OUTBOUND:
+            seen.append((event.outbound.external_message_id, event.outbound.interactive is not None))
+    register_event_listener(listen)
+    long_reply = 'x' * 1100
+
+    await deliver_to_customer(db, session, {'message': long_reply}, message_id=_bot_row(db, session, test_organization).id,
+                              interactive=from_options(long_reply, ['Yes', 'No']), source=MessageSource.AI)
+
+    assert seen == [('wamid.TXT', False), ('wamid.INT', True)]
+
+
+@pytest.mark.asyncio
 async def test_channels_without_receipts_record_no_message_id(db, test_agent, test_customer, test_organization, mock_sio, monkeypatch):
     session, _ = make_channel_session(db, test_agent, test_customer, test_organization)
     adapter = _channel_adapter(False)

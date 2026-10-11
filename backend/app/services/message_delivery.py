@@ -59,6 +59,8 @@ class _Sent:
     # The choices that went with it, and whether they had to go as text
     choices: Optional[InteractiveMessage] = None
     as_text: bool = False
+    # A reply too long to carry its choices went out first on its own
+    lead: Optional[SendResult] = None
 
 
 async def deliver_to_customer(db: Session, session_record: SessionToAgent, payload: dict,
@@ -138,15 +140,19 @@ async def _deliver_to_channel(db: Session, session_record: SessionToAgent,
         # A person has taken the conversation from there; the AI no longer
         # reads it as a reply to the business's last own message
         forget_business_message(db, conversation)
-    external_message_id = sent.result.external_message_id
-    await emit_channel_event(outbound_event(
-        organization_id=account.organization_id, channel_account_id=account.id,
-        session_id=session_id,
-        customer_id=str(session_record.customer_id) if session_record.customer_id else None,
-        record=OutboundRecord(message_id=message_id, external_message_id=external_message_id,
-                              source=source, text=text, interactive=sent.choices),
-    ))
-    return DeliveryResult(ok=True, external_message_id=external_message_id)
+    customer_id = str(session_record.customer_id) if session_record.customer_id else None
+    # Each platform message is announced: the reply sent on its own first,
+    # then the one carrying the choices
+    announced = ([(sent.lead, text, None), (sent.result, sent.choices.body, sent.choices)]
+                 if sent.lead is not None else [(sent.result, text, sent.choices)])
+    for result, announced_text, choices in announced:
+        await emit_channel_event(outbound_event(
+            organization_id=account.organization_id, channel_account_id=account.id,
+            session_id=session_id, customer_id=customer_id,
+            record=OutboundRecord(message_id=message_id, external_message_id=result.external_message_id,
+                                  source=source, text=announced_text, interactive=choices),
+        ))
+    return DeliveryResult(ok=True, external_message_id=sent.result.external_message_id)
 
 
 async def _record_delivery(db: Session, adapter: ChannelAdapter, account: ChannelAccount,
@@ -195,7 +201,7 @@ async def _send_reply(adapter: ChannelAdapter, account: ChannelAccount,
         else:
             result = await adapter.send_interactive(account, conversation, choices)
             if result.ok:
-                return _Sent(result=result, choices=choices)
+                return _Sent(result=result, choices=choices, lead=lead)
             logger.warning(f"Interactive send failed on {adapter.channel_type}, "
                            f"falling back to text: {result.error}")
     fallback = to_text_fallback(choices, adapter.max_text_length)
@@ -205,4 +211,4 @@ async def _send_reply(adapter: ChannelAdapter, account: ChannelAccount,
         logger.warning(f"Choices undelivered on {adapter.channel_type} after the reply was "
                        f"sent: {result.error}")
         return _Sent(result=lead)
-    return _Sent(result=result, choices=choices, as_text=True)
+    return _Sent(result=result, choices=choices, as_text=True, lead=lead)
