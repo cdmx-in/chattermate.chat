@@ -23,7 +23,9 @@ from uuid import uuid4
 import pytest
 
 from app.models.session_to_agent import SessionToAgent, SessionStatus
-from app.services.human_routing import route_session_to_human
+from app.models.chat_history import ChatHistory
+from app.services.human_routing import notify_customer, route_session_to_human
+from app.services.message_delivery import DeliveryResult
 
 
 @pytest.fixture
@@ -96,3 +98,16 @@ async def test_routing_is_idempotent(db, open_session):
         assert await route_session_to_human(db, open_session, reason="x") is False
         assert not n.called
         assert not c.called
+
+
+@pytest.mark.asyncio
+async def test_handover_notice_is_delivered_against_its_stored_row(db, open_session):
+    """The notice's channel message id must land on the notice's own row."""
+    open_session.channel = "whatsapp"
+    db.commit()
+    with patch("app.services.human_routing.deliver_to_customer",
+               new=AsyncMock(return_value=DeliveryResult(ok=True))) as deliver:
+        await notify_customer(db, open_session, "You're now connected with our team.")
+
+    notice = db.query(ChatHistory).filter_by(session_id=open_session.session_id).one()
+    assert deliver.await_args.kwargs["message_id"] == notice.id

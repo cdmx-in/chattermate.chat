@@ -23,6 +23,29 @@ from typing import ClassVar, List, Optional
 from app.models.channels import ChannelAccount, ChannelConversation
 
 
+class InteractiveReplyType(str, enum.Enum):
+    BUTTON_REPLY = "button_reply"   # tap on a reply button we sent
+    LIST_REPLY = "list_reply"       # pick from a list message we sent
+    TEMPLATE_BUTTON = "template_button"  # tap on an approved template's quick-reply button
+
+
+@dataclass
+class InteractiveReply:
+    """The customer tapped a button or list row. `id` is the payload we set
+    when sending; `title` is the text they saw."""
+    type: InteractiveReplyType
+    id: str
+    title: str
+
+
+@dataclass
+class SharedLocation:
+    latitude: float
+    longitude: float
+    name: Optional[str] = None
+    address: Optional[str] = None
+
+
 @dataclass
 class InboundMessage:
     """A customer message normalized from a channel webhook payload."""
@@ -34,6 +57,71 @@ class InboundMessage:
     attachments: List[dict] = field(default_factory=list)
     profile: dict = field(default_factory=dict)   # name / phone / username when available
     timestamp: Optional[datetime] = None
+    interactive: Optional[InteractiveReply] = None
+    location: Optional[SharedLocation] = None
+    # The platform message this one replies to (WhatsApp context.id) — ties a
+    # button tap back to the message that offered the button.
+    reply_to_message_id: Optional[str] = None
+
+
+class InteractiveKind(str, enum.Enum):
+    BUTTONS = "buttons"
+    LIST = "list"
+    CTA_URL = "cta_url"
+
+
+@dataclass
+class InteractiveButton:
+    id: str
+    title: str
+
+
+@dataclass
+class InteractiveRow:
+    id: str
+    title: str
+    description: Optional[str] = None
+
+
+@dataclass
+class InteractiveSection:
+    rows: List[InteractiveRow]
+    title: Optional[str] = None
+
+
+@dataclass
+class InteractiveMessage:
+    """A channel-native choice prompt: reply buttons, a list, or a link button.
+    Limits are enforced by app.channels.interactive.validate_interactive."""
+    kind: InteractiveKind
+    body: str
+    header: Optional[str] = None
+    footer: Optional[str] = None
+    buttons: List[InteractiveButton] = field(default_factory=list)
+    list_button_label: Optional[str] = None
+    sections: List[InteractiveSection] = field(default_factory=list)
+    url: Optional[str] = None
+    display_text: Optional[str] = None
+
+
+class DeliveryState(str, enum.Enum):
+    SENT = "sent"
+    DELIVERED = "delivered"
+    READ = "read"
+    FAILED = "failed"
+
+
+@dataclass
+class StatusEvent:
+    """A delivery receipt for a message we sent."""
+    external_account_id: str
+    external_message_id: str
+    recipient_id: str
+    status: DeliveryState
+    timestamp: Optional[datetime] = None
+    error: Optional[str] = None
+    pricing_category: Optional[str] = None
+    billable: Optional[bool] = None
 
 
 @dataclass
@@ -76,6 +164,13 @@ class ChannelAdapter(ABC):
     """
 
     channel_type: ClassVar[str]
+    # Whether send_interactive is implemented (buttons / lists)
+    supports_interactive: ClassVar[bool] = False
+    # Whether the platform sends delivery receipts (parse_status_events) for
+    # the messages we send, so their ids are worth recording
+    reports_delivery_status: ClassVar[bool] = False
+    # The platform's cap on one text message, when it has one
+    max_text_length: ClassVar[Optional[int]] = None
 
     @abstractmethod
     async def verify_webhook(self, headers: dict, raw_body: bytes, account: Optional[ChannelAccount]) -> bool:
@@ -94,6 +189,17 @@ class ChannelAdapter(ABC):
                          url: str, content_type: str) -> SendResult:
         """Deliver a media attachment. Default: unsupported."""
         return SendResult(ok=False, error=f"{self.channel_type} does not support media yet")
+
+    async def send_interactive(self, account: ChannelAccount, conversation: ChannelConversation,
+                               message: InteractiveMessage) -> SendResult:
+        """Deliver buttons / a list / a link button. Default: unsupported —
+        callers check supports_interactive and fall back to text."""
+        return SendResult(ok=False, error=f"{self.channel_type} does not support interactive messages")
+
+    def parse_status_events(self, payload: dict) -> List[StatusEvent]:
+        """Extract delivery receipts (sent/delivered/read/failed) from a
+        webhook payload. Default: the channel reports none."""
+        return []
 
     def check_delivery_window(self, conversation: ChannelConversation) -> WindowStatus:
         """Whether the platform still accepts free-form outbound messages.

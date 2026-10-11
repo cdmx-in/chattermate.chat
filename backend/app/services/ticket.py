@@ -45,7 +45,9 @@ from app.models.ticket_settings import (
     DEFAULT_SLA_TARGETS,
     OrganizationTicketSettings,
 )
+from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
+from app.services.message_delivery import deliver_to_customer
 from app.repositories.ticket import (
     InvestigationRepository,
     TicketActivityRepository,
@@ -245,7 +247,6 @@ class TicketService:
     ) -> Optional[str]:
         """Plain-text transcript of a session's recent messages — shared by the
         create-modal draft endpoint and the triage context builder."""
-        from app.repositories.chat import ChatRepository
         messages = (await ChatRepository(self.db).get_session_history(session_id))[-max_messages:]
         lines = []
         for m in messages:
@@ -667,7 +668,6 @@ class TicketService:
         if session_record is None:
             return
         try:
-            from app.services.message_delivery import deliver_to_customer
             await deliver_to_customer(self.db, session_record, {
                 "message": (
                     f"How did we do on ticket {ticket.display_number}? "
@@ -785,15 +785,11 @@ class TicketService:
             await self._send_direct_email(ticket, message, record_activity)
             return
         channel = getattr(session_record, "channel", None) or WEB_CHANNEL
+        chat_repo = ChatRepository(self.db)
+        stored = delivery = None
         try:
-            from app.services.message_delivery import deliver_to_customer
-            from app.repositories.chat import ChatRepository
-            await deliver_to_customer(self.db, session_record, {
-                "message": message,
-                "type": "chat_response",
-                "session_id": str(session_record.session_id),
-            })
-            ChatRepository(self.db).create_message({
+            # Stored first so the channel's message id lands on this row
+            stored = chat_repo.create_message({
                 "message": message,
                 "message_type": "bot",
                 "session_id": session_record.session_id,
@@ -802,6 +798,13 @@ class TicketService:
                 "customer_id": session_record.customer_id,
                 "attributes": {"ticket_number": ticket.display_number},
             })
+            delivery = await deliver_to_customer(self.db, session_record, {
+                "message": message,
+                "type": "chat_response",
+                "session_id": str(session_record.session_id),
+            }, message_id=stored.id)
+            if not delivery.ok:
+                chat_repo.mark_delivery_failed(stored.id, delivery.reason)
             if ticket.first_response_at is None:
                 ticket.first_response_at = datetime.now(timezone.utc)
             if record_activity:
@@ -816,6 +819,10 @@ class TicketService:
                 )
         except Exception as e:
             logger.error(f"Customer notification failed for {ticket.display_number}: {e}")
+            # Stored but the hand-over itself raised: don't let the thread
+            # show it as sent
+            if stored is not None and delivery is None:
+                chat_repo.mark_delivery_failed(stored.id, "send_failed")
 
         # Widget (web) sessions are delivered over Socket.IO to the browser tab
         # only, but a ticket reply almost always arrives after the visitor has

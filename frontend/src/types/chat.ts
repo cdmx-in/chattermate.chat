@@ -32,6 +32,11 @@ export interface Message {
   // Live replies are revealed client-side with a typewriter effect.
   stream?: boolean
   attributes?: Record<string, any>
+  // Set on a message sent from the inbox until the backend reports its id
+  client_id?: string
+  // Channel messages: the platform's id and its latest delivery receipt
+  external_message_id?: string | null
+  channel_status?: 'sent' | 'delivered' | 'read' | 'failed' | null
   user_name?: string
   agent_name?: string
   end_chat?: boolean

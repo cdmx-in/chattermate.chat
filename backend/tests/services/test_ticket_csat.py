@@ -38,7 +38,7 @@ def no_embeddings():
 @pytest.fixture(autouse=True)
 def no_delivery():
     """CSAT asks go out over the widget socket — irrelevant here."""
-    with patch("app.services.message_delivery.deliver_to_customer", new=AsyncMock()):
+    with patch("app.services.ticket.deliver_to_customer", new=AsyncMock()):
         yield
 
 

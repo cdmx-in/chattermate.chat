@@ -15,7 +15,7 @@ limitations under the License.
 """
 
 from sqlalchemy.orm import Session
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, Iterable, List, Optional
 from app.models.chat_history import ChatHistory
 from app.models.customer import Customer
 from uuid import UUID
@@ -26,6 +26,7 @@ from app.models.session_to_agent import SessionToAgent
 from app.repositories.channels import ChannelConversationRepository
 from app.core.logger import get_logger
 from app.channels.constants import is_widget_channel
+from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, decode_sent_choices
 from app.models.user import User
 from app.repositories.customer import CustomerRepository
 from sqlalchemy.orm import joinedload
@@ -36,6 +37,15 @@ from app.core.config import settings
 from app.services.sentiment import analyze_sentiment, compute_session_sentiment
 
 logger = get_logger(__name__)
+
+def _readable_attributes(attributes: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A message's attributes for the inbox: the encrypted record of the
+    choices it was sent with, decrypted."""
+    if not attributes or SENT_CHOICES_ATTRIBUTE not in attributes:
+        return attributes
+    return {**attributes,
+            SENT_CHOICES_ATTRIBUTE: decode_sent_choices(attributes[SENT_CHOICES_ATTRIBUTE])}
+
 
 class ChatRepository:
     def __init__(self, db: Session):
@@ -168,6 +178,61 @@ class ChatRepository:
         """
         self.update_message_attributes(message_id, {'delivery_status': reason or 'failed'})
 
+    def set_external_message_id(self, message_id: int, external_message_id: str) -> Optional[ChatHistory]:
+        """Record the platform's id for a message we sent, so its delivery
+        receipts can find it. Returns the row, or None if it is gone."""
+        try:
+            message = self.db.query(ChatHistory).filter(ChatHistory.id == message_id).first()
+            if message is None:
+                return None
+            message.external_message_id = external_message_id
+            self.db.commit()
+            return message
+        except Exception as e:
+            logger.error(f"Error setting external message id: {str(e)}")
+            self.db.rollback()
+            return None
+
+    def get_by_external_message_id(self, organization_id: UUID | str,
+                                   external_message_id: str) -> Optional[ChatHistory]:
+        """The message a platform id belongs to, within one organization —
+        a receipt can never touch another tenant's row."""
+        if isinstance(organization_id, str):
+            organization_id = UUID(organization_id)
+        return (
+            self.db.query(ChatHistory)
+            .filter(
+                ChatHistory.organization_id == organization_id,
+                ChatHistory.external_message_id == external_message_id,
+            )
+            .first()
+        )
+
+    def advance_channel_status(self, message_id: int, status: str, at: datetime,
+                               replaceable: Iterable[str]) -> bool:
+        """Set a message's delivery receipt only if it currently has none or
+        one of `replaceable` — a single conditional UPDATE, so two receipts
+        racing on different workers can't overwrite a newer one with an older.
+        Returns whether the row changed."""
+        try:
+            changed = (
+                self.db.query(ChatHistory)
+                .filter(
+                    ChatHistory.id == message_id,
+                    or_(ChatHistory.channel_status.is_(None),
+                        ChatHistory.channel_status.in_(list(replaceable))),
+                )
+                .update({ChatHistory.channel_status: status,
+                         ChatHistory.channel_status_at: at},
+                        synchronize_session=False)
+            )
+            self.db.commit()
+            return changed > 0
+        except Exception as e:
+            logger.error(f"Error setting channel status: {str(e)}")
+            self.db.rollback()
+            return False
+
     def _channel_account_id(self, channel: Optional[str], session_id) -> Optional[str]:
         """Which connected account a channel conversation belongs to, so the
         inbox can call account-scoped endpoints (e.g. sending a template).
@@ -181,33 +246,6 @@ class ChatRepository:
             return None
         conversation = ChannelConversationRepository(self.db).get_by_session(session_id)
         return str(conversation.channel_account_id) if conversation else None
-
-    def get_latest_bot_message(self, session_id: str | UUID) -> Optional[ChatHistory]:
-        """Most recent bot reply in a session.
-
-        The bot path persists its reply inside ChatAgent.get_response and never
-        returns the row, so callers that need to annotate it (e.g. recording a
-        delivery failure) read it back with this. Only 'bot' qualifies —
-        'agent' is a human's message, never the AI's.
-
-        Ordered by id, not created_at: created_at is a server default with
-        coarse resolution, so two replies in the same second would tie and
-        resolve arbitrarily.
-
-        Caveat: this identifies the latest reply, not a specific one. Two turns
-        processed concurrently on one session can read back each other's row.
-        """
-        if isinstance(session_id, str):
-            session_id = UUID(session_id)
-        return (
-            self.db.query(ChatHistory)
-            .filter(
-                ChatHistory.session_id == session_id,
-                ChatHistory.message_type == 'bot',
-            )
-            .order_by(ChatHistory.id.desc())
-            .first()
-        )
 
     def _update_session_sentiment(self, session_id) -> None:
         """Recompute and update the overall session sentiment from customer messages."""
@@ -587,10 +625,14 @@ class ChatRepository:
         messages_list = []
         for msg in messages:
             msg_dict = {
+                'id': msg.id,
                 'message': msg.message,
                 'message_type': msg.message_type,
                 'created_at': msg.created_at,
-                'attributes': msg.attributes
+                'attributes': _readable_attributes(msg.attributes),
+                # Live delivery receipts are matched to the message by either
+                'external_message_id': msg.external_message_id,
+                'channel_status': msg.channel_status,
             }
             
             # Add attachments with file info if they exist

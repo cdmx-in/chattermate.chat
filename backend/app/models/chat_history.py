@@ -29,6 +29,10 @@ class ChatHistory(Base):
         # never proposes dropping it and the sqlite test schema matches Postgres.
         Index('ix_chat_history_session_created', 'session_id',
               text('created_at DESC'), text('id DESC')),
+        # Delivery receipts look their message up by platform id
+        Index('ix_chat_history_org_external_message', 'organization_id', 'external_message_id',
+              postgresql_where=text('external_message_id IS NOT NULL'),
+              sqlite_where=text('external_message_id IS NOT NULL')),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -49,6 +53,11 @@ class ChatHistory(Base):
     attributes = Column(JSON, default={})
     sentiment_label = Column(String, nullable=True)  # 'positive', 'neutral', 'negative'
     sentiment_score = Column(Float, nullable=True)  # -1.0 to 1.0
+    # Channel messages only: the platform's id for this message (WhatsApp wamid)
+    # and its latest delivery receipt — app.channels.base.DeliveryState values.
+    external_message_id = Column(String, nullable=True)
+    channel_status = Column(String(16), nullable=True)
+    channel_status_at = Column(TIMESTAMP(timezone=True), nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at = Column(TIMESTAMP(timezone=True), server_default=func.now(),
                         onupdate=func.now())

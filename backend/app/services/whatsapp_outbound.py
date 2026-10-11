@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from app.channels import get_adapter
 from app.channels.constants import DEFAULT_TEMPLATE_LANGUAGE
 from app.services.channel_chat import placeholder_name
+from app.services.channel_status import record_sent
 from app.services.chat_notifications import notify_new_chat
 from app.channels.meta_base import fetch_message_templates
 from app.core.logger import get_logger
@@ -267,7 +268,7 @@ async def start_outbound_conversation(
         raise OutboundError(502, result.error or "WhatsApp did not accept the message")
 
     rendered = _render_body(template, components)
-    ChatRepository(db).create_message({
+    stored = ChatRepository(db).create_message({
         "message": rendered,
         "message_type": "bot",
         "session_id": str(session_id),
@@ -281,6 +282,8 @@ async def start_outbound_conversation(
             "outbound_template": template_name,
         },
     })
+    if result.external_message_id:
+        await record_sent(db, stored.id, account.id, result.external_message_id)
     # The AI reads this when the customer replies: a bare "yes" is meaningless
     # without knowing what we asked (see _run_chat_agent).
     conv_repo.set_extra(conversation, {

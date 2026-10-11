@@ -29,6 +29,9 @@ import FileUpload from '@/components/common/FileUpload.vue'
 import { userService } from '@/services/user'
 import ChannelBadge from '@/components/common/ChannelBadge.vue'
 import WhatsAppTemplatePicker from '@/components/conversations/WhatsAppTemplatePicker.vue'
+import MessageStatusTicks from '@/components/conversations/MessageStatusTicks.vue'
+import QuickReplyChips from '@/components/conversations/QuickReplyChips.vue'
+import ButtonReplyTag from '@/components/conversations/ButtonReplyTag.vue'
 import { marked } from 'marked'
 import { sanitizeHtml } from '@/utils/sanitize'
 import type { Renderer } from 'marked'
@@ -346,7 +349,9 @@ watch(() => currentChat.value?.session_id, () => refreshLinkedTicket())
               </template>
               <!-- Regular message with markdown -->
               <template v-else>
+                <ButtonReplyTag v-if="message.attributes?.interactive_reply" />
                 <div v-html="renderMarkdown(message.message || '')"></div>
+                <QuickReplyChips :sent="message.attributes?.interactive_sent" />
                 
                 <!-- Display attachments if present -->
                 <div v-if="message.attachments && message.attachments.length > 0" class="message-attachments">
@@ -391,7 +396,12 @@ watch(() => currentChat.value?.session_id, () => refreshLinkedTicket())
                   </div>
                 </div>
               </template>
-              <span class="message-time">{{ message.timeAgo }}</span>
+              <span class="message-time">
+                {{ message.timeAgo }}<MessageStatusTicks
+                  :status="message.channel_status"
+                  :on-accent="message.message_type === 'agent'"
+                />
+              </span>
               <span v-if="message.attributes?.delivery_status" class="delivery-failed">
                 <font-awesome-icon icon="fa-solid fa-circle-exclamation" /> Not delivered
               </span>
@@ -805,6 +815,7 @@ watch(() => currentChat.value?.session_id, () => refreshLinkedTicket())
   display: block;
   text-align: right;
 }
+
 
 /* The agent bubble is accent-filled: lift --c-danger toward the bubble's own
    foreground for contrast while keeping it readably red, not just a timestamp */

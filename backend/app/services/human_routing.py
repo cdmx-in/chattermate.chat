@@ -66,7 +66,7 @@ async def notify_customer(
     if channels_only and getattr(session, 'channel', None) in (None, WEB_CHANNEL):
         return
     try:
-        ChatRepository(db).create_message({
+        stored = ChatRepository(db).create_message({
             'message': message,
             'message_type': 'agent' if user_id else 'bot',
             'session_id': str(session.session_id),
@@ -79,7 +79,7 @@ async def notify_customer(
         result = await deliver_to_customer(db, session, {
             'message': message,
             'type': 'chat_response',
-        })
+        }, message_id=stored.id)
         if not result.ok:
             logger.warning(
                 f"Handover notice not delivered on {session.channel}: {result.reason}")
