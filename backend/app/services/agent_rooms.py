@@ -32,7 +32,7 @@ ORG_INBOX_ROOM_PREFIX = "org_inbox_"
 
 # chat_reply `type`s the inbox appends to a conversation
 USER_MESSAGE = 'user_message'
-AGENT_MESSAGE = 'agent_message'
+BOT_MESSAGE = 'bot'
 
 
 def org_inbox_room(organization_id) -> str:
