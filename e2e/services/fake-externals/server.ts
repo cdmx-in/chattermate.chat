@@ -22,6 +22,8 @@
 //   Meta GET /<node>       id = <node>
 //   LINE GET /info         userId derived from the channel access token
 //   Slack oauth.v2.access  team id and bot token derived from the OAuth code
+//   HubSpot oauth/v1/token  an access token derived from the code; introspecting it
+//                           (oauth/v1/access-tokens/<token>) gives a hub id from it
 //
 // A call's `action` is the provider's method (Telegram, Slack) or else the last
 // non-empty path segment (`/Account/<id>/Message/` → `Message`).
@@ -199,10 +201,22 @@ function answer(call: Call): Answer {
     case 'plivo':
       return ok({ message_uuid: [`e2e-${counter}`], api_id: `e2e-${counter}` })
     case 'hubspot':
-      return ok(method === 'GET' ? { results: [] } : { id: String(counter) })
+      return hubspot(call)
     default:
       return ok({})
   }
+}
+
+function hubspot({ method, url, body }: Call): Answer {
+  const path = url.pathname
+  if (path.endsWith('/oauth/v1/token')) {
+    const seed = String(body?.code ?? body?.refresh_token ?? '')
+    return ok({ access_token: `hs-${digest(seed).slice(0, 16)}`, refresh_token: `hs-refresh-${digest(seed).slice(0, 8)}`, expires_in: 1800, token_type: 'bearer' })
+  }
+  const introspected = /\/oauth\/v1\/access-tokens\/([^/]+)$/.exec(path)
+  if (introspected) return ok({ hub_id: parseInt(digest(introspected[1]).slice(0, 7), 16), hub_domain: 'e2e.hubspot.com', token: introspected[1] })
+  if (path.endsWith('/contacts/batch/upsert')) return ok({ status: 'COMPLETE', results: [{ id: String(counter), new: true }] })
+  return ok(method === 'GET' ? { results: [] } : { id: String(counter) })
 }
 
 /** How each provider says "bad request", so the backend's error handling sees the real shape. */
