@@ -22,7 +22,6 @@ from uuid import UUID
 from datetime import datetime
 from pathlib import Path
 import json
-import time
 from urllib.parse import urlparse
 
 from app.models.widget import Widget
@@ -464,9 +463,7 @@ async def get_widget_data(
         if email:
             customer_email = email
         else:
-            # Generate unique email with timestamp for anonymous access
-            timestamp = int(time.time() * 1000)  # milliseconds for better uniqueness
-            customer_email = f"{timestamp}@noemail.com"
+            customer_email = CustomerRepository.anonymous_email()
         
         # Try to get existing customer first (only if email is provided)
         customer = None
@@ -518,12 +515,8 @@ async def get_widget_data(
     else:
         # If workflow / ASK_ANYTHING / email-optional and no customer_id, create anonymous customer
         if (customer_id == "None" or customer_id is None) and (agent_has_workflow or is_ask_anything_style or email_bypass):
-            # Generate unique email with timestamp for workflow agents and ASK_ANYTHING style
-            timestamp = int(time.time() * 1000)  # milliseconds for better uniqueness
-            anonymous_email = f"{timestamp}@noemail.com"
-
             # Create anonymous customer for workflow or ASK_ANYTHING style
-            customer = customer_repo.create_customer(anonymous_email, widget.organization_id)
+            customer = customer_repo.create_customer(CustomerRepository.anonymous_email(), widget.organization_id)
 
             # Generate new token with customer_id
             new_token = create_conversation_token(
