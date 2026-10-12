@@ -1530,6 +1530,7 @@ class WorkflowExecutionService:
         Replace variable placeholders in text with actual values
         
         Supports syntax:
+        - {{user_message}} - A top-level variable such as the latest user message
         - {{field_name}} - Search all form nodes for field (latest value wins)
         - {{node_id.field_name}} - Specific node's field value
         
@@ -1550,7 +1551,11 @@ class WorkflowExecutionService:
             
             # Pattern to match {{variable}} or {{node_id.field_name}}
             pattern = r'\{\{([^}]+)\}\}'
-            
+
+            # Node variables are dicts keyed by node id; anything else (user_message)
+            # is a top-level variable and is looked up by its own name.
+            node_variables = {k: v for k, v in variables.items() if isinstance(v, dict)}
+
             def replace_variable(match):
                 var_expression = match.group(1).strip()
                 
@@ -1562,18 +1567,21 @@ class WorkflowExecutionService:
                         field_name = field_name.strip()
                         
                         # Look for the specific node's variables
-                        if node_id in variables and field_name in variables[node_id]:
-                            value = variables[node_id][field_name]
+                        if node_id in node_variables and field_name in node_variables[node_id]:
+                            value = node_variables[node_id][field_name]
                             logger.debug(f"Interpolated {{{{node_id.field_name}}}}: {node_id}.{field_name} = {value}")
                             return str(value)
                     else:
                         # Search all nodes for the field (latest value wins)
                         field_name = var_expression.strip()
-                        
+
+                        if field_name in variables and field_name not in node_variables:
+                            return str(variables[field_name])
+
                         # Search through all node variables (reverse order for latest first)
-                        for node_id in reversed(list(variables.keys())):
-                            if field_name in variables[node_id]:
-                                value = variables[node_id][field_name]
+                        for node_id in reversed(list(node_variables.keys())):
+                            if field_name in node_variables[node_id]:
+                                value = node_variables[node_id][field_name]
                                 logger.debug(f"Interpolated {{{{field_name}}}}: {field_name} = {value} (from node {node_id})")
                                 return str(value)
                     

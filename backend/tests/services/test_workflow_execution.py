@@ -743,3 +743,35 @@ class TestTerminalMessageNotDuplicated:
 
         assert result.message == "What is your name?"
         assert result.intermediate_messages == ["Welcome"]
+
+
+class TestUserMessageVariable:
+    """{{user_message}} sits at the top level of variables, not under a node."""
+
+    def test_user_message_is_interpolated(self, workflow_service):
+        workflow_state = {"variables": {"user_message": "where is my order"}}
+
+        result = workflow_service._process_variables("You said: {{user_message}}", workflow_state)
+
+        assert result == "You said: where is my order"
+
+    def test_user_message_does_not_hide_node_variables(self, workflow_service):
+        # The user message was searched as if it were a node's variables, so a
+        # message containing a field's name broke the lookup for that field.
+        node_id = str(uuid4())
+        workflow_state = {"variables": {
+            node_id: {"contact_email": "a@example.com"},
+            "user_message": "my contact_email changed",
+        }}
+
+        result = workflow_service._process_variables("Email: {{contact_email}}", workflow_state)
+
+        assert result == "Email: a@example.com"
+
+    @pytest.mark.asyncio
+    async def test_message_node_sees_the_current_user_message(self, workflow_service, sample_workflow):
+        nodes = _linked_nodes(_message_node("Echo: {{user_message}}"))
+
+        result = await _run_workflow(workflow_service, sample_workflow, nodes, user_message="hello there")
+
+        assert result.message == "Echo: hello there"
