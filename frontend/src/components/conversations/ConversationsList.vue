@@ -270,7 +270,7 @@ onBeforeUnmount(() => {
         No conversations yet
       </div>
 
-      <div v-else class="conversations-list" ref="listContainer">
+      <div v-else class="conversations-list" ref="listContainer" tabindex="0" aria-label="Conversations">
         <div 
           v-for="conv in formattedConversations" 
           :key="conv.session_id"

@@ -1724,6 +1724,8 @@ window.chattermateConfig;
 
             iframe = document.createElement('iframe')
             iframe.className = 'chattermate-iframe'
+            // Screen readers announce a frame by its title.
+            iframe.title = 'Chat'
             iframe.srcdoc = html;
             iframe.addEventListener('load', function () {
               iframeReady = true

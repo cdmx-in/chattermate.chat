@@ -2931,6 +2931,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     </button>
                     <button
                         class="send-button"
+                        aria-label="Send message"
                         :class="{ 'ask-anything-send': isAskAnythingStyle }"
                         :style="userBubbleStyles"
                         @click="sendMessage"
