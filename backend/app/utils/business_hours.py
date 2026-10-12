@@ -38,6 +38,15 @@ _DEFAULT_START = '09:00'
 _DEFAULT_END = '17:00'
 
 
+def normalize_timezone(tz_name: str | None) -> str:
+    """A valid IANA timezone name, or 'UTC' for a missing or unknown one.
+
+    For values from outside (a browser's reported zone at signup): a bad value
+    must never block the caller, it just means business hours run in UTC.
+    """
+    return tz_name if tz_name in pytz.all_timezones_set else 'UTC'
+
+
 def organization_timezone(organization) -> pytz.BaseTzInfo:
     """The org's timezone, falling back to UTC for a missing or bad value."""
     tz_name = getattr(organization, 'timezone', None) or 'UTC'
