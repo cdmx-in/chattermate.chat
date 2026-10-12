@@ -1,0 +1,28 @@
+{
+  "name": "chattermate-e2e",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests for ChatterMate (dashboard, widget, backend) — see AUTHORING.md",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "./scripts/stack.sh up && playwright test --project=chromium && playwright test --project=org --workers=1 --pass-with-no-tests",
+    "test:smoke": "playwright test --project=chromium --grep @smoke",
+    "test:org": "playwright test --project=org --workers=1 --pass-with-no-tests",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "stack": "./scripts/stack.sh",
+    "fake-llm": "node services/fake-llm/server.ts",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "^22.10.0",
+    "eslint": "^9.14.0",
+    "eslint-plugin-playwright": "^2.1.0",
+    "typescript": "~5.6.3",
+    "typescript-eslint": "^8.18.0"
+  }
+}
