@@ -995,6 +995,32 @@ def test_add_urls_rejects_zero_max_links(client: TestClient, test_organization):
     assert response.status_code == 422
 
 
+def test_create_text_source_creates_the_vector_table_before_writing(monkeypatch):
+    """An org whose first knowledge source is pasted text has no vector table yet
+    (only URL/PDF ingestion used to create it), so the write must create it first."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from app.knowledge import page_editor
+
+    calls = []
+    fake_manager = MagicMock()
+    fake_manager.vector_db.table_name = "d_test"
+    fake_manager.vector_db.schema = "ai"
+    fake_manager.vector_db.create.side_effect = lambda: calls.append("create")
+    fake_manager.vector_db.upsert.side_effect = lambda *a, **kw: calls.append("upsert")
+    monkeypatch.setattr(page_editor, "KnowledgeManager", lambda **kw: fake_manager)
+    monkeypatch.setattr(page_editor, "embed_page", lambda *a, **kw: [SimpleNamespace(id="t", embedding=[0.1])])
+
+    repo = MagicMock()
+    repo.get_by_sources.return_value = []
+    repo.create.side_effect = lambda knowledge: knowledge
+    monkeypatch.setattr(page_editor, "KnowledgeRepository", lambda db: repo)
+
+    page_editor.create_text_source(MagicMock(), uuid4(), "Returns", "Returns within 45 days.")
+
+    assert calls == ["create", "upsert"]
+
+
 # Test cases for add/text endpoint
 def test_add_text_unauthorized_org(client: TestClient):
     """Adding a text source for a different org is rejected."""

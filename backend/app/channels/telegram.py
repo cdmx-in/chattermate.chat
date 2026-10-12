@@ -30,10 +30,11 @@ from app.channels.registry import register_adapter
 from app.models.channels import ChannelAccount, ChannelConversation, ChannelType
 from app.core.security import decrypt_api_key
 from app.core.logger import get_logger
+from app.core.external_urls import external_base
 
 logger = get_logger(__name__)
 
-TELEGRAM_API_BASE = "https://api.telegram.org"
+TELEGRAM_API_BASE = external_base("TELEGRAM_API_BASE", "https://api.telegram.org")
 # https://core.telegram.org/bots/api#sendmessage
 MAX_MESSAGE_LENGTH = TELEGRAM_LIMITS.body_max
 REQUEST_TIMEOUT_SECONDS = 15.0

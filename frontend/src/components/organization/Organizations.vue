@@ -18,7 +18,7 @@ limitations under the License.
 import { ref, onMounted } from 'vue'
 import { useOrganizationSettings } from '@/composables/useOrganizationSettings'
 // @ts-ignore
-import { listTz } from 'timezone-select-js'
+import { timezoneOptions } from '@/utils/timezones'
 
 const {
   formData,
@@ -33,7 +33,7 @@ const {
   updateOrganization
 } = useOrganizationSettings()
 
-const timezones = ref(listTz())
+const timezones = ref(timezoneOptions())
 
 // Danger zone — no destructive API yet; route the user to support.
 const onTransferOwnership = () => {

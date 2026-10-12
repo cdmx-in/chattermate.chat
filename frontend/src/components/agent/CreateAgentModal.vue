@@ -42,10 +42,10 @@ const handleCreateAgent = async () => {
 
 <template>
     <div class="modal-overlay">
-        <div class="modal-content">
+        <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="create-agent-title">
             <div class="modal-header">
-                <h3>Create New Agent</h3>
-                <button type="button" class="close-button" @click="$emit('close')">&times;</button>
+                <h3 id="create-agent-title">Create New Agent</h3>
+                <button type="button" class="close-button" aria-label="Close" @click="$emit('close')">&times;</button>
             </div>
             <div class="modal-body">
                 <form @submit.prevent="handleCreateAgent">

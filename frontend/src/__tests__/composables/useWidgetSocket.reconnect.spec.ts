@@ -90,6 +90,35 @@ describe('widget socket reconnection', () => {
     expect(currentAuth().conversation_token).toBe('token-2')
   })
 
+  /** A conversation token for `customerId` (only the claims matter here). */
+  const tokenFor = (customerId: string, version = 1) =>
+    `header.${btoa(JSON.stringify({ sub: customerId, v: version }))}.signature`
+
+  it('keeps a live connection for the same visitor instead of rebuilding it', async () => {
+    const widget = await connectWidget()
+    widget.setToken(tokenFor('customer-1'))
+    socket.connected = true
+    fire('connect')
+
+    // A takeover re-runs the widget's authorization, which calls connect() again.
+    // Rebuilding the socket here dropped the agent's first reply (found by e2e).
+    // A rotated token for the same visitor is not a reason to rebuild either.
+    widget.setToken(tokenFor('customer-1', 2))
+    await expect(widget.connect()).resolves.toBe(true)
+    expect(socket.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('reconnects when the visitor changes', async () => {
+    const widget = await connectWidget()
+    widget.setToken(tokenFor('customer-1'))
+    socket.connected = true
+    fire('connect')
+
+    widget.setToken(tokenFor('customer-2'))
+    void widget.connect()
+    expect(socket.disconnect).toHaveBeenCalled()
+  })
+
   it('keeps retrying rather than giving up after a handful of attempts', async () => {
     await connectWidget()
     expect(ioOptions.reconnectionAttempts).toBe(Infinity)

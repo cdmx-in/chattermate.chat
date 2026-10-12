@@ -169,6 +169,7 @@ async function submitResolve() {
             <div class="control">
               <span class="control-label">Status</span>
               <select
+                aria-label="Status"
                 :value="ticket.status"
                 :disabled="!canManage"
                 class="control-select"
@@ -185,6 +186,7 @@ async function submitResolve() {
             <div class="control">
               <span class="control-label">Priority</span>
               <select
+                aria-label="Priority"
                 :value="ticket.priority"
                 :disabled="!canManage"
                 class="control-select"
@@ -197,6 +199,7 @@ async function submitResolve() {
             <div class="control">
               <span class="control-label">Severity</span>
               <select
+                aria-label="Severity"
                 :value="ticket.severity ?? ''"
                 :disabled="!canManage"
                 class="control-select"

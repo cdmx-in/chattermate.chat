@@ -297,6 +297,10 @@ def create_text_source(
             KnowledgeToAgentRepository(db).create(
                 KnowledgeToAgent(knowledge_id=knowledge.id, agent_id=agent_id)
             )
+        # The org's vector table is otherwise created only by URL/PDF ingestion, so
+        # an org whose first source is pasted text has none yet. create() is a
+        # no-op when it exists and tolerates a concurrent creator.
+        manager.vector_db.create()
         # upsert (not insert) is idempotent on the id, so a raced duplicate title
         # overwrites its own chunks instead of raising a duplicate-key error.
         manager.vector_db.upsert(

@@ -527,7 +527,7 @@ async def login(
             httponly=True,
             secure=True,
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=180  # 30 minutes
+            max_age=1800  # 30 minutes
         )
         response.set_cookie(
             key="refresh_token",

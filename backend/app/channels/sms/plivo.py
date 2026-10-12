@@ -26,10 +26,11 @@ from app.channels.sms.base import (
 )
 from app.models.channels import ChannelAccount
 from app.core.logger import get_logger
+from app.core.external_urls import external_base
 
 logger = get_logger(__name__)
 
-PLIVO_API_BASE = "https://api.plivo.com/v1"
+PLIVO_API_BASE = external_base("PLIVO_API_BASE", "https://api.plivo.com/v1")
 
 
 class PlivoProvider(SmsProvider):

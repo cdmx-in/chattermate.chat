@@ -64,7 +64,9 @@ chmod +x .git/hooks/prepare-commit-msg
 2. Make your changes. Follow the existing code style
    (PEP 8 for Python, type hints where practical; the project conventions for
    Vue/TypeScript on the frontend).
-3. Add or update tests for your change and make sure the suite passes.
+3. Add or update tests for your change and make sure the suite passes. If it
+   changes something a user does, add or update the end-to-end spec too (see
+   [e2e/AUTHORING.md](e2e/AUTHORING.md)).
 4. Commit with sign-off (`git commit -s`).
 5. Push and open a Pull Request, filling out the PR template.
 
