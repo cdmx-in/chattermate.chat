@@ -4,6 +4,8 @@
 export { test, expect, type AgentSettings, type HandoverTeam, type Member, type MemberOptions, type TestAgent } from './fixtures'
 export { ApiClient } from './api/client'
 export { createGroup, createUser } from './api/team'
+export { setAlwaysClosed, setAlwaysOpen } from './api/organizations'
+export { chatsWithAgent, type ChatOverview } from './api/chats'
 export { connectEmail, listChannelAccounts } from './api/channels'
 export { currentAiConfig, restoreAi, useFakeLlm, type AiConfig } from './api/ai'
 export { createAgent, enableLeadCapture } from './api/agents'
