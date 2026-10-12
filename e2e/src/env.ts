@@ -22,6 +22,8 @@ export const env = {
   databaseUrl: `${(process.env.E2E_PG_URL ?? `postgresql://${process.env.USER}@127.0.0.1:5432`).replace(/\/$/, '')}/chattermate_e2e`,
   /** The private enterprise suite, present only where the enterprise_frontend submodule is checked out. */
   enterpriseSpecDir: fileURLToPath(new URL('../../frontend/src/modules/enterprise/e2e/', import.meta.url)),
+  /** stack.sh, for `stack.sh python …` one-off jobs against the running stack. */
+  stackScript: fileURLToPath(new URL('../scripts/stack.sh', import.meta.url)),
   /** Where the setup project writes the org contract (see src/org-state.ts). */
   authDir: fileURLToPath(new URL('../.auth/', import.meta.url)),
 } as const
