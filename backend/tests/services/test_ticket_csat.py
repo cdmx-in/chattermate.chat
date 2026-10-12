@@ -109,6 +109,22 @@ class TestCsatRequest:
         assert TicketActivityType.CSAT_REQUESTED.value in types
 
     @pytest.mark.asyncio
+    async def test_close_asks_with_the_widget_rating_prompt(
+        self, service, db, test_organization, test_session
+    ):
+        """The widget only shows its stars on a message that also ends the chat."""
+        ticket = make_ticket(
+            service, db, test_organization,
+            session_id=test_session.session_id, source=TicketSource.CHAT_AI,
+        )
+        with patch("app.services.ticket.deliver_to_customer", new=AsyncMock()) as deliver:
+            await service.close(ticket)
+        payload = deliver.call_args.args[2]
+        assert payload["request_rating"] is True
+        assert payload["end_chat"] is True
+        assert payload["session_id"] == str(test_session.session_id)
+
+    @pytest.mark.asyncio
     async def test_close_without_session_never_asks(
         self, service, db, test_organization
     ):

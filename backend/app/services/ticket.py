@@ -676,6 +676,12 @@ class TicketService:
                 ),
                 "type": "chat_response",
                 "request_rating": True,
+                # The widget only shows its stars on a message that also ends
+                # the chat (as the AI's own wrap-up does); without these the
+                # customer was asked to rate with nothing to rate with.
+                "end_chat": True,
+                "end_chat_reason": "ISSUE_RESOLVED",
+                "session_id": str(session_record.session_id),
             }, source=MessageSource.SYSTEM)
             ticket.csat_requested_at = datetime.now(timezone.utc)
             self._add_activity(
