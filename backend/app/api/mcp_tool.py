@@ -39,8 +39,18 @@ from app.models.schemas.mcp_tool import (
 from app.core.outbound_policy import require_public_target
 from app.core.params import DbIntId
 from app.tools.mcp_manager import MCP_URL_LABEL, TEST_CONNECT_BUDGET_SECONDS, MCPToolsManager
+from app.core.config import settings
 from sqlalchemy.orm import Session
 from uuid import UUID
+
+def require_stdio_enabled() -> None:
+    """Refuse a STDIO connector where running admin-typed commands is off."""
+    if not settings.MCP_STDIO_ENABLED:
+        raise HTTPException(
+            status_code=400,
+            detail="Local (STDIO) MCP servers are not available here. Connect a remote server over HTTP or SSE.",
+        )
+
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -74,7 +84,9 @@ async def create_mcp_tool(
     try:
         # Check MCP tools feature access
         check_mcp_feature_access(current_user, db)
-        if mcp_tool_data.transport_type != MCPTransportTypeEnum.STDIO:
+        if mcp_tool_data.transport_type == MCPTransportTypeEnum.STDIO:
+            require_stdio_enabled()
+        else:
             require_public_target(mcp_tool_data.url, MCP_URL_LABEL)
 
         mcp_tool_repo = MCPToolRepository(db)
@@ -289,6 +301,7 @@ async def update_mcp_tool(
         transport = update_dict.get('transport_type', mcp_tool.transport_type)
         transport = getattr(transport, 'value', transport)
         if transport == MCPTransportTypeEnum.STDIO.value:
+            require_stdio_enabled()
             if not update_dict.get('command', mcp_tool.command):
                 raise HTTPException(
                     status_code=400,

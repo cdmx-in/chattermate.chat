@@ -26,6 +26,7 @@ from app.models.mcp_tool import MCPTransportType
 from app.models.schemas.mcp_tool import MAX_USAGE_GUIDANCE_CHARS
 from app.core.logger import get_logger
 from app.core.outbound_policy import check_outbound_target
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -247,6 +248,10 @@ class MCPToolsManager:
     @staticmethod
     def _build_stdio_tool(config) -> Optional[MCPTools]:
         """MCPTools for a local subprocess server (npx/uvx/binary)."""
+        if not settings.MCP_STDIO_ENABLED:
+            # Connectors saved before it was turned off never get to run.
+            logger.warning(f"STDIO MCP tool {config.name} skipped: MCP_STDIO_ENABLED is false")
+            return None
         if not (config.command and config.args):
             logger.warning(f"STDIO MCP tool {config.name} missing command or args")
             return None

@@ -143,6 +143,10 @@ class Settings(BaseSettings):
     # install reaching its own network; "public_only" refuses private,
     # loopback, link-local and reserved targets on a shared deployment.
     OUTBOUND_URL_POLICY: Literal["any", "public_only"] = os.getenv("OUTBOUND_URL_POLICY", "any")
+    # STDIO MCP connectors start a process on this server from a command an org
+    # admin types. Fine on your own install; on a shared deployment it hands
+    # every customer a shell, so turn it off there.
+    MCP_STDIO_ENABLED: bool = os.getenv("MCP_STDIO_ENABLED", "true").lower() == "true"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     TRIAL_DAYS: int = 7  # 7-day trial period
 
