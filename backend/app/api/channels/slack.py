@@ -24,7 +24,7 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.api.channels.accounts import get_org_account_or_404
-from app.channels.slack import slack_api
+from app.channels.slack import SLACK_API_BASE, slack_api
 from app.core.auth import get_current_organization, require_permissions
 from app.core.config import settings
 from app.core.redis import get_redis
@@ -118,7 +118,7 @@ async def slack_oauth_callback(
         return _settings_redirect("failure", "invalid_state")
 
     async with httpx.AsyncClient(timeout=15.0) as client:
-        response = await client.post("https://slack.com/api/oauth.v2.access", data={
+        response = await client.post(f"{SLACK_API_BASE}/oauth.v2.access", data={
             "client_id": settings.SLACK_CLIENT_ID,
             "client_secret": settings.SLACK_CLIENT_SECRET,
             "code": code,
