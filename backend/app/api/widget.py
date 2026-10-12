@@ -62,7 +62,7 @@ def _identity_expired() -> HTTPException:
     )
 
 
-_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+_ASSETS_DIR = Path(settings.WIDGET_ASSETS_DIR)
 
 
 def _asset_version() -> str:

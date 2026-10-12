@@ -99,26 +99,63 @@ fresh_database() {
 }
 
 run_backend() {
+  build_widget
   fresh_database
   backend_env "$DB_NAME"
+  export WIDGET_ASSETS_DIR="$CACHE_DIR/widget-assets-$EDITION"
   cd "$REPO_DIR/backend"
   log "backend ($EDITION) on http://127.0.0.1:$BACKEND_PORT"
   exec "$E2E_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
 }
 
-# Builds the dashboard from a copy of frontend/ so the e2e build never touches the
-# developer's dist/ or .env, and so the OSS edition can leave out the enterprise module.
+# Copies frontend/ into the cache so e2e builds never touch the developer's dist/,
+# .env or the committed widget/loader bundles, and so the OSS edition can leave out
+# the enterprise module. Prints rsync's change list (empty = nothing changed).
+# Backend and frontend start in parallel, so each gets its own copy.
+sync_frontend_copy() {
+  local dest="$1"
+  [[ -d "$NODE_MODULES" ]] || die "no frontend node_modules at $NODE_MODULES (run npm ci in frontend/, or set E2E_FRONTEND_NODE_MODULES)"
+  mkdir -p "$dest"
+  # The loader bundle is generated inside the copy (build_loader), so keep rsync off it.
+  local excludes=(--exclude node_modules --exclude 'dist*' --exclude '.env*' --exclude e2e --exclude coverage
+                  --exclude public/webclient/chattermate.min.js)
+  if [[ "$EDITION" == oss ]]; then excludes+=(--exclude src/modules/enterprise); fi
+  rsync -a --delete -i "${excludes[@]}" "$REPO_DIR/frontend/" "$dest/"
+  ln -sfn "$NODE_MODULES" "$dest/node_modules"
+}
+
+# The widget bundle the backend serves at /assets, built from the current source
+# (backend/assets holds the committed production build, which may lag the source).
+build_widget() {
+  local src="$CACHE_DIR/widget-src-$EDITION" out="$CACHE_DIR/widget-assets-$EDITION" changes
+  changes="$(sync_frontend_copy "$src")"
+  if [[ -n "$changes" || ! -f "$out/widget.js" || -n "${E2E_REBUILD_FRONTEND:-}" ]]; then
+    log "building widget ($EDITION)"
+    (cd "$src" && node_modules/.bin/vite build --config vite.widget.config.ts --outDir "$out" --emptyOutDir --logLevel warn) >&2
+    # Same post-steps as scripts/build-widget.ts: the stylesheet can land in unused/,
+    # and only widget.js + widget.css belong in the assets dir (vite also copies public/).
+    if [[ ! -f "$out/widget.css" ]]; then cp "$(ls "$out"/unused/*.css | head -n 1)" "$out/widget.css"; fi
+    find "$out" -mindepth 1 -maxdepth 1 ! -name widget.js ! -name widget.css -exec rm -rf {} +
+  fi
+}
+
+# The embed loader (chattermate.min.js), built from source into the dashboard copy's
+# public/ so vite ships it in the build — what build-webclient-*.ts does.
+build_loader() {
+  local src="$1"
+  (cd "$src" && node_modules/.bin/esbuild src/webclient/chattermate.js --bundle --minify --format=iife \
+    --target=es2015 --loader:.svg=text --log-level=warning \
+    --define:process.env.NODE_ENV='"production"' \
+    --define:__CHATTERMATE_API_URL__="\"http://127.0.0.1:$BACKEND_PORT/api/v1\"" \
+    --outfile=public/webclient/chattermate.min.js) >&2
+}
+
 build_frontend() {
   local src="$CACHE_DIR/frontend-$EDITION" out="$CACHE_DIR/dist-$EDITION" changes
-  [[ -d "$NODE_MODULES" ]] || die "no frontend node_modules at $NODE_MODULES (run npm ci in frontend/, or set E2E_FRONTEND_NODE_MODULES)"
-  mkdir -p "$src"
-  local excludes=(--exclude node_modules --exclude 'dist*' --exclude '.env*' --exclude e2e --exclude coverage)
-  if [[ "$EDITION" == oss ]]; then excludes+=(--exclude src/modules/enterprise); fi
-  changes="$(rsync -a --delete -i "${excludes[@]}" "$REPO_DIR/frontend/" "$src/")"
-  ln -sfn "$NODE_MODULES" "$src/node_modules"
-
+  changes="$(sync_frontend_copy "$src")"
   if [[ -n "$changes" || ! -f "$out/index.html" || -n "${E2E_REBUILD_FRONTEND:-}" ]]; then
     log "building dashboard ($EDITION)"
+    build_loader "$src"
     (cd "$src" && node_modules/.bin/vite build --outDir "$out" --emptyOutDir --logLevel warn) >&2
   fi
   # Runtime config: what docker-entrypoint.sh writes in a real deployment.

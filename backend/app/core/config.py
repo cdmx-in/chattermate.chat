@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     BACKEND_URL: str = os.getenv("BACKEND_URL", "http://localhost:8000")
+    # Where the widget bundle (widget.js / widget.css) is served from at /assets.
+    # The e2e suite points this at a bundle built from the current source, so the
+    # committed production build in backend/assets is never rebuilt locally.
+    WIDGET_ASSETS_DIR: str = os.getenv("WIDGET_ASSETS_DIR", str(BACKEND_DIR / "assets"))
     VITE_WIDGET_URL: str = os.getenv("VITE_WIDGET_URL", "http://localhost:5173")
 
     # app.core.encryption owns the actual key loading (reads the env var directly and
