@@ -378,12 +378,17 @@ const chatterMateButtonText = computed(() => {
       </header>
 
       <div class="tabs-container">
-        <div class="tabs">
+        <div class="tabs" role="tablist">
           <div
             v-if="hasEnterpriseModule"
             class="tab"
             :class="{ active: activeTab === 'chattermate' }"
+            role="tab"
+            tabindex="0"
+            :aria-selected="activeTab === 'chattermate'"
             @click="selectTab('chattermate')"
+            @keydown.enter.prevent="selectTab('chattermate')"
+            @keydown.space.prevent="selectTab('chattermate')"
           >
             <span class="tab-icon">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -398,7 +403,12 @@ const chatterMateButtonText = computed(() => {
               active: activeTab === 'custom',
               locked: isCustomModelsLocked
             }"
+            role="tab"
+            tabindex="0"
+            :aria-selected="activeTab === 'custom'"
             @click="selectTab('custom')"
+            @keydown.enter.prevent="selectTab('custom')"
+            @keydown.space.prevent="selectTab('custom')"
           >
             <span class="tab-icon">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
