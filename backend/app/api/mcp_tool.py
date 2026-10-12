@@ -36,8 +36,9 @@ from app.models.schemas.mcp_tool import (
     AgentMCPToolsResponse, MCPToolTestResponse, MCPToolReferencesResponse,
     MCPTransportTypeEnum, unmask_secret_values
 )
-from app.tools.mcp_manager import TEST_CONNECT_BUDGET_SECONDS, MCPToolsManager
+from app.core.outbound_policy import require_public_target
 from app.core.params import DbIntId
+from app.tools.mcp_manager import MCP_URL_LABEL, TEST_CONNECT_BUDGET_SECONDS, MCPToolsManager
 from sqlalchemy.orm import Session
 from uuid import UUID
 
@@ -73,7 +74,9 @@ async def create_mcp_tool(
     try:
         # Check MCP tools feature access
         check_mcp_feature_access(current_user, db)
-        
+        if mcp_tool_data.transport_type != MCPTransportTypeEnum.STDIO:
+            require_public_target(mcp_tool_data.url, MCP_URL_LABEL)
+
         mcp_tool_repo = MCPToolRepository(db)
         
         # Set organization_id from current user
@@ -296,6 +299,8 @@ async def update_mcp_tool(
                 status_code=400,
                 detail="URL is required for SSE/HTTP transport"
             )
+        else:
+            require_public_target(update_dict.get('url', mcp_tool.url), MCP_URL_LABEL)
 
         # Check for name conflicts if name is being updated
         if 'name' in update_dict:

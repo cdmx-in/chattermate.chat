@@ -25,6 +25,7 @@ from app.repositories.mcp_tool import MCPToolRepository
 from app.models.mcp_tool import MCPTransportType
 from app.models.schemas.mcp_tool import MAX_USAGE_GUIDANCE_CHARS
 from app.core.logger import get_logger
+from app.core.outbound_policy import check_outbound_target
 
 logger = get_logger(__name__)
 
@@ -54,6 +55,8 @@ CHAT_CONNECT_BUDGET_SECONDS = 15.0
 # whether a connector comes up — including a cold `npx` launch — so it can be
 # far more patient than a chat turn while still bounding the request.
 TEST_CONNECT_BUDGET_SECONDS = 60.0
+
+MCP_URL_LABEL = "MCP server URL"
 
 # Background callers pass no ceiling at all: the ticket investigation worker
 # derives its own from the run's wall-clock budget.
@@ -317,6 +320,8 @@ class MCPToolsManager:
         if not config.url:
             logger.warning(f"Remote MCP tool {config.name} missing URL, skipping")
             return None
+        # Checked again at connect time, not only on save: DNS can change.
+        check_outbound_target(config.url, MCP_URL_LABEL)
         headers = config.headers or None
         timeout = _session_timeout(config)
         sse_read_timeout = config.sse_read_timeout or 300

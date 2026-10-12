@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
 from app.core.logger import get_logger
+from app.core.outbound_policy import check_outbound_target
 from app.core.security import decrypt_api_key
 
 logger = get_logger(__name__)
@@ -194,12 +195,23 @@ def _driver_connect(config: DBConnectorConfig, host: str, port: int):
     )
 
 
+def first_hop(ssh_enabled: bool, ssh_host: Optional[str], host: Optional[str]) -> Tuple[Optional[str], str]:
+    """The host this server dials first, with its field label, for the
+    outbound policy: the SSH bastion when tunnelling, else the database. A
+    database behind a bastion is reached from the bastion, and may be private."""
+    if ssh_enabled:
+        return ssh_host, "SSH host"
+    return host, "Database host"
+
+
 @contextmanager
 def _connection(config: DBConnectorConfig):
     """Yield a read-only DB connection, opening an SSH tunnel first when the
     connector is configured for one. Tunnel and connection are both closed on
     exit — a fresh pair per call keeps the (short-lived) investigation queries
     isolated."""
+    # Checked on every connect, not only on save: DNS can change.
+    check_outbound_target(*first_hop(config.ssh_enabled, config.ssh_host, config.host))
     if config.ssh_enabled:
         if not config.ssh_host or not config.ssh_username:
             raise ValueError("SSH tunnel is enabled but host/username are missing")

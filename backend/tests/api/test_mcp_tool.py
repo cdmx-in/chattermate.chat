@@ -475,3 +475,41 @@ def test_overlong_usage_guidance_is_rejected(client: TestClient, db):
         "enabled": True,
     })
     assert resp.status_code == 422
+
+
+def test_public_only_policy_refuses_an_internal_server_url(client: TestClient, db, monkeypatch):
+    """OUTBOUND_URL_POLICY=public_only keeps a tenant's connector off the
+    server's own network, on create and on update."""
+    from app.core.config import settings
+    mcp_api.HAS_ENTERPRISE = False
+    monkeypatch.setattr(settings, "OUTBOUND_URL_POLICY", "public_only")
+
+    created = client.post("/api/mcp", json={
+        "name": "Metadata", "transport_type": MCPTransportType.HTTP.value,
+        "url": "http://169.254.169.254/latest", "enabled": True,
+    })
+    assert created.status_code == 400
+    assert "MCP server URL must be a public address" in created.json()["detail"]
+
+    # STDIO has no URL to check.
+    stdio = client.post("/api/mcp", json={
+        "name": "Local", "transport_type": MCPTransportType.STDIO.value,
+        "command": "uvx", "enabled": True,
+    })
+    assert stdio.status_code == 200
+    switched = client.put(f"/api/mcp/{stdio.json()['id']}", json={
+        "transport_type": MCPTransportType.SSE.value, "url": "http://localhost:3001/sse",
+    })
+    assert switched.status_code == 400
+
+
+def test_any_policy_allows_an_internal_server_url(client: TestClient, db, monkeypatch):
+    from app.core.config import settings
+    mcp_api.HAS_ENTERPRISE = False
+    monkeypatch.setattr(settings, "OUTBOUND_URL_POLICY", "any")
+
+    resp = client.post("/api/mcp", json={
+        "name": "Internal", "transport_type": MCPTransportType.HTTP.value,
+        "url": "http://10.0.0.8:8080/mcp", "enabled": True,
+    })
+    assert resp.status_code == 200

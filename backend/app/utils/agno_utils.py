@@ -19,6 +19,7 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from app.core.logger import get_logger
 from app.core.config import settings
+from app.core.outbound_policy import check_outbound_target
 from app.utils.agno_patches import apply_agno_patches
 from typing import Dict, Any, Optional, List
 from fastapi import HTTPException
@@ -58,6 +59,8 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
         elif model_type == 'OPENAI_COMPATIBLE':
             if not base_url:
                 raise ValueError("base_url is required for OPENAI_COMPATIBLE")
+            # Re-checked on every build, not only on save: DNS can change.
+            check_outbound_target(base_url, "Base URL")
             base_url = re.sub(r'/chat/completions/?$', '', base_url.strip(), flags=re.IGNORECASE).rstrip('/')
             if response_format:
                 return OpenAIChat(api_key=api_key, id=model_name, base_url=base_url, max_tokens=max_tokens, response_format=response_format)

@@ -17,7 +17,7 @@ limitations under the License.
 import os
 import json
 from pydantic_settings import BaseSettings
-from typing import List, NamedTuple, Optional
+from typing import List, Literal, NamedTuple, Optional
 from dotenv import load_dotenv
 from pathlib import Path
 from pydantic import field_validator
@@ -138,6 +138,11 @@ class Settings(BaseSettings):
     SIGNUP_ALLOWED_EMAILS: str = os.getenv("SIGNUP_ALLOWED_EMAILS", "")
 
     VERIFY_SSL_CERTIFICATES: bool = os.getenv("VERIFY_SSL_CERTIFICATES", "true").lower() == "true"
+    # Which addresses the AI base URL, MCP server URLs and ticket databases may
+    # point at (see app/core/outbound_policy.py). "any" suits a self-hosted
+    # install reaching its own network; "public_only" refuses private,
+    # loopback, link-local and reserved targets on a shared deployment.
+    OUTBOUND_URL_POLICY: Literal["any", "public_only"] = os.getenv("OUTBOUND_URL_POLICY", "any")
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     TRIAL_DAYS: int = 7  # 7-day trial period
 
