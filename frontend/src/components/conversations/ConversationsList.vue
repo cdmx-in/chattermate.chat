@@ -276,7 +276,13 @@ onBeforeUnmount(() => {
           :key="conv.session_id"
           class="conversation-item"
           :class="{ active: selectedId === conv.session_id }"
+          role="button"
+          tabindex="0"
+          :aria-label="`Conversation with ${conv.customer.full_name || conv.customer.email}`"
+          :aria-current="selectedId === conv.session_id ? 'true' : undefined"
           @click="handleConversationClick(conv.session_id)"
+          @keydown.enter.prevent="handleConversationClick(conv.session_id)"
+          @keydown.space.prevent="handleConversationClick(conv.session_id)"
         >
           <div class="conversation-item-header">
             <h3>{{ conv.customer.full_name || conv.customer.email }}</h3>

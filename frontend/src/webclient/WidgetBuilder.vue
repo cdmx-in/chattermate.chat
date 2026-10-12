@@ -2391,7 +2391,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                 @cancel="disarmNewChat"
             />
 
-            <div v-show="!showEmailGate" class="chat-messages" ref="messagesContainer">
+            <div v-show="!showEmailGate" class="chat-messages" ref="messagesContainer" role="log" aria-label="Messages">
                 <!-- Welcome message on open (cleared after the first send). Quick actions
                      render as a bar above the input — see below. -->
                 <div v-if="showWelcomeBlock" class="cm-welcome-block">
