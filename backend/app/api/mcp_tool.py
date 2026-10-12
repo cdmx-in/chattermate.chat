@@ -37,6 +37,7 @@ from app.models.schemas.mcp_tool import (
     MCPTransportTypeEnum, unmask_secret_values
 )
 from app.tools.mcp_manager import TEST_CONNECT_BUDGET_SECONDS, MCPToolsManager
+from app.core.params import DbIntId
 from sqlalchemy.orm import Session
 from uuid import UUID
 
@@ -125,7 +126,7 @@ async def get_organization_mcp_tools(
 
 @router.get("/{mcp_tool_id}", response_model=MCPToolResponse)
 async def get_mcp_tool(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     current_user: User = Depends(require_permissions("view_all", "manage_agents")),
     db: Session = Depends(get_db)
 ):
@@ -160,7 +161,7 @@ async def get_mcp_tool(
 
 @router.post("/{mcp_tool_id}/test", response_model=MCPToolTestResponse)
 async def test_mcp_tool(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
 ):
@@ -200,7 +201,7 @@ async def test_mcp_tool(
 
 @router.get("/{mcp_tool_id}/references", response_model=MCPToolReferencesResponse)
 async def get_mcp_tool_references(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
 ):
@@ -239,7 +240,7 @@ async def get_mcp_tool_references(
 
 @router.put("/{mcp_tool_id}", response_model=MCPToolResponse)
 async def update_mcp_tool(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     update_data: MCPToolUpdate,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
@@ -320,7 +321,7 @@ async def update_mcp_tool(
 
 @router.delete("/{mcp_tool_id}")
 async def delete_mcp_tool(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
 ):
@@ -423,7 +424,7 @@ async def add_mcp_tool_to_agent(
 
 @router.delete("/agent-association/{mcp_tool_id}/{agent_id}")
 async def remove_mcp_tool_from_agent(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     agent_id: UUID,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)

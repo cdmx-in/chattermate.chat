@@ -58,6 +58,7 @@ from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services.ticket import TicketService
 from app.services.ticket_access import check_ticketing_access
 from app.services.ticket_events import emit_ticket_update
+from app.core.params import PageNumber
 
 logger = get_logger(__name__)
 router = APIRouter()
@@ -155,7 +156,7 @@ async def list_tickets(
     ai_state: Optional[str] = None,
     search: Optional[str] = None,
     sort: str = "updated",
-    page: int = Query(default=1, ge=1),
+    page: PageNumber = 1,
     page_size: int = Query(default=25, ge=1, le=MAX_PAGE_SIZE),
     current_user: User = Depends(view_tickets),
     db: Session = Depends(get_db),

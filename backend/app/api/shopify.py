@@ -49,6 +49,7 @@ from app.models.knowledge_to_agent import KnowledgeToAgent
 from uuid import UUID
 from app.core.cors import update_cors_middleware
 from app.core.application import app
+from app.core.params import MAX_DB_INT
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -272,8 +273,8 @@ async def link_shop_to_org(
 @router.get("/shops", response_model=list[ShopifyShop])
 async def get_shops(
     db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0, le=MAX_DB_INT),
+    limit: int = Query(100, ge=1, le=1000),
     organization: Organization = Depends(get_current_organization),
     current_user: User = Depends(require_permissions("manage_organization"))
 ):

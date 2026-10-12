@@ -37,6 +37,7 @@ from app.models.schemas.people import (
     PeopleListResponse, PeopleStats, PersonDetail, PersonListItem, PersonUpdateRequest,
 )
 from app.models.schemas.crm import CrmCustomerSyncOut, PersonCrmStatus
+from app.core.params import PageNumber
 
 # Enterprise gating — People is part of Lead Management, a Pro-plan feature where
 # the enterprise module is installed; OSS/community deployments are unrestricted.
@@ -81,7 +82,7 @@ def _require_people_access(
 async def list_people(
     stage: Optional[str] = Query(None),
     search: Optional[str] = Query(None),
-    page: int = Query(1, ge=1),
+    page: PageNumber = 1,
     page_size: int = Query(20, ge=1, le=100),
     view: str = Query("identified", pattern="^(identified|anonymous)$"),
     current_user: User = Depends(get_current_user),

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Body, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Response, Request, Body, File, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -48,6 +48,7 @@ from app.repositories.shopify_shop_repository import ShopifyShopRepository
 from app.models.schemas.shopify.shopify_shop import ShopifyShopUpdate
 from app.core.cors import update_cors_middleware
 from app.core.application import app
+from app.core.params import MAX_DB_INT
 # Try to import enterprise modules
 try:
     from app.enterprise.repositories.subscription import SubscriptionRepository
@@ -203,8 +204,8 @@ async def create_user(
 
 @router.get("", response_model=List[UserResponse])
 async def list_users(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0, le=MAX_DB_INT),
+    limit: int = Query(100, ge=1, le=1000),
     current_user: User = Depends(require_permissions("manage_users")),
     db: Session = Depends(get_db)
 ):
