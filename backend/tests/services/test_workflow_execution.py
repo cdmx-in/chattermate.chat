@@ -794,3 +794,24 @@ class TestWaitNodeConfig:
         assert result.success is True
         assert result.message == "Please wait 5 minutes..."
         assert result.next_node_id is None
+
+
+class TestUnknownConditionFormat:
+
+    def test_unparseable_condition_is_false(self, workflow_service):
+        assert workflow_service._evaluate_condition("this is not a condition", {}) is False
+
+    def test_unparseable_condition_takes_the_false_branch(self, workflow_service, sample_workflow):
+        true_target, false_target = uuid4(), uuid4()
+        true_conn = Mock(target_node_id=true_target, label="true", condition="true")
+        false_conn = Mock(target_node_id=false_target, label="false", condition="false")
+
+        node = Mock(spec=WorkflowNode)
+        node.id = uuid4()
+        node.node_type = NodeType.CONDITION
+        node.config = {"condition_expression": "{{missing_field}}"}
+        node.outgoing_connections = [true_conn, false_conn]
+
+        result = workflow_service._execute_condition_node(node, sample_workflow, {"variables": {}})
+
+        assert result.next_node_id == false_target

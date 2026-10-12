@@ -1319,9 +1319,10 @@ class WorkflowExecutionService:
                 logger.debug(f"Contains: '{right_val}' in '{left_val}' -> {result}")
                 return result
             else:
-                # Default to true for unknown conditions
-                logger.warning(f"Unknown condition format: {condition}, defaulting to True")
-                return True
+                # An unreadable condition must not take the "true" branch: that
+                # would silently route every visitor down it.
+                logger.warning(f"Unknown condition format: {condition}, defaulting to False")
+                return False
                 
         except Exception as e:
             logger.error(f"Error evaluating single condition '{condition}': {str(e)}")
