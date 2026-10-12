@@ -15,9 +15,11 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, toRef } from 'vue'
 import { toast } from 'vue-sonner'
 import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+import { WIDGET_INSTALL_GUIDE_URL } from '@/config/docs'
+import { useWidgetInstallStatus } from '@/composables/useWidgetInstallStatus'
 
 const props = defineProps<{
   widgetId: string | null
@@ -32,6 +34,25 @@ const emit = defineEmits<{
 const widgetSnippet = computed(() =>
   props.widgetId ? buildWidgetEmbed(props.widgetId, false) : '',
 )
+
+const { liveOn, blockedOn } = useWidgetInstallStatus(toRef(props, 'widgetId'))
+
+// Built in the browser and handed to the user's own mail app: nothing is sent
+// from our servers, so it can't be used to mail arbitrary addresses.
+const developerMailto = computed(() => {
+  if (!widgetSnippet.value) return ''
+  const body = [
+    'Hi,',
+    '',
+    'Could you add our ChatterMate chat to the website? Paste this just before </body> on every page:',
+    '',
+    widgetSnippet.value,
+    '',
+    `Guide: ${WIDGET_INSTALL_GUIDE_URL}`,
+  ].join('\n')
+  const params = new URLSearchParams({ subject: 'Add our ChatterMate chat to the website', body })
+  return `mailto:?${params.toString().replace(/\+/g, '%20')}`
+})
 
 const copy = async (text: string, label: string) => {
   try {
@@ -53,8 +74,17 @@ const copy = async (text: string, label: string) => {
 
     <div>
       <pre class="code-block">{{ widgetSnippet }}</pre>
-      <button type="button" class="btn-soft" :disabled="!widgetSnippet" @click="copy(widgetSnippet, 'Widget snippet')">Copy snippet</button>
+      <div class="snippet-actions">
+        <button type="button" class="btn-soft" :disabled="!widgetSnippet" @click="copy(widgetSnippet, 'Widget snippet')">Copy snippet</button>
+        <a v-if="developerMailto" class="btn-soft" :href="developerMailto">Email it to my developer</a>
+        <a class="guide-link" :href="WIDGET_INSTALL_GUIDE_URL" target="_blank" rel="noopener">Install guide</a>
+      </div>
     </div>
+
+    <p v-if="liveOn" class="install-status live">✓ Live on {{ liveOn }}</p>
+    <p v-if="blockedOn" class="install-status blocked">
+      Blocked on {{ blockedOn }}: only your signup domain can show the chat.
+    </p>
 
     <div class="step-actions">
       <button type="button" class="btn-ghost" @click="emit('back')">Back</button>
@@ -90,6 +120,31 @@ const copy = async (text: string, label: string) => {
   margin: 0;
 }
 
+.snippet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.guide-link {
+  font-size: 14px;
+  color: var(--accent-ink);
+}
+
+.install-status {
+  margin: 0;
+  font-size: 14px;
+}
+
+.install-status.live {
+  color: var(--accent-ink);
+}
+
+.install-status.blocked {
+  color: var(--c-warn);
+}
+
 .code-block {
   background: var(--bg);
   border: 1px solid var(--o10);
@@ -103,6 +158,11 @@ const copy = async (text: string, label: string) => {
   white-space: pre-wrap;
   word-break: break-all;
   margin: 0 0 12px;
+}
+
+a.btn-soft {
+  text-decoration: none;
+  display: inline-block;
 }
 
 .btn-soft {

@@ -15,10 +15,10 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-
 import type { Agent } from '@/types/agent';
 import type { Widget } from '@/types/widget';
 import { resolveUploadUrl } from '@/config/api'
+import { WIDGET_INSTALL_GUIDE_URL } from '@/config/docs'
 import { resolveOrbStyle } from '@/utils/orb'
 import { useAgentStorage, useSubscriptionStorage } from '@/utils/storage'
 import { onMounted, onUnmounted, ref, computed } from 'vue';
@@ -184,7 +184,7 @@ const copyWidgetCodeToClipboard = async (widget: Widget, requireTokenAuth?: bool
     }
 }
 
-const openWidgetHelp = () => window.open('https://docs.chattermate.chat/features/widget', '_blank')
+const openWidgetHelp = () => window.open(WIDGET_INSTALL_GUIDE_URL, '_blank')
 
 onMounted(async () => {
     await refreshAgents()

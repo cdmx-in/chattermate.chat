@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Header, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, Header, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -32,9 +32,9 @@ from app.database import get_db
 from app.repositories.widget import WidgetRepository
 from app.repositories.agent import AgentRepository
 from app.core.security import create_conversation_token, verify_conversation_token
-from app.services import conversation_token
+from app.services import conversation_token, widget_install
 from app.repositories.customer import CustomerRepository
-from app.models.schemas.widget import WidgetCreate, WidgetResponse
+from app.models.schemas.widget import WidgetCreate, WidgetInstallStatus, WidgetResponse
 from app.core.logger import get_logger
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
@@ -185,6 +185,7 @@ async def get_widget_ui(
     widget_id: str,
     request: Request,
     response: Response,
+    background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),
     source: Optional[str] = Query(None),
     db: Session = Depends(get_db)
@@ -194,6 +195,12 @@ async def get_widget_ui(
     widget = db.query(Widget).filter(Widget.id == widget_id).first()
     if not widget:
         raise HTTPException(status_code=404, detail="Widget not found")
+
+    # Note where the widget is live (or blocked), after the response is sent.
+    origin = request.headers.get("origin")
+    install_kind = widget_install.claim_write(widget, origin)
+    if install_kind:
+        background_tasks.add_task(widget_install.record, widget.id, install_kind, origin)
 
     # Get agent data
     agent_repo = AgentRepository(db)
@@ -652,6 +659,19 @@ def list_widgets(
     """List all widgets for the organization"""
     widget_repo = WidgetRepository(db)
     return widget_repo.get_widgets(current_user.organization_id)
+
+
+@router.get("/{widget_id}/install", response_model=WidgetInstallStatus)
+def get_widget_install_status(
+    widget_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+    """Where this widget is live, and any site it is blocked on."""
+    widget = WidgetRepository(db).get_widget(widget_id)
+    if not widget or widget.organization_id != current_user.organization_id:
+        raise HTTPException(status_code=404, detail="Widget not found")
+    return widget
 
 
 @router.get("/agent/{agent_id}", response_model=List[WidgetResponse])
