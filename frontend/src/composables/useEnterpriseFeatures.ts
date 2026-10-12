@@ -112,6 +112,9 @@ const EmptyComponent = defineComponent({ name: 'EnterpriseEmpty', setup: () => (
 const allEnterpriseModules = import.meta.glob<EnterpriseModule>([
   '/src/modules/enterprise/**/*.vue',
   '/src/modules/enterprise/**/*.ts',
+  // Tests live in the enterprise repo too; they are not part of the app bundle.
+  '!/src/modules/enterprise/e2e/**',
+  '!/src/modules/enterprise/__tests__/**',
 ])
 const asyncComponents = new Map<string, Component>()
 

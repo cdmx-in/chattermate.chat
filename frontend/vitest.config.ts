@@ -16,7 +16,8 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
-    exclude: [...configDefaults.exclude, 'e2e/**'],
+    // Playwright specs (the enterprise suite lives under its module), not vitest.
+    exclude: [...configDefaults.exclude, 'e2e/**', 'src/modules/enterprise/e2e/**'],
     root: fileURLToPath(new URL('./', import.meta.url)),
   },
 })
