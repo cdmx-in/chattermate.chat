@@ -54,6 +54,8 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Analytics | A conversation counts for its agent; the dashboard renders | `specs/analytics/analytics.spec.ts` | P2 | ✅ |
 | CRM | HubSpot install, manual sync and automatic push (worker) with the lead's details | `specs/crm/hubspot.org.spec.ts` | P2 | ✅ |
 | CRM | Pipedrive (its OAuth and API hosts are fixed; needs overridable URLs) | — | N | ⬜ |
+| Integrations | Jira connect from Settings (real browser OAuth round trip) and the AI filing an issue in the agent's project | `specs/integrations/jira.org.spec.ts` | P2 | ✅ |
+| Integrations | Shopify install and link, order status answered from the shop, lookup refused without the customer's email | `specs/integrations/shopify.org.spec.ts` | P2 | ✅ |
 | Visual and cross-browser widget | Widget on Firefox, WebKit, Android, iPhone; screenshots light/dark | `--project=widget-*`, `specs/visual` | P2 | ✅ (nightly) |
 | Accessibility | axe on key screens and the widget, held to a baseline | `specs/a11y` | P2 | ✅ |
 | Performance | Loader/widget size budgets; reply-time budget | `specs/perf` | P2 | ✅ |

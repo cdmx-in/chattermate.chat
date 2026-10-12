@@ -1,6 +1,6 @@
 // A recording stand-in for the third-party APIs the backend calls on its own:
 // Telegram, Meta Graph (WhatsApp / Messenger / Instagram), Slack, LINE, SMS
-// providers, HubSpot. The backend reaches it through the *_API_BASE overrides in
+// providers, HubSpot, Jira, Shopify. The backend reaches it through the *_API_BASE overrides in
 // .env.e2e (see backend/app/core/external_urls.py); each provider is a path prefix.
 //
 // Every request is recorded (method, path, query, headers, body, the answer) and
@@ -25,6 +25,11 @@
 //   Slack oauth.v2.access  team id and bot token derived from the OAuth code
 //   HubSpot oauth/v1/token  an access token derived from the code; introspecting it
 //                           (oauth/v1/access-tokens/<token>) gives a hub id from it
+//   Jira authorize          consent granted at once: redirects to redirect_uri with a
+//                           fresh code and the state; the token is derived from the
+//                           code and accessible-resources gives a site derived from it
+//   Shopify orders          the customer's order with the number they searched for
+//                           (#1001 if none), shipped with a tracking number
 //
 // A call's `action` is the provider's method (Telegram, Slack) or else the last
 // non-empty path segment (`/Account/<id>/Message/` → `Message`).
@@ -85,8 +90,13 @@ class HttpError extends Error {
   }
 }
 
-function send(res: ServerResponse, status: number, body: unknown) {
-  res.writeHead(status, { 'content-type': 'application/json' })
+function send(res: ServerResponse, status: number, body: unknown, headers: Record<string, string> = {}) {
+  if (status === 204) {
+    res.writeHead(status, headers)
+    res.end()
+    return
+  }
+  res.writeHead(status, { 'content-type': 'application/json', ...headers })
   res.end(JSON.stringify(body))
 }
 
@@ -133,6 +143,7 @@ interface Call {
 interface Answer {
   status: number
   body: unknown
+  headers?: Record<string, string>
 }
 
 const ok = (body: unknown): Answer => ({ status: 200, body })
@@ -203,6 +214,12 @@ function answer(call: Call): Answer {
       return ok({ message_uuid: [`e2e-${counter}`], api_id: `e2e-${counter}` })
     case 'hubspot':
       return hubspot(call)
+    case 'jira-auth':
+      return jiraAuth(call)
+    case 'jira':
+      return jira(call)
+    case 'shopify':
+      return shopify(call)
     default:
       return ok({})
   }
@@ -218,6 +235,127 @@ function hubspot({ method, url, body }: Call): Answer {
   if (introspected) return ok({ hub_id: parseInt(digest(introspected[1]).slice(0, 7), 16), hub_domain: 'e2e.hubspot.com', token: introspected[1] })
   if (path.endsWith('/contacts/batch/upsert')) return ok({ status: 'COMPLETE', results: [{ id: String(counter), new: true }] })
   return ok(method === 'GET' ? { results: [] } : { id: String(counter) })
+}
+
+/** Insert-ordered, so the oldest entry goes first once a map outgrows `max`. */
+function remember<V>(map: Map<string, V>, key: string, value: V, max = 1000) {
+  map.set(key, value)
+  if (map.size > max) map.delete(map.keys().next().value as string)
+}
+
+// Jira Cloud: OAuth on jira-auth (auth.atlassian.com), the REST API on jira (api.atlassian.com).
+
+function jiraAuth({ action, url, body }: Call): Answer {
+  if (action === 'authorize') {
+    const redirect = url.searchParams.get('redirect_uri')
+    if (!redirect) return { status: 400, body: { error: 'invalid_request', error_description: 'redirect_uri is required' } }
+    const back = new URL(redirect)
+    back.searchParams.set('code', `jira-code-${counter}`)
+    back.searchParams.set('state', url.searchParams.get('state') ?? '')
+    return { status: 302, body: {}, headers: { location: back.toString() } }
+  }
+  // oauth/token, for both the code grant and a refresh.
+  const seed = String(body?.code ?? body?.refresh_token ?? '')
+  return ok({ access_token: `jira-${digest(seed).slice(0, 16)}`, refresh_token: `jira-refresh-${digest(seed).slice(0, 8)}`, token_type: 'Bearer', expires_in: 3600, scope: 'read:jira-work write:jira-work read:jira-user offline_access' })
+}
+
+const JIRA_PRIORITIES = ['Highest', 'High', 'Medium', 'Low', 'Lowest'].map((name, i) => ({ id: String(i + 1), name }))
+const JIRA_ISSUE_TYPES = [
+  { id: '10001', name: 'Task', subtask: false, description: 'A small, distinct piece of work.' },
+  { id: '10002', name: 'Sub-task', subtask: true, description: 'A part of a task.' },
+]
+const jiraIssues = new Map<string, { key: string; fields: Record<string, unknown> }>()
+
+function jiraNotFound(message: string): Answer {
+  return { status: 404, body: { errorMessages: [message], errors: {} } }
+}
+
+function jira({ method, url, headers, body }: Call): Answer {
+  if (url.pathname.endsWith('/oauth/token/accessible-resources')) {
+    const site = digest(bearer(headers)).slice(0, 12)
+    return ok([{ id: `cloud-${site}`, url: `https://e2e-${site}.atlassian.net`, name: `e2e-${site}`, scopes: ['read:jira-work', 'write:jira-work'], avatarUrl: '' }])
+  }
+  // /jira/ex/jira/<cloud id>/rest/api/3/<resource>
+  const resource = /\/ex\/jira\/[^/]+\/rest\/api\/3\/(.+)$/.exec(url.pathname)?.[1] ?? ''
+  if (resource === 'project') return ok([{ id: '10000', key: 'SUP', name: 'Support' }])
+  if (resource.startsWith('project/')) return ok({ id: '10000', key: resource.slice('project/'.length), name: 'Support', issueTypes: JIRA_ISSUE_TYPES })
+  if (resource === 'priority') return ok(JIRA_PRIORITIES)
+  if (resource === 'issue/createmeta') {
+    return ok({ projects: [{ key: url.searchParams.get('projectKeys'), issuetypes: [{ id: url.searchParams.get('issuetypeIds'), fields: { summary: {}, description: {}, priority: {} } }] }] })
+  }
+  if (resource === 'issue' && method === 'POST') {
+    const fields = (body?.fields ?? {}) as { project?: { key?: string } }
+    const key = `${fields.project?.key ?? 'SUP'}-${counter}`
+    remember(jiraIssues, key, { key, fields: { ...fields, status: { name: 'To Do' } } })
+    return { status: 201, body: { id: String(counter), key, self: `${url.origin}${url.pathname}/${counter}` } }
+  }
+  const issueKey = /^issue\/([^/]+)$/.exec(resource)?.[1]
+  if (issueKey) {
+    const issue = jiraIssues.get(issueKey)
+    if (!issue) return jiraNotFound('Issue does not exist or you do not have permission to see it.')
+    if (method === 'PUT') {
+      Object.assign(issue.fields, (body?.fields ?? {}) as Record<string, unknown>)
+      return { status: 204, body: null }
+    }
+    return ok({ id: issueKey, ...issue })
+  }
+  return jiraNotFound(`e2e fake has no answer for ${method} ${resource}`)
+}
+
+// Shopify Admin API: /shopify/<shop>.myshopify.com/admin/...
+
+interface ShopifyOrder { id: string; number: string; email: string }
+const shopifyOrders = new Map<string, ShopifyOrder>()
+
+function money(amount: string) {
+  return { shopMoney: { amount, currencyCode: 'USD' } }
+}
+
+function shopifyOrderNode(order: ShopifyOrder) {
+  return {
+    id: `gid://shopify/Order/${order.id}`,
+    name: `#${order.number}`,
+    email: order.email,
+    phone: null,
+    createdAt: '2026-10-01T10:00:00Z',
+    processedAt: '2026-10-01T10:00:00Z',
+    updatedAt: '2026-10-02T10:00:00Z',
+    cancelledAt: null,
+    cancelReason: null,
+    displayFinancialStatus: 'PAID',
+    displayFulfillmentStatus: 'FULFILLED',
+    subtotalLineItemsQuantity: 1,
+    currentSubtotalPriceSet: money('40.00'),
+    currentTotalPriceSet: money('45.00'),
+    originalTotalPriceSet: money('45.00'),
+    customer: { id: `gid://shopify/Customer/${order.id}`, firstName: 'E2E', lastName: 'Customer', email: order.email, phone: null },
+    shippingAddress: { address1: '1 Test Street', address2: null, city: 'Testville', provinceCode: 'CA', zip: '94000', country: 'United States', phone: null, name: 'E2E Customer' },
+    fulfillments: [{ status: 'SUCCESS', trackingInfo: [{ company: 'UPS', number: `1ZE2E${order.id}`, url: `https://tracking.e2e.test/1ZE2E${order.id}` }] }],
+    lineItems: { edges: [{ node: { id: `gid://shopify/LineItem/${order.id}`, title: 'E2E Mug', name: 'E2E Mug', quantity: 1, originalUnitPriceSet: money('40.00'), variant: { id: 'gid://shopify/ProductVariant/1', title: 'Default', sku: 'E2E-MUG', image: null } } }] },
+  }
+}
+
+function shopify({ action, body }: Call): Answer {
+  if (action === 'access_token') {
+    const seed = String(body?.subject_token ?? body?.code ?? '')
+    return ok({ access_token: `shpat_${digest(seed).slice(0, 24)}`, scope: 'read_orders,read_products' })
+  }
+  const query = String(body?.query ?? '')
+  const variables = (body?.variables ?? {}) as Record<string, unknown>
+  if (query.includes('query SearchOrders')) {
+    // `email:<email>[ AND name:<number>]`, as the backend builds it.
+    const search = String(variables.query ?? '')
+    const email = /email:(\S+)/.exec(search)?.[1] ?? ''
+    const number = /name:(\S+)/.exec(search)?.[1] ?? '1001'
+    const order = { id: String(parseInt(digest(`${email}#${number}`).slice(0, 8), 16)), number, email }
+    remember(shopifyOrders, order.id, order)
+    return ok({ data: { orders: { edges: email ? [{ node: shopifyOrderNode(order) }] : [], pageInfo: { hasNextPage: false, endCursor: null } } } })
+  }
+  if (query.includes('query GetOrder')) {
+    const order = shopifyOrders.get(String(variables.id ?? '').split('/').at(-1) ?? '')
+    return ok({ data: { order: order ? shopifyOrderNode(order) : null } })
+  }
+  return ok({ errors: [{ message: 'e2e fake has no answer for this query' }] })
 }
 
 /** How each provider says "bad request", so the backend's error handling sees the real shape. */
@@ -313,7 +451,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     response: result.body,
   })
   if (calls.length > MAX_CALLS) calls.splice(0, calls.length - MAX_CALLS)
-  return send(res, result.status, result.body)
+  return send(res, result.status, result.body, result.headers)
 }
 
 const portArg = process.argv.indexOf('--port')
