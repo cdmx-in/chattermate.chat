@@ -7,7 +7,7 @@
 #   stack.sh down          stop what `up` started
 #   stack.sh reset         fresh database (restarts the backend)
 #   stack.sh logs [name]   tail backend | frontend | fake-llm logs
-#   stack.sh backend|frontend|fake-llm|fake-externals|customer-site|mail   run one service in the foreground
+#   stack.sh backend|frontend|fake-llm|fake-externals|fake-mcp|customer-site|mail   run one service in the foreground
 #                                        (what playwright.config.ts webServer calls)
 #
 # Knobs (all optional):
@@ -41,6 +41,7 @@ BACKEND_PORT=18000
 FRONTEND_PORT=15173
 FAKE_LLM_PORT=14010
 FAKE_EXTERNALS_PORT=14020
+FAKE_MCP_PORT=14030
 CUSTOMER_SITE_PORT=13000
 MAIL_SMTP_PORT=11025
 MAIL_WEB_PORT=18025
@@ -225,6 +226,11 @@ run_fake_externals() {
   exec node services/fake-externals/server.ts --port "$FAKE_EXTERNALS_PORT"
 }
 
+run_fake_mcp() {
+  cd "$E2E_DIR"
+  exec node services/fake-mcp/server.ts --port "$FAKE_MCP_PORT"
+}
+
 run_customer_site() {
   cd "$E2E_DIR"
   exec node services/customer-site/server.ts --port "$CUSTOMER_SITE_PORT" \
@@ -277,6 +283,8 @@ cmd_up() {
   wait_for fake-llm "http://127.0.0.1:$FAKE_LLM_PORT/health" 30
   start_bg fake-externals
   wait_for fake-externals "http://127.0.0.1:$FAKE_EXTERNALS_PORT/health" 30
+  start_bg fake-mcp
+  wait_for fake-mcp "http://127.0.0.1:$FAKE_MCP_PORT/health" 30
   start_bg customer-site
   wait_for customer-site "http://127.0.0.1:$CUSTOMER_SITE_PORT/health" 30
   start_bg mail
@@ -288,7 +296,7 @@ cmd_up() {
   log "stack ready — dashboard http://127.0.0.1:$FRONTEND_PORT"
 }
 
-cmd_down() { for s in frontend backend customer-site fake-externals fake-llm mail; do stop_bg "$s"; done; log "stack stopped"; }
+cmd_down() { for s in frontend backend customer-site fake-mcp fake-externals fake-llm mail; do stop_bg "$s"; done; log "stack stopped"; }
 
 wait_port_free() {
   local port="$1" i
@@ -316,6 +324,7 @@ case "${1:-}" in
   frontend) run_frontend ;;
   fake-llm) run_fake_llm ;;
   fake-externals) run_fake_externals ;;
+  fake-mcp) run_fake_mcp ;;
   customer-site) run_customer_site ;;
   mail) run_mail ;;
   *) sed -n '2,21p' "$0"; exit 1 ;;

@@ -18,6 +18,7 @@ test.describe('sessions', () => {
       return context
     }
   })
+
   test.afterEach(async () => {
     await Promise.all(contexts.map((c) => c.dispose()))
     contexts = []

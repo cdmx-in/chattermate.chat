@@ -16,6 +16,8 @@ export const env = {
   fakeLlmUrl: 'http://127.0.0.1:14010',
   /** Recording stand-in for Telegram, Meta, Slack, … (services/fake-externals). */
   fakeExternalsUrl: 'http://127.0.0.1:14020',
+  /** A real MCP server with a lookup_order tool (services/fake-mcp). */
+  fakeMcpUrl: 'http://127.0.0.1:14030',
   /** Mailpit's web/API port (its SMTP side is 127.0.0.1:11025, where .env.e2e sends all mail). */
   mailUrl: 'http://127.0.0.1:18025',
   /** The pretend customer website the widget is embedded on (services/customer-site). */
