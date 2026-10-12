@@ -81,6 +81,7 @@ async function newContext(browser: Browser, options: BrowserContextOptions = {})
     baseURL: env.frontendUrl,
     reducedMotion: 'reduce',
     serviceWorkers: 'block',
+    timezoneId: 'UTC',
     ...options,
   })
   await blockThirdParty(context)

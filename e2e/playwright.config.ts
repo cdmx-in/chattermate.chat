@@ -67,6 +67,8 @@ export default defineConfig({
     // The widget launcher floats forever; with reduced motion (which the loader honours)
     // it holds still, so clicks don't wait on an element that is never "stable".
     contextOptions: { reducedMotion: 'reduce' },
+    // CI browsers run in UTC; pin it so a local run behaves the same.
+    timezoneId: 'UTC',
   },
 
   projects,
