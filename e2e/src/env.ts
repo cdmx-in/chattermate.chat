@@ -8,6 +8,8 @@ const backendUrl = 'http://127.0.0.1:18000'
 
 export const env = {
   edition: (process.env.E2E_EDITION ?? 'oss') as 'oss' | 'enterprise',
+  /** The stack runs with Redis (scripts/stack.sh E2E_REDIS_URL): dedupe and rate limits are live. */
+  redis: Boolean(process.env.E2E_REDIS_URL),
   frontendUrl: 'http://127.0.0.1:15173',
   backendUrl,
   apiUrl: `${backendUrl}/api/v1`,

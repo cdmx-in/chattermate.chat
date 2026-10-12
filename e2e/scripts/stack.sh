@@ -18,6 +18,11 @@
 #                                (default postgresql://$USER@127.0.0.1:5432)
 #   E2E_PYTHON                   python with backend deps (default backend/venv/bin/python, else python3)
 #   E2E_FRONTEND_NODE_MODULES    frontend node_modules to build with (default frontend/node_modules)
+#   E2E_REDIS_URL                run with Redis on (webhook dedupe, rate limits, socket.io fan-out),
+#                                as production does. Use a database of its own, e.g. redis://127.0.0.1:6379/5:
+#                                the stack shares its cors:origins cache with anything else on it
+#   E2E_BACKEND_WORKERS          run the backend under gunicorn with this many workers, as production
+#                                does (scripts/start.sh), instead of a single uvicorn process
 set -euo pipefail
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -70,6 +75,9 @@ backend_env() {
     # Enterprise-only settings (SMTP to Mailpit, default AI key, …) live with the
     # private suite; exported values override the shared .env.e2e.
     if [[ -f "$ENTERPRISE_E2E_DIR/.env.e2e" ]]; then set -a; source "$ENTERPRISE_E2E_DIR/.env.e2e"; set +a; fi
+  fi
+  if [[ -n "${E2E_REDIS_URL:-}" ]]; then
+    export REDIS_ENABLED=true REDIS_URL="$E2E_REDIS_URL"
   fi
 }
 
@@ -126,7 +134,16 @@ run_backend() {
   export WIDGET_ASSETS_DIR; WIDGET_ASSETS_DIR="$(widget_assets_dir)"
   mkdir -p "$WIDGET_ASSETS_DIR"
   cd "$REPO_DIR/backend"
-  log "backend ($EDITION) on http://127.0.0.1:$BACKEND_PORT"
+  if [[ -n "${E2E_BACKEND_WORKERS:-}" ]]; then
+    # The same server and flags as production (scripts/start.sh). On macOS, a
+    # preloaded app that forks trips the Objective-C fork-safety abort.
+    if [[ "$(uname)" == Darwin ]]; then export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES; fi
+    log "backend ($EDITION, gunicorn × $E2E_BACKEND_WORKERS${E2E_REDIS_URL:+, redis}) on http://127.0.0.1:$BACKEND_PORT"
+    exec "$E2E_PYTHON" -m gunicorn app.main:app --workers "$E2E_BACKEND_WORKERS" \
+      --worker-class uvicorn.workers.UvicornWorker --bind "127.0.0.1:$BACKEND_PORT" \
+      --timeout 120 --keep-alive 5 --access-logfile - --error-logfile - --preload
+  fi
+  log "backend ($EDITION${E2E_REDIS_URL:+, redis}) on http://127.0.0.1:$BACKEND_PORT"
   exec "$E2E_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
 }
 

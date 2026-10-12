@@ -14,6 +14,8 @@ if (enterprise && !existsSync(env.enterpriseSpecDir)) {
 
 const signedInAsAdmin = { ...devices['Desktop Chrome'], storageState: storageStatePath('admin') }
 const ORG_WIDE = /\.org\.spec\.ts$/
+// Tests that need a capability the default stack leaves off.
+const needsRedis = env.redis ? undefined : /@redis/
 
 // Both editions share the project names `setup`, `chromium` and `org`, so the same
 // commands run either way. Each edition brings its own setup (OSS: first-run form;
@@ -23,7 +25,7 @@ const projects: PlaywrightTestConfig['projects'] = [
   enterprise
     ? { name: 'setup', testDir: env.enterpriseSpecDir, testMatch: /.*\.setup\.ts/ }
     : { name: 'setup', testMatch: /.*\.setup\.ts/ },
-  { name: 'chromium', dependencies: ['setup'], testIgnore: ORG_WIDE, use: signedInAsAdmin },
+  { name: 'chromium', dependencies: ['setup'], testIgnore: ORG_WIDE, grepInvert: needsRedis, use: signedInAsAdmin },
   // Specs that change org-wide settings (AI config, business hours, …). Run them in a
   // separate invocation with --workers=1 (see package.json "test") so they never race
   // the parallel suite, and are not skipped when an unrelated parallel test fails.

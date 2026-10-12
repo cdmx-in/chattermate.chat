@@ -3,7 +3,7 @@
 // Playwright instance and one place to change shared behaviour.
 export { test, expect, type AgentSettings, type HandoverTeam, type Member, type MemberOptions, type TestAgent } from './fixtures'
 export { ApiClient } from './api/client'
-export { createGroup, createUser } from './api/team'
+export { createGroup, createUser, roleId } from './api/team'
 export { setAlwaysClosed, setAlwaysOpen } from './api/organizations'
 export { chatsWithAgent, type ChatOverview } from './api/chats'
 export { createArticle, enableHelpCenter, setArticleStatus, type Article } from './api/help-center'
