@@ -135,6 +135,11 @@ export class ChatWidget {
     return this.frame.locator('.message.user-message .message-bubble')
   }
 
+  /** The agent's welcome message, shown when the chat opens. */
+  get welcomeMessage(): Locator {
+    return this.frame.locator('.cm-welcome-block .message-bubble')
+  }
+
   get contactForm(): Locator {
     return this.frame.locator('.form-message').filter({ hasText: 'Before we connect you to a teammate' })
   }
