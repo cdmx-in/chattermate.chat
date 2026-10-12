@@ -22,7 +22,7 @@ import { createOrganization, getSetupStatus } from '@/services/organization'
 import { userService } from '@/services/user'
 import { validatePassword, validateDomain, validateEmail, validateName, validateOrgName, type PasswordStrength } from '@/utils/validators'
 // @ts-ignore
-import { listTz, clientTz } from 'timezone-select-js'
+import { defaultTimezone, timezoneOptions } from '@/utils/timezones'
 import type { BusinessHoursDict } from '@/types/organization'
 
 
@@ -53,8 +53,8 @@ onMounted(async () => {
     }
 })
 
-const timezones = ref(listTz())
-const selectedTimezone = ref(clientTz())
+const timezones = ref(timezoneOptions())
+const selectedTimezone = ref(defaultTimezone(timezones.value))
 
 // Add default business hours
 const defaultBusinessHours: BusinessHoursDict = {
