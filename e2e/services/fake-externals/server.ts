@@ -8,7 +8,8 @@
 //   - the smallest success the adapter accepts, by default;
 //   - the provider's own rejection when a payload breaks its published limits
 //     (limits.ts), so a backend that drifts past a real limit fails here too;
-//   - a scripted failure while a fault the test registered matches (PUT /__faults).
+//   - a scripted answer — a failure, or a reply for a provider with no built-in
+//     answers — while one the test registered matches (PUT /__faults).
 // Tests then assert on what the backend sent ("the bot replied on Telegram with …")
 // and read values the provider would have learned, such as the webhook secret
 // Telegram receives in setWebhook.

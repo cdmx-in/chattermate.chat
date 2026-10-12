@@ -1,13 +1,8 @@
 import type { ApiClient } from './client'
+import type { Schemas } from './types'
 
-export interface ChannelAccount {
-  id: string
-  channel_type: string
-  external_account_id: string
-  display_name: string
-  /** For channels the customer points at us (SMS, email): the exact webhook URL. */
-  webhook_url?: string | null
-}
+/** A connected account (ChannelAccountOut); webhook_url is set for SMS and email. */
+export type ChannelAccount = Schemas['ChannelAccountOut']
 
 async function connect(api: ApiClient, path: string, data: Record<string, unknown>): Promise<ChannelAccount> {
   const account = await api.post<ChannelAccount>(path, { data })

@@ -68,6 +68,12 @@ jobs:
         working-directory: e2e
         run: npm run lint && npm run typecheck
 
+      # The API types are generated from the backend's schema; a route or field
+      # change must regenerate them, so the suite's seeding can't silently drift.
+      - name: API types are up to date
+        working-directory: e2e
+        run: ./scripts/api-types.sh --check
+
       - name: Fake LLM contract matches agno
         working-directory: e2e
         run: |

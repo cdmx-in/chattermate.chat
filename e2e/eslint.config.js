@@ -2,7 +2,7 @@ import playwright from 'eslint-plugin-playwright'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['node_modules/', 'test-results/', 'playwright-report/', '.cache/', '.stack/', '.auth/'] },
+  { ignores: ['node_modules/', 'test-results/', 'playwright-report/', '.cache/', '.stack/', '.auth/', 'src/api/schema.d.ts'] },
   ...tseslint.configs.recommended,
   {
     files: ['**/*.ts'],

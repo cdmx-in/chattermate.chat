@@ -1,4 +1,4 @@
-import { test, expect, connectHubSpot, disconnectHubSpot, findPerson, FakeExternals, syncPersonToCrm, unique, AI_REPLY } from '@e2e'
+import { test, expect, connectHubSpot, disconnectHubSpot, findPerson, FakeExternals, runWorkerOnce, syncPersonToCrm, unique, AI_REPLY } from '@e2e'
 
 // One HubSpot connection per org, so this runs in the serial `org` project and
 // disconnects afterwards.
@@ -36,5 +36,28 @@ test.describe('HubSpot', () => {
     expect(upsert.body).toMatchObject({
       inputs: [{ id: email, idProperty: 'email', properties: { email, company: 'Acme Corp', lifecyclestage: 'lead' } }],
     })
+  })
+
+  test('with HubSpot as the agent\'s CRM, a captured lead is pushed on its own @crm @workers', async ({ agent, widget, llm, adminApi, request }) => {
+    await connectHubSpot(adminApi, unique('hs-code'))
+    await adminApi.put(`/agent/${agent.id}/lead-capture`, { data: { enabled: true, require_consent: false, crm_sync_target: 'hubspot' } })
+
+    const { email, name } = widget.customer
+    await llm.script(agent, (s) => s
+      .when(/@/).captureLead('Thanks! Someone from sales will reach out.', { email, name, company: 'Globex' })
+      .otherwise().reply('Happy to set that up — what is your email?'))
+    await widget.embed()
+    await widget.open()
+    await widget.send('I would like a demo')
+    await expect(widget.lastAgentMessage()).toHaveText('Happy to set that up — what is your email?', AI_REPLY)
+    await widget.send(`Sure, I am ${name}, ${email}`)
+    await expect(widget.lastAgentMessage()).toHaveText('Thanks! Someone from sales will reach out.', AI_REPLY)
+
+    // Capture queues a sync job; the CRM worker pushes it on its next pass.
+    const externals = new FakeExternals(request)
+    expect(await externals.calls('hubspot', 'upsert', { contains: email })).toHaveLength(0)
+    await runWorkerOnce('crm-sync')
+    const [upsert] = await externals.calls('hubspot', 'upsert', { contains: email })
+    expect(upsert.body).toMatchObject({ inputs: [{ id: email, properties: { company: 'Globex', lifecyclestage: 'lead' } }] })
   })
 })

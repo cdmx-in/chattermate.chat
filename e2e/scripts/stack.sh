@@ -7,6 +7,9 @@
 #   stack.sh down          stop what `up` started
 #   stack.sh reset         fresh database (restarts the backend)
 #   stack.sh logs [name]   tail backend | frontend | fake-llm logs
+#   stack.sh tick <worker> one pass of a background worker against the stack's DB:
+#                          crm-sync | knowledge | ticket-lifecycle (tests call this
+#                          instead of waiting on always-on workers' poll intervals)
 #   stack.sh backend|frontend|fake-llm|fake-externals|fake-mcp|customer-site|mail   run one service in the foreground
 #                                        (what playwright.config.ts webServer calls)
 #
@@ -246,6 +249,23 @@ run_mail() {
   exec mailpit --smtp "127.0.0.1:$MAIL_SMTP_PORT" --listen "127.0.0.1:$MAIL_WEB_PORT" --disable-version-check --quiet
 }
 
+# One pass of a worker production runs on a loop (docker-compose's knowledge_processor,
+# ticket_investigator, crm_sync), with the backend's exact environment.
+run_tick() {
+  local import
+  case "${1:-}" in
+    crm-sync) import="from app.workers.crm_sync import run_sync_pass as tick" ;;
+    knowledge) import="from app.workers.knowledge_processor import run_processor as tick" ;;
+    # Its main() routes socket emits through Redis and loads extensions first; so must a tick.
+    ticket-lifecycle) import="from app.core.socketio import configure_socketio; configure_socketio(); from app.channels.app_hooks import load_extensions; load_extensions(); from app.workers.ticket_investigator import run_ticket_lifecycle as tick" ;;
+    *) die "unknown worker '${1:-}' (crm-sync | knowledge | ticket-lifecycle)" ;;
+  esac
+  backend_env "$DB_NAME"
+  export WIDGET_ASSETS_DIR; WIDGET_ASSETS_DIR="$(widget_assets_dir)"
+  cd "$REPO_DIR/backend"
+  "$E2E_PYTHON" -c "import asyncio; $import; asyncio.run(tick())"
+}
+
 wait_for() {
   local name="$1" url="$2" timeout="$3" i
   for ((i = 0; i < timeout; i++)); do
@@ -320,6 +340,7 @@ case "${1:-}" in
   down) cmd_down ;;
   reset) cmd_reset ;;
   logs) tail -n 100 -f "$STATE_DIR/${2:-backend}.log" ;;
+  tick) run_tick "${2:-}" ;;
   backend) run_backend ;;
   frontend) run_frontend ;;
   fake-llm) run_fake_llm ;;

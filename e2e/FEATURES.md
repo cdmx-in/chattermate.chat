@@ -12,33 +12,51 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Setup and auth | Wrong password shows an error | `specs/auth/login.spec.ts` | P1 | ✅ |
 | Setup and auth | Sign out | `specs/auth/login.spec.ts` | P1 | ✅ |
 | Setup and auth | Agent role is denied AI settings | `specs/auth/login.spec.ts` | P1 | ✅ |
+| Setup and auth | Sign-out, deactivation and a password change end sessions server-side; a refresh token is not an access token | `specs/auth/sessions.spec.ts` | P1 | ✅ |
+| Team | The Agent role is refused every admin API; sees channels without secrets; assigned-only sees just its group's handovers | `specs/team/permissions.spec.ts` | P1 | ✅ |
 | Widget chat | Customer gets the AI answer | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | History survives a reload | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
-| Widget chat | Agent wraps up → customer rates the chat | `specs/widget/rating.spec.ts` | P1 | ✅ |
-| Human handover | AI hands over → contact form → agent takes over → two-way messages | `specs/handover/handover.spec.ts` | P1 | ✅ |
+| Widget chat | Agent wraps up → customer rates the chat → rating stored against the agent | `specs/widget/rating.spec.ts` | P1 | ✅ |
+| Widget chat | Provider error, provider timeout and malformed reply each end in an apology; the next message works | `specs/widget/ai-failures.spec.ts` | P1 | ✅ |
+| Human handover | AI hands over → contact form → agent takes over → two-way messages → the AI stays silent | `specs/handover/handover.spec.ts` | P1 | ✅ |
+| Human handover | After hours, or nobody online: the chat waits in the team's queue with a reply that says so | `specs/handover/after-hours.org.spec.ts`, `nobody-online.spec.ts` | P1 | ✅ |
+| Human handover | A visitor's attachment reaches the teammate through a signed link | `specs/handover/attachments.spec.ts` | P2 | ✅ |
 | Agents | Create in the dashboard → edit instructions → they reach the model | `specs/agents/agent-editor.spec.ts` | P1 | ✅ |
-| Agents | Toggles (handover, rating, reply buttons); customization | — | P1 | ⬜ |
+| Agents | Toggles (handover, rating, reply buttons) | — | P1 | ⬜ |
 | Knowledge | Add text → answer is grounded in it (real search) | `specs/knowledge/knowledge-answer.spec.ts` | P1 | ✅ |
-| AI config | Rejected key is reported and agents keep working; working key saves | `specs/settings/ai-config.org.spec.ts` | P1 | ✅ |
+| Knowledge | Deleted knowledge stops reaching the model; one agent's never reaches another's | `specs/knowledge/knowledge-lifecycle.spec.ts` | P1 | ✅ |
+| Knowledge | An uploaded PDF is indexed by the knowledge worker and answered from | `specs/knowledge/knowledge-pdf.spec.ts` | P2 | ✅ |
+| AI config | Rejected key is reported (exact message) and agents keep working; the saved key is the one used | `specs/settings/ai-config.org.spec.ts` | P1 | ✅ |
 | Tickets | AI opens a ticket → listed → agent changes status | `specs/tickets/ai-ticket.spec.ts` | P1 | ✅ |
-| Tickets | Resolve/notify; CSAT | — | P1 | ⬜ |
-| Lead capture | Visitor shares details → appears as a Lead in People | `specs/leads/lead-capture.spec.ts` | P1 | ✅ |
+| Tickets | Resolving tells the customer in their chat | `specs/tickets/ai-ticket.spec.ts` | P1 | ✅ |
+| Tickets | Confirmation window runs out → closed → customer rates → CSAT kept (worker, `@redis`) | `specs/tickets/ai-ticket.spec.ts` | P2 | ✅ |
+| Lead capture | Visitor shares details → appears as a Lead in People with their name and company | `specs/leads/lead-capture.spec.ts` | P1 | ✅ |
+| People | Rename, phone, mark customer; international and unique phones; a WhatsApp contact keeps their number | `specs/leads/people.spec.ts` | P2 | ✅ |
 | Team | Admin adds an agent who signs in to the inbox; Agent role sees only Inbox/People/Settings | `specs/team/team.spec.ts` | P1 | ✅ |
-| Team | Groups management; group-scoped inbox | — | P1 | ⬜ |
+| Team | Groups management UI | — | P1 | ⬜ |
 | Widget JS API | open/close/isOpen; hidden launcher + page's own trigger button | `specs/widget/js-api.spec.ts` | P1 | ✅ |
-| Widget placement | displayMode, position, `open({message})`, events | — | P1 | ⬜ |
-| Token-auth widget | Server-issued token → chat works; no token → "Chat Unavailable" | `specs/widget/token-auth.spec.ts` | P1 | ✅ |
+| Widget placement | Left side; sidebar mode; dashboard display settings with no code, site config wins; welcome message and colour | `specs/widget/placement.spec.ts` | P1 | ✅ |
+| Widget placement | `open({message})`, events | — | P1 | ⬜ |
+| Token-auth widget | Server-issued token → chat works; no, tampered, other-widget or expired token is refused | `specs/widget/token-auth.spec.ts` | P1 | ✅ |
 | Reply buttons | Telegram, WhatsApp, Messenger, Instagram: AI offers buttons, a tap gets the next answer | `specs/channels/reply-buttons.spec.ts` | P2 | ✅ |
 | Reply buttons | Widget quick replies; typed-number matching | — | P2 | ⬜ |
-| Help center | Publish an article → public page; search | — | P2 | ⬜ |
-| Workflows | Simple flow runs in the widget | — | P2 | ⬜ |
-| MCP connectors | Add/edit/delete; agent calls a tool | — | P2 | ⬜ |
+| Help center | Only published articles are public; unpublishing takes one down | `specs/help-center/publishing.org.spec.ts` | P2 | ✅ |
+| Help center | Search | — | P2 | ⬜ |
+| Workflows | One-message flow greets once and answers once with no AI call; a question branches on the answer | `specs/workflows/workflows.spec.ts` | P2 | ✅ |
+| MCP connectors | An agent answers from a real MCP server's tool; header secrets masked on read, kept on save | `specs/mcp/connectors.spec.ts` | P2 | ✅ |
 | Channels | Telegram, WhatsApp, Messenger, Instagram, Slack, LINE, SMS (Twilio, Plivo), email: a signed inbound message gets the AI reply on the same channel | `specs/channels/replies.spec.ts` | P2 | ✅ |
 | Channels | WhatsApp customer asks for a person → agent takes over in the inbox → reply goes out on WhatsApp | `specs/channels/handover.spec.ts` | P2 | ✅ |
 | Channels | Email reply is threaded (Re: subject, In-Reply-To) | `specs/channels/email.spec.ts` | P2 | ✅ |
-| Channels | Media messages; delivery failures surfaced; disconnect | — | P2 | ⬜ |
-| Analytics, People | Pages render; counters move | — | P2 | ⬜ |
-| CRM push, URL/PDF knowledge | Worker-backed | — | N | ⬜ |
-| Visual and cross-browser widget | Light/dark; placements; Firefox/WebKit | — | P2 | ⬜ |
+| Channels | Forged webhooks refused on every channel; echoes, receipts and bot messages never reach the model | `specs/channels/forged-webhooks.spec.ts` | P2 | ✅ |
+| Channels | A refused send is marked Not delivered; list and long-title buttons stay within WhatsApp's limits | `specs/channels/delivery.spec.ts` | P2 | ✅ |
+| Channels | A provider's retry gets one answer (`@redis`) | `specs/channels/retries.spec.ts` | P2 | ✅ |
+| Channels | Media messages; disconnect | — | P2 | ⬜ |
+| Analytics | A conversation counts for its agent; the dashboard renders | `specs/analytics/analytics.spec.ts` | P2 | ✅ |
+| CRM | HubSpot install, manual sync and automatic push (worker) with the lead's details | `specs/crm/hubspot.org.spec.ts` | P2 | ✅ |
+| CRM | Pipedrive (its OAuth and API hosts are fixed; needs overridable URLs) | — | N | ⬜ |
+| Visual and cross-browser widget | Widget on Firefox, WebKit, Android, iPhone; screenshots light/dark | `--project=widget-*`, `specs/visual` | P2 | ✅ (nightly) |
+| Accessibility | axe on key screens and the widget, held to a baseline | `specs/a11y` | P2 | ✅ |
+| Performance | Loader/widget size budgets; reply-time budget | `specs/perf` | P2 | ✅ |
+| Security basics | HttpOnly/Secure sign-in cookies; no CORS for other origins | `specs/security` | P2 | ✅ |
 
 Enterprise journeys are tracked privately in `enterprise_frontend/e2e/FEATURES.md`.

@@ -57,6 +57,18 @@ export class FakeExternals {
    * so parallel tests are untouched.
    */
   async fail(fault: Fault): Promise<() => Promise<void>> {
+    return this.script(fault)
+  }
+
+  /**
+   * Answers matching calls with exactly this — for a provider the fake has no
+   * built-in answers for (e.g. one only a private suite uses). Same scoping rules.
+   */
+  async respond(answer: Fault): Promise<() => Promise<void>> {
+    return this.script(answer)
+  }
+
+  private async script(fault: Fault): Promise<() => Promise<void>> {
     const id = unique('fault')
     const response = await this.request.put(`${env.fakeExternalsUrl}/__faults/${id}`, { data: fault })
     if (!response.ok()) throw new Error(`fake-externals rejected the fault: ${await response.text()}`)

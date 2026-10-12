@@ -9,6 +9,8 @@ interface CallOptions {
   params?: Record<string, string | number | boolean>
   /** 0 to read a redirect's Location instead of following it. */
   maxRedirects?: number
+  /** A multipart/form-data body — files as { name, mimeType, buffer }. */
+  multipart?: Record<string, string | { name: string; mimeType: string; buffer: Buffer }>
   /** Extra request headers, e.g. an Origin for a CORS check. */
   headers?: Record<string, string>
 }
@@ -56,6 +58,7 @@ export class ApiClient {
       method,
       data: options.data,
       form: options.form,
+      multipart: options.multipart,
       params: options.params,
       maxRedirects: options.maxRedirects,
       headers: { ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}), ...options.headers },

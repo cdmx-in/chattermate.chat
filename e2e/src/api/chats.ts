@@ -1,14 +1,7 @@
 import type { ApiClient } from './client'
+import type { Schemas } from './types'
 
-export interface ChatOverview {
-  session_id: string
-  status: string
-  agent: { id: string }
-  customer: { id: string; email: string | null; full_name: string | null }
-  group_id: string | null
-  user_id: string | null
-  message_count: number
-}
+export type ChatOverview = Schemas['ChatOverviewResponse']
 
 /** The org's conversations with one AI agent, newest first (admin view). */
 export async function chatsWithAgent(api: ApiClient, agentId: string): Promise<ChatOverview[]> {
