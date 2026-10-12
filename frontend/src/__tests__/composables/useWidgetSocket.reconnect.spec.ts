@@ -90,6 +90,27 @@ describe('widget socket reconnection', () => {
     expect(currentAuth().conversation_token).toBe('token-2')
   })
 
+  it('keeps a live connection for the same visitor instead of rebuilding it', async () => {
+    const widget = await connectWidget()
+    socket.connected = true
+    fire('connect')
+
+    // A takeover re-runs the widget's authorization, which calls connect() again.
+    // Rebuilding the socket here dropped the agent's first reply (found by e2e).
+    await expect(widget.connect()).resolves.toBe(true)
+    expect(socket.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('reconnects when the visitor changes', async () => {
+    const widget = await connectWidget()
+    socket.connected = true
+    fire('connect')
+
+    widget.setToken('token-for-another-visitor')
+    void widget.connect()
+    expect(socket.disconnect).toHaveBeenCalled()
+  })
+
   it('keeps retrying rather than giving up after a handful of attempts', async () => {
     await connectWidget()
     expect(ioOptions.reconnectionAttempts).toBe(Infinity)

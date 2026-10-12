@@ -118,6 +118,8 @@ export function useWidgetSocket() {
     let lastSessionState: SessionState | null = null
     let widgetToken: string | undefined = undefined
     let widgetIdAuth: string | undefined = undefined
+    // The conversation token the live connection authenticated with.
+    let connectedToken: string | undefined = undefined
 
     // Store token for socket authentication.
     // A rotated token has to reach the open connection too: the server keeps the
@@ -178,6 +180,7 @@ export function useWidgetSocket() {
 
         // Set up event listeners
         socket.on('connect', () => {
+            connectedToken = buildAuth().conversation_token
             connectionStatus.value = 'connected'
             clearManualRetry()
             retryCount.value = 0
@@ -354,7 +357,16 @@ export function useWidgetSocket() {
 
     const connect = async (): Promise<boolean> => {
         try {
-           
+            // Keep a live connection that is already this visitor's. Tearing it down
+            // loses whatever the server emits before the new one joins the room - a
+            // human agent's first reply right after a takeover (which re-runs the
+            // widget's authorization) vanished that way, and history is only loaded
+            // once. A different token (another visitor) still gets a new connection.
+            if (socket?.connected && connectedToken && connectedToken === buildAuth().conversation_token) {
+                connectionStatus.value = 'connected'
+                return true
+            }
+
             connectionStatus.value = 'connecting'
             retryCount.value = 0
 
