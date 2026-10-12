@@ -76,6 +76,16 @@ async def test_a_bad_credential_is_logged_and_the_rest_still_register(db, test_o
 
 
 @pytest.mark.asyncio
+async def test_a_database_error_listing_the_bots_is_logged_not_raised(db, test_agent):
+    """The agent is already saved: the save must not fail over it."""
+    with patch.object(telegram_webhooks.AgentChannelConfigRepository, "list_by_agent",
+                      side_effect=RuntimeError("db down")), \
+         patch.object(telegram_webhooks.telegram_api, "set_webhook", AsyncMock()) as set_webhook:
+        await telegram_webhooks.reregister_for_agent(db, test_agent.id)
+    set_webhook.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("buttons_on,channel,registered", [(True, "telegram", True), (False, "telegram", False),
                                                            (True, "whatsapp", False)])
 async def test_a_bot_routed_to_an_agent_with_buttons_on_is_registered(db, test_organization, test_agent,

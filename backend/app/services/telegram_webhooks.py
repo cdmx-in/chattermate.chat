@@ -47,10 +47,15 @@ async def register(account: ChannelAccount, bot_token: str) -> Tuple[bool, str]:
 async def reregister_for_agent(db: Session, agent_id: UUID) -> None:
     """Register again, at once, every active Telegram bot routed to this agent
     — its buttons were just turned on."""
-    accounts = ChannelAccountRepository(db)
-    bots = [account for account in (accounts.get_by_id(config.channel_account_id)
-                                    for config in AgentChannelConfigRepository(db).list_by_agent(agent_id))
-            if _is_active_bot(account)]
+    try:
+        accounts = ChannelAccountRepository(db)
+        bots = [account for account in (accounts.get_by_id(config.channel_account_id)
+                                        for config in AgentChannelConfigRepository(db).list_by_agent(agent_id))
+                if _is_active_bot(account)]
+    except Exception:
+        # The agent is already saved; only the re-registration is lost
+        logger.exception(f"Could not list agent {agent_id}'s Telegram bots to re-register")
+        return
     await asyncio.gather(*(_reregister(account) for account in bots))
 
 

@@ -68,12 +68,14 @@ async def telegram_webhook(
                                 f"{account.id}:{inbound.external_conversation_id}:{telegram_channel.dedupe_id(inbound)}"):
             logger.info(f"Skipping duplicate Telegram message {inbound.external_message_id}")
             continue
+        background_tasks.add_task(process_channel_message, account.id, inbound)
         if inbound.interactive is not None:
             tap_taken = True
-            # Take the keyboard off the message: it has been answered
+            # Take the keyboard off the message: it has been answered. After
+            # the reply — background tasks run in turn, and a slow edit must
+            # not hold it up (a second tap meanwhile is refused as a duplicate).
             background_tasks.add_task(adapter.clear_buttons, account, inbound.external_conversation_id,
                                       inbound.reply_to_message_id)
-        background_tasks.add_task(process_channel_message, account.id, inbound)
 
     # A tap is answered in the reply, so its button stops spinning
     return telegram_channel.callback_answer(payload, taken=tap_taken) or {"ok": True}

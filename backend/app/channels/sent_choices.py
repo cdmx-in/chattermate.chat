@@ -45,13 +45,17 @@ def decode_sent_choices(value) -> Optional[dict]:
     return record if isinstance(record, dict) else None
 
 
-def sent_numbered_choice(record: Optional[dict], number: int) -> Optional[str]:
-    """The full text of the choice shown as `number` (1-based), when the
-    record's choices were shown numbered."""
+def sent_numbered_choice(record: Optional[dict], typed: str) -> Optional[str]:
+    """The full text of the choice the customer typed the number of (1-based),
+    when the record's choices were shown numbered. A number that is itself
+    one of the choices ("2" guests) is that choice, not a position."""
     choices = (record or {}).get("choices") or []
-    if not (record or {}).get("numbered") or not 1 <= number <= len(choices):
+    if not (record or {}).get("numbered") or not typed.isdecimal():
         return None
-    return choices[number - 1].get("text")
+    if any((choice.get("text") or "").strip() == typed for choice in choices):
+        return None
+    number = int(typed)
+    return choices[number - 1].get("text") if 1 <= number <= len(choices) else None
 
 
 def sent_choice_text(record: Optional[dict], choice_id: str) -> Optional[str]:

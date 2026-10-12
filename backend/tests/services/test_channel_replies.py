@@ -132,7 +132,7 @@ def test_a_tap_with_no_text_reads_as_its_title(db, account):
 
 
 @pytest.mark.parametrize("typed,expected", [("2", LONG_OPTION), ("2.", LONG_OPTION), (" 1 ", "Cancel"),
-                                            ("3", "3"), ("0", "0"), ("two", "two")])
+                                            ("3", "3"), ("0", "0"), ("two", "two"), ("²", "²"), ("①", "①")])
 def test_a_typed_number_picks_from_choices_shown_numbered(db, account, typed, expected):
     """Instagram on desktop shows the numbered list, not the buttons."""
     _offer(db, account, _session(db, account), ["Cancel", LONG_OPTION], numbered=True)
@@ -150,6 +150,22 @@ def test_a_typed_number_only_answers_our_latest_reply(db, account):
     ChatRepository(db).create_message({"message": "How many seats?", "message_type": "bot",
                                        "session_id": str(session), "organization_id": str(account.organization_id)})
     assert reply_text(db, account.id, _typed("2")) == "2"
+
+
+def test_a_typed_number_answers_a_persons_question_not_an_older_bot_offer(db, account):
+    """A person took over and asked something after the AI's numbered choices."""
+    session = _session(db, account)
+    _offer(db, account, session, ["Cancel", LONG_OPTION], numbered=True)
+    ChatRepository(db).create_message({"message": "How many units?", "message_type": "agent",
+                                       "session_id": str(session), "organization_id": str(account.organization_id)})
+    assert reply_text(db, account.id, _typed("2")) == "2"
+
+
+@pytest.mark.parametrize("typed", ["2", "3", "4"])
+def test_a_number_that_is_one_of_the_choices_is_that_choice(db, account, typed):
+    """Choices that are numbers themselves (guest counts): never read as positions."""
+    _offer(db, account, _session(db, account), ["2", "3", "4"], numbered=True)
+    assert reply_text(db, account.id, _typed(typed)) == typed
 
 
 def test_plain_text_is_unchanged(db, account):

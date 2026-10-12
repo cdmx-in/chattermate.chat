@@ -228,12 +228,13 @@ class ChatRepository:
             .first()
         )
 
-    def latest_bot_messages_in_channel_chat(self, channel_account_id: UUID, external_conversation_id: str,
-                                            limit: int) -> List[ChatHistory]:
-        """That chat's most recent replies to the customer, newest first."""
+    def latest_replies_in_channel_chat(self, channel_account_id: UUID, external_conversation_id: str,
+                                       limit: int) -> List[ChatHistory]:
+        """That chat's most recent replies to the customer, the AI's or a
+        person's, newest first."""
         return (
             self._in_channel_chat(channel_account_id, external_conversation_id)
-            .filter(ChatHistory.message_type == 'bot')
+            .filter(ChatHistory.message_type.in_(('bot', 'agent')))
             .order_by(ChatHistory.created_at.desc(), ChatHistory.id.desc())
             .limit(limit)
             .all()
@@ -715,4 +716,3 @@ class ChatRepository:
             'updated_at': result.updated_at,
             'messages': messages_list
         }
-

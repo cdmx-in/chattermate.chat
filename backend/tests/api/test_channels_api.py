@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -204,15 +204,18 @@ class TestTelegramWebhook:
                             "reply_markup": {"inline_keyboard": [[{"text": "Yes", "callback_data": "qr_0"}],
                                                                  [{"text": "No", "callback_data": "qr_1"}]]}}}}
         headers = {"X-Telegram-Bot-Api-Secret-Token": telegram_account.webhook_secret}
-        with patch("app.api.webhooks.telegram.process_channel_message", AsyncMock()) as process, \
+        process, clear, order = AsyncMock(), AsyncMock(), MagicMock()
+        order.attach_mock(process, "process")
+        order.attach_mock(clear, "clear")
+        with patch("app.api.webhooks.telegram.process_channel_message", process), \
              patch("app.api.webhooks.telegram.is_duplicate_message", side_effect=[False, True]), \
-             patch("app.channels.telegram.TelegramAdapter.clear_buttons", AsyncMock()) as clear:
+             patch("app.channels.telegram.TelegramAdapter.clear_buttons", clear):
             first = client.post(f"{WEBHOOK_BASE}/telegram/{telegram_account.id}", json=tap("cb-1", "qr_0"),
                                 headers=headers)
             second = client.post(f"{WEBHOOK_BASE}/telegram/{telegram_account.id}", json=tap("cb-2", "qr_1"),
                                  headers=headers)
-        assert process.await_count == 1
-        clear.assert_awaited_once()
+        # The reply goes first: a slow keyboard edit never holds it up
+        assert [name for name, _, _ in order.mock_calls] == ["process", "clear"]
         assert "text" not in first.json() and second.json()["text"] == "This choice is no longer available"
 
 

@@ -78,7 +78,7 @@ def _tapped_choice(db: Session, channel_account_id: UUID, inbound: InboundMessag
             channel_account_id, inbound.external_conversation_id, inbound.reply_to_message_id)
         candidates = [offered] if offered is not None else []
     else:
-        candidates = repo.latest_bot_messages_in_channel_chat(
+        candidates = repo.latest_replies_in_channel_chat(
             channel_account_id, inbound.external_conversation_id, RECENT_OFFERS)
     for offered in candidates:
         text = sent_choice_text(_record(offered), inbound.interactive.id)
@@ -88,14 +88,15 @@ def _tapped_choice(db: Session, channel_account_id: UUID, inbound: InboundMessag
 
 
 def _numbered_choice(db: Session, channel_account_id: UUID, inbound: InboundMessage) -> Optional[str]:
-    """A bare number answering our latest reply, when that reply showed its
-    choices numbered (as text, or alongside buttons a desktop app hides)."""
+    """A bare number answering our latest reply — the AI's or a person's —
+    when that reply showed its choices numbered (as text, or alongside
+    buttons a desktop app hides)."""
     typed = (inbound.text or "").strip().rstrip(".")
-    if inbound.interactive is not None or not typed.isdigit():
+    if inbound.interactive is not None or not typed.isdecimal():
         return None
-    latest = ChatRepository(db).latest_bot_messages_in_channel_chat(
+    latest = ChatRepository(db).latest_replies_in_channel_chat(
         channel_account_id, inbound.external_conversation_id, 1)
-    return sent_numbered_choice(_record(latest[0]), int(typed)) if latest else None
+    return sent_numbered_choice(_record(latest[0]), typed) if latest else None
 
 
 def _record(message) -> Optional[dict]:
