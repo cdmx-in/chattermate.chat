@@ -27,6 +27,7 @@ from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401 — ensures routers are registered on the FastAPI app
 import app.api.crm as crm_api
+import app.core.oauth_state as oauth_state
 from app.core.application import app
 from app.core.auth import get_current_user
 from app.core.config import settings
@@ -91,9 +92,9 @@ def _inprocess_oauth_state(monkeypatch):
     deterministic whether or not a Redis happens to be reachable in the env,
     and open the plan gate so these tests exercise the endpoints, not the
     enterprise plan machinery (present or absent depending on the checkout)."""
-    monkeypatch.setattr(crm_api, "get_redis", lambda: None)
+    monkeypatch.setattr(oauth_state, "get_redis", lambda: None)
     monkeypatch.setattr(crm_api, "check_feature_access", lambda *a, **k: None)
-    crm_api._state_fallback.clear()
+    oauth_state._fallback.clear()
 
 
 class TestInstall:

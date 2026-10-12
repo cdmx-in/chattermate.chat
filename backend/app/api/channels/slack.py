@@ -27,7 +27,7 @@ from app.api.channels.accounts import get_org_account_or_404
 from app.channels.slack import SLACK_API_BASE, slack_api
 from app.core.auth import get_current_organization, require_permissions
 from app.core.config import settings
-from app.core.redis import get_redis
+from app.core.oauth_state import pop_state, store_state
 from app.database import get_db
 from app.models.channels import ChannelAccount, ChannelType
 from app.models.organization import Organization
@@ -46,30 +46,6 @@ logger = get_logger(__name__)
 #   im:history         receive message.im, so the agent answers DMs
 #   users:read         users.info, so a customer shows as a name not a raw U0… id
 OAUTH_SCOPES = "app_mentions:read,chat:write,im:history,users:read"
-STATE_TTL_SECONDS = 60 * 10
-
-# In-process fallback when Redis is disabled (single-worker dev setups)
-_state_fallback: dict = {}
-
-
-def _store_state(state: str, org_id: str) -> None:
-    redis_client = get_redis()
-    if redis_client is not None:
-        redis_client.set(f"slack_oauth_state:{state}", org_id, ex=STATE_TTL_SECONDS)
-    else:
-        _state_fallback[state] = org_id
-
-
-def _pop_state(state: str) -> str | None:
-    redis_client = get_redis()
-    if redis_client is not None:
-        key = f"slack_oauth_state:{state}"
-        org_id = redis_client.get(key)
-        if org_id:
-            redis_client.delete(key)
-        return org_id
-    return _state_fallback.pop(state, None)
-
 
 def _redirect_uri() -> str:
     return f"{settings.BACKEND_URL.rstrip('/')}{settings.API_V1_STR}/channels/slack/callback"
@@ -92,7 +68,7 @@ async def install_slack(
     if not settings.SLACK_CLIENT_ID or not settings.SLACK_CLIENT_SECRET:
         raise HTTPException(status_code=400, detail="Slack app credentials are not configured")
     state = secrets.token_urlsafe(24)
-    _store_state(state, str(organization.id))
+    store_state("slack", state, str(organization.id))
     params = urlencode({
         "client_id": settings.SLACK_CLIENT_ID,
         "scope": OAUTH_SCOPES,
@@ -113,7 +89,7 @@ async def slack_oauth_callback(
     channel account, and bounce back to the settings page."""
     if error:
         return _settings_redirect("failure", "cancelled" if error == "access_denied" else error)
-    org_id = _pop_state(state or "")
+    org_id = pop_state("slack", state or "")
     if org_id is None or not code:
         return _settings_redirect("failure", "invalid_state")
 
