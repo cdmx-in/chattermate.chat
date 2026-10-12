@@ -14,16 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict, Optional
 import asyncio
 from agno.agent import Agent
 from app.agents.guardrail_policy import INJECTION_CLAUSE, visitor_data_block
 from app.utils.agno_utils import create_model
-from app.repositories.agent import AgentRepository
 from app.repositories.customer import CustomerRepository
 from app.core.logger import get_logger
 from app.utils.business_hours import DEFAULT_BUSINESS_HOURS, is_within_business_hours
-from app.database import get_db
 from app.repositories.group import GroupRepository
 from app.tools.jira_toolkit import JiraTools
 from app.models.schemas.chat import ChatResponse
@@ -38,7 +36,7 @@ TRANSFER_TIMEOUT_MESSAGE = "Let me connect you with someone from our team."
 FOLLOW_UP_TIMEOUT_MESSAGE = "Our team will get back to you shortly."
 
 class TransferResponseAgent:
-    def __init__(self, api_key: str, model_name: str, model_type: str = "OPENAI", agent_id: str = None, base_url: str = None):
+    def __init__(self, api_key: str, model_name: str, model_type: str = "OPENAI", agent_name: Optional[str] = None, base_url: str = None):
         model = create_model(
             model_type=model_type,
             api_key=api_key,
@@ -58,14 +56,9 @@ class TransferResponseAgent:
             "If already transferred, do not transfer again. Tell that someone will get back to them shortly."
         ]
 
-        agent_data_repo = AgentRepository(next(get_db()))
-        agent_data = agent_data_repo.get_by_agent_id(
-            agent_id) if agent_id else None
-
-        if agent_data:
+        if agent_name:
             # Prepend the identity instruction to the list instead of replacing all instructions
-            agent_identity = f"You are {agent_data.display_name if agent_data.display_name else agent_data.name}, representing our company."
-            instructions = [agent_identity] + instructions
+            instructions = [f"You are {agent_name}, representing our company."] + instructions
 
         self.agent = Agent(
             name="Transfer Response Agent",
@@ -251,11 +244,17 @@ async def get_agent_availability_response(
 
 
     # Create transfer response agent
+    # The caller already loaded the agent; the name comes from it rather than a
+    # second lookup on a session nobody would close.
+    agent_name = (
+        (agent.get("display_name") or agent.get("name")) if isinstance(agent, dict)
+        else (getattr(agent, "display_name", None) or getattr(agent, "name", None))
+    )
     transfer_agent = TransferResponseAgent(
         api_key=api_key,
         model_name=model_name,
         model_type=model_type,
-        agent_id=agent.get("id") if isinstance(agent, dict) else agent.id,
+        agent_name=agent_name,
         base_url=base_url
     )
 
