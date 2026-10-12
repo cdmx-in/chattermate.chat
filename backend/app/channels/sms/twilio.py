@@ -26,10 +26,11 @@ from app.channels.sms.base import (
 )
 from app.models.channels import ChannelAccount
 from app.core.logger import get_logger
+from app.core.external_urls import external_base
 
 logger = get_logger(__name__)
 
-TWILIO_API_BASE = "https://api.twilio.com/2010-04-01"
+TWILIO_API_BASE = external_base("TWILIO_API_BASE", "https://api.twilio.com/2010-04-01")
 
 
 def _verify_signature(auth_token: str, url: str, param_pairs, signature: str) -> bool:

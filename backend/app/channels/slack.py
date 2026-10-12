@@ -30,10 +30,11 @@ from app.core.config import settings
 from app.core.security import decrypt_api_key
 from app.models.channels import ChannelAccount, ChannelConversation, ChannelType
 from app.core.logger import get_logger
+from app.core.external_urls import external_base
 
 logger = get_logger(__name__)
 
-SLACK_API_BASE = "https://slack.com/api"
+SLACK_API_BASE = external_base("SLACK_API_BASE", "https://slack.com/api")
 REQUEST_TIMEOUT_SECONDS = 15.0
 # Reject webhook timestamps older than this (replay protection, per Slack docs)
 MAX_SIGNATURE_AGE_SECONDS = 60 * 5

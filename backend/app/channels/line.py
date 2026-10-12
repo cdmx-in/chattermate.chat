@@ -28,10 +28,11 @@ from app.channels.registry import register_adapter
 from app.core.security import decrypt_api_key
 from app.models.channels import ChannelAccount, ChannelConversation, ChannelType
 from app.core.logger import get_logger
+from app.core.external_urls import external_base
 
 logger = get_logger(__name__)
 
-LINE_API_BASE = "https://api.line.me/v2/bot"
+LINE_API_BASE = external_base("LINE_API_BASE", "https://api.line.me/v2/bot")
 REQUEST_TIMEOUT_SECONDS = 15.0
 # https://developers.line.biz/en/reference/messaging-api/#text-message
 MAX_MESSAGE_LENGTH = 5000

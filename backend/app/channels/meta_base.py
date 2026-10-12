@@ -28,14 +28,15 @@ from app.core.config import settings
 from app.core.security import decrypt_api_key
 from app.models.channels import ChannelAccount, ChannelConversation
 from app.core.logger import get_logger
+from app.core.external_urls import external_base
 
 logger = get_logger(__name__)
 
-GRAPH_BASE = "https://graph.facebook.com"
+GRAPH_BASE = external_base("META_GRAPH_BASE", "https://graph.facebook.com")
 # Instagram API with Instagram Login speaks to its own host with an Instagram
 # user token; the Facebook graph rejects those. Page-based channels keep using
 # GRAPH_BASE, so every helper below takes the base rather than assuming one.
-GRAPH_INSTAGRAM_BASE = "https://graph.instagram.com"
+GRAPH_INSTAGRAM_BASE = external_base("META_GRAPH_INSTAGRAM_BASE", "https://graph.instagram.com")
 INSTAGRAM_OAUTH_BASE = "https://api.instagram.com"
 REQUEST_TIMEOUT_SECONDS = 15.0
 SEND_RETRIES = 2
