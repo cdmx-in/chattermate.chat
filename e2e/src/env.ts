@@ -16,6 +16,8 @@ export const env = {
   mailUrl: 'http://127.0.0.1:18025',
   /** The pretend customer website the widget is embedded on (services/customer-site). */
   customerSiteUrl: 'http://127.0.0.1:13000',
+  /** The throwaway database stack.sh manages (same E2E_PG_URL convention). */
+  databaseUrl: `${(process.env.E2E_PG_URL ?? `postgresql://${process.env.USER}@127.0.0.1:5432`).replace(/\/$/, '')}/chattermate_e2e`,
   /** The private enterprise suite, present only where the enterprise_frontend submodule is checked out. */
   enterpriseSpecDir: fileURLToPath(new URL('../../frontend/src/modules/enterprise/e2e/', import.meta.url)),
   /** Where the setup project writes the org contract (see src/org-state.ts). */

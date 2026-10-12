@@ -16,6 +16,7 @@
     "stack": "./scripts/stack.sh",
     "fake-llm": "node services/fake-llm/server.ts",
     "lint": "eslint .",
+    "lint:enterprise": "cd ../frontend/src/modules/enterprise/e2e && ../../../../../e2e/node_modules/.bin/eslint .",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

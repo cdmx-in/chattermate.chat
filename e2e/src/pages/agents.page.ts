@@ -41,6 +41,16 @@ export class AgentsPage {
     })
   }
 
+  /** The list's "Create Agent" button; locked (disabled, titled with the limit) at the plan's cap. */
+  get createAgentButton(): Locator {
+    return this.page.getByRole('button', { name: /Create Agent/ })
+  }
+
+  /** Shown instead of the list while the org has no agents. */
+  get onboardingHeading(): Locator {
+    return this.page.getByRole('heading', { name: "Let's get your first agent live" })
+  }
+
   card(name: string): Locator {
     return this.page.getByRole('heading', { name, exact: true })
   }
