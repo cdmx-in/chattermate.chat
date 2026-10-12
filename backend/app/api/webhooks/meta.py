@@ -14,15 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import hmac
+from typing import Callable, Optional
+from uuid import UUID
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.webhooks.common import is_duplicate_message
 from app.channels import get_adapter
-from app.channels.meta_base import verify_meta_signature, verify_challenge
+from app.channels.meta_base import signed_by_any, verify_meta_signature, verify_challenge
+from app.channels.meta_own_app import is_own_app, own_app_secret, same_app_accounts
 from app.core.logger import get_logger
 from app.database import get_db
-from app.models.channels import ChannelType
+from app.models.channels import ChannelAccount, ChannelType
 from app.repositories.channels import ChannelAccountRepository
 from app.services.channel_chat import process_channel_message
 from app.services.channel_status import process_status_event
@@ -78,11 +83,72 @@ async def meta_webhook(
         # Unknown product subscription — ack so Meta doesn't retry forever
         return {"status": "ignored"}
 
-    adapter = get_adapter(channel_type)
     account_repo = ChannelAccountRepository(db)
+    _queue_events(background_tasks, channel_type, payload,
+                  lambda external_id: account_repo.get_by_external_id(channel_type, external_id))
+    return {"status": "ok"}
+
+
+@router.get("/{account_id}")
+async def own_app_webhook_verify(
+    account_id: UUID,
+    hub_mode: str = Query(None, alias="hub.mode"),
+    hub_verify_token: str = Query(None, alias="hub.verify_token"),
+    hub_challenge: str = Query(None, alias="hub.challenge"),
+    db: Session = Depends(get_db),
+):
+    """Verification handshake for an account connected from the customer's
+    own Meta app: its verify token is the account's webhook secret."""
+    account = _own_app_account(db, account_id)
+    if (account is None or hub_mode != "subscribe" or not hub_verify_token
+            or not hmac.compare_digest(hub_verify_token.encode(), account.webhook_secret.encode())):
+        raise HTTPException(status_code=403, detail="Verification failed")
+    return Response(content=hub_challenge or "", media_type="text/plain")
+
+
+@router.post("/{account_id}")
+async def own_app_webhook(
+    account_id: UUID,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    """A webhook for an account connected from the customer's own Meta app.
+
+    Checked with that app's secret only, and only taken for this
+    organization's accounts from the same app: the secret is one the customer
+    chose, so it must never vouch for anyone else's.
+    """
+    raw_body = await request.body()
+    account = _own_app_account(db, account_id)
+    if account is None:
+        # Disconnected (or never ours): ack, so Meta doesn't disable the
+        # customer's webhook over retries — nothing here is acted on
+        return {"status": "ignored"}
+    if not signed_by_any(raw_body, request.headers.get("x-hub-signature-256", ""), (own_app_secret(account),)):
+        logger.warning(f"Meta webhook for account {account_id} rejected: bad signature ({len(raw_body)} bytes)")
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
+    payload = await request.json()
+    if _OBJECT_TO_CHANNEL.get(payload.get("object")) != account.channel_type:
+        return {"status": "ignored"}
+    _queue_events(background_tasks, account.channel_type, payload, same_app_accounts(db, account))
+    return {"status": "ok"}
+
+
+def _own_app_account(db: Session, account_id: UUID) -> Optional[ChannelAccount]:
+    account = ChannelAccountRepository(db).get_by_id(account_id)
+    return account if account is not None and account.is_active and is_own_app(account) else None
+
+
+def _queue_events(background_tasks: BackgroundTasks, channel_type: str, payload: dict,
+                  resolve: Callable[[str], Optional[ChannelAccount]]) -> None:
+    """Hand each message and receipt in a webhook to its account's processor;
+    `resolve` names the account an external id belongs to, if any."""
+    adapter = get_adapter(channel_type)
 
     for inbound in adapter.parse_inbound(payload):
-        account = account_repo.get_by_external_id(channel_type, inbound.external_account_id)
+        account = resolve(inbound.external_account_id)
         if account is None or not account.is_active:
             logger.info(f"No active {channel_type} account for {inbound.external_account_id}")
             continue
@@ -96,8 +162,7 @@ async def meta_webhook(
     accounts = {}
     for event in adapter.parse_status_events(payload):
         if event.external_account_id not in accounts:
-            accounts[event.external_account_id] = account_repo.get_by_external_id(
-                channel_type, event.external_account_id)
+            accounts[event.external_account_id] = resolve(event.external_account_id)
         account = accounts[event.external_account_id]
         if account is None or not account.is_active:
             continue
@@ -106,5 +171,3 @@ async def meta_webhook(
                                               f"{event.status.value}"):
             continue
         background_tasks.add_task(process_status_event, account.id, event)
-
-    return {"status": "ok"}

@@ -336,6 +336,11 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+
+def webhooks_base_url() -> str:
+    """Where platforms reach this backend's inbound webhooks."""
+    return f"{settings.BACKEND_URL.rstrip('/')}{settings.API_V1_STR}/webhooks"
+
 logger = get_logger(__name__)
 
 

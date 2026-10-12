@@ -17,16 +17,15 @@ limitations under the License.
 import asyncio
 import hashlib
 import hmac
-import json
 from datetime import datetime, timezone
-from typing import ClassVar, Optional
+from typing import ClassVar, Iterable, Optional
 
 import httpx
 
 from app.channels.base import ChannelAdapter, SendResult, WindowStatus
 from app.core.config import settings
-from app.core.security import decrypt_api_key
 from app.models.channels import ChannelAccount, ChannelConversation
+from app.repositories.channels.accounts import account_credentials
 from app.core.logger import get_logger
 from app.core.external_urls import external_base
 
@@ -72,10 +71,17 @@ def verify_meta_signature(raw_body: bytes, signature_header: str) -> bool:
     we own instead of trusting unverified content to choose one; an attacker
     still has to forge one of them.
     """
+    return signed_by_any(raw_body, signature_header,
+                         (settings.META_APP_SECRET, settings.INSTAGRAM_APP_SECRET))
+
+
+def signed_by_any(raw_body: bytes, signature_header: str, app_secrets: Iterable[Optional[str]]) -> bool:
+    """Whether X-Hub-Signature-256 was made with one of these app secrets
+    (constant-time; empty secrets are skipped)."""
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     provided = signature_header[len("sha256="):]
-    for app_secret in (settings.META_APP_SECRET, settings.INSTAGRAM_APP_SECRET):
+    for app_secret in app_secrets:
         if not app_secret:
             continue
         expected = hmac.new(app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
@@ -421,7 +427,7 @@ class MetaBaseAdapter(ChannelAdapter):
     @staticmethod
     def access_token(account: ChannelAccount) -> str:
         """Decrypt the account's Graph access token (page or WABA token)."""
-        return json.loads(decrypt_api_key(account.encrypted_credentials))["access_token"]
+        return account_credentials(account)["access_token"]
 
     @staticmethod
     def _timestamp(value) -> Optional[datetime]:

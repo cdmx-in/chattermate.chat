@@ -21,6 +21,7 @@ import channelsService, { type ChannelAccount } from '@/services/channels'
 import { agentService } from '@/services/agent'
 import type { Agent } from '@/types/agent'
 import MessengerPagePicker from './MessengerPagePicker.vue'
+import MetaOwnAppWebhook from './MetaOwnAppWebhook.vue'
 import { useMetaSignup } from '@/composables/useMetaSignup'
 
 const props = defineProps<{
@@ -37,26 +38,34 @@ const emit = defineEmits<{
 // hostname to retype.
 const META_APPS_URL = 'https://developers.facebook.com/apps/'
 
+// Meta signs your own app's webhooks with its secret: without it a number or
+// Page from your app can send but never receives.
+const APP_SECRET_FIELD = {
+  key: 'app_secret', label: 'App secret (optional)', placeholder: 'App settings → Basic', secret: true,
+} as const
+
 // Per-channel copy + credential fields. The intro is split around the link
 // rather than carrying markup, so it renders as escaped text.
 const META_FORMS = {
   whatsapp: {
     title: 'Connect WhatsApp',
     introBefore: 'From your Meta app (',
-    introAfter: ' → WhatsApp → API Setup), copy the phone number ID and a permanent access token.',
+    introAfter: ' → WhatsApp → API Setup), copy the phone number ID and a permanent access token. Add the app secret to receive messages.',
     fields: [
       { key: 'phone_number_id', label: 'Phone number ID', placeholder: '1234567890', secret: false },
       { key: 'access_token', label: 'Access token', placeholder: 'EAAG…', secret: true },
       { key: 'waba_id', label: 'WhatsApp Business Account ID (optional)', placeholder: 'for webhook auto-subscribe', secret: false },
+      APP_SECRET_FIELD,
     ],
   },
   messenger: {
     title: 'Connect Messenger',
     introBefore: 'From your Meta app (',
-    introAfter: ' → Messenger → Settings), generate a page access token for the Facebook Page you want to connect.',
+    introAfter: ' → Messenger → Settings), generate a page access token for the Facebook Page you want to connect. Add the app secret to receive messages.',
     fields: [
       { key: 'page_id', label: 'Facebook Page ID', placeholder: '1234567890', secret: false },
       { key: 'page_access_token', label: 'Page access token', placeholder: 'EAAG…', secret: true },
+      APP_SECRET_FIELD,
     ],
   },
   instagram: {
@@ -215,8 +224,9 @@ const saveAgent = async () => {
       <div v-else class="meta-modal-body">
         <p class="meta-intro">
           <strong>{{ account.display_name }}</strong> is connected.
-          Choose which AI agent answers its messages:
         </p>
+        <MetaOwnAppWebhook v-if="account.webhook_url && account.webhook_verify_token" :account="account" />
+        <p class="meta-intro">Choose which AI agent answers its messages:</p>
         <label class="meta-label" for="meta-agent">AI agent</label>
         <select id="meta-agent" v-model="selectedAgentId" class="meta-input">
           <option v-for="agent in agents" :key="String(agent.id)" :value="String(agent.id)">
