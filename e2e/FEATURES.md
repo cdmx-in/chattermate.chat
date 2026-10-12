@@ -14,16 +14,20 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Setup and auth | Agent role is denied AI settings | `specs/auth/login.spec.ts` | P1 | ✅ |
 | Widget chat | Customer gets the AI answer | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | History survives a reload | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
-| Widget chat | End chat and rating | — | P1 | ⬜ |
+| Widget chat | Agent wraps up → customer rates the chat | `specs/widget/rating.spec.ts` | P1 | ✅ |
 | Human handover | AI hands over → contact form → agent takes over → two-way messages | `specs/handover/handover.spec.ts` | P1 | ✅ |
-| Agents | Create, edit, delete; instructions; toggles; customization | — | P1 | ⬜ |
+| Agents | Create in the dashboard → edit instructions → they reach the model | `specs/agents/agent-editor.spec.ts` | P1 | ✅ |
+| Agents | Toggles (handover, rating, reply buttons); customization | — | P1 | ⬜ |
 | Knowledge | Add text → answer is grounded in it (real search) | `specs/knowledge/knowledge-answer.spec.ts` | P1 | ✅ |
 | AI config | Rejected key is reported and agents keep working; working key saves | `specs/settings/ai-config.org.spec.ts` | P1 | ✅ |
-| Tickets | AI creates a ticket; list/detail; status; CSAT | — | P1 | ⬜ |
-| Lead capture | Widget form → People | — | P1 | ⬜ |
-| Team | Human agents, groups, role permissions, group-scoped inbox | — | P1 | ⬜ |
-| Widget placement and JS API | Placements, open/close/toggle, `open({message})`, launcher, trigger | — | P1 | ⬜ |
-| Token-auth widget | Widget-apps key → token → widget loads; none → 401 | — | P1 | ⬜ |
+| Tickets | AI opens a ticket → listed → agent changes status | `specs/tickets/ai-ticket.spec.ts` | P1 | ✅ |
+| Tickets | Resolve/notify; CSAT | — | P1 | ⬜ |
+| Lead capture | Visitor shares details → appears as a Lead in People | `specs/leads/lead-capture.spec.ts` | P1 | ✅ |
+| Team | Admin adds an agent who signs in to the inbox; Agent role sees only Inbox/People/Settings | `specs/team/team.spec.ts` | P1 | ✅ |
+| Team | Groups management; group-scoped inbox | — | P1 | ⬜ |
+| Widget JS API | open/close/isOpen; hidden launcher + page's own trigger button | `specs/widget/js-api.spec.ts` | P1 | ✅ |
+| Widget placement | displayMode, position, `open({message})`, events | — | P1 | ⬜ |
+| Token-auth widget | Server-issued token → chat works; no token → "Chat Unavailable" | `specs/widget/token-auth.spec.ts` | P1 | ✅ |
 | Reply buttons | Quick replies; typed-number matching | — | P2 | ⬜ |
 | Help center | Publish an article → public page; search | — | P2 | ⬜ |
 | Workflows | Simple flow runs in the widget | — | P2 | ⬜ |

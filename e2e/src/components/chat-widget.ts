@@ -3,6 +3,17 @@ import { env } from '../env'
 import { unique } from '../support/ids'
 import { step } from '../support/step'
 
+export interface EmbedOptions {
+  /** window.chattermateConfig — launcher, displayMode, position, trigger, … */
+  config?: Record<string, unknown>
+  /** window.chattermateToken, for agents that require token auth. */
+  token?: string
+  /** Put a `[data-chattermate-open]` button on the page. */
+  withTriggerButton?: boolean
+}
+
+type JsApiMethod = 'open' | 'close' | 'toggle' | 'isOpen' | 'showLauncher' | 'hideLauncher'
+
 /**
  * The customer's view: a pretend website with the widget embedded exactly the way the
  * dashboard's install snippet does it, and the chat inside the widget's iframe.
@@ -14,7 +25,7 @@ import { step } from '../support/step'
 export class ChatWidget {
   readonly page: Page
   readonly widgetId: string
-  /** Who this visitor says they are when the widget asks (contact form). */
+  /** Who this visitor says they are when the widget asks (contact form, lead details). */
   readonly customer: { name: string; email: string }
   private readonly frame: FrameLocator
 
@@ -27,18 +38,26 @@ export class ChatWidget {
   }
 
   /** Opens the pretend customer site (services/customer-site) with this widget embedded. */
-  async embed(): Promise<void> {
+  async embed(options: EmbedOptions = {}): Promise<void> {
     await step('Customer opens a site with the widget', async () => {
-      await this.page.goto(`${env.customerSiteUrl}/?widget=${encodeURIComponent(this.widgetId)}`)
+      const params = new URLSearchParams({ widget: this.widgetId })
+      if (options.config) params.set('config', JSON.stringify(options.config))
+      if (options.token) params.set('token', options.token)
+      if (options.withTriggerButton) params.set('trigger', '1')
+      await this.page.goto(`${env.customerSiteUrl}/?${params}`)
     })
   }
 
   async open(): Promise<void> {
     await step('Customer opens the chat', async () => {
-      await this.page.locator('#chattermate-button').click()
-      // The placeholder reads "Connecting..." until the socket is up.
-      await expect(this.messageInput).toBeEditable()
+      await this.launcher.click()
+      await this.expectReady()
     })
+  }
+
+  /** The chat is connected and accepting messages ("Connecting..." until the socket is up). */
+  async expectReady(): Promise<void> {
+    await expect(this.messageInput).toBeEditable()
   }
 
   async send(text: string): Promise<void> {
@@ -61,6 +80,44 @@ export class ChatWidget {
     })
   }
 
+  /** Rates the finished chat; `stars` is 1–5. */
+  async rate(stars: number, feedback?: string): Promise<void> {
+    await step(`Customer rates the chat ${stars}/5`, async () => {
+      // The star buttons are plain "★" glyphs with no accessible name.
+      await this.frame.locator('.star-button').nth(stars - 1).click()
+      if (feedback) await this.frame.getByPlaceholder('Please share your feedback (optional)').fill(feedback)
+      await this.frame.getByRole('button', { name: 'Submit Rating' }).click()
+    })
+  }
+
+  /** Calls the public `window.ChatterMate` API the host page uses. */
+  async api(method: JsApiMethod, ...args: unknown[]): Promise<unknown> {
+    await this.page.waitForFunction(() => 'ChatterMate' in window)
+    return this.page.evaluate(
+      ({ method, args }) => (window as unknown as { ChatterMate: Record<string, (...a: unknown[]) => unknown> }).ChatterMate[method](...args),
+      { method, args },
+    )
+  }
+
+  /** The page's own "Chat with us" button (embed with withTriggerButton). */
+  get hostChatButton(): Locator {
+    return this.page.getByRole('button', { name: 'Chat with us' })
+  }
+
+  get launcher(): Locator {
+    return this.page.locator('#chattermate-button')
+  }
+
+  /** The chat panel; it carries `.active` while open. */
+  get panel(): Locator {
+    return this.page.locator('#chattermate-container')
+  }
+
+  /** Shown by the loader instead of a chat when the widget refuses to load (e.g. no token). */
+  get unavailableNotice(): Locator {
+    return this.page.getByText('Chat Unavailable')
+  }
+
   get messageInput(): Locator {
     return this.frame.getByPlaceholder('Type a message...', { exact: true })
   }
@@ -80,5 +137,13 @@ export class ChatWidget {
 
   get contactForm(): Locator {
     return this.frame.locator('.form-message').filter({ hasText: 'Before we connect you to a teammate' })
+  }
+
+  get ratingThanks(): Locator {
+    return this.frame.getByText('Thank you for your rating!')
+  }
+
+  get ratingPrompt(): Locator {
+    return this.frame.getByText(/Rate the chat session/)
   }
 }

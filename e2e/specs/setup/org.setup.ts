@@ -4,6 +4,7 @@ import { login } from '../../src/api/auth'
 import { ApiClient } from '../../src/api/client'
 import { isSetUp, setAlwaysOpen } from '../../src/api/organizations'
 import { ensureGroup, ensureUser } from '../../src/api/team'
+import { disableAutoInvestigation } from '../../src/api/tickets'
 import { env, seedOrg, seedUsers } from '../../src/env'
 import { FakeLlm } from '../../src/fakes/llm'
 import { storageStatePath, writeOrgState } from '../../src/org-state'
@@ -45,6 +46,7 @@ setup('organization, AI and support team are ready', async ({ page, request, bro
   const orgId = session.organizationId
   await useFakeLlm(api)
   await setAlwaysOpen(api, orgId)
+  await disableAutoInvestigation(api)
   const sam = await ensureUser(api, { ...humanAgent, role: 'Agent' })
   const supportGroupId = await ensureGroup(api, seedOrg.supportGroup, [sam])
 

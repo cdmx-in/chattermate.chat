@@ -32,9 +32,25 @@ class RuleBuilder {
     return this.reply(message, { transfer_to_human: true, transfer_reason: 'DIRECT_REQUEST' })
   }
 
-  /** The agent decides to open a ticket. */
+  /** The agent opens a support ticket through the backend's create_ticket tool. */
   createTicket(message: string, summary: string): Script {
-    return this.reply(message, { create_ticket: true, ticket_summary: summary, ticket_description: summary })
+    return this.callTool('create_ticket', { summary, description: summary }).thenReply(message)
+  }
+
+  /** The agent wraps up the chat (the widget then asks for a rating if the agent is set to). */
+  endChat(message: string): Script {
+    return this.reply(message, { end_chat: true, end_chat_reason: 'ISSUE_RESOLVED', request_rating: true })
+  }
+
+  /** The agent records a lead from details the visitor gave (with their consent). */
+  captureLead(message: string, lead: { email: string; name?: string; company?: string }): Script {
+    return this.reply(message, {
+      request_lead_capture: true,
+      lead_email: lead.email,
+      lead_name: lead.name ?? null,
+      lead_company: lead.company ?? null,
+      lead_consent: true,
+    })
   }
 
   /** The model calls a backend tool first, then answers with `reply` once the result is back. */

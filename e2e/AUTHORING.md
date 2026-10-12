@@ -88,15 +88,18 @@ Each test's agent carries a hidden marker. The fake LLM uses it to find that tes
 
 ```ts
 await llm.script(agent, (s) => s
-  .when(/refund/i).handOver('Let me get a teammate.')            // transfer_to_human
-  .when(/broken/i).createTicket('I have logged it.', 'Widget broken')
+  .when(/refund/i).handOver('Let me get a teammate.')                  // transfer_to_human
+  .when(/broken/i).createTicket('I have logged it.', 'Widget broken')    // runs the create_ticket tool
+  .when(/@/).captureLead('Thanks!', { email, name })                     // request_lead_capture + lead_*
+  .when(/thanks/i).endChat('Goodbye!')                                   // end_chat (+ rating if the agent asks)
   .when(/pricing/i).callTool('search_knowledge_base', { query: 'pricing' }).thenReply('Plans start at $10.')
   .otherwise().reply('Happy to help!'))
 
-const sent = await llm.requests(agent)    // what the backend actually sent the model
+const sent = await llm.requests(agent)    // what the backend sent the model: system, lastUser, toolResults…
 ```
 
-- **Reply format:** replies are structured `ChatResponse` JSON, and handover and ticket creation are boolean fields, the same as with a real model. `reply(message, fields)` sets any other field.
+- **Reply format:** replies are structured `ChatResponse` JSON, the same as with a real model. Handover, end-chat and lead capture are fields of that JSON. Tickets are a real tool call (`create_ticket`); the `create_ticket` JSON field alone creates nothing. `reply(message, fields)` sets any other field.
+- **Pace conversations like a person:** wait for the agent's reply before the visitor's next message. Replies to back-to-back messages are produced concurrently and can arrive in either order.
 - **Contract check:** `services/fake-llm/contract_check.py` runs agno itself against the fake. Run it after upgrading agno.
 
 ## Adding a test
