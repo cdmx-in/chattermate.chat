@@ -866,3 +866,8 @@ def test_avatar_route_is_not_shadowed_by_the_user_id_route(client: TestClient, t
     response = client.get("/api/v1/users/me/avatar", follow_redirects=False)
 
     assert response.status_code == 307
+
+
+def test_get_user_with_malformed_id_is_a_client_error(client: TestClient):
+    """A malformed id is the caller's mistake (422), never a server error."""
+    assert client.get("/api/v1/users/0").status_code == 422

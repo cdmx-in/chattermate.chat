@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, Header
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from uuid import UUID
 from datetime import datetime
 from pathlib import Path
 import json
@@ -656,7 +657,7 @@ def list_widgets(
 
 @router.get("/agent/{agent_id}", response_model=List[WidgetResponse])
 def get_widgets_by_agent(
-    agent_id: str,
+    agent_id: UUID,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):

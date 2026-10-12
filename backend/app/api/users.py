@@ -445,7 +445,7 @@ async def get_my_avatar(current_user: User = Depends(get_current_user)):
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
-    user_id: str,
+    user_id: UUID,
     current_user: User = Depends(require_permissions("manage_users")),
     db: Session = Depends(get_db)
 ):
