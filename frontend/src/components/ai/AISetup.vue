@@ -368,7 +368,7 @@ const chatterMateButtonText = computed(() => {
     </div>
     
     <div v-else>
-      <div v-if="error" class="error-message">
+      <div v-if="error" class="error-message" role="alert">
         {{ error }}
       </div>
 

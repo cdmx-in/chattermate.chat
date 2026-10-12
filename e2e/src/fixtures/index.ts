@@ -7,6 +7,7 @@ import { ChatWidget } from '../components/chat-widget'
 import { env } from '../env'
 import { FakeLlm, scenarioMarker, type ScriptedAgent } from '../fakes/llm'
 import { readOrgState, type OrgState } from '../org-state'
+import { AiConfigPage } from '../pages/ai-config.page'
 import { Dashboard } from '../pages/dashboard.page'
 import { InboxPage } from '../pages/inbox.page'
 import { LoginPage } from '../pages/login.page'
@@ -40,6 +41,7 @@ interface TestFixtures {
   inbox: InboxPage
   loginPage: LoginPage
   dashboard: Dashboard
+  aiConfigPage: AiConfigPage
 }
 
 export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
@@ -93,6 +95,7 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
 
   loginPage: async ({ page }, use) => use(new LoginPage(page)),
   dashboard: async ({ page }, use) => use(new Dashboard(page)),
+  aiConfigPage: async ({ page }, use) => use(new AiConfigPage(page)),
 })
 
 export { expect }

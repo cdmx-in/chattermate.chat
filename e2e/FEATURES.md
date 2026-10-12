@@ -17,8 +17,8 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Widget chat | End chat and rating | — | P1 | ⬜ |
 | Human handover | AI hands over → contact form → agent takes over → two-way messages | `specs/handover/handover.spec.ts` | P1 | ✅ |
 | Agents | Create, edit, delete; instructions; toggles; customization | — | P1 | ⬜ |
-| Knowledge | Add text → answer uses it | — | P1 | ⬜ |
-| AI config | Bad key shows an error; switching back works (`*.org.spec`) | — | P1 | ⬜ |
+| Knowledge | Add text → answer is grounded in it (real search) | `specs/knowledge/knowledge-answer.spec.ts` | P1 | ✅ |
+| AI config | Rejected key is reported and agents keep working; working key saves | `specs/settings/ai-config.org.spec.ts` | P1 | ✅ |
 | Tickets | AI creates a ticket; list/detail; status; CSAT | — | P1 | ⬜ |
 | Lead capture | Widget form → People | — | P1 | ⬜ |
 | Team | Human agents, groups, role permissions, group-scoped inbox | — | P1 | ⬜ |

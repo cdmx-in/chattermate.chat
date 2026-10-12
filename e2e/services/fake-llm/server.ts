@@ -14,6 +14,8 @@
 //   GET    /__scenarios/:id/requests   what the backend sent for that scenario
 //   DELETE /__scenarios                forget everything
 //
+// An API key starting with `e2e-invalid` is rejected with 401, like a real provider.
+//
 // Run: node services/fake-llm/server.ts --port 14010   (Node >= 22.18 strips the types)
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
@@ -216,6 +218,10 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   if (req.method === 'GET' && path === '/v1/models') return send(res, 200, { object: 'list', data: [{ id: 'e2e-fake', object: 'model' }] })
 
   if (req.method === 'POST' && path === '/v1/chat/completions') {
+    // Lets a test exercise the "invalid API key" path: the backend live-tests keys.
+    if (/^Bearer e2e-invalid/.test(req.headers.authorization ?? '')) {
+      throw new HttpError(401, 'Incorrect API key provided.')
+    }
     const body = (await readJson(req)) as ChatRequest
     if (body.stream) throw new HttpError(400, 'the e2e fake LLM does not stream — ChatterMate never asks it to; if it does now, extend services/fake-llm')
     if (!Array.isArray(body.messages)) throw new HttpError(400, 'messages[] is required')
