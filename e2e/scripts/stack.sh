@@ -12,8 +12,8 @@
 #
 # Knobs (all optional):
 #   E2E_EDITION=oss|enterprise   oss (default) blocks the enterprise submodule even if present;
-#                                enterprise also starts Mailpit and applies the private suite's
-#                                .env.e2e overlay and seed.sql (frontend/src/modules/enterprise/e2e)
+#                                enterprise also applies the private suite's .env.e2e overlay
+#                                and seed.sql (frontend/src/modules/enterprise/e2e)
 #   E2E_PG_URL                   admin URL of a Postgres with pgvector, no db name
 #                                (default postgresql://$USER@127.0.0.1:5432)
 #   E2E_PYTHON                   python with backend deps (default backend/venv/bin/python, else python3)
@@ -215,8 +215,9 @@ run_customer_site() {
     --loader "http://127.0.0.1:$FRONTEND_PORT/webclient/chattermate.min.js"
 }
 
-# SMTP capture (Mailpit): account emails and notifications land here, readable
-# through its API (src/fakes/mailbox.ts).
+# SMTP capture (Mailpit): everything the backend emails — email-channel replies,
+# account emails, notifications — lands here, readable through its API
+# (src/fakes/mailbox.ts).
 run_mail() {
   command -v mailpit >/dev/null || die "mailpit not found (brew install mailpit, or see https://mailpit.axllent.org)"
   exec mailpit --smtp "127.0.0.1:$MAIL_SMTP_PORT" --listen "127.0.0.1:$MAIL_WEB_PORT" --disable-version-check --quiet
@@ -261,10 +262,8 @@ cmd_up() {
   wait_for fake-externals "http://127.0.0.1:$FAKE_EXTERNALS_PORT/health" 30
   start_bg customer-site
   wait_for customer-site "http://127.0.0.1:$CUSTOMER_SITE_PORT/health" 30
-  if [[ "$EDITION" == enterprise ]]; then
-    start_bg mail
-    wait_for mail "http://127.0.0.1:$MAIL_WEB_PORT/livez" 30
-  fi
+  start_bg mail
+  wait_for mail "http://127.0.0.1:$MAIL_WEB_PORT/livez" 30
   start_bg backend
   wait_for backend "http://127.0.0.1:$BACKEND_PORT/health" 180
   start_bg frontend

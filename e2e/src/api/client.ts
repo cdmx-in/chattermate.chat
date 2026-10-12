@@ -7,6 +7,8 @@ interface CallOptions {
   data?: Body
   form?: Record<string, string>
   params?: Record<string, string | number | boolean>
+  /** 0 to read a redirect's Location instead of following it. */
+  maxRedirects?: number
 }
 
 /**
@@ -40,6 +42,7 @@ export class ApiClient {
       data: options.data,
       form: options.form,
       params: options.params,
+      maxRedirects: options.maxRedirects,
       headers: this.token ? { Authorization: `Bearer ${this.token}` } : undefined,
       failOnStatusCode: false,
     })

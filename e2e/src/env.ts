@@ -14,7 +14,7 @@ export const env = {
   fakeLlmUrl: 'http://127.0.0.1:14010',
   /** Recording stand-in for Telegram, Meta, Slack, … (services/fake-externals). */
   fakeExternalsUrl: 'http://127.0.0.1:14020',
-  /** Mailpit's web/API port (its SMTP side is 127.0.0.1:11025). Enterprise edition only for now. */
+  /** Mailpit's web/API port (its SMTP side is 127.0.0.1:11025, where .env.e2e sends all mail). */
   mailUrl: 'http://127.0.0.1:18025',
   /** The pretend customer website the widget is embedded on (services/customer-site). */
   customerSiteUrl: 'http://127.0.0.1:13000',
@@ -24,6 +24,11 @@ export const env = {
   enterpriseSpecDir: fileURLToPath(new URL('../../frontend/src/modules/enterprise/e2e/', import.meta.url)),
   /** Where the setup project writes the org contract (see src/org-state.ts). */
   authDir: fileURLToPath(new URL('../.auth/', import.meta.url)),
+  /** App-wide webhook signing secrets; the same values are set in .env.e2e. */
+  channelSecrets: {
+    meta: 'e2e-meta-app-secret',
+    slack: 'e2e-slack-signing-secret',
+  },
 } as const
 
 /**

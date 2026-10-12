@@ -465,7 +465,7 @@ cd backend && pytest tests/
 cd frontend && npm run test:unit
 ```
 
-**End-to-end**: Playwright drives the real dashboard, widget and backend against a throwaway database and a fake LLM, all on `127.0.0.1`. Needs a local Postgres with pgvector.
+**End-to-end**: Playwright drives the real dashboard, widget and backend against a throwaway database and a fake LLM, all on `127.0.0.1`. Needs a local Postgres with pgvector and [Mailpit](https://mailpit.axllent.org).
 ```bash
 cd e2e && npm ci && npx playwright install chromium && npm test
 ```

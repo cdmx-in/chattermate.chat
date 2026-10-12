@@ -8,6 +8,16 @@
 // Telegram with …") — and read values the provider would have learned, such as
 // the webhook secret Telegram receives in setWebhook.
 //
+// Where a provider tells the backend who the account is, the answer is derived
+// from what the test sent, so every test gets its own account:
+//   Meta debug_token    profile_id = the page id in a `page:<id>:…` token
+//   Meta GET /<node>    id = <node>
+//   LINE GET /info      userId derived from the channel access token
+//   Slack oauth.v2.access   team id derived from the OAuth code
+//
+// A call's `action` is the provider's method (Telegram, Slack) or else the last
+// non-empty path segment (`/Account/<id>/Message/` → `Message`).
+//
 //   GET    /__calls?provider=telegram&action=sendMessage   recorded calls, oldest first
 //   DELETE /__calls                                         forget everything
 //
@@ -51,9 +61,17 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   }
 }
 
+function digest(value: string): string {
+  return createHash('sha256').update(value).digest('hex')
+}
+
 /** A stable numeric id per bot token, so reconnecting the same token finds the same bot. */
 function botIdFor(token: string): number {
-  return parseInt(createHash('sha256').update(token).digest('hex').slice(0, 10), 16)
+  return parseInt(digest(token).slice(0, 10), 16)
+}
+
+function bearer(req: IncomingMessage): string {
+  return (req.headers.authorization ?? '').replace(/^Bearer\s+/i, '')
 }
 
 // ---------- per-provider answers ----------
@@ -73,14 +91,44 @@ function telegram(action: string, token: string, body: Record<string, unknown> |
   }
 }
 
-function answer(provider: string, action: string, method: string, body: Record<string, unknown> | null): unknown {
+interface Call {
+  provider: string
+  action: string
+  method: string
+  url: URL
+  body: Record<string, unknown> | null
+  req: IncomingMessage
+}
+
+function graph({ action, method, url, body }: Call): unknown {
+  if (method !== 'GET') {
+    return { messages: [{ id: `wamid.e2e.${counter}` }], message_id: `m_e2e_${counter}`, recipient_id: body?.recipient ?? null, success: true }
+  }
+  if (action === 'debug_token') {
+    // Page tokens look like `page:<page id>:<anything>`; the backend checks the token belongs to that page.
+    const pageId = (url.searchParams.get('input_token') ?? '').split(':')[1] ?? ''
+    return { data: { is_valid: Boolean(pageId), type: 'PAGE', profile_id: pageId } }
+  }
+  // GET /<node>?fields=…: the node itself, as Graph answers for a page, number or IG account.
+  return { id: action, name: `E2E ${action}`, username: `e2e_${action}`, data: [] }
+}
+
+function answer(call: Call): unknown {
   counter += 1
+  const { provider, action, method, body, req } = call
   switch (provider) {
     case 'graph':
     case 'graph-instagram':
-      return method === 'GET' ? { id: `e2e_${counter}`, data: [] } : { messages: [{ id: `wamid.e2e.${counter}` }], message_id: `m_e2e_${counter}`, recipient_id: body?.recipient ?? null, success: true }
+      return graph(call)
     case 'slack':
+      if (action === 'oauth.v2.access') {
+        const code = String(body?.code ?? '')
+        return { ok: true, access_token: `xoxb-e2e-${digest(code).slice(0, 12)}`, bot_user_id: 'U0E2EBOT', team: { id: `T${digest(code).slice(0, 10).toUpperCase()}`, name: 'E2E Workspace' } }
+      }
       return { ok: true, ts: `${Math.floor(Date.now() / 1000)}.${String(counter).padStart(6, '0')}`, channel: body?.channel ?? 'C0E2E' }
+    case 'line':
+      // GET /info is the bot's own profile; everything else (push, webhook endpoint) answers an empty 200.
+      return action === 'info' ? { userId: `U${digest(bearer(req)).slice(0, 32)}`, displayName: 'E2E LINE Bot', basicId: '@e2e' } : {}
     case 'twilio':
       return { sid: `SM${String(counter).padStart(32, '0')}`, status: 'queued' }
     case 'plivo':
@@ -88,8 +136,6 @@ function answer(provider: string, action: string, method: string, body: Record<s
     case 'hubspot':
       return method === 'GET' ? { results: [] } : { id: String(counter) }
     default:
-      // line and anything new: an empty 200 is what LINE's push API returns.
-      void action
       return {}
   }
 }
@@ -112,7 +158,8 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   const [, provider = '', ...rest] = path.split('/')
   const body = (await readBody(req)) as Record<string, unknown> | null
 
-  let action = rest.at(-1) ?? ''
+  // The last non-empty segment, so Plivo's `/Account/<id>/Message/` records as `Message`.
+  let action = rest.filter(Boolean).at(-1) ?? ''
   let response: unknown
   if (provider === 'telegram') {
     // /telegram/bot<token>/<method>
@@ -120,7 +167,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     action = rest[1] ?? ''
     response = telegram(action, token, body)
   } else {
-    response = answer(provider, action, req.method ?? 'GET', body)
+    response = answer({ provider, action, method: req.method ?? 'GET', url, body, req })
   }
 
   calls.push({ at: new Date().toISOString(), provider, action, method: req.method ?? 'GET', path, body, response })

@@ -77,7 +77,7 @@ export default defineConfig({
     service('fake-llm', `${env.fakeLlmUrl}/health`, 30_000),
     service('fake-externals', `${env.fakeExternalsUrl}/health`, 30_000),
     service('customer-site', `${env.customerSiteUrl}/health`, 30_000),
-    ...(enterprise ? [service('mail', `${env.mailUrl}/livez`, 30_000)] : []),
+    service('mail', `${env.mailUrl}/livez`, 30_000),
     service('backend', `${env.backendUrl}/health`, 180_000),
     service('frontend', `${env.frontendUrl}/config.js`, 300_000),
   ],

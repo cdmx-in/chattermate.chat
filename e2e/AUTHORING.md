@@ -30,6 +30,7 @@ npm run report                # last HTML report (traces on failure)
 - A local Postgres with pgvector, reachable as `postgresql://$USER@127.0.0.1:5432` (set `E2E_PG_URL` otherwise). The user must be able to create databases and the `vector` extension.
 - `backend/venv` with the backend requirements (or set `E2E_PYTHON`).
 - `frontend/node_modules` (or set `E2E_FRONTEND_NODE_MODULES`).
+- [`mailpit`](https://mailpit.axllent.org) on the PATH (`brew install mailpit`). Every email the backend sends lands there.
 
 **Faster reruns:** keep the stack up between runs.
 
@@ -50,7 +51,7 @@ npx playwright test           # reuses the running stack
 
 | | OSS (default) | Enterprise (`E2E_EDITION=enterprise`) |
 |---|---|---|
-| Needs | nothing extra | the enterprise submodules checked out, and `mailpit` |
+| Needs | nothing extra | the enterprise submodules checked out |
 | Backend | `NO_ENTERPRISE=1`, so community behaviour | enterprise module loaded, its migrations and seed applied |
 | Setup project | the first-run form (`specs/setup/`) | real signup with the emailed code (private suite) |
 | Specs | `specs/**` | the private suite's specs (`--project=enterprise`) **and** every OSS spec (`--project=chromium`) |
@@ -117,13 +118,16 @@ const sent = await llm.requests(agent)    // what the backend sent the model: sy
 
 ## Channels and other third parties
 
-The backend's calls to Telegram, Meta, Slack, LINE, SMS providers and HubSpot go to `services/fake-externals`. The `*_API_BASE` overrides in `.env.e2e` point them there; production never sets these.
+The backend's calls to Telegram, Meta, Slack, LINE, SMS providers and HubSpot go to `services/fake-externals`. The `*_API_BASE` overrides in `.env.e2e` point them there; production never sets these. Email replies go over SMTP into Mailpit.
 
 The fake records every call and answers like the provider would. Use `FakeExternals` to assert on what the backend sent.
 
-`src/channels/telegram.ts` shows the pattern for a channel:
-- deliver updates to the backend's webhook the way the provider does, including the secret the backend handed the provider
-- read the bot's replies back from the fake
+Each channel has a driver in `src/channels/` that plays the provider:
+- `connect` gives every test its own account, routed to the test agent
+- `chatWith(name).send(text)` delivers a signed webhook exactly as the provider would (the signing secrets match `.env.e2e`)
+- `replies()` reads what the business sent back, from the fake or Mailpit; channels with buttons also have `buttons()` and `tap()`
+
+A journey that should hold on every channel loops over `channels` (or `channelsWithButtons`) from `src/channels/index.ts`. Adding a channel is one driver file and one line in that registry.
 
 ## Adding a test
 
@@ -135,7 +139,7 @@ The fake records every call and answers like the provider would. Use `FakeExtern
 
 ## Troubleshooting
 
-- **Port already in use:** something else is on 18000, 15173, 14010 or 13000. Run `./scripts/stack.sh down`, or stop the other process.
+- **Port already in use:** something else is on 18000, 15173, 14010, 14020, 13000, 11025 or 18025. Run `./scripts/stack.sh down`, or stop the other process.
 - **The launcher never becomes clickable:** the suite runs with `reducedMotion: 'reduce'` because the launcher floats forever otherwise. Keep that option on any new browser context.
 - **The customer site must be a real server:** Chrome blocks a page faked with `page.route` from calling `127.0.0.1` (Local Network Access).
 - **The widget and loader are built from source on every run.** `stack.sh` builds the widget bundle and `chattermate.min.js` from the current `frontend/src/webclient` into `e2e/.cache`, and points the backend at that build with `WIDGET_ASSETS_DIR`. The committed production bundles in `backend/assets` and `frontend/public/webclient` are never rebuilt or modified.

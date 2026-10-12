@@ -5,6 +5,7 @@ import { env } from '../env'
 import { FakeExternals } from '../fakes/externals'
 import { unique } from '../support/ids'
 import { step } from '../support/step'
+import type { ChannelConnector } from './chat'
 
 interface SetWebhookBody {
   url: string
@@ -130,3 +131,6 @@ export class TelegramChat {
     })
   }
 }
+
+/** Telegram as a ChannelConnector, for journeys that loop over every channel. */
+export const telegram: ChannelConnector<TelegramChat> = ({ api, request, agentId }) => TelegramBot.connect(api, request, agentId)
