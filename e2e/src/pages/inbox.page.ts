@@ -53,6 +53,11 @@ export class InboxPage {
     return this.page.locator('.message.agent').filter({ hasText: text })
   }
 
+  /** The download link for an attachment in the open chat. */
+  attachment(filename: string): Locator {
+    return this.page.locator('.attachment-link').filter({ hasText: filename })
+  }
+
   /** The bubble also shows a relative time ("less than a minute ago"), so assert with toContainText. */
   lastCustomerMessage(): Locator {
     return this.page.locator('.message.user .message-bubble').last()

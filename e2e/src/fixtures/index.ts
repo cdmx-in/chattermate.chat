@@ -32,6 +32,8 @@ export interface AgentSettings {
   leadCapture: boolean
   /** Quick replies become tappable buttons on messaging channels. */
   channelQuickReplies: boolean
+  /** Visitors may attach files once a person has joined the chat. */
+  allowAttachments: boolean
 }
 
 const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -40,6 +42,7 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   requireTokenAuth: false,
   leadCapture: false,
   channelQuickReplies: false,
+  allowAttachments: false,
 }
 
 export type TestAgent = ScriptedAgent & { id: string }
@@ -197,6 +200,7 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
         askForRating: settings.askForRating,
         requireTokenAuth: settings.requireTokenAuth,
         channelQuickReplies: settings.channelQuickReplies,
+        allowAttachments: settings.allowAttachments,
       })
       if (settings.leadCapture) await enableLeadCapture(adminApi, created.id)
       return { ...created, scenarioId }
