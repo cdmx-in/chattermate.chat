@@ -15,6 +15,9 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
+import { useId } from 'vue'
+
+const titleId = useId()
 const props = withDefaults(defineProps<{
   title?: string
   // When true, clicking the backdrop does NOT close the modal — for forms
@@ -33,12 +36,12 @@ const onOverlayClick = () => {
 
 <template>
   <div class="modal-overlay" @click="onOverlayClick">
-    <div class="modal-content" @click.stop>
+    <div class="modal-content" role="dialog" aria-modal="true" :aria-labelledby="titleId" @click.stop>
       <div class="modal-header">
-        <h3 class="modal-title">
+        <h3 :id="titleId" class="modal-title">
           <slot name="title"></slot>
         </h3>
-        <button class="close-button" @click="$emit('close')">&times;</button>
+        <button class="close-button" aria-label="Close" @click="$emit('close')">&times;</button>
       </div>
       <div class="modal-body">
         <slot name="content"></slot>
