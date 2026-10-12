@@ -6,6 +6,7 @@ import { createPinia, setActivePinia } from 'pinia'
 const getOrganization = vi.fn()
 const getKnowledgeByAgent = vi.fn()
 const getKnowledgeByOrganization = vi.fn()
+const addUrls = vi.fn()
 
 vi.mock('@/services/organization', () => ({
   organizationService: { getOrganization: (id: string) => getOrganization(id) }
@@ -14,6 +15,7 @@ vi.mock('@/services/knowledge', () => ({
   knowledgeService: {
     getKnowledgeByAgent: (...a: unknown[]) => getKnowledgeByAgent(...a),
     getKnowledgeByOrganization: (...a: unknown[]) => getKnowledgeByOrganization(...a),
+    addUrls: (...a: unknown[]) => addUrls(...a),
     getAgentQueueItems: vi.fn().mockResolvedValue({ queue_items: [] })
   }
 }))
@@ -40,6 +42,7 @@ describe('StepTeach - signup domain prefill', () => {
     vi.clearAllMocks()
     getKnowledgeByAgent.mockResolvedValue(empty)
     getKnowledgeByOrganization.mockResolvedValue(empty)
+    addUrls.mockResolvedValue({ message: 'Queued' })
   })
 
   it('stages the signup domain as a source, scheme added', async () => {

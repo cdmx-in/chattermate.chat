@@ -15,8 +15,9 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useKnowledgeManagement } from '@/composables/useKnowledgeManagement'
+import { useStagedSourceCap } from '@/composables/useStagedSourceCap'
 import { organizationService } from '@/services/organization'
 
 const props = defineProps<{
@@ -40,6 +41,8 @@ const {
   urlFormError,
   successMessage,
   knowledgeItems,
+  orgTotalCount,
+  queueItems,
   handleUrlAdd,
   removeUrl,
   triggerFileInput,
@@ -52,6 +55,26 @@ const {
 
 const advancing = ref(false)
 
+// Crawls still running count against the cap too (the server counts them).
+const crawling = computed(() =>
+  queueItems.value.filter((q) => q.status === 'pending' || q.status === 'processing'),
+)
+const inUseCount = computed(() => orgTotalCount.value + crawling.value.length)
+const { fitToCap } = useStagedSourceCap(inUseCount, urls, files)
+
+// Stage the typed URL, then keep the batch within the plan's source cap —
+// over the cap the server rejects the whole batch, signup domain included.
+const stageUrl = () => {
+  const before = urls.value.length
+  handleUrlAdd()
+  if (urls.value.length > before) urlFormError.value = fitToCap('urls')
+}
+
+const stageFiles = (event: Event) => {
+  handleFileSelect(event)
+  if (files.value.length) urlFormError.value = fitToCap('files', files.value.length)
+}
+
 // The site they gave us at signup is almost always what they want indexed
 // first. Stage it as a source rather than dropping it in the input: sitting in
 // the box it looks like a placeholder, and nothing says you must press
@@ -61,12 +84,16 @@ const prefillFromOrgDomain = async () => {
   try {
     const org = await organizationService.getOrganization(props.organizationId)
     if (!org?.domain || newUrl.value || urls.value.length) return
+    const domainUrl = withScheme(org.domain)
+    // Back from a later step, the domain may still be crawling — not indexed
+    // yet, so the dedupe below can't see it. Staging it again would re-send it.
+    if (crawling.value.some((q) => q.source === domainUrl)) return
 
-    newUrl.value = withScheme(org.domain)
-    handleUrlAdd()
-    // handleUrlAdd flags an already-indexed URL. That is worth saying when a
-    // person typed it, but not for a suggestion they never asked for — it just
-    // ends up not staged.
+    newUrl.value = domainUrl
+    stageUrl()
+    // stageUrl flags an already-indexed URL, or a plan with no room left. That
+    // is worth saying when a person typed it, but not for a suggestion they
+    // never asked for — it just ends up not staged.
     urlFormError.value = null
   } catch {
     // A missing prefill is not worth blocking or alarming the user over.
@@ -79,23 +106,23 @@ onMounted(async () => {
   await prefillFromOrgDomain()
 })
 
-// Flush any staged URLs/files, then advance. Ingestion runs async in the
-// background — we don't block the wizard on it.
+// Flush any staged URLs/files, then advance — but only when the server took
+// them. Ingestion itself runs async in the background; we don't wait on it.
 const handleContinue = async () => {
   // A URL sitting in the box (the prefill, or one they typed without pressing
   // "Add") reads as accepted. Stage it rather than silently dropping it.
   if (newUrl.value.trim()) {
-    handleUrlAdd()
+    stageUrl()
     if (urlFormError.value) return
   }
 
   advancing.value = true
   try {
-    if (urls.value.length) await handleUrlUpload()
-    if (files.value.length) await handleFileUpload()
+    const accepted = (await handleUrlUpload()) && (await handleFileUpload())
+    // On failure the error is on screen and the batch stays staged to fix.
+    if (accepted) emit('next')
   } finally {
     advancing.value = false
-    emit('next')
   }
 }
 
@@ -118,12 +145,12 @@ const removeFile = (index: number) => {
         type="text"
         placeholder="https://docs.yourcompany.com"
         :disabled="isUploading"
-        @keydown.enter.prevent="handleUrlAdd"
+        @keydown.enter.prevent="stageUrl"
       />
       <!-- "Add" acts on the URL beside it, so the object is implicit. The PDF
            button opens a file picker, a different action — it keeps its own
            label rather than reading as a second way to add the same thing. -->
-      <button type="button" class="btn-soft" :disabled="isUploading" @click="handleUrlAdd">Add</button>
+      <button type="button" class="btn-soft" :disabled="isUploading" @click="stageUrl">Add</button>
       <button type="button" class="btn-soft" :disabled="isUploading" @click="triggerFileInput">Upload PDF</button>
       <input
         ref="fileInput"
@@ -131,7 +158,7 @@ const removeFile = (index: number) => {
         accept="application/pdf"
         multiple
         hidden
-        @change="handleFileSelect"
+        @change="stageFiles"
       />
     </div>
 
