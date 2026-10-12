@@ -655,3 +655,51 @@ async def test_execute_graphql_async_success(shopify_service, mock_shop, mock_gr
             
             # Assert
             assert result["success"] is True
+
+
+@pytest.fixture
+def reload_shopify_urls(monkeypatch):
+    """Re-import shopify_urls under a given SHOPIFY_ADMIN_BASE, then restore it."""
+    import importlib
+    import app.services.shopify_urls as shopify_urls
+
+    def _reload(admin_base=None):
+        monkeypatch.delenv("SHOPIFY_ADMIN_BASE", raising=False)
+        if admin_base is not None:
+            monkeypatch.setenv("SHOPIFY_ADMIN_BASE", admin_base)
+        return importlib.reload(shopify_urls)
+
+    yield _reload
+    monkeypatch.delenv("SHOPIFY_ADMIN_BASE", raising=False)
+    importlib.reload(shopify_urls)
+
+
+def test_shopify_urls_default_to_the_shop_host(reload_shopify_urls):
+    urls = reload_shopify_urls()
+    assert urls.shopify_admin_url("test-shop.myshopify.com", "graphql.json") == (
+        "https://test-shop.myshopify.com/admin/api/2025-10/graphql.json"
+    )
+    assert urls.shopify_oauth_token_url("test-shop.myshopify.com") == (
+        "https://test-shop.myshopify.com/admin/oauth/access_token"
+    )
+
+
+def test_shopify_admin_base_puts_the_shop_under_the_override(reload_shopify_urls):
+    urls = reload_shopify_urls("http://127.0.0.1:14020/shopify/")
+    assert urls.shopify_admin_url("test-shop.myshopify.com", "products/1.json") == (
+        "http://127.0.0.1:14020/shopify/test-shop.myshopify.com/admin/api/2025-10/products/1.json"
+    )
+    assert urls.shopify_oauth_token_url("test-shop.myshopify.com") == (
+        "http://127.0.0.1:14020/shopify/test-shop.myshopify.com/admin/oauth/access_token"
+    )
+
+
+def test_execute_graphql_posts_to_the_admin_url(mock_db, mock_shop, monkeypatch):
+    monkeypatch.setattr("app.services.shopify_urls.SHOPIFY_ADMIN_BASE", "http://fake/shopify")
+    response = MagicMock(status_code=200)
+    response.json.return_value = {"data": {}}
+    with patch("requests.post", return_value=response) as mock_post:
+        ShopifyService(mock_db)._execute_graphql(mock_shop, "{ shop { name } }")
+    assert mock_post.call_args.args[0] == (
+        "http://fake/shopify/test-shop.myshopify.com/admin/api/2025-10/graphql.json"
+    )
