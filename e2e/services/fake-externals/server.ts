@@ -182,7 +182,7 @@ function graph({ action, method, url, headers, body }: Call): Answer {
 }
 
 function answer(call: Call): Answer {
-  const { provider, action, method, headers, body } = call
+  const { provider, action, headers, body } = call
   switch (provider) {
     case 'graph':
     case 'graph-instagram':
