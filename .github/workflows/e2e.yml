@@ -18,7 +18,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-${{ github.ref }}
+  # Per event, so a push to main never cancels the nightly run (same ref) or vice versa.
+  group: e2e-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -104,6 +105,8 @@ jobs:
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:14010/health >/dev/null 2>&1 && break; sleep 1; done
           (cd ../backend && PYTHONPATH=. ENV_FILE=../e2e/.env.e2e NO_ENTERPRISE=1 python ../e2e/services/fake-llm/contract_check.py)
           kill $FAKE_PID
+          # Let it release port 14010 before Playwright starts its own fake-llm.
+          wait $FAKE_PID || true
 
       - name: Run e2e (parallel)
         working-directory: e2e

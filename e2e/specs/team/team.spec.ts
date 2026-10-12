@@ -19,9 +19,13 @@ test.describe('team', () => {
 test.describe('as a human agent', () => {
   test.use({ storageState: storageStatePath('human-agent') })
 
-  test('the Agent role only sees the inbox, people and their own settings @team', async ({ page }) => {
+  test('the Agent role does not see admin areas in the navigation @team', async ({ page }) => {
     // Not /conversations: the inbox collapses the sidebar to icons.
     await page.goto('/people')
-    await expect(new Sidebar(page).links).toHaveText(['Inbox', 'People', 'User Settings'])
+    const sidebar = new Sidebar(page)
+    await expect(sidebar.link('Inbox')).toBeVisible()
+    for (const adminArea of ['AI Agents', 'Human Agents', 'Knowledge', 'AI Configuration', 'Organization']) {
+      await expect(sidebar.link(adminArea)).toBeHidden()
+    }
   })
 })

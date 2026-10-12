@@ -13,4 +13,8 @@ export class Sidebar {
     // Scoped to the desktop sidebar; the mobile bottom bar repeats some links.
     return this.page.locator('nav.sidebar-nav').getByRole('link')
   }
+
+  link(name: string): Locator {
+    return this.links.filter({ hasText: new RegExp(`^\\s*${name}\\s*$`) })
+  }
 }
