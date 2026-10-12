@@ -15,8 +15,10 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { onMounted, ref, defineAsyncComponent } from 'vue'
+import { onMounted, ref, watch, defineAsyncComponent } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
+import { useSetupProgress } from '@/composables/useSetupProgress'
 
 // Lazy load components
 const AISetup = defineAsyncComponent(() => import('../ai/AISetup.vue'))
@@ -84,15 +86,23 @@ const handleFullscreenToggle = (isFullscreen: boolean) => {
     emit('toggle-fullscreen', isFullscreen)
 }
 
+const route = useRoute()
+const router = useRouter()
+const setupProgress = useSetupProgress()
+
+// The "Finish setup" bar links here with ?setup=1: reopen the wizard, which
+// resumes at the step the server says the org has reached.
+const openWizardIfAsked = () => {
+    if (route.query.setup === '1' && permissionChecks.canManageAgents()) showOnboarding.value = true
+}
+watch(() => route.query.setup, openWizardIfAsked)
+
 // Onboarding wizard finished (or was skipped) — refresh and show the list
 const handleOnboardingComplete = async () => {
     showOnboarding.value = false
     isAISetupMode.value = false
-    await fetchAgents()
-}
-
-const resumeOnboarding = () => {
-    showOnboarding.value = true
+    if (route.query.setup) router.replace({ query: { ...route.query, setup: undefined } })
+    await Promise.all([fetchAgents(), setupProgress.load(true)])
 }
 
 onMounted(async () => {
@@ -102,6 +112,7 @@ onMounted(async () => {
         const agents = await agentService.getOrganizationAgents()
         if (agents.length > 0) {
             agentStorage.setAgents(agents)
+            openWizardIfAsked()
             return
         }
         // No agents yet → show the guided first-agent setup, but only to
@@ -141,7 +152,7 @@ onMounted(async () => {
                 </div>
             </div>
             <div v-else class="agent-list-container">
-                <AgentList @toggle-fullscreen="handleFullscreenToggle" @resume-onboarding="resumeOnboarding" />
+                <AgentList @toggle-fullscreen="handleFullscreenToggle" />
             </div>
         </div>
     </div>

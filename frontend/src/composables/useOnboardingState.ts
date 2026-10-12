@@ -18,7 +18,6 @@ import { userService } from '@/services/user'
 
 const STORAGE_KEY = 'chattermate:onboarding:v1'
 
-export const ONBOARDING_STEPS = ['Create', 'Teach', 'Test', 'Launch'] as const
 export type OnboardingStepIndex = 0 | 1 | 2 | 3
 
 export interface OnboardingRecord {
@@ -65,7 +64,8 @@ function writeStore(store: OnboardingStore) {
 /**
  * localStorage-backed onboarding state machine, keyed by organization id.
  * Completion is backend-authoritative (org has >=1 agent); this only tracks
- * skip + in-run progress + the resume-checklist banner ticks.
+ * skip + in-run progress; how far the org really got comes from the server
+ * (useSetupProgress).
  */
 export function useOnboardingState() {
   const resolveOrgId = (orgId?: string): string => {
@@ -122,19 +122,7 @@ export function useOnboardingState() {
     })
   }
 
-  /**
-   * An unfinished run worth surfacing in the resume banner: an agent was
-   * created but the user hasn't seen every step, and they didn't skip.
-   */
-  const hasUnfinishedRun = (orgId?: string): boolean => {
-    const record = get(orgId)
-    if (record.skipped) return false
-    if (!record.agentId) return false
-    return record.completedSteps.length < ONBOARDING_STEPS.length
-  }
-
   return {
-    ONBOARDING_STEPS,
     get,
     patch,
     isSkipped,
@@ -142,7 +130,6 @@ export function useOnboardingState() {
     clear,
     goTo,
     completeStep,
-    hasUnfinishedRun,
     resolveOrgId,
   }
 }

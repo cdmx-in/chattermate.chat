@@ -30,8 +30,7 @@ import { widgetService } from '@/services/widget'
 import { toast } from 'vue-sonner'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import { buildWidgetEmbed } from '@/utils/widgetEmbed'
-import { useOnboardingState } from '@/composables/useOnboardingState'
-import { userService } from '@/services/user'
+import SetupProgressBar from '@/components/onboarding/SetupProgressBar.vue'
 
 const agentStorage = useAgentStorage()
 const subscriptionStorage = useSubscriptionStorage()
@@ -83,23 +82,7 @@ const copyAgentId = async (agent: Agent) => {
 
 const emit = defineEmits<{
     (e: 'toggle-fullscreen', isFullscreen: boolean): void
-    (e: 'resume-onboarding'): void
 }>()
-
-// Resume-setup banner: shown when an onboarding run was started but not finished
-const onboarding = useOnboardingState()
-const orgId = userService.getCurrentUser()?.organization_id || ''
-const onboardingRecord = ref(onboarding.get(orgId))
-const showResumeBanner = computed(() => onboarding.hasUnfinishedRun(orgId) && !bannerDismissed.value)
-const bannerDismissed = ref(false)
-const checklistProgress = computed(() => {
-    const done = onboardingRecord.value.completedSteps.length
-    return `${done} of ${onboarding.ONBOARDING_STEPS.length} steps complete`
-})
-const dismissBanner = () => {
-    onboarding.skip(orgId)
-    bannerDismissed.value = true
-}
 
 const currentSubscription = computed(() => subscriptionStorage.getCurrentSubscription())
 const planLimits = computed(() => subscriptionStorage.getPlanLimits())
@@ -277,22 +260,7 @@ const getOrbStyle = (agent: Agent): Record<string, string> => {
     <div class="agent-list" :class="{ 'showing-detail': selectedAgent }">
         <div v-if="!selectedAgent">
             <!-- Resume guided setup -->
-            <div v-if="showResumeBanner" class="resume-banner">
-                <div class="resume-info">
-                    <div class="resume-text">
-                        <div class="resume-title">Finish setting up your agent</div>
-                        <div class="resume-progress">{{ checklistProgress }}</div>
-                    </div>
-                </div>
-                <div class="resume-actions">
-                    <button class="resume-dismiss" @click="dismissBanner">Dismiss</button>
-                    <button
-                        v-if="canManageAgents"
-                        class="resume-cta"
-                        @click="emit('resume-onboarding')"
-                    >Resume setup →</button>
-                </div>
-            </div>
+            <SetupProgressBar />
 
             <!-- Search + Create header -->
             <div class="list-header">
@@ -537,69 +505,6 @@ const getOrbStyle = (agent: Agent): Record<string, string> => {
 }
 
 /* ─── Resume guided setup banner ────────────────────────────────── */
-.resume-banner {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    background: linear-gradient(120deg, var(--purple-bg), var(--accent-bg-08));
-    border: 1px solid var(--o10);
-    border-radius: 16px;
-    padding: 18px 22px;
-    margin-bottom: 22px;
-}
-
-.resume-title {
-    font-family: var(--font-display);
-    font-weight: 600;
-    font-size: 16px;
-    color: var(--text);
-}
-
-.resume-progress {
-    font-size: 13.5px;
-    color: var(--muted);
-    margin-top: 2px;
-}
-
-.resume-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-shrink: 0;
-}
-
-.resume-dismiss {
-    background: none;
-    border: none;
-    color: var(--muted2);
-    font-size: 13.5px;
-    font-family: var(--font-sans);
-    cursor: pointer;
-    transition: var(--transition-fast);
-}
-
-.resume-dismiss:hover {
-    color: var(--text3);
-}
-
-.resume-cta {
-    padding: 10px 18px;
-    background: var(--accent-solid);
-    color: var(--on-accent-solid);
-    border: none;
-    border-radius: var(--radius-btn);
-    font-size: 14px;
-    font-weight: 600;
-    font-family: var(--font-sans);
-    cursor: pointer;
-    transition: var(--transition-fast);
-}
-
-.resume-cta:hover {
-    filter: brightness(1.05);
-}
-
 /* ─── Header: search + create ───────────────────────────────────── */
 .list-header {
     display: flex;

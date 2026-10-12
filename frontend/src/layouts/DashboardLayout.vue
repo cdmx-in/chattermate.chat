@@ -26,6 +26,7 @@ import userAvatar from '@/assets/user.svg'
 import notificationIcon from '@/assets/notification.svg'
 import NotificationList from '@/components/notifications/NotificationList.vue'
 import EnablePushPrompt from '@/components/notifications/EnablePushPrompt.vue'
+import SetupProgressBar from '@/components/onboarding/SetupProgressBar.vue'
 import { userService } from '@/services/user'
 import { permissionChecks } from '@/utils/permissions'
 import type { User } from '@/types/user'
@@ -368,6 +369,8 @@ const openNotificationsFromSheet = () => {
 
             <!-- Main Content Area -->
             <main class="content">
+                <!-- The agents page shows its own copy, beside the wizard and list -->
+                <SetupProgressBar v-if="route.name !== 'ai-agents'" />
                 <slot></slot>
             </main>
 
