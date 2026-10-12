@@ -8,7 +8,7 @@ test.describe('knowledge base', () => {
     await addKnowledgeText(adminApi, {
       orgId: org.orgId,
       agentId: agent.id,
-      title: 'Returns policy',
+      title: `Returns policy ${policyCode}`, // titles are unique per org
       content: `Returns policy: items can be returned within 45 days of delivery. Quote reference ${policyCode} on the return label.`,
     })
     await llm.script(agent, (s) => s
