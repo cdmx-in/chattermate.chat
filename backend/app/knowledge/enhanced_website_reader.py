@@ -44,6 +44,7 @@ from app.knowledge.crawl_scope import (
     url_scheme,
 )
 from app.knowledge.domains import registrable_domain
+from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause
 from app.knowledge.main_content import select_main_node
 
 # Initialize logger for this module
@@ -81,67 +82,6 @@ def _is_name_resolution_error(error: Exception) -> bool:
 
     text = str(error).lower()
     return 'nodename' in text or 'name or service not known' in text or 'name resolution' in text
-
-
-class FailureCause:
-    """Why a page could not be read.
-
-    The old message offered the user three guesses at once ("empty, require
-    JavaScript, or be unreachable"). _process_url always knew which one it hit;
-    it just threw the answer away. These are the classes it can tell apart, and
-    each one gets its own advice in FAILURE_ADVICE below.
-    """
-
-    DNS = "dns"
-    CONNECTION = "connection"
-    TIMEOUT = "timeout"
-    BOT_BLOCKED = "bot_blocked"
-    HTTP_ERROR = "http_error"
-    EMPTY_RESPONSE = "empty_response"
-    THIN_CONTENT = "thin_content"
-    BLOCKED_HOST = "blocked_host"
-    # Something that is not a transport failure at all — most likely a bug of
-    # ours. Deliberately has no entry in FAILURE_ADVICE: we fall back to the
-    # generic message rather than blame the customer's site for our crash.
-    UNKNOWN = "unknown"
-
-
-# What to tell the user for each cause. Phrased as "what happened, what to do".
-FAILURE_ADVICE = {
-    FailureCause.DNS: (
-        "{url} could not be found — the domain does not resolve. Check the "
-        "address for typos, and that the site is published."
-    ),
-    FailureCause.CONNECTION: (
-        "{url} refused the connection. Check the site is online and reachable "
-        "from the public internet."
-    ),
-    FailureCause.TIMEOUT: (
-        "{url} did not respond in time. If the site is usually slow, try again "
-        "in a few minutes, or add a specific page instead of the whole site."
-    ),
-    FailureCause.BOT_BLOCKED: (
-        "{url} blocked automated crawling (its bot protection served a "
-        "challenge page). Add the content manually with Upload PDF or Paste text."
-    ),
-    FailureCause.HTTP_ERROR: (
-        "{url} returned an error response. Check the URL is correct and "
-        "publicly accessible, then try again."
-    ),
-    FailureCause.EMPTY_RESPONSE: (
-        "{url} returned an empty page. Check the site is published and serving "
-        "content at that address."
-    ),
-    FailureCause.THIN_CONTENT: (
-        "{url} loaded but had almost no readable text — it may render its "
-        "content with JavaScript we could not run. Add the content manually "
-        "with Upload PDF or Paste text."
-    ),
-    FailureCause.BLOCKED_HOST: (
-        "{url} redirected to an address we are not allowed to fetch. Use the "
-        "site's public URL."
-    ),
-}
 
 
 @dataclass
