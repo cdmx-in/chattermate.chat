@@ -1,9 +1,12 @@
 import { test, expect, AI_REPLY } from '@e2e'
 
+interface People { items: Array<{ id: string; email: string | null }> }
+interface Person { name: string | null; email: string | null; lead_stage: string; captured_attributes: Record<string, unknown> }
+
 test.describe('lead capture', () => {
   test.use({ agentSettings: { leadCapture: true } })
 
-  test('a visitor who shares their details shows up as a lead @leads', async ({ agent, widget, llm, peoplePage }) => {
+  test('a visitor who shares their details shows up as a lead, with what they told us @leads', async ({ agent, widget, llm, peoplePage, adminApi }) => {
     const { email, name } = widget.customer
     await llm.script(agent, (s) => s
       .when(/@/).captureLead('Thanks! Someone from sales will reach out.', { email, name, company: 'Acme Corp' })
@@ -21,5 +24,10 @@ test.describe('lead capture', () => {
     await peoplePage.goto()
     await peoplePage.findLead(email)
     await expect(peoplePage.person(email)).toContainText('Lead')
+
+    const [found] = (await adminApi.get<People>('/people', { params: { search: email } })).items
+    const person = await adminApi.get<Person>(`/people/${found.id}`)
+    expect(person).toMatchObject({ name, email })
+    expect(JSON.stringify(person.captured_attributes)).toContain('Acme Corp')
   })
 })

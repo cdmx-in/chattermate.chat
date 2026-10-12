@@ -48,6 +48,11 @@ export class InboxPage {
     return this.page.getByPlaceholder('Type a message or paste a screenshot')
   }
 
+  /** The agent's message bubble that carries `text`. */
+  agentMessage(text: string): Locator {
+    return this.page.locator('.message.agent').filter({ hasText: text })
+  }
+
   /** The bubble also shows a relative time ("less than a minute ago"), so assert with toContainText. */
   lastCustomerMessage(): Locator {
     return this.page.locator('.message.user .message-bubble').last()

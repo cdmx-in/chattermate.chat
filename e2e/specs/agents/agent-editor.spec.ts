@@ -1,9 +1,9 @@
 import { test, expect, scenarioMarker, unique, AI_REPLY } from '@e2e'
 
 test.describe('agent editor', () => {
-  // `agent` makes sure the org has one, so /ai-agents shows the list, not onboarding.
-  test('an agent created and edited in the dashboard answers with its new instructions @agents', async ({ agent, agentsPage, makeWidget, llm }) => {
-    expect(agent.id).toBeTruthy()
+  test('an agent created and edited in the dashboard answers with its new instructions @agents', async ({ makeAgent, agentsPage, makeWidget, llm }) => {
+    // With at least one agent, /ai-agents shows the list rather than onboarding.
+    await makeAgent()
     const scenarioId = unique('scn')
     const name = `UI Agent ${scenarioId}`
 
