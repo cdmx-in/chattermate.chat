@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.api.channels.accounts import get_org_account_or_404, to_account_out
-from app.channels.email import validate_smtp
+from app.channels.email import inbox_smtp_config, validate_smtp
 from app.core.auth import get_current_organization, require_permissions
 from app.core.config import settings
 from app.database import get_db
@@ -59,12 +59,7 @@ async def _build_smtp_credentials(request: EmailConnectRequest, address: str) ->
         "from_email": (request.from_email or address).lower(),
         "smtp_use_ssl": request.smtp_use_ssl,
     }
-    cfg = {
-        "host": creds["smtp_host"], "port": int(creds["smtp_port"]),
-        "username": creds["smtp_username"], "password": creds["smtp_password"],
-        "from_email": creds["from_email"],
-        "use_ssl": int(creds["smtp_port"]) == 465 if request.smtp_use_ssl is None else bool(request.smtp_use_ssl),
-    }
+    cfg = inbox_smtp_config(creds, address)
     try:
         await asyncio.to_thread(validate_smtp, cfg)
     except smtplib.SMTPAuthenticationError as e:

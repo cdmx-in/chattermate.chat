@@ -30,7 +30,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
-from app.channels.email import _open_smtp, smtp_config
+from app.channels.email import open_smtp, platform_smtp_config, smtp_config
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.models.channels import ChannelAccount
@@ -138,18 +138,11 @@ def _resolve_smtp(db: Session, organization_id) -> dict:
     account = _org_email_account(db, organization_id)
     if account is not None:
         return smtp_config(account)
-    return {
-        "host": settings.SMTP_SERVER,
-        "port": int(settings.SMTP_PORT),
-        "username": settings.SMTP_USERNAME,
-        "password": settings.SMTP_PASSWORD,
-        "from_email": settings.FROM_EMAIL,
-        "use_ssl": int(settings.SMTP_PORT) == 465,
-    }
+    return platform_smtp_config(settings.FROM_EMAIL)
 
 
 def _smtp_send(cfg: dict, message: EmailMessage) -> None:
-    with _open_smtp(cfg) as smtp:
+    with open_smtp(cfg) as smtp:
         smtp.send_message(message)
 
 

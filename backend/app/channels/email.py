@@ -49,28 +49,45 @@ def smtp_config(account: ChannelAccount) -> dict:
             logger.error(f"Failed to read email SMTP credentials for {account.id}: {e}")
 
     if creds.get("smtp_host"):
-        port = int(creds.get("smtp_port") or 587)
-        use_ssl = creds.get("smtp_use_ssl")
-        return {
-            "host": creds["smtp_host"],
-            "port": port,
-            "username": creds.get("smtp_username"),
-            "password": creds.get("smtp_password"),
-            "from_email": creds.get("from_email") or account.external_account_id,
-            "use_ssl": port == 465 if use_ssl is None else bool(use_ssl),
-        }
-    # Platform fallback
+        return inbox_smtp_config(creds, account.external_account_id)
+    return platform_smtp_config(account.external_account_id)
+
+
+def _use_ssl(port: int, use_ssl: Optional[bool]) -> bool:
+    """Implicit TLS on 465 unless set explicitly; other ports try STARTTLS."""
+    return port == 465 if use_ssl is None else bool(use_ssl)
+
+
+def inbox_smtp_config(creds: dict, default_from: str) -> dict:
+    """Connection settings from an inbox's own SMTP credentials (the stored
+    smtp_* keys). `default_from` is used when no from_email was given."""
+    port = int(creds.get("smtp_port") or 587)
     return {
-        "host": settings.SMTP_SERVER,
-        "port": int(settings.SMTP_PORT),
-        "username": settings.SMTP_USERNAME,
-        "password": settings.SMTP_PASSWORD,
-        "from_email": account.external_account_id,
-        "use_ssl": int(settings.SMTP_PORT) == 465,
+        "host": creds["smtp_host"],
+        "port": port,
+        "username": creds.get("smtp_username"),
+        "password": creds.get("smtp_password"),
+        "from_email": creds.get("from_email") or default_from,
+        "use_ssl": _use_ssl(port, creds.get("smtp_use_ssl")),
     }
 
 
-def _open_smtp(cfg: dict) -> smtplib.SMTP:
+def platform_smtp_config(from_email: str) -> dict:
+    """Connection settings for the platform's own account (SMTP_* settings).
+    With no SMTP_USERNAME there is no login, which is how local Mailpit runs."""
+    port = int(settings.SMTP_PORT)
+    return {
+        "host": settings.SMTP_SERVER,
+        "port": port,
+        "username": settings.SMTP_USERNAME,
+        "password": settings.SMTP_PASSWORD,
+        "from_email": from_email,
+        "use_ssl": _use_ssl(port, None),
+    }
+
+
+def open_smtp(cfg: dict) -> smtplib.SMTP:
+    """A connected, logged-in SMTP session for a config built above."""
     if cfg["use_ssl"]:
         smtp = smtplib.SMTP_SSL(cfg["host"], cfg["port"], timeout=SMTP_TIMEOUT_SECONDS)
     else:
@@ -87,7 +104,7 @@ def _open_smtp(cfg: dict) -> smtplib.SMTP:
 def validate_smtp(cfg: dict) -> None:
     """Open + authenticate an SMTP connection to verify per-inbox credentials.
     Raises on failure. Runs in a worker thread (smtplib is blocking)."""
-    with _open_smtp(cfg) as smtp:
+    with open_smtp(cfg) as smtp:
         smtp.noop()
 
 SMTP_TIMEOUT_SECONDS = 20.0
@@ -203,7 +220,7 @@ class EmailAdapter(ChannelAdapter):
 
     @staticmethod
     def _smtp_send(cfg: dict, message: EmailMessage) -> None:
-        with _open_smtp(cfg) as smtp:
+        with open_smtp(cfg) as smtp:
             smtp.send_message(message)
 
     @staticmethod
