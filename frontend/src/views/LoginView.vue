@@ -205,8 +205,10 @@ const handleLogin = async () => {
 
     } catch (err) {
         console.log(err)
-        const axiosError = err as AxiosError<ErrorResponse>
-        error.value = axiosError.response?.data?.detail || 'Login failed'
+        // authService.login rethrows the backend's detail as a plain Error, so
+        // reading only the axios response showed "Login failed" for everything.
+        const detail = (err as AxiosError<ErrorResponse>).response?.data?.detail
+        error.value = (typeof detail === 'string' && detail) || (err instanceof Error && err.message) || 'Login failed'
         console.error('Login error:', err)
     } finally {
         isLoading.value = false
