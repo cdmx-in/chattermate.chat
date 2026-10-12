@@ -147,6 +147,7 @@ function answer(req: ChatRequest) {
     lastRole,
     responseFormat: format ? (format.type === 'json_schema' ? `json_schema:${format.json_schema?.name ?? ''}` : format.type) : null,
     tools,
+    toolResults: req.messages.filter((m) => m.role === 'tool').map((m) => textOf(m.content)),
     answeredWith: '',
   }
 

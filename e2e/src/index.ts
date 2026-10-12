@@ -3,6 +3,7 @@
 // Playwright instance and one place to change shared behaviour.
 export { test, expect, type AgentSettings, type TestAgent } from './fixtures'
 export { ApiClient } from './api/client'
+export { addKnowledgeText } from './api/knowledge'
 export { ChatWidget } from './components/chat-widget'
 export { env, seedOrg, seedUsers } from './env'
 export { FakeLlm, Script, scenarioMarker } from './fakes/llm'

@@ -52,6 +52,8 @@ export interface RecordedRequest {
   /** 'json_schema:<name>' | 'json_object' | null */
   responseFormat: string | null
   tools: string[]
+  /** Contents of the tool-result messages in this request — e.g. what knowledge search returned. */
+  toolResults: string[]
   /** What the fake answered: 'tool_call:<name>' | 'structured' | 'text' */
   answeredWith: string
 }
