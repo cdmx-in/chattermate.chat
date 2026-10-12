@@ -14,4 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from .main import app
+# Must run before anything imports app.enterprise (see app/core/edition.py).
+from .core import edition as _edition
+
+_edition.apply()
+
+from .main import app  # noqa: E402

@@ -26,8 +26,11 @@ from app.core.logger import get_logger
 # Get the absolute path to the backend directory (parent of app directory)
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
-# Load the .env file
-load_dotenv(BACKEND_DIR / ".env")
+# ENV_FILE points the backend at a different env file. The e2e suite sets it to
+# e2e/.env.e2e so nothing from a developer's backend/.env (dev DB, dev Redis,
+# real provider keys) leaks into a test run.
+ENV_FILE = Path(os.getenv("ENV_FILE") or BACKEND_DIR / ".env")
+load_dotenv(ENV_FILE)
 
 DEFAULT_CORS = ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
 
@@ -314,7 +317,7 @@ class Settings(BaseSettings):
 
     model_config = {
         "case_sensitive": True,
-        "env_file": ".env",
+        "env_file": ENV_FILE,
         "extra": "allow",  # This allows extra fields from .env
     }
 
