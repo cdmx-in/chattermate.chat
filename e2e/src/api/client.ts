@@ -9,6 +9,8 @@ interface CallOptions {
   params?: Record<string, string | number | boolean>
   /** 0 to read a redirect's Location instead of following it. */
   maxRedirects?: number
+  /** Extra request headers, e.g. an Origin for a CORS check. */
+  headers?: Record<string, string>
 }
 
 /**
@@ -56,7 +58,7 @@ export class ApiClient {
       form: options.form,
       params: options.params,
       maxRedirects: options.maxRedirects,
-      headers: this.token ? { Authorization: `Bearer ${this.token}` } : undefined,
+      headers: { ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}), ...options.headers },
       failOnStatusCode: false,
     })
   }

@@ -16,6 +16,29 @@ const signedInAsAdmin = { ...devices['Desktop Chrome'], storageState: storageSta
 const ORG_WIDE = /\.org\.spec\.ts$/
 // Tests that need a capability the default stack leaves off.
 const needsRedis = env.redis ? undefined : /@redis/
+// Screenshot baselines are Linux-only (generated in CI); they run in their own project.
+const VISUAL = /visual\/.*\.spec\.ts$/
+const NOT_DEFAULT = [ORG_WIDE, VISUAL]
+
+/**
+ * Nightly only (E2E_MORE_BROWSERS=1): the customer-facing widget on the other
+ * engines and on phones. The dashboard stays Chromium-only.
+ */
+const otherBrowsers: PlaywrightTestConfig['projects'] = process.env.E2E_MORE_BROWSERS
+  ? [
+      ['widget-firefox', devices['Desktop Firefox']],
+      ['widget-webkit', devices['Desktop Safari']],
+      ['widget-android', devices['Pixel 7']],
+      ['widget-iphone', devices['iPhone 14']],
+    ].map(([name, device]) => ({
+      name: name as string,
+      dependencies: ['setup'],
+      testIgnore: NOT_DEFAULT,
+      grep: /@widget/,
+      grepInvert: needsRedis,
+      use: { ...(device as object), storageState: storageStatePath('admin') },
+    }))
+  : []
 
 // Both editions share the project names `setup`, `chromium` and `org`, so the same
 // commands run either way. Each edition brings its own setup (OSS: first-run form;
@@ -25,7 +48,7 @@ const projects: PlaywrightTestConfig['projects'] = [
   enterprise
     ? { name: 'setup', testDir: env.enterpriseSpecDir, testMatch: /.*\.setup\.ts/ }
     : { name: 'setup', testMatch: /.*\.setup\.ts/ },
-  { name: 'chromium', dependencies: ['setup'], testIgnore: ORG_WIDE, grepInvert: needsRedis, use: signedInAsAdmin },
+  { name: 'chromium', dependencies: ['setup'], testIgnore: NOT_DEFAULT, grepInvert: needsRedis, use: signedInAsAdmin },
   // Specs that change org-wide settings (AI config, business hours, …). Run them in a
   // separate invocation with --workers=1 (see package.json "test") so they never race
   // the parallel suite, and are not skipped when an unrelated parallel test fails.
@@ -36,6 +59,9 @@ const projects: PlaywrightTestConfig['projects'] = [
         { name: 'enterprise-org', testDir: env.enterpriseSpecDir, dependencies: ['setup'], testMatch: ORG_WIDE, use: signedInAsAdmin },
       ]
     : []),
+  // Widget screenshots, light and dark. Baselines live next to the specs, Linux only.
+  { name: 'visual', dependencies: ['setup'], testMatch: VISUAL, use: signedInAsAdmin },
+  ...otherBrowsers,
 ]
 
 const service = (name: string, url: string, timeout: number) => ({
