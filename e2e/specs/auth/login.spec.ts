@@ -12,7 +12,7 @@ test.describe('signed out', () => {
   test('a wrong password keeps you on the sign-in page with an error @auth', async ({ loginPage, org, page }) => {
     await loginPage.goto()
     await loginPage.signIn(org.admin.email, 'not-the-password')
-    await expect(loginPage.error).toBeVisible()
+    await expect(loginPage.error).toHaveText('Incorrect email or password')
     await expect(page).toHaveURL(/\/login/)
   })
 
