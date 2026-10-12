@@ -31,6 +31,7 @@ from app.models.knowledge import Knowledge
 from app.repositories.knowledge import KnowledgeRepository
 from app.knowledge import page_editor
 from app.knowledge.crawl_scope import CRAWL_SCOPES
+from app.knowledge.pdf_download import MAX_PDF_SIZE
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.agent import AgentRepository
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
@@ -63,7 +64,6 @@ logger = get_logger(__name__)
 TEMP_DIR = "temp"
 
 # PDF upload limits (see app/core/file_validation.py)
-MAX_PDF_SIZE = 25 * 1024 * 1024  # 25MB per file
 MAX_PDF_FILES = 20  # per request
 ALLOWED_PDF_TYPES = ("application/pdf",)
 
