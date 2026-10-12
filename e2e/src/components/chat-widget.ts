@@ -132,9 +132,14 @@ export class ChatWidget {
     return this.frame.getByPlaceholder('Type a message...', { exact: true })
   }
 
+  /** The conversation — the widget's message log. */
+  get messageLog(): Locator {
+    return this.frame.getByRole('log', { name: 'Messages' })
+  }
+
   /** Bot and human-agent replies — the widget renders both the same way. */
   get agentMessages(): Locator {
-    return this.frame.locator('.message.agent-message .message-bubble')
+    return this.messageLog.locator('.message.agent-message .message-bubble')
   }
 
   lastAgentMessage(): Locator {
@@ -142,7 +147,7 @@ export class ChatWidget {
   }
 
   get customerMessages(): Locator {
-    return this.frame.locator('.message.user-message .message-bubble')
+    return this.messageLog.locator('.message.user-message .message-bubble')
   }
 
   /** The agent's name in the chat header. */

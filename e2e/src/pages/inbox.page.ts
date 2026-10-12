@@ -20,7 +20,7 @@ export class InboxPage {
    */
   async openConversationWith(customerName: string): Promise<void> {
     await step(`Agent opens the chat with ${customerName}`, async () => {
-      const item = this.page.locator('.conversation-item').filter({ hasText: customerName })
+      const item = this.page.getByRole('button', { name: `Conversation with ${customerName}`, exact: true })
       await expect(async () => {
         await this.page.reload()
         await item.click({ timeout: 2_000 })
