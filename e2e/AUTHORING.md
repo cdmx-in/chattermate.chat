@@ -114,6 +114,7 @@ const sent = await llm.requests(agent)    // what the backend sent the model: sy
 
 - **Reply format:** replies are structured `ChatResponse` JSON, the same as with a real model. Handover, end-chat and lead capture are fields of that JSON. Tickets are a real tool call (`create_ticket`); the `create_ticket` JSON field alone creates nothing. `reply(message, fields)` sets any other field.
 - **Pace conversations like a person:** wait for the agent's reply before the visitor's next message. Replies to back-to-back messages are produced concurrently and can arrive in either order.
+- **Failures on purpose:** `.when(/x/).fail(500)`, `.after(25_000).reply(…)` (past `AGENT_RUN_TIMEOUT`), `.malformed()`, and `.costing(promptTokens, completionTokens)` for metering.
 - **Contract check:** `services/fake-llm/contract_check.py` runs agno itself against the fake. Run it after upgrading agno.
 
 ## Channels and other third parties
@@ -129,6 +130,31 @@ Each channel has a driver in `src/channels/` that plays the provider:
 
 A journey that should hold on every channel loops over `channels` (or `channelsWithButtons`) from `src/channels/index.ts`. Adding a channel is one driver file and one line in that registry.
 
+- **Replies are attributed:** a driver only counts what the backend sent *as that account* (its token, number or path), so a reply leaking from another account fails.
+- **Provider limits are real:** the fake rejects payloads past each provider's published limits (`services/fake-externals/limits.ts`), the way the provider would.
+- **Faults:** `new FakeExternals(request).fail({ provider, action, contains, status, body, times })` makes matching calls fail; scope it with `contains` (e.g. the customer id) so parallel tests are untouched.
+- **MCP:** `services/fake-mcp` is a real MCP server (streamable HTTP) with a `lookup_order` tool.
+
+## Fixtures worth knowing
+
+- `customerPage` / `widget`: a visitor's browser, never signed in to the dashboard.
+- `makeAgent(settings, groupIds)`, `makeMember({ role, groupIds, seeAllAiChats })`: more agents, and teammates signed in on their own request context.
+- `handoverTeam` / `inbox`: each handover test gets its own teammate and group.
+- `diagnostics` (automatic): a failed test gets the backend log, model requests and third-party calls attached.
+- `expectUnchanged(what, read)`: the "and nothing else happens" check (the AI stays quiet, a forged webhook gets no reply).
+
+## More than the default run
+
+| What | How | Where it runs |
+|---|---|---|
+| Production-like backend | `E2E_REDIS_URL=redis://127.0.0.1:6379/5 E2E_BACKEND_WORKERS=2 ./scripts/stack.sh up`; enables `@redis` tests | nightly |
+| Widget on Firefox, WebKit, phones | `E2E_MORE_BROWSERS=1 npx playwright test --project=widget-firefox …` | nightly |
+| Visual | `npx playwright test --project=visual`; baselines are Linux-only, made by the nightly job (or a manual run with *update snapshots*) | nightly |
+| Accessibility | `specs/a11y`; new serious findings fail; after fixing some, refresh with `UPDATE_A11Y_BASELINE=1` | every run |
+| Size and speed budgets | `specs/perf` | every run |
+| Migrations | `./scripts/upgrade-check.sh [ref]`: the last release's schema upgraded to HEAD must equal a fresh install | nightly |
+| API fuzzing | `./scripts/api-fuzz.sh` (Schemathesis): every read endpoint, no 500s | nightly |
+
 ## Adding a test
 
 1. Find or create `specs/<feature>/`, and add a row to `FEATURES.md`.
@@ -139,7 +165,7 @@ A journey that should hold on every channel loops over `channels` (or `channelsW
 
 ## Troubleshooting
 
-- **Port already in use:** something else is on 18000, 15173, 14010, 14020, 13000, 11025 or 18025. Run `./scripts/stack.sh down`, or stop the other process.
+- **Port already in use:** something else is on 18000, 15173, 14010, 14020, 14030, 13000, 11025 or 18025. Run `./scripts/stack.sh down`, or stop the other process.
 - **The launcher never becomes clickable:** the suite runs with `reducedMotion: 'reduce'` because the launcher floats forever otherwise. Keep that option on any new browser context.
 - **The customer site must be a real server:** Chrome blocks a page faked with `page.route` from calling `127.0.0.1` (Local Network Access).
 - **The widget and loader are built from source on every run.** `stack.sh` builds the widget bundle and `chattermate.min.js` from the current `frontend/src/webclient` into `e2e/.cache`, and points the backend at that build with `WIDGET_ASSETS_DIR`. The committed production bundles in `backend/assets` and `frontend/public/webclient` are never rebuilt or modified.
