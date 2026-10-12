@@ -10,12 +10,15 @@ import { ChatWithButtons, digits, hmac, phoneNumber, postWebhook, samePhone, sen
 // WhatsApp, Messenger and Instagram share one webhook (/webhooks/meta), signed
 // with the Meta app secret; `object` in the body says which product sent it.
 
-/** A raw Meta webhook POST, signed like Meta would unless `signature` says otherwise — for negative tests too. */
-export async function deliverMeta(request: APIRequestContext, payload: Record<string, unknown>, signature?: string): Promise<void> {
+/** The X-Hub-Signature-256 header Meta puts on `json`. */
+export function metaSignature(json: string): Record<string, string> {
+  return { 'x-hub-signature-256': `sha256=${hmac('sha256', env.channelSecrets.meta, json).toString('hex')}` }
+}
+
+/** A Meta webhook POST, signed like Meta signs it. */
+export async function deliverMeta(request: APIRequestContext, payload: Record<string, unknown>): Promise<void> {
   const json = JSON.stringify(payload)
-  await postWebhook(request, '/webhooks/meta', { json }, {
-    'x-hub-signature-256': signature ?? `sha256=${hmac('sha256', env.channelSecrets.meta, json).toString('hex')}`,
-  })
+  await postWebhook(request, '/webhooks/meta', { json }, metaSignature(json))
 }
 
 /** A Meta access token that owns `nodes` in the fake Graph (see fake-externals). */

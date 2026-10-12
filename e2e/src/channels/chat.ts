@@ -1,5 +1,5 @@
 import { createHmac, randomInt } from 'node:crypto'
-import type { APIRequestContext } from '@playwright/test'
+import type { APIRequestContext, APIResponse } from '@playwright/test'
 import type { ApiClient } from '../api/client'
 import type { RecordedCall } from '../fakes/externals'
 import { env } from '../env'
@@ -99,16 +99,22 @@ export class ChatWithButtons<B extends Button = Button> extends Chat implements 
   }
 }
 
-type Payload = { json: string } | { form: Record<string, string> }
+export type WebhookPayload = { json: string } | { form: Record<string, string> }
 
 /**
- * POSTs a provider webhook to the backend. JSON goes as the exact string that was
- * signed — re-serialising would change the bytes the signature covers.
+ * POSTs a provider webhook to the backend and hands back the response, whatever
+ * its status — for tests of what the backend refuses. JSON goes as the exact
+ * string that was signed: re-serialising would change the bytes the signature covers.
  */
-export async function postWebhook(request: APIRequestContext, path: string, payload: Payload, headers: Record<string, string> = {}): Promise<void> {
-  const response = 'json' in payload
-    ? await request.post(`${env.apiUrl}${path}`, { data: payload.json, headers: { 'content-type': 'application/json', ...headers } })
-    : await request.post(`${env.apiUrl}${path}`, { form: payload.form, headers })
+export function sendWebhook(request: APIRequestContext, path: string, payload: WebhookPayload, headers: Record<string, string> = {}): Promise<APIResponse> {
+  return 'json' in payload
+    ? request.post(`${env.apiUrl}${path}`, { data: payload.json, headers: { 'content-type': 'application/json', ...headers } })
+    : request.post(`${env.apiUrl}${path}`, { form: payload.form, headers })
+}
+
+/** sendWebhook for a delivery that must be accepted. */
+export async function postWebhook(request: APIRequestContext, path: string, payload: WebhookPayload, headers: Record<string, string> = {}): Promise<void> {
+  const response = await sendWebhook(request, path, payload, headers)
   if (!response.ok()) throw new Error(`POST ${path} → ${response.status()}: ${(await response.text()).slice(0, 300)}`)
 }
 
