@@ -1,4 +1,4 @@
-import { test as base, expect, type Browser, type BrowserContextOptions, type Page, type TestInfo } from '@playwright/test'
+import { test as base, expect, type APIRequestContext, type Browser, type BrowserContextOptions, type Page, type TestInfo } from '@playwright/test'
 import { ApiClient } from '../api/client'
 import { signedInClient } from '../api/auth'
 import { createAgent, enableLeadCapture } from '../api/agents'
@@ -44,6 +44,22 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
 
 export type TestAgent = ScriptedAgent & { id: string }
 
+export interface MemberOptions {
+  role?: string
+  groupIds?: string[]
+  /** "Assigned only" when false: the user form's AI-queue toggle. */
+  seeAllAiChats?: boolean
+}
+
+/** A team member a test created, with a seeding client signed in as them. */
+export interface Member {
+  id: string
+  name: string
+  email: string
+  password: string
+  api: ApiClient
+}
+
 /** The human team a handover test's chats go to: one online Agent-role member in their own group. */
 export interface HandoverTeam {
   groupId: string
@@ -67,6 +83,8 @@ interface TestFixtures {
   llm: FakeLlm
   /** A fresh AI agent per test, scripted through `llm`. */
   agent: TestAgent
+  /** Another AI agent — e.g. one per group in a routing test. `groupIds` are its handover groups. */
+  makeAgent: (settings?: Partial<AgentSettings>, groupIds?: string[]) => Promise<TestAgent>
   /** The customer-facing widget for `agent`, on `customerPage`. */
   widget: ChatWidget
   /** A visitor's browser: its own context, never signed in to the dashboard. */
@@ -81,6 +99,12 @@ interface TestFixtures {
   handoverTeam: () => Promise<HandoverTeam>
   /** The handover team member's dashboard inbox, in a separate signed-in browser. */
   inbox: InboxPage
+  /**
+   * A new user in the org (Agent role unless told otherwise), signed in through
+   * the API on a request context of their own — the backend prefers a cookie over
+   * a Bearer token, so two people must never share one. Signing in marks them online.
+   */
+  makeMember: (options?: MemberOptions) => Promise<Member>
   /** A second, signed-out browser — for signing in as someone a test just created. */
   anonymousPage: Page
   loginPage: LoginPage
@@ -135,6 +159,21 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
     await attachDiagnostics(testInfo, start, llm, new FakeExternals(request))
   }, { auto: true, box: true }],
 
+  makeMember: [async ({ adminApi, playwright }, use) => {
+    const contexts: APIRequestContext[] = []
+    await use(async ({ role = 'Agent', groupIds = [], seeAllAiChats } = {}) => {
+      const id = unique('member')
+      const person = { name: `Member ${id}`, email: `${id}@e2e.example.com`, password: 'E2e-Member-Passw0rd!' }
+      const user = await createUser(adminApi, { ...person, role, seeAllAiChats })
+      for (const groupId of groupIds) await adminApi.post(`/groups/${groupId}/users/${user.id}`)
+      const context = await playwright.request.newContext()
+      contexts.push(context)
+      const { api } = await signedInClient(new ApiClient(context), person.email, person.password)
+      return { ...person, id: user.id, api }
+    })
+    await Promise.all(contexts.map((c) => c.dispose()))
+  }, { box: true }],
+
   handoverTeam: [async ({ adminApi }, use) => {
     let team: Promise<HandoverTeam> | undefined
     await use(() => (team ??= (async () => {
@@ -146,22 +185,27 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
     })()))
   }, { box: true }],
 
-  agent: [async ({ adminApi, agentSettings, handoverTeam }, use) => {
-    const settings = { ...DEFAULT_AGENT_SETTINGS, ...agentSettings }
-    const scenarioId = unique('scn')
-    const name = `E2E Agent ${scenarioId}`
-    const groupIds = settings.transferToHuman ? [(await handoverTeam()).groupId] : []
-    const created = await createAgent(adminApi, {
-      name,
-      instructions: [`You are a helpful support agent. ${scenarioMarker(scenarioId)}`],
-      transferToHuman: settings.transferToHuman,
-      groupIds,
-      askForRating: settings.askForRating,
-      requireTokenAuth: settings.requireTokenAuth,
-      channelQuickReplies: settings.channelQuickReplies,
+  makeAgent: [async ({ adminApi }, use) => {
+    await use(async (agentSettings = {}, groupIds = []) => {
+      const settings = { ...DEFAULT_AGENT_SETTINGS, ...agentSettings }
+      const scenarioId = unique('scn')
+      const created = await createAgent(adminApi, {
+        name: `E2E Agent ${scenarioId}`,
+        instructions: [`You are a helpful support agent. ${scenarioMarker(scenarioId)}`],
+        transferToHuman: settings.transferToHuman,
+        groupIds,
+        askForRating: settings.askForRating,
+        requireTokenAuth: settings.requireTokenAuth,
+        channelQuickReplies: settings.channelQuickReplies,
+      })
+      if (settings.leadCapture) await enableLeadCapture(adminApi, created.id)
+      return { ...created, scenarioId }
     })
-    if (settings.leadCapture) await enableLeadCapture(adminApi, created.id)
-    await use({ ...created, scenarioId })
+  }, { box: true }],
+
+  agent: [async ({ makeAgent, agentSettings, handoverTeam }, use) => {
+    const groupIds = agentSettings.transferToHuman ? [(await handoverTeam()).groupId] : []
+    await use(await makeAgent(agentSettings, groupIds))
   }, { box: true }],
 
   customerPage: [async ({ browser }, use, testInfo) => {

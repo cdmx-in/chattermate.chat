@@ -29,11 +29,17 @@ export interface NewUser {
   name: string
   password: string
   role: string
+  /** The user form's chat-scope toggles; omitted = the role's own scope. */
+  seeAllAiChats?: boolean
+  seeAllOrgChats?: boolean
 }
 
 export async function createUser(api: ApiClient, user: NewUser): Promise<User> {
   const created = await api.post<User>('/users', {
-    data: { email: user.email, full_name: user.name, password: user.password, role_id: await roleId(api, user.role) },
+    data: {
+      email: user.email, full_name: user.name, password: user.password, role_id: await roleId(api, user.role),
+      see_all_ai_chats: user.seeAllAiChats, see_all_org_chats: user.seeAllOrgChats,
+    },
   })
   return { ...created, id: String(created.id) }
 }

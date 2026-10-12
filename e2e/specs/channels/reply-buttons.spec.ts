@@ -14,8 +14,8 @@ test.describe('reply buttons', () => {
       await expect.poll(() => chat.buttons(), AI_REPLY).toEqual(['Track my order', 'Returns'])
 
       await chat.tap('Track my order')
-      await expect.poll(() => chat.replies(), AI_REPLY)
-        .toContainEqual(expect.stringContaining('Your order ships tomorrow.'))
+      await expect.poll(async () => (await chat.replies()).at(-1), AI_REPLY).toContain('Your order ships tomorrow.')
+      expect(await chat.replies()).toHaveLength(2)
     })
   }
 })

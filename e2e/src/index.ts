@@ -1,8 +1,10 @@
 // The harness public API. Specs (and the enterprise suite, via the `@e2e` alias)
 // import from here only — never from '@playwright/test' directly, so there is one
 // Playwright instance and one place to change shared behaviour.
-export { test, expect, type AgentSettings, type TestAgent } from './fixtures'
+export { test, expect, type AgentSettings, type HandoverTeam, type Member, type MemberOptions, type TestAgent } from './fixtures'
 export { ApiClient } from './api/client'
+export { createGroup, createUser } from './api/team'
+export { connectEmail, listChannelAccounts } from './api/channels'
 export { currentAiConfig, restoreAi, useFakeLlm, type AiConfig } from './api/ai'
 export { createAgent, enableLeadCapture } from './api/agents'
 export { addKnowledgeText } from './api/knowledge'
@@ -31,4 +33,5 @@ export { TicketsPage } from './pages/tickets.page'
 export { unique } from './support/ids'
 export { step } from './support/step'
 export { AI_REPLY } from './support/timeouts'
+export { expectUnchanged } from './support/unchanged'
 export type { Page, Locator, BrowserContext, APIRequestContext } from '@playwright/test'
