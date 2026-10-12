@@ -919,8 +919,10 @@ class WorkflowExecutionService:
         # This is a simplified implementation
         # In a full implementation, you'd handle timed waits and conditions
         
-        wait_duration = node.wait_duration or 0
-        message = f"Please wait {wait_duration} seconds..."
+        config = node.config or {}
+        wait_duration = config.get("wait_duration", 0)
+        wait_unit = config.get("wait_unit", "seconds")
+        message = f"Please wait {wait_duration} {wait_unit}..."
         
         # Find next node
         next_node_id = self._find_next_node(node)

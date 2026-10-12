@@ -408,8 +408,7 @@ class TestWorkflowExecutionService:
         node = Mock(spec=WorkflowNode)
         node.id = uuid4()
         node.node_type = NodeType.WAIT
-        node.config = {"duration": 1}  # 1 second
-        node.wait_duration = 1
+        node.config = {"wait_duration": 1}  # unit defaults to seconds
         node.outgoing_connections = [connection]
 
         result = workflow_service._execute_wait_node(node, {})
@@ -775,3 +774,23 @@ class TestUserMessageVariable:
         result = await _run_workflow(workflow_service, sample_workflow, nodes, user_message="hello there")
 
         assert result.message == "Echo: hello there"
+
+
+class TestWaitNodeConfig:
+
+    @pytest.mark.asyncio
+    async def test_wait_node_reads_duration_from_config(self, workflow_service, sample_workflow):
+        # A real node: wait settings live in config; there is no wait_duration column.
+        node = WorkflowNode(
+            id=uuid4(),
+            node_type=NodeType.WAIT,
+            name="Wait",
+            config={"wait_duration": 5, "wait_unit": "minutes"},
+        )
+
+        result = await workflow_service._execute_node(
+            node, sample_workflow, {}, None, None, None, None, None, None, None, None, "test-session")
+
+        assert result.success is True
+        assert result.message == "Please wait 5 minutes..."
+        assert result.next_node_id is None
