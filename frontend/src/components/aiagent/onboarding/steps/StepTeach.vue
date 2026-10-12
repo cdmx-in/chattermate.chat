@@ -15,9 +15,12 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useKnowledgeManagement } from '@/composables/useKnowledgeManagement'
 import { useStagedSourceCap } from '@/composables/useStagedSourceCap'
+import { useCrawlCheck } from '@/composables/useCrawlCheck'
+import TeachTextFallback from './TeachTextFallback.vue'
+import type { QueueItem } from '@/types/knowledge'
 import { organizationService } from '@/services/organization'
 
 const props = defineProps<{
@@ -43,6 +46,7 @@ const {
   knowledgeItems,
   orgTotalCount,
   queueItems,
+  fetchQueueItems,
   handleUrlAdd,
   removeUrl,
   triggerFileInput,
@@ -54,6 +58,12 @@ const {
 } = useKnowledgeManagement(props.agentId, props.organizationId)
 
 const advancing = ref(false)
+// A website that failed fast (e.g. a domain that doesn't resolve), shown with
+// a way round it instead of moving on with nothing learned
+const crawlFailure = ref<QueueItem | null>(null)
+const showTextFallback = ref(false)
+const { firstFailure, cancel: stopCrawlCheck } = useCrawlCheck(fetchQueueItems, queueItems)
+onBeforeUnmount(stopCrawlCheck)
 
 // Crawls still running count against the cap too (the server counts them).
 const crawling = computed(() =>
@@ -117,13 +127,23 @@ const handleContinue = async () => {
   }
 
   advancing.value = true
+  crawlFailure.value = null
   try {
+    const sentUrls = [...urls.value]
     const accepted = (await handleUrlUpload()) && (await handleFileUpload())
     // On failure the error is on screen and the batch stays staged to fix.
-    if (accepted) emit('next')
+    if (!accepted) return
+    crawlFailure.value = sentUrls.length ? await firstFailure(sentUrls) : null
+    if (!crawlFailure.value) emit('next')
   } finally {
     advancing.value = false
   }
+}
+
+const handleTextAdded = () => {
+  crawlFailure.value = null
+  showTextFallback.value = false
+  emit('next')
 }
 
 const removeFile = (index: number) => {
@@ -191,13 +211,26 @@ const removeFile = (index: number) => {
       <div class="progress-bar" :style="{ width: `${uploadProgress}%` }"></div>
     </div>
 
-    <p v-if="successMessage" class="step-hint">{{ successMessage }} Processing in the background — you can continue.</p>
+    <p v-if="successMessage && !crawlFailure" class="step-hint">{{ successMessage }} Processing in the background — you can continue.</p>
     <p v-if="uploadError" class="step-error">{{ uploadError }}</p>
+
+    <div v-if="crawlFailure" class="crawl-failure" role="alert">
+      <p class="step-error">We couldn't read {{ crawlFailure.source }}. {{ crawlFailure.reason }}</p>
+      <button v-if="!showTextFallback" type="button" class="btn-soft" @click="showTextFallback = true">
+        Paste some text instead
+      </button>
+      <TeachTextFallback
+        v-else
+        :agent-id="agentId"
+        :organization-id="organizationId"
+        @added="handleTextAdded"
+      />
+    </div>
 
     <div class="step-actions">
       <button type="button" class="btn-ghost" :disabled="advancing || isUploading" @click="emit('back')">Back</button>
       <button type="button" class="btn-accent" :disabled="advancing || isUploading" @click="handleContinue">
-        {{ advancing ? 'Saving…' : 'Continue' }}
+        {{ advancing ? 'Reading your site…' : crawlFailure ? 'Continue without it' : 'Continue' }}
         <span v-if="!advancing" class="arrow">→</span>
       </button>
     </div>
@@ -349,6 +382,16 @@ const removeFile = (index: number) => {
   margin: 0;
   font-size: 13px;
   color: var(--muted);
+}
+
+.crawl-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--o12);
+  border-radius: var(--radius-input);
 }
 
 .step-error {

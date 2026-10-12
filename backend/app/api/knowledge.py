@@ -31,6 +31,7 @@ from app.models.knowledge import Knowledge
 from app.repositories.knowledge import KnowledgeRepository
 from app.knowledge import page_editor
 from app.knowledge.crawl_scope import CRAWL_SCOPES
+from app.knowledge.failure_advice import plain_reason
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.agent import AgentRepository
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
@@ -879,6 +880,8 @@ def _serialize_queue_item(item: KnowledgeQueue) -> dict:
         "source_type": item.source_type,
         "status": _enum_value(item.status),
         "error": item.error,
+        # One plain sentence for people; `error` stays for the knowledge page
+        "reason": plain_reason(item.error, item.source) if _enum_value(item.status) == QueueStatus.FAILED.value else None,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         "processing_stage": _enum_value(item.processing_stage),

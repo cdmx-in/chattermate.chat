@@ -8,6 +8,7 @@ const getKnowledgeByAgent = vi.fn()
 const getKnowledgeByOrganization = vi.fn()
 const getAgentQueueItems = vi.fn()
 const addUrls = vi.fn()
+const addText = vi.fn()
 const planLimits = vi.fn()
 
 vi.mock('@/services/organization', () => ({
@@ -18,6 +19,7 @@ vi.mock('@/services/knowledge', () => ({
     getKnowledgeByAgent: (...a: unknown[]) => getKnowledgeByAgent(...a),
     getKnowledgeByOrganization: (...a: unknown[]) => getKnowledgeByOrganization(...a),
     addUrls: (...a: unknown[]) => addUrls(...a),
+    addText: (...a: unknown[]) => addText(...a),
     getAgentQueueItems: (...a: unknown[]) => getAgentQueueItems(...a)
   }
 }))
@@ -174,6 +176,51 @@ describe('StepTeach - plan source cap', () => {
     expect(staged(wrapper)).toEqual([])
     await clickContinue(wrapper)
     expect(addUrls).not.toHaveBeenCalled()
+    expect(wrapper.emitted('next')).toBeTruthy()
+  })
+})
+
+describe('StepTeach - a website that fails fast', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    vi.clearAllMocks()
+    getKnowledgeByAgent.mockResolvedValue(empty)
+    getKnowledgeByOrganization.mockResolvedValue(empty)
+    getOrganization.mockResolvedValue({ id: 'org-1', domain: 'erfanpv.com' })
+    planLimits.mockReturnValue({ maxKnowledgeSources: 0 })
+    addUrls.mockResolvedValue({ message: 'Queued' })
+  })
+
+  const failedItem = {
+    id: 7, source: 'https://erfanpv.com', source_type: 'website', status: 'failed', created_at: '',
+    error: 'raw', reason: 'This site could not be found. Check the address for typos.',
+  }
+
+  it('stays, explains, and offers to paste text instead', async () => {
+    getAgentQueueItems.mockResolvedValueOnce({ queue_items: [] }).mockResolvedValue({ queue_items: [failedItem] })
+    const wrapper = await mountStep()
+
+    await clickContinue(wrapper)
+
+    expect(wrapper.emitted('next')).toBeFalsy()
+    expect(wrapper.find('.crawl-failure').text()).toContain("We couldn't read https://erfanpv.com. This site could not be found")
+    expect(wrapper.find('.btn-accent').text()).toContain('Continue without it')
+
+    await wrapper.findAll('button').find((b: any) => b.text().includes('Paste some text instead'))!.trigger('click')
+    addText.mockResolvedValue({ message: 'ok' })
+    await wrapper.find('textarea').setValue('We sell handmade candles and ship across India within five days.')
+    await wrapper.findAll('button').find((b: any) => b.text() === 'Add this text')!.trigger('click')
+    await flushPromises()
+
+    expect(addText).toHaveBeenCalledWith('org-1', 'About us', expect.stringContaining('handmade candles'), 'agent-1')
+    expect(wrapper.emitted('next')).toBeTruthy()
+  })
+
+  it('lets them continue without it', async () => {
+    getAgentQueueItems.mockResolvedValueOnce({ queue_items: [] }).mockResolvedValue({ queue_items: [failedItem] })
+    const wrapper = await mountStep()
+    await clickContinue(wrapper)
+    await clickContinue(wrapper)
     expect(wrapper.emitted('next')).toBeTruthy()
   })
 })

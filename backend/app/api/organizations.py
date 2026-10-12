@@ -41,6 +41,7 @@ from app.models.session_to_agent import SessionToAgent
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 from app.core.cors import update_cors_middleware
+from app.utils.domain_check import domain_resolves
 from app.core.application import app  # Import the FastAPI app instance from the new location
 
 # Disposable-address rejection lives in the enterprise module: the hosted signup
@@ -246,12 +247,14 @@ async def check_domain_availability(
     domain: str,
     db: Session = Depends(get_db)
 ):
-    """Check if an organization domain is available"""
+    """Check if an organization domain is available, and whether it resolves
+    (`resolves`: false only when DNS said no; null when it couldn't tell)."""
     try:
         existing_org = db.query(Organization).filter(Organization.domain == domain).first()
         return {
             "available": not existing_org,
-            "message": "Domain is available" if not existing_org else "Domain already exists"
+            "message": "Domain is available" if not existing_org else "Domain already exists",
+            "resolves": None if existing_org else await domain_resolves(domain),
         }
     except Exception as e:
         logger.error(f"Failed to check domain availability: {str(e)}", exc_info=True)

@@ -567,6 +567,18 @@ def test_get_organization_queue_items(client: TestClient, test_organization, tes
     assert test_knowledge_queue.source in sources
 
 
+def test_failed_queue_items_carry_a_plain_reason(client: TestClient, db: Session, test_organization, test_user):
+    """Raw errors stay in `error`; people get one sentence in `reason`."""
+    db.add(KnowledgeQueue(organization_id=test_organization.id, user_id=test_user.id, source_type="website",
+                          source="https://nope.invalid", status=QueueStatus.FAILED,
+                          error="Traceback: KeyError 'x'", created_at=datetime.now(timezone.utc)))
+    db.commit()
+    response = client.get(f"/api/v1/knowledge/queue/organization/{test_organization.id}")
+    (item,) = [i for i in response.json()["queue_items"] if i["source"] == "https://nope.invalid"]
+    assert item["reason"].startswith("We couldn't read any pages there")
+    assert "Traceback" not in item["reason"]
+
+
 def test_get_organization_queue_items_wrong_org(client: TestClient):
     """The org queue endpoint rejects a different organization."""
     response = client.get(f"/api/v1/knowledge/queue/organization/{uuid4()}")

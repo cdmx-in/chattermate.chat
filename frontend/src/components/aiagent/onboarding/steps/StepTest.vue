@@ -53,6 +53,8 @@ const scrollEl = ref<HTMLElement | null>(null)
 // know it'll get smarter once indexing finishes.
 const knowledgeProcessing = ref(false)
 const knowledgeJustFinished = ref(false)
+// Nothing indexed and nothing indexing: answers can only be generic
+const noKnowledge = ref(false)
 let knowledgePoll: ReturnType<typeof setInterval> | null = null
 
 const checkKnowledgeStatus = async () => {
@@ -68,6 +70,16 @@ const checkKnowledgeStatus = async () => {
     }
   } catch (err) {
     console.error('Failed to check knowledge status:', err)
+  }
+}
+
+const checkHasKnowledge = async () => {
+  if (knowledgeProcessing.value) return
+  try {
+    const page = await knowledgeService.getKnowledgeByAgent(props.agentId, 1, 1)
+    noKnowledge.value = !(page?.pagination?.total_count || page?.knowledge?.length)
+  } catch (err) {
+    console.error('Failed to check agent knowledge:', err)
   }
 }
 
@@ -98,6 +110,7 @@ onMounted(async () => {
   if (widgetId) await start(widgetId)
   // Watch the knowledge queue and poll while anything is still indexing
   await checkKnowledgeStatus()
+  await checkHasKnowledge()
   if (knowledgeProcessing.value) {
     knowledgePoll = setInterval(checkKnowledgeStatus, 5000)
   }
@@ -146,6 +159,12 @@ const formatMessage = (content: string) => sanitizeHtml(marked(content) as strin
     <div v-else-if="knowledgeJustFinished" class="kb-note done">
       <span class="kb-check" aria-hidden="true">✓</span>
       <span>Knowledge indexed — your agent can now answer from it.</span>
+    </div>
+    <div v-else-if="noKnowledge" class="kb-note empty">
+      <span>
+        It hasn't learned anything about your business yet, so answers will be generic.
+        <button type="button" class="kb-link" @click="emit('back')">Add your website or some text</button>
+      </span>
     </div>
 
     <div class="test-chat">
@@ -233,6 +252,20 @@ const formatMessage = (content: string) => sanitizeHtml(marked(content) as strin
   background: var(--purple-bg);
   border: 1px solid var(--purple-border);
   color: var(--text3);
+}
+
+.kb-note.empty {
+  border-color: var(--c-warn);
+}
+
+.kb-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-ink);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .kb-note.done {
