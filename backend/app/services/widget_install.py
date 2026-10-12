@@ -43,6 +43,7 @@ from app.core.cors import BASE_CORS_ORIGINS, get_cors_origin_regex, get_cors_ori
 from app.core.logger import get_logger
 from app.database import SessionLocal
 from app.models.widget import Widget
+from app.utils.datetimes import as_utc
 
 logger = get_logger(__name__)
 
@@ -148,7 +149,7 @@ def claim_write(widget: Widget, origin: Optional[str]) -> Optional[OriginKind]:
         fresh = (
             widget.blocked_origin == origin
             and widget.blocked_origin_seen_at is not None
-            and _aware(widget.blocked_origin_seen_at) > datetime.now(timezone.utc) - _BLOCKED_REFRESH
+            and as_utc(widget.blocked_origin_seen_at) > datetime.now(timezone.utc) - _BLOCKED_REFRESH
         )
         if fresh or (widget.id, origin, date.today()) in _recorded_blocks:
             return None
@@ -207,7 +208,3 @@ def _forget(widget_id: str, kind: OriginKind, origin: str) -> None:
     else:
         _recorded_blocks.discard((widget_id, origin, date.today()))
 
-
-def _aware(value: datetime) -> datetime:
-    """SQLite (tests) hands back naive datetimes for timezone columns."""
-    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
