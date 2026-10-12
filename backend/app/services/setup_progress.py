@@ -72,6 +72,21 @@ def _exists(db: Session, query) -> bool:
     return db.execute(select(exists(query))).scalar()
 
 
+def is_live(db: Session, org_id) -> bool:
+    """Reachable by customers: the widget loaded on the org's own site, a
+    messaging channel is connected, or a real visitor has chatted."""
+    return (
+        _exists(db, select(Widget.id).where(
+            Widget.organization_id == org_id, Widget.installed_at.isnot(None)))
+        or _exists(db, select(ChannelAccount.id).where(
+            ChannelAccount.organization_id == org_id, ChannelAccount.is_active.is_(True)))
+        or _exists(db, select(ChatHistory.id).join(Customer, Customer.id == ChatHistory.customer_id).where(
+            ChatHistory.organization_id == org_id,
+            ChatHistory.message_type == "user",
+            Customer.email.notlike(_TEST_CHAT_EMAILS)))
+    )
+
+
 def get_progress(db: Session, organization: Organization) -> SetupProgress:
     """A handful of EXISTS checks; stops at the first missing stage."""
     org_id = organization.id
@@ -100,17 +115,7 @@ def get_progress(db: Session, organization: Organization) -> SetupProgress:
         return progress(SetupStep.TEACH)
     if not _exists(db, select(ChatHistory.id).where(ChatHistory.organization_id == org_id)):
         return progress(SetupStep.TEST)
-    live = (
-        _exists(db, select(Widget.id).where(
-            Widget.organization_id == org_id, Widget.installed_at.isnot(None)))
-        or _exists(db, select(ChannelAccount.id).where(
-            ChannelAccount.organization_id == org_id, ChannelAccount.is_active.is_(True)))
-        or _exists(db, select(ChatHistory.id).join(Customer, Customer.id == ChatHistory.customer_id).where(
-            ChatHistory.organization_id == org_id,
-            ChatHistory.message_type == "user",
-            Customer.email.notlike(_TEST_CHAT_EMAILS)))
-    )
-    return progress(SetupStep.LIVE if live else SetupStep.LAUNCH)
+    return progress(SetupStep.LIVE if is_live(db, org_id) else SetupStep.LAUNCH)
 
 
 def hide(db: Session, organization: Organization) -> None:
