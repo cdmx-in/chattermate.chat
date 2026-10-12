@@ -180,8 +180,12 @@ let currentInputFields: HTMLElement[] = []
 // setTimeout outlives the component and then touches a document that is gone
 // (surfaced by the test runner as an error after environment teardown).
 const pendingListenerSetups = new Set<ReturnType<typeof setTimeout>>()
+// Set on unmount. The async onMounted can finish after the component is gone and
+// would schedule a fresh setup that the unmount-time cancel never saw.
+let isUnmounted = false
 
 const scheduleNativeListenerSetup = (delayMs: number) => {
+    if (isUnmounted) return
     const timer = setTimeout(() => {
         pendingListenerSetups.delete(timer)
         setupNativeEventListeners()
@@ -1590,6 +1594,7 @@ onUnmounted(() => {
         clearTimeout(setupDOMObserver.timeoutId)
         setupDOMObserver.timeoutId = null
     }
+    isUnmounted = true
     cancelPendingListenerSetups()
 
     // Clean up native event listeners
