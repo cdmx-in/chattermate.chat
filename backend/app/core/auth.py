@@ -18,11 +18,12 @@ from fastapi import Depends, HTTPException, status, Cookie, Request
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from typing import Callable, Iterable, Optional, List
+from uuid import UUID
 
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
-from app.core.security import verify_token
+from app.services.auth_sessions import ACCESS, live_payload
 from app.core.logger import get_logger
 from app.models.role import Role
 
@@ -165,6 +166,51 @@ def require_any_permission(*permissions: str):
         return current_user
     return permission_checker
 
+def request_token(request: Request) -> Optional[str]:
+    """The bearer credential a request carries: the access_token cookie, else
+    an Authorization: Bearer header."""
+    cookie_token = request.cookies.get('access_token')
+    # Ensure we got a valid string, not a mock or None
+    if cookie_token and isinstance(cookie_token, str):
+        return cookie_token
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        return auth_header.split(' ')[1]
+    return None
+
+
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+def _jwt_user(access_token: str, db: Session) -> User:
+    """The active user a live access JWT belongs to, or a 401.
+
+    live_payload rejects refresh tokens and tokens whose session was revoked
+    (signed out, or ended by a password change).
+    """
+    payload = live_payload(db, access_token, ACCESS)
+    if payload is None:
+        raise _unauthorized("Invalid authentication token")
+
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise _unauthorized("Invalid token payload")
+
+    user = db.query(User).filter(User.id == UUID(str(user_id))).first()
+    if user is None:
+        raise _unauthorized("User not found")
+
+    if not user.is_active:
+        raise _unauthorized("User is inactive")
+
+    return user
+
+
 async def get_current_user(
     request: Request,
     access_token: Optional[str] = Cookie(None),
@@ -172,27 +218,10 @@ async def get_current_user(
 ) -> User:
     """Get current user from access token cookie"""
     try:
-        # Manually extract cookie from request if access_token is not a string
-        if access_token is None or not isinstance(access_token, str):
-            # Try to get from cookies directly
-            cookie_token = request.cookies.get('access_token')
-            # Ensure we got a valid string, not a mock or None
-            if cookie_token and isinstance(cookie_token, str):
-                access_token = cookie_token
-            else:
-                access_token = None
-        
         if not access_token or not isinstance(access_token, str):
-            # Try getting token from Authorization header as fallback
-            auth_header = request.headers.get('Authorization')
-            if auth_header and auth_header.startswith('Bearer '):
-                access_token = auth_header.split(' ')[1]
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Not authenticated",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+            access_token = request_token(request)
+        if not access_token:
+            raise _unauthorized("Not authenticated")
 
         # Enterprise: a Personal Access Token resolves directly to its owning user.
         if access_token.startswith(PAT_TOKEN_PREFIX):
@@ -205,38 +234,7 @@ async def get_current_user(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        payload = verify_token(access_token)
-        if payload is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication token",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        user_id = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token payload",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        user = db.query(User).filter(User.id == user_id).first()
-        if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User not found",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="User is inactive",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
-        return user
+        return _jwt_user(access_token, db)
 
     except HTTPException:
         raise
@@ -336,19 +334,9 @@ async def get_unified_auth(request: Request, db: Session = Depends(get_db)) -> d
             # For regular endpoints, use JWT auth - inline the logic to avoid calling dependency as function
             try:
                 # Get token from cookie or Authorization header
-                access_token = request.cookies.get('access_token')
-                
-                if not access_token or not isinstance(access_token, str):
-                    # Try getting token from Authorization header as fallback
-                    auth_header = request.headers.get('Authorization')
-                    if auth_header and auth_header.startswith('Bearer '):
-                        access_token = auth_header.split(' ')[1]
-                    else:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Not authenticated",
-                            headers={"WWW-Authenticate": "Bearer"},
-                        )
+                access_token = request_token(request)
+                if not access_token:
+                    raise _unauthorized("Not authenticated")
 
                 # Enterprise: a Personal Access Token resolves directly to its owning user.
                 if access_token.startswith(PAT_TOKEN_PREFIX):
@@ -366,36 +354,7 @@ async def get_unified_auth(request: Request, db: Session = Depends(get_db)) -> d
                         "current_user": current_user
                     }
 
-                payload = verify_token(access_token)
-                if payload is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid authentication token",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                user_id = payload.get("sub")
-                if user_id is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid token payload",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                current_user = db.query(User).filter(User.id == user_id).first()
-                if current_user is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="User not found",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                if not current_user.is_active:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="User is inactive",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
+                current_user = _jwt_user(access_token, db)
 
                 return {
                     "auth_type": "jwt",
@@ -486,19 +445,9 @@ async def get_unified_chat_auth(request: Request, db: Session = Depends(get_db))
             # For regular endpoints, use JWT auth with chat permissions - inline the logic
             try:
                 # Get token from cookie or Authorization header
-                access_token = request.cookies.get('access_token')
-                
-                if not access_token or not isinstance(access_token, str):
-                    # Try getting token from Authorization header as fallback
-                    auth_header = request.headers.get('Authorization')
-                    if auth_header and auth_header.startswith('Bearer '):
-                        access_token = auth_header.split(' ')[1]
-                    else:
-                        raise HTTPException(
-                            status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Not authenticated",
-                            headers={"WWW-Authenticate": "Bearer"},
-                        )
+                access_token = request_token(request)
+                if not access_token:
+                    raise _unauthorized("Not authenticated")
 
                 # Enterprise: a Personal Access Token resolves directly to its owning user.
                 if access_token.startswith(PAT_TOKEN_PREFIX):
@@ -526,36 +475,7 @@ async def get_unified_chat_auth(request: Request, db: Session = Depends(get_db))
                         "can_view_unassigned": pat_can_view_unassigned
                     }
 
-                payload = verify_token(access_token)
-                if payload is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid authentication token",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                user_id = payload.get("sub")
-                if user_id is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Invalid token payload",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                current_user = db.query(User).filter(User.id == user_id).first()
-                if current_user is None:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="User not found",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-
-                if not current_user.is_active:
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="User is inactive",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
+                current_user = _jwt_user(access_token, db)
 
                 # Check chat permissions
                 user_permissions = {p.name for p in current_user.role.permissions}
