@@ -1706,7 +1706,18 @@ async def handle_get_workflow_state(sid):
                                 "initial_message": True
                             }
                         })
-                        
+
+                        # The widget does not render a workflow_state message, so
+                        # send the text as a chat_response like the other handlers.
+                        await sio.emit('chat_response', {
+                            'message': workflow_result.message,
+                            'type': 'chat_response',
+                            'transfer_to_human': workflow_result.transfer_to_human,
+                            'end_chat': workflow_result.end_chat,
+                            'request_rating': workflow_result.request_rating,
+                            'shopify_output': None
+                        }, room=session_id, namespace='/widget')
+
                         await sio.emit('workflow_state', {
                             'type': 'message',
                             'message': workflow_result.message,

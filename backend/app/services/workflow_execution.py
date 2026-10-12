@@ -163,7 +163,8 @@ class WorkflowExecutionService:
             # Automatic execution loop - continue executing nodes until we reach one that requires user interaction
             final_result = None
             intermediate_messages = []  # Collect messages from MESSAGE nodes during execution
-            
+            final_message_collected = False
+
             while current_node:
                 logger.debug(f"Executing node: {current_node.id} ({current_node.node_type})")
                 
@@ -184,6 +185,8 @@ class WorkflowExecutionService:
                     source
                 )
                 
+                collected_before = len(intermediate_messages)
+
                 # Collect messages from MESSAGE nodes during automatic execution
                 if current_node.node_type == NodeType.MESSAGE and result.message:
                     intermediate_messages.append(result.message)
@@ -205,7 +208,8 @@ class WorkflowExecutionService:
                     logger.debug(f"Collected confirmation message from USER_INPUT node: {result.message}")
                 
                 final_result = result
-                
+                final_message_collected = len(intermediate_messages) > collected_before
+
                 # Check if we should continue to next node automatically
                 if not result.success:
                     logger.error(f"Node execution failed: {result.error}")
@@ -244,7 +248,13 @@ class WorkflowExecutionService:
                     message="No execution result",
                     error="No execution result"
                 )
-            
+
+            # The node we stopped on is returned as the final message, which every
+            # caller sends and stores on top of the intermediate ones. Leaving it
+            # in both lists sent the visitor the same text twice.
+            if final_message_collected:
+                intermediate_messages.pop()
+
             # Update session workflow state based on final result
             if (final_result.landing_page_data or 
                 final_result.form_data or 

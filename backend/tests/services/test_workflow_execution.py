@@ -673,3 +673,73 @@ class TestWorkflowExecutionService:
         assert result.success is True
         assert result.should_continue is True
         assert result.next_node_id == next_node_id
+
+
+def _linked_nodes(*nodes):
+    """Chain mock nodes in order with mock connections; the first is the start."""
+    for node in nodes:
+        node.incoming_connections = []
+        node.outgoing_connections = []
+    for source, target in zip(nodes, nodes[1:]):
+        connection = Mock()
+        connection.target_node_id = target.id
+        source.outgoing_connections.append(connection)
+        target.incoming_connections.append(connection)
+    return list(nodes)
+
+
+def _message_node(text):
+    node = Mock(spec=WorkflowNode)
+    node.id = uuid4()
+    node.node_type = NodeType.MESSAGE
+    node.config = {"message_text": text}
+    return node
+
+
+async def _run_workflow(workflow_service, workflow, nodes, user_message="hi"):
+    workflow.nodes = nodes
+    with patch.object(workflow_service.workflow_repo, 'get_workflow_with_nodes_and_connections',
+                      return_value=workflow), \
+         patch.object(workflow_service, '_update_session_workflow_state'):
+        return await workflow_service.execute_workflow(
+            session_id="test-session",
+            user_message=user_message,
+            workflow_id=workflow.id,
+        )
+
+
+class TestTerminalMessageNotDuplicated:
+    """The node execution stops on is returned as the final message, so it must
+    not also be reported as an intermediate one: every caller emits and stores
+    both, which sent the visitor the same text twice."""
+
+    @pytest.mark.asyncio
+    async def test_single_message_node_is_only_the_final_message(self, workflow_service, sample_workflow):
+        result = await _run_workflow(workflow_service, sample_workflow, _linked_nodes(_message_node("Hello")))
+
+        assert result.success is True
+        assert result.message == "Hello"
+        assert result.intermediate_messages == []
+
+    @pytest.mark.asyncio
+    async def test_message_chain_keeps_earlier_messages_as_intermediate(self, workflow_service, sample_workflow):
+        nodes = _linked_nodes(_message_node("First"), _message_node("Second"))
+
+        result = await _run_workflow(workflow_service, sample_workflow, nodes)
+
+        assert result.message == "Second"
+        assert result.intermediate_messages == ["First"]
+
+    @pytest.mark.asyncio
+    async def test_message_before_user_input_stays_intermediate(self, workflow_service, sample_workflow):
+        user_input = Mock(spec=WorkflowNode)
+        user_input.id = uuid4()
+        user_input.name = "Ask"
+        user_input.node_type = NodeType.USER_INPUT
+        user_input.config = {"prompt_message": "What is your name?"}
+        nodes = _linked_nodes(_message_node("Welcome"), user_input)
+
+        result = await _run_workflow(workflow_service, sample_workflow, nodes, user_message=None)
+
+        assert result.message == "What is your name?"
+        assert result.intermediate_messages == ["Welcome"]
