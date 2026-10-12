@@ -46,6 +46,19 @@ npx playwright test           # reuses the running stack
 - The backend reads only `e2e/.env.e2e` (through `ENV_FILE`), never `backend/.env`.
 - The OSS edition runs with `NO_ENTERPRISE=1`, and the dashboard is built without `src/modules/enterprise`, so it behaves like a community install even in a checkout that has the submodules.
 
+## Editions
+
+| | OSS (default) | Enterprise (`E2E_EDITION=enterprise`) |
+|---|---|---|
+| Needs | nothing extra | the enterprise submodules checked out, and `mailpit` |
+| Backend | `NO_ENTERPRISE=1`, so community behaviour | enterprise module loaded, its migrations and seed applied |
+| Setup project | the first-run form (`specs/setup/`) | real signup with the emailed code (private suite) |
+| Specs | `specs/**` | the private suite's specs (`--project=enterprise`) **and** every OSS spec (`--project=chromium`) |
+
+Both setups write the same org contract (`src/org-state.ts`) through `prepareOrg()`, so an OSS spec never needs to know which edition it runs on.
+
+The private suite lives in the enterprise frontend module's `e2e/` folder. It imports only `@e2e`, and nothing from it belongs in this repo.
+
 ## How the code is organised
 
 ```
