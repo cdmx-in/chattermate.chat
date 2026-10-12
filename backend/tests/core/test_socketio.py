@@ -40,100 +40,88 @@ def test_configure_socketio_with_cors():
         assert set(sio.eio.cors_allowed_origins) == {"https://example1.com", "https://example2.com"}
 
 
+REDIS_OPTIONS = {
+    'retry_on_timeout': True,
+    'health_check_interval': 30,
+    'socket_timeout': 5.0,
+    'socket_connect_timeout': 5.0,
+}
+
+
+@pytest.fixture
+def restore_manager():
+    """configure_socketio swaps the shared server's manager; put the real one back."""
+    manager, initialized = sio.manager, sio.manager_initialized
+    yield
+    sio.manager, sio.manager_initialized = manager, initialized
+
+
 @patch('app.core.socketio.settings')
-def test_configure_socketio_with_redis_disabled(mock_settings):
-    """Test configuring socketio with Redis disabled"""
-    # Reset client manager before test
-    sio.client_manager = None
-    
-    # Configure mock
+def test_configure_socketio_with_redis_disabled(mock_settings, restore_manager):
+    """Without Redis the server keeps its in-process manager."""
     mock_settings.REDIS_ENABLED = False
-    
-    # Call the function
+    manager = sio.manager
+
     configure_socketio()
-    
-    # Verify Redis manager was not configured
-    if hasattr(sio, 'client_manager'):
-        assert not isinstance(sio.client_manager, socketio.AsyncRedisManager)
-    # If client_manager doesn't exist, the test passes implicitly
+
+    assert sio.manager is manager
+    assert not isinstance(sio.manager, socketio.AsyncRedisManager)
 
 
 @patch('app.core.socketio.settings')
 @patch('socketio.AsyncRedisManager')
-def test_configure_socketio_with_redis_enabled(mock_redis_manager, mock_settings):
-    """Test configuring socketio with Redis enabled"""
-    # Configure mocks
+def test_configure_socketio_with_redis_enabled(mock_redis_manager, mock_settings, restore_manager):
+    """With Redis, the Redis manager is the one the server emits through —
+    not merely assigned to an attribute it never reads."""
     mock_settings.REDIS_ENABLED = True
     mock_settings.REDIS_URL = "redis://localhost:6379"
     mock_redis_instance = MagicMock()
     mock_redis_manager.return_value = mock_redis_instance
-    
-    # Call the function
+
     configure_socketio()
-    
-    # Verify Redis manager was configured
+
     mock_redis_manager.assert_called_once_with(
-        "redis://localhost:6379",
-        write_only=False,
-        channel='chattermate',
-        redis_options={
-            'retry_on_timeout': True,
-            'health_check_interval': 30,
-            'socket_timeout': 5.0,
-            'socket_connect_timeout': 5.0,
-            'ssl_cert_reqs': None
-        }
+        "redis://localhost:6379", write_only=False, channel='chattermate', redis_options=REDIS_OPTIONS,
     )
-    
-    # Reset for next test
-    sio.client_manager = None
+    assert sio.manager is mock_redis_instance
+    mock_redis_instance.set_server.assert_called_once_with(sio)
+    assert sio.manager_initialized is False
 
 
 @patch('app.core.socketio.settings')
 @patch('socketio.AsyncRedisManager')
-def test_configure_socketio_with_elasticache(mock_redis_manager, mock_settings):
-    """Test configuring socketio with ElastiCache Redis URL"""
-    # Configure mocks
+def test_configure_socketio_with_elasticache(mock_redis_manager, mock_settings, restore_manager):
+    """ElastiCache URLs are upgraded to TLS."""
     mock_settings.REDIS_ENABLED = True
     mock_settings.REDIS_URL = "redis://my-cluster.cache.amazonaws.com:6379"
-    mock_redis_instance = MagicMock()
-    mock_redis_manager.return_value = mock_redis_instance
-    
-    # Call the function
+    mock_redis_manager.return_value = MagicMock()
+
     configure_socketio()
-    
-    # Verify Redis manager was configured with TLS URL
+
     mock_redis_manager.assert_called_once_with(
-        "rediss://my-cluster.cache.amazonaws.com:6379",
-        write_only=False,
-        channel='chattermate',
-        redis_options={
-            'retry_on_timeout': True,
-            'health_check_interval': 30,
-            'socket_timeout': 5.0,
-            'socket_connect_timeout': 5.0,
-            'ssl_cert_reqs': None
-        }
+        "rediss://my-cluster.cache.amazonaws.com:6379", write_only=False, channel='chattermate',
+        redis_options={**REDIS_OPTIONS, 'ssl_cert_reqs': None},
     )
-    
-    # Reset for next test
-    sio.client_manager = None
 
 
 @patch('app.core.socketio.settings')
 @patch('socketio.AsyncRedisManager')
-def test_configure_socketio_with_redis_exception(mock_redis_manager, mock_settings):
-    """Test configuring socketio with Redis that raises an exception"""
-    # Configure mocks
+def test_configure_socketio_with_redis_exception(mock_redis_manager, mock_settings, restore_manager):
+    """A Redis manager that cannot be built leaves the in-process one serving."""
     mock_settings.REDIS_ENABLED = True
     mock_settings.REDIS_URL = "redis://localhost:6379"
     mock_redis_manager.side_effect = Exception("Redis connection error")
-    
-    # Call the function - should not raise an exception
+    manager = sio.manager
+
     configure_socketio()
-    
-    # Verify Redis manager was attempted
+
     mock_redis_manager.assert_called_once()
-    
-    # Reset for next test
-    sio.client_manager = None 
+    assert sio.manager is manager
+
+
+def test_plain_redis_gets_no_tls_options():
+    """redis-py rejects ssl_cert_reqs on redis://; with it the manager's listener
+    fails in a loop and floods the log."""
+    from app.core.socketio import redis_options
+    assert 'ssl_cert_reqs' not in redis_options("redis://redis:6379/0")
+    assert redis_options("rediss://cache.amazonaws.com:6379")['ssl_cert_reqs'] is None
