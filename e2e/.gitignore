@@ -5,3 +5,5 @@ blob-report/
 .auth/
 .cache/
 .stack/
+test-results-quarantine/
+playwright-report-quarantine/

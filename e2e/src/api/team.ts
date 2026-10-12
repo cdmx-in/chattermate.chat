@@ -24,17 +24,35 @@ export async function roleId(api: ApiClient, name: string): Promise<number> {
   return role.id
 }
 
-/** Creates the user unless one with that email exists — setup reruns against a reused DB. */
-export async function ensureUser(
-  api: ApiClient,
-  user: { email: string; name: string; password: string; role: string },
-): Promise<User> {
-  const existing = (await api.get<User[]>('/users')).find((u) => u.email === user.email)
-  if (existing) return { ...existing, id: String(existing.id) }
+export interface NewUser {
+  email: string
+  name: string
+  password: string
+  role: string
+}
+
+export async function createUser(api: ApiClient, user: NewUser): Promise<User> {
   const created = await api.post<User>('/users', {
     data: { email: user.email, full_name: user.name, password: user.password, role_id: await roleId(api, user.role) },
   })
   return { ...created, id: String(created.id) }
+}
+
+/** A new group with `members`. */
+export async function createGroup(api: ApiClient, name: string, members: User[]): Promise<string> {
+  const group = await api.post<Group>('/groups', { data: { name } })
+  for (const member of members) await api.post(`/groups/${group.id}/users/${member.id}`)
+  return String(group.id)
+}
+
+/** Creates the user unless one with that email exists — setup reruns against a reused DB. */
+export async function ensureUser(
+  api: ApiClient,
+  user: NewUser,
+): Promise<User> {
+  const existing = (await api.get<User[]>('/users')).find((u) => u.email === user.email)
+  if (existing) return { ...existing, id: String(existing.id) }
+  return createUser(api, user)
 }
 
 export async function ensureGroup(api: ApiClient, name: string, members: User[]): Promise<string> {

@@ -115,13 +115,28 @@ jobs:
           # Let it release port 14010 before Playwright starts its own fake-llm.
           wait $FAKE_PID || true
 
+      # Started up front (Playwright reuses it) so every service writes its log to
+      # e2e/.stack/, which failure diagnostics read and the artifact keeps.
+      - name: Start the stack
+        working-directory: e2e
+        run: ./scripts/stack.sh up
+
       - name: Run e2e (parallel)
         working-directory: e2e
-        run: npx playwright test --project=chromium
+        run: npx playwright test --project=chromium --grep-invert @quarantine
 
       - name: Run e2e (org-wide settings, serial)
         working-directory: e2e
-        run: npx playwright test --project=org --workers=1 --pass-with-no-tests
+        run: npx playwright test --project=org --workers=1 --pass-with-no-tests --grep-invert @quarantine
+
+      # Known-flaky tests (AUTHORING.md flake policy) still run, but never block.
+      - name: Run quarantined tests (non-blocking)
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        working-directory: e2e
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report-quarantine
+        run: npx playwright test --project=chromium --project=org --workers=1 --grep @quarantine --pass-with-no-tests --output=test-results-quarantine
 
       - name: Upload report
         if: ${{ !cancelled() }}
@@ -131,4 +146,7 @@ jobs:
           path: |
             e2e/playwright-report/
             e2e/test-results/
+            e2e/playwright-report-quarantine/
+            e2e/test-results-quarantine/
+            e2e/.stack/*.log
           retention-days: 14

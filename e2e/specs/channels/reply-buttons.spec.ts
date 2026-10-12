@@ -1,4 +1,4 @@
-import { test, expect, channelsWithButtons } from '@e2e'
+import { test, expect, channelsWithButtons, AI_REPLY } from '@e2e'
 
 test.describe('reply buttons', () => {
   test.use({ agentSettings: { channelQuickReplies: true } })
@@ -11,10 +11,10 @@ test.describe('reply buttons', () => {
 
       const chat = (await connect({ api: adminApi, request, agentId: agent.id })).chatWith('Tess')
       await chat.send('Hi')
-      await expect.poll(() => chat.buttons(), { timeout: 20_000 }).toEqual(['Track my order', 'Returns'])
+      await expect.poll(() => chat.buttons(), AI_REPLY).toEqual(['Track my order', 'Returns'])
 
       await chat.tap('Track my order')
-      await expect.poll(() => chat.replies(), { timeout: 20_000 })
+      await expect.poll(() => chat.replies(), AI_REPLY)
         .toContainEqual(expect.stringContaining('Your order ships tomorrow.'))
     })
   }

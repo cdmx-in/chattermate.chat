@@ -1,12 +1,14 @@
-import { test as base, expect, type Browser, type BrowserContextOptions, type Page } from '@playwright/test'
+import { test as base, expect, type Browser, type BrowserContextOptions, type Page, type TestInfo } from '@playwright/test'
 import { ApiClient } from '../api/client'
-import { login } from '../api/auth'
+import { signedInClient } from '../api/auth'
 import { createAgent, enableLeadCapture } from '../api/agents'
+import { createGroup, createUser } from '../api/team'
 import { createWidget } from '../api/widgets'
 import { ChatWidget } from '../components/chat-widget'
 import { Sidebar } from '../components/sidebar'
-import { env } from '../env'
+import { FakeExternals } from '../fakes/externals'
 import { FakeLlm, scenarioMarker, type ScriptedAgent } from '../fakes/llm'
+import { attachDiagnostics, startDiagnostics } from './diagnostics'
 import { readOrgState, type OrgState } from '../org-state'
 import { AgentsPage } from '../pages/agents.page'
 import { AiConfigPage } from '../pages/ai-config.page'
@@ -42,6 +44,12 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
 
 export type TestAgent = ScriptedAgent & { id: string }
 
+/** The human team a handover test's chats go to: one online Agent-role member in their own group. */
+export interface HandoverTeam {
+  groupId: string
+  member: { id: string; name: string; email: string; password: string }
+}
+
 interface Options {
   /** Override per describe: test.use({ agentSettings: { transferToHuman: true } }). */
   agentSettings: Partial<AgentSettings>
@@ -54,14 +62,24 @@ interface WorkerFixtures {
 }
 
 interface TestFixtures {
+  /** Automatic: on failure, attaches the backend log, model requests and third-party calls. */
+  diagnostics: void
   llm: FakeLlm
   /** A fresh AI agent per test, scripted through `llm`. */
   agent: TestAgent
-  /** The customer-facing widget for `agent`, on `page`. */
+  /** The customer-facing widget for `agent`, on `customerPage`. */
   widget: ChatWidget
+  /** A visitor's browser: its own context, never signed in to the dashboard. */
+  customerPage: Page
   /** A widget for any agent id — e.g. one a test created through the UI. */
   makeWidget: (agentId: string) => Promise<ChatWidget>
-  /** Sam Agent's dashboard inbox, in a separate signed-in browser. */
+  /**
+   * The team this test's agent hands over to (with transferToHuman): a member and
+   * group of its own, so no other test's chats crowd its inbox or change its member.
+   * Created on first call — tests that never hand over never pay for one.
+   */
+  handoverTeam: () => Promise<HandoverTeam>
+  /** The handover team member's dashboard inbox, in a separate signed-in browser. */
   inbox: InboxPage
   /** A second, signed-out browser — for signing in as someone a test just created. */
   anonymousPage: Page
@@ -75,13 +93,17 @@ interface TestFixtures {
   humanAgentsPage: HumanAgentsPage
 }
 
-/** Every extra browser a fixture opens gets the same settings as the config's `use`. */
-async function newContext(browser: Browser, options: BrowserContextOptions = {}) {
+/**
+ * Every extra browser a fixture opens gets the running project's browser settings
+ * (viewport, device, motion, timezone, …) — never its storageState, which is the admin's.
+ */
+async function newContext(browser: Browser, testInfo: TestInfo, options: BrowserContextOptions = {}) {
+  const { contextOptions, baseURL, serviceWorkers, timezoneId, locale, colorScheme, viewport, userAgent,
+    deviceScaleFactor, isMobile, hasTouch } = testInfo.project.use
   const context = await browser.newContext({
-    baseURL: env.frontendUrl,
-    reducedMotion: 'reduce',
-    serviceWorkers: 'block',
-    timezoneId: 'UTC',
+    ...contextOptions,
+    baseURL, serviceWorkers, timezoneId, locale, colorScheme, viewport, userAgent,
+    deviceScaleFactor, isMobile, hasTouch,
     ...options,
   })
   await blockThirdParty(context)
@@ -95,9 +117,8 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
 
   adminApi: [async ({ playwright, org }, use) => {
     const request = await playwright.request.newContext()
-    const anonymous = new ApiClient(request)
-    const session = await login(anonymous, org.admin.email, org.admin.password)
-    await use(anonymous.withToken(session.token))
+    const { api } = await signedInClient(new ApiClient(request), org.admin.email, org.admin.password)
+    await use(api)
     await request.dispose()
   }, { scope: 'worker', box: true }],
 
@@ -108,15 +129,33 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
 
   llm: [async ({ request }, use) => use(new FakeLlm(request)), { box: true }],
 
-  agent: [async ({ adminApi, agentSettings, org }, use) => {
+  diagnostics: [async ({ llm, request }, use, testInfo) => {
+    const start = startDiagnostics()
+    await use()
+    await attachDiagnostics(testInfo, start, llm, new FakeExternals(request))
+  }, { auto: true, box: true }],
+
+  handoverTeam: [async ({ adminApi }, use) => {
+    let team: Promise<HandoverTeam> | undefined
+    await use(() => (team ??= (async () => {
+      const id = unique('teammate')
+      const member = { name: `Teammate ${id}`, email: `${id}@e2e.example.com`, password: 'E2e-Agent-Passw0rd!' }
+      const user = await createUser(adminApi, { ...member, role: 'Agent' })
+      const groupId = await createGroup(adminApi, `Team ${id}`, [user])
+      return { groupId, member: { ...member, id: user.id } }
+    })()))
+  }, { box: true }],
+
+  agent: [async ({ adminApi, agentSettings, handoverTeam }, use) => {
     const settings = { ...DEFAULT_AGENT_SETTINGS, ...agentSettings }
     const scenarioId = unique('scn')
     const name = `E2E Agent ${scenarioId}`
+    const groupIds = settings.transferToHuman ? [(await handoverTeam()).groupId] : []
     const created = await createAgent(adminApi, {
       name,
       instructions: [`You are a helpful support agent. ${scenarioMarker(scenarioId)}`],
       transferToHuman: settings.transferToHuman,
-      groupIds: settings.transferToHuman ? [org.supportGroupId] : [],
+      groupIds,
       askForRating: settings.askForRating,
       requireTokenAuth: settings.requireTokenAuth,
       channelQuickReplies: settings.channelQuickReplies,
@@ -125,23 +164,36 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
     await use({ ...created, scenarioId })
   }, { box: true }],
 
-  makeWidget: [async ({ adminApi, page }, use) => {
+  customerPage: [async ({ browser }, use, testInfo) => {
+    const context = await newContext(browser, testInfo)
+    await use(await context.newPage())
+    await context.close()
+  }, { box: true }],
+
+  makeWidget: [async ({ adminApi, customerPage }, use) => {
     await use(async (agentId) => {
       const widget = await createWidget(adminApi, agentId, unique('widget'))
-      return new ChatWidget(page, widget.id)
+      return new ChatWidget(customerPage, widget.id)
     })
   }, { box: true }],
 
   widget: [async ({ agent, makeWidget }, use) => use(await makeWidget(agent.id)), { box: true }],
 
-  inbox: [async ({ browser, org }, use) => {
-    const context = await newContext(browser, { storageState: org.humanAgent.storageState })
-    await use(new InboxPage(await context.newPage()))
+  inbox: [async ({ browser, handoverTeam }, use, testInfo) => {
+    const { member } = await handoverTeam()
+    const context = await newContext(browser, testInfo)
+    // Signing in through the form is also what marks the member online — handover
+    // only routes to a group with someone online.
+    const loginPage = new LoginPage(await context.newPage())
+    await loginPage.goto()
+    await loginPage.signIn(member.email, member.password)
+    await expect(loginPage.page).not.toHaveURL(/\/login/)
+    await use(new InboxPage(loginPage.page))
     await context.close()
   }, { box: true }],
 
-  anonymousPage: [async ({ browser }, use) => {
-    const context = await newContext(browser)
+  anonymousPage: [async ({ browser }, use, testInfo) => {
+    const context = await newContext(browser, testInfo)
     await use(await context.newPage())
     await context.close()
   }, { box: true }],

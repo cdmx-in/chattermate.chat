@@ -1,4 +1,4 @@
-import { test, expect, createWidgetApp, issueConversationToken, unique } from '@e2e'
+import { test, expect, createWidgetApp, issueConversationToken, unique, AI_REPLY } from '@e2e'
 
 test.describe('token-authenticated widget', () => {
   test.use({ agentSettings: { requireTokenAuth: true } })
@@ -11,7 +11,7 @@ test.describe('token-authenticated widget', () => {
     await widget.embed({ token })
     await widget.open()
     await widget.send('Hi')
-    await expect(widget.lastAgentMessage()).toHaveText('Welcome back!')
+    await expect(widget.lastAgentMessage()).toHaveText('Welcome back!', AI_REPLY)
   })
 
   test('without a token the widget refuses to load @widget', async ({ widget }) => {

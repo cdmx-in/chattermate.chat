@@ -4,9 +4,9 @@ import { env } from './src/env'
 import { storageStatePath } from './src/org-state'
 
 const isCI = !!process.env.CI
-// Locally, reuse a stack already started with `./scripts/stack.sh up` (fast reruns);
-// on CI always start clean.
-const reuse = !isCI
+// Reuse a stack already started with `./scripts/stack.sh up` — locally for fast
+// reruns, and on CI, which starts it first so every service logs to e2e/.stack/.
+const reuse = true
 const enterprise = env.edition === 'enterprise'
 if (enterprise && !existsSync(env.enterpriseSpecDir)) {
   throw new Error(`E2E_EDITION=enterprise but ${env.enterpriseSpecDir} is missing — check out the enterprise_frontend submodule`)
@@ -59,7 +59,8 @@ export default defineConfig({
 
   use: {
     baseURL: env.frontendUrl,
-    trace: 'on-first-retry',
+    // Every failure, including the first attempt, keeps its trace.
+    trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
     // The dashboard is a PWA; a service worker caching across tests only adds flake.

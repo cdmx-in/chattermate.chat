@@ -1,6 +1,7 @@
 import { createHmac, randomInt } from 'node:crypto'
 import type { APIRequestContext } from '@playwright/test'
 import type { ApiClient } from '../api/client'
+import type { RecordedCall } from '../fakes/externals'
 import { env } from '../env'
 import { step } from '../support/step'
 
@@ -125,6 +126,11 @@ export function digits(n: number): string {
 /** A UK mobile number in E.164 (what the backend stores as the customer's phone). */
 export function phoneNumber(): string {
   return `+447${digits(9)}`
+}
+
+/** True when the backend authenticated `call` with `token` — i.e. it was sent as that account. */
+export function sentWith(call: RecordedCall, token: string): boolean {
+  return call.headers.authorization === `Bearer ${token}`
 }
 
 /** Phone numbers compared the way providers differ on them: digits only. */

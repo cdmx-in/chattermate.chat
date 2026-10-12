@@ -1,4 +1,4 @@
-import { test, expect, scenarioMarker, unique } from '@e2e'
+import { test, expect, scenarioMarker, unique, AI_REPLY } from '@e2e'
 
 test.describe('agent editor', () => {
   // `agent` makes sure the org has one, so /ai-agents shows the list, not onboarding.
@@ -18,7 +18,7 @@ test.describe('agent editor', () => {
     await widget.open()
     await widget.send('Hi there')
 
-    await expect(widget.lastAgentMessage()).toHaveText('Hello from the Acme team!')
+    await expect(widget.lastAgentMessage()).toHaveText('Hello from the Acme team!', AI_REPLY)
     const prompts = (await llm.requests({ name, scenarioId })).map((request) => request.system)
     expect(prompts.join('\n')).toContain('Always sign off as the Acme team.')
   })

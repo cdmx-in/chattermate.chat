@@ -18,15 +18,18 @@ interface CallOptions {
  */
 export class ApiClient {
   readonly request: APIRequestContext
-  private readonly token?: string
+  private token?: string
+  private readonly renew?: () => Promise<string>
 
-  constructor(request: APIRequestContext, token?: string) {
+  /** `renew` fetches a fresh token when the current one is refused (it lives 30 minutes). */
+  constructor(request: APIRequestContext, token?: string, renew?: () => Promise<string>) {
     this.request = request
     this.token = token
+    this.renew = renew
   }
 
-  withToken(token: string): ApiClient {
-    return new ApiClient(this.request, token)
+  withToken(token: string, renew?: () => Promise<string>): ApiClient {
+    return new ApiClient(this.request, token, renew)
   }
 
   get<T>(path: string, options: CallOptions = {}) { return this.call<T>('GET', path, options) }
@@ -37,6 +40,16 @@ export class ApiClient {
 
   /** Like call(), but hands back the raw response instead of throwing on a non-2xx. */
   async raw(method: string, path: string, options: CallOptions = {}): Promise<APIResponse> {
+    const response = await this.send(method, path, options)
+    // A long-lived worker outlasts its token; sign in again once and retry.
+    if (response.status() === 401 && this.renew) {
+      this.token = await this.renew()
+      return this.send(method, path, options)
+    }
+    return response
+  }
+
+  private send(method: string, path: string, options: CallOptions): Promise<APIResponse> {
     return this.request.fetch(`${env.apiUrl}${path}`, {
       method,
       data: options.data,

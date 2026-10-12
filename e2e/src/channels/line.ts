@@ -2,7 +2,7 @@ import { connectLine, routeToAgent } from '../api/channels'
 import { FakeExternals } from '../fakes/externals'
 import { unique } from '../support/ids'
 import { step } from '../support/step'
-import { Chat, digits, hmac, postWebhook, type ChannelConnector } from './chat'
+import { Chat, digits, hmac, postWebhook, sentWith, type ChannelConnector } from './chat'
 
 interface LinePush { to: string; messages: Array<{ type: string; text?: string }> }
 
@@ -10,7 +10,8 @@ interface LinePush { to: string; messages: Array<{ type: string; text?: string }
 export const line: ChannelConnector = ({ api, request, agentId }) =>
   step('Connect a LINE Official Account', async () => {
     const channelSecret = unique('line-secret')
-    const account = await connectLine(api, channelSecret, unique('line-token'))
+    const accessToken = unique('line-token')
+    const account = await connectLine(api, channelSecret, accessToken)
     await routeToAgent(api, account.id, agentId)
     const externals = new FakeExternals(request)
 
@@ -32,7 +33,8 @@ export const line: ChannelConnector = ({ api, request, agentId }) =>
           await postWebhook(request, `/webhooks/line/${account.id}`, { json }, {
             'x-line-signature': hmac('sha256', channelSecret, json).toString('base64'),
           })
-        }, async () => (await externals.calls('line', 'push'))
+        }, async () => (await externals.calls('line', 'push', { contains: userId }))
+          .filter((c) => c.status === 200 && sentWith(c, accessToken))
           .map((c) => c.body as LinePush)
           .filter((b) => b.to === userId)
           .flatMap((b) => b.messages.map((m) => m.text ?? '')))

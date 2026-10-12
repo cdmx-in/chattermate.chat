@@ -1,4 +1,4 @@
-import { test, expect } from '@e2e'
+import { test, expect, AI_REPLY } from '@e2e'
 
 test.describe('human handover', () => {
   test.use({ agentSettings: { transferToHuman: true } })
@@ -17,7 +17,7 @@ test.describe('human handover', () => {
     await inbox.openConversationWith(widget.customer.name)
     await inbox.takeOver()
     await inbox.reply('Hi, this is Sam. How can I help?')
-    await expect(widget.lastAgentMessage()).toHaveText('Hi, this is Sam. How can I help?')
+    await expect(widget.lastAgentMessage()).toHaveText('Hi, this is Sam. How can I help?', AI_REPLY)
 
     await widget.send('My parcel never arrived')
     await expect(inbox.lastCustomerMessage()).toContainText('My parcel never arrived')

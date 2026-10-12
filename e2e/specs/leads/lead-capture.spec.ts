@@ -1,4 +1,4 @@
-import { test, expect } from '@e2e'
+import { test, expect, AI_REPLY } from '@e2e'
 
 test.describe('lead capture', () => {
   test.use({ agentSettings: { leadCapture: true } })
@@ -14,9 +14,9 @@ test.describe('lead capture', () => {
     await widget.send('I would like a demo')
     // A visitor answers the question once it is asked; replies to back-to-back
     // messages are produced concurrently and may arrive in either order.
-    await expect(widget.lastAgentMessage()).toHaveText('Happy to set that up — what is your email?')
+    await expect(widget.lastAgentMessage()).toHaveText('Happy to set that up — what is your email?', AI_REPLY)
     await widget.send(`Sure, I am ${name}, ${email}`)
-    await expect(widget.lastAgentMessage()).toHaveText('Thanks! Someone from sales will reach out.')
+    await expect(widget.lastAgentMessage()).toHaveText('Thanks! Someone from sales will reach out.', AI_REPLY)
 
     await peoplePage.goto()
     await peoplePage.findLead(email)

@@ -1,4 +1,4 @@
-import { test, expect, unique } from '@e2e'
+import { test, expect, unique, AI_REPLY } from '@e2e'
 
 test.describe('tickets', () => {
   test('the AI opens a ticket that an agent then works in the dashboard @tickets', async ({ agent, widget, llm, ticketsPage }) => {
@@ -10,7 +10,7 @@ test.describe('tickets', () => {
     await widget.embed()
     await widget.open()
     await widget.send('The checkout button does nothing when I click it')
-    await expect(widget.lastAgentMessage()).toHaveText('I have logged this for our team.')
+    await expect(widget.lastAgentMessage()).toHaveText('I have logged this for our team.', AI_REPLY)
 
     await ticketsPage.goto()
     await ticketsPage.open(summary)

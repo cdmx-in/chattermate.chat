@@ -1,4 +1,4 @@
-import { test, expect, channels, Mailbox } from '@e2e'
+import { test, expect, channels, Mailbox, AI_REPLY } from '@e2e'
 
 test('an email reply stays in the customer\'s thread @channels', async ({ agent, llm, adminApi, request }) => {
   await llm.script(agent, (s) => s.otherwise().reply('Happy to help with that.'))
@@ -7,7 +7,7 @@ test('an email reply stays in the customer\'s thread @channels', async ({ agent,
   await chat.send('Can I change my delivery address?')
 
   const mailbox = new Mailbox(request)
-  await expect.poll(async () => (await mailbox.messagesTo(chat.address)).length, { timeout: 20_000 }).toBe(1)
+  await expect.poll(async () => (await mailbox.messagesTo(chat.address)).length, AI_REPLY).toBe(1)
   const [reply] = await mailbox.messagesTo(chat.address)
   expect(reply.subject).toBe(`Re: ${chat.subject}`)
   // In-Reply-To is what makes mail clients file the answer under the question.
