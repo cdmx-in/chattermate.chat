@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -35,6 +37,19 @@ engine = create_engine(
     json_serializer=lambda obj: __import__('json').dumps(obj, ensure_ascii=False),
     json_deserializer=lambda s: __import__('json').loads(s)
 )
+
+
+
+def _fresh_pool_after_fork() -> None:
+    """gunicorn --preload (scripts/start.sh) imports the app, which opens pooled
+    connections, before it forks the workers. A worker must never reuse its
+    parent's sockets: two workers talking over one connection corrupt each
+    other's transactions. So each child starts with an empty pool, leaving the
+    parent's connections open for the parent."""
+    engine.dispose(close=False)
+
+
+os.register_at_fork(after_in_child=_fresh_pool_after_fork)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
