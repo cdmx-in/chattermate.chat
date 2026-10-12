@@ -25,8 +25,9 @@ from app.channels.app_hooks import OutboundRecord, emit_channel_event, outbound_
 from app.channels.base import InteractiveMessage
 from app.channels.constants import MessageSource
 from app.channels.interactive import (
-    BODY_MAX, DEFAULT_CHOICES_BODY, to_text_fallback, validate_interactive,
+    DEFAULT_CHOICES_BODY, to_text_fallback, validate_interactive,
 )
+from app.channels.interactive_limits import InteractiveLimits
 from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, encode_sent_choices
 from app.models.channels import ChannelAccount, ChannelConversation
 from app.models.session_to_agent import SessionToAgent
@@ -163,12 +164,24 @@ async def _record_delivery(db: Session, adapter: ChannelAdapter, account: Channe
     try:
         if sent.choices is not None:
             ChatRepository(db).update_message_attributes(message_id, {
-                SENT_CHOICES_ATTRIBUTE: encode_sent_choices(sent.choices, sent.as_text),
+                SENT_CHOICES_ATTRIBUTE: encode_sent_choices(
+                    sent.choices, sent.as_text,
+                    numbered=bool(adapter.interactive_limits and adapter.interactive_limits.options_in_text)),
             })
-        if adapter.reports_delivery_status and sent.result.external_message_id:
-            await record_sent(db, message_id, account.id, sent.result.external_message_id)
+        external_message_id = sent.result.external_message_id
+        if adapter.reports_delivery_status and external_message_id:
+            await record_sent(db, message_id, account.id, external_message_id)
+        elif sent.choices is not None and external_message_id:
+            # A tap is matched back to the message that offered it
+            ChatRepository(db).set_external_message_id(message_id, external_message_id)
     except Exception as e:
         logger.error(f"Could not record delivery of message {message_id}: {e}")
+
+
+def _shown_length(message: InteractiveMessage, limits: InteractiveLimits) -> int:
+    """How long the message's text is as sent: with the choices written in
+    too where the channel shows them that way."""
+    return len(to_text_fallback(message) if limits.options_in_text else message.body)
 
 
 async def _send_reply(adapter: ChannelAdapter, account: ChannelAccount,
@@ -189,12 +202,13 @@ async def _send_reply(adapter: ChannelAdapter, account: ChannelAccount,
     choices = interactive
     lead = None
     if adapter.supports_interactive:
-        if len(interactive.body) > BODY_MAX:
+        limits = adapter.interactive_limits
+        if _shown_length(interactive, limits) > limits.body_max:
             lead = await adapter.send_text(account, conversation, adapter.format_outbound(text))
             if not lead.ok:
                 return _Sent(result=lead)
             choices = replace(interactive, body=DEFAULT_CHOICES_BODY)
-        errors = validate_interactive(choices)
+        errors = validate_interactive(choices, limits)
         if errors:
             logger.warning(f"Choices not sendable as interactive on {adapter.channel_type}, "
                            f"sending as text: {'; '.join(errors)}")

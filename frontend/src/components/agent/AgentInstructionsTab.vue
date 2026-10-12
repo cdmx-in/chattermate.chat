@@ -47,6 +47,10 @@ const props = defineProps({
     type: Boolean,
     default: true
   },
+  channelQuickReplies: {
+    type: Boolean,
+    default: false
+  },
   askForRating: {
     type: Boolean,
     required: true
@@ -136,6 +140,7 @@ const isGuardrailDefault = computed(() => {
 })
 const localTransferToHuman = ref(props.transferToHuman)
 const localAiRepliesEnabled = ref(props.aiRepliesEnabled)
+const localChannelQuickReplies = ref(props.channelQuickReplies)
 const localAskForRating = ref(props.askForRating)
 const localHandoffCollectEmail = ref(props.handoffCollectEmail)
 const localHandoffCollectName = ref(props.handoffCollectName)
@@ -172,6 +177,10 @@ watch(() => props.transferToHuman, (newValue) => {
 
 watch(() => props.aiRepliesEnabled, (newValue) => {
   localAiRepliesEnabled.value = newValue
+})
+
+watch(() => props.channelQuickReplies, (newValue) => {
+  localChannelQuickReplies.value = newValue
 })
 
 watch(() => props.askForRating, (newValue) => {
@@ -250,6 +259,7 @@ const handleSave = () => {
     guardrailEnabled: localGuardrailEnabled.value,
     transferToHuman: localTransferToHuman.value,
     aiRepliesEnabled: localAiRepliesEnabled.value,
+    channelQuickReplies: localChannelQuickReplies.value,
     askForRating: localAskForRating.value,
     handoffCollectEmail: localHandoffCollectEmail.value,
     handoffCollectName: localHandoffCollectName.value,
@@ -370,6 +380,24 @@ const handleSave = () => {
           </div>
           <p class="helper-text">
             Turn this off to send every chat straight to your team. The AI won't reply.
+          </p>
+        </div>
+
+        <!-- The AI's choices as tappable buttons where the channel can show them -->
+        <div v-if="localAiRepliesEnabled" class="transfer-toggle">
+          <div class="toggle-header">
+            <h4 class="section-title">Reply Buttons</h4>
+            <label class="switch">
+              <input type="checkbox"
+                v-model="localChannelQuickReplies"
+                :disabled="!isEditing"
+                aria-label="Reply buttons on messaging channels"
+              >
+              <span class="slider"></span>
+            </label>
+          </div>
+          <p class="helper-text">
+            Offer choices as tappable buttons on WhatsApp, Messenger, Instagram and Telegram. Not the web widget.
           </p>
         </div>
 

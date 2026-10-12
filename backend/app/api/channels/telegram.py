@@ -22,7 +22,6 @@ from sqlalchemy.orm import Session
 from app.api.channels.accounts import get_org_account_or_404, to_account_out
 from app.channels import telegram as telegram_api
 from app.core.auth import get_current_organization, require_permissions
-from app.core.config import settings
 from app.core.error_handlers import ClientSafeHTTPException
 from app.database import get_db
 from app.models.channels import ChannelType
@@ -30,14 +29,11 @@ from app.models.organization import Organization
 from app.models.schemas.channel import ChannelAccountOut, TelegramConnectRequest
 from app.models.user import User
 from app.repositories.channels import ChannelAccountRepository
+from app.services import telegram_webhooks
 from app.core.logger import get_logger
 
 router = APIRouter()
 logger = get_logger(__name__)
-
-
-def _webhook_url(account_id) -> str:
-    return f"{settings.BACKEND_URL.rstrip('/')}{settings.API_V1_STR}/webhooks/telegram/{account_id}"
 
 
 @router.post("", response_model=ChannelAccountOut)
@@ -72,8 +68,7 @@ async def connect_telegram(
         )
         created = True
 
-    webhook_ok, webhook_error = await telegram_api.set_webhook(
-        bot_token, _webhook_url(account.id), account.webhook_secret)
+    webhook_ok, webhook_error = await telegram_webhooks.register(account, bot_token)
     if not webhook_ok:
         # Roll back only a freshly created account; keep an existing one (and
         # its conversation history) intact on a transient webhook failure.

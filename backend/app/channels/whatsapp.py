@@ -22,6 +22,7 @@ from app.channels.base import (
     StatusEvent, WindowStatus,
 )
 from app.channels.constants import DEFAULT_TEMPLATE_LANGUAGE
+from app.channels.interactive_limits import WHATSAPP_LIMITS, InteractiveLimits
 from app.channels.meta_base import MetaBaseAdapter, graph_post
 from app.channels.registry import register_adapter
 from app.models.channels import ChannelAccount, ChannelConversation, ChannelType
@@ -37,7 +38,7 @@ class WhatsAppAdapter(MetaBaseAdapter):
     channel_type: ClassVar[str] = ChannelType.WHATSAPP.value
     # Outside the 24h window WhatsApp allows re-opening with an approved template
     expired_status: ClassVar[WindowStatus] = WindowStatus.TEMPLATE_REQUIRED
-    supports_interactive: ClassVar[bool] = True
+    interactive_limits: ClassVar[Optional[InteractiveLimits]] = WHATSAPP_LIMITS
     reports_delivery_status: ClassVar[bool] = True
     max_text_length: ClassVar[Optional[int]] = MAX_MESSAGE_LENGTH
 

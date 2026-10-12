@@ -21,6 +21,7 @@ from uuid import uuid4
 import pytest
 
 from app.channels.base import InboundMessage, InteractiveReply, InteractiveReplyType
+from app.channels.interactive_limits import TELEGRAM_LIMITS, WHATSAPP_LIMITS
 from app.models.channels import ChannelConversation
 from app.models.chat_history import ChatHistory
 from app.models.agent import AgentType
@@ -560,6 +561,30 @@ def _wa_tap():
 class TestChoices:
     @pytest.mark.asyncio
     async def test_whatsapp_agent_is_told_it_can_offer_choices(
+            self, db, whatsapp_account, use_test_db, test_ai_config, mock_sio, test_agent):
+        test_agent.channel_quick_replies = True
+        db.commit()
+        response = SimpleNamespace(message="When?", transfer_to_human=False, end_chat=False,
+                                   request_lead_capture=False, quick_replies=["Today", "Tomorrow"])
+        fake_agent = MagicMock()
+        fake_agent.get_response = AsyncMock(return_value=response)
+        fake_agent.safe_cleanup_mcp_tools = AsyncMock()
+        fake_agent.last_bot_message_id = 7
+
+        with patch.object(channel_chat.ChatAgent, "create_async", AsyncMock(return_value=fake_agent)) as create_async, \
+             patch.object(channel_chat, "deliver_to_customer",
+                          AsyncMock(return_value=DeliveryResult(ok=True))) as deliver:
+            await process_channel_message(whatsapp_account.id, _wa_tap())
+
+        assert create_async.await_args.kwargs["choice_limits"] is WHATSAPP_LIMITS
+        assert deliver.await_args.kwargs["message_id"] == 7
+        sent = deliver.await_args.kwargs["interactive"]
+        assert [b.title for b in sent.buttons] == ["Today", "Tomorrow"]
+        user_attributes = fake_agent.get_response.await_args.kwargs["user_attributes"]
+        assert user_attributes["interactive_reply"] == {"type": "button_reply", "id": "qr_1"}
+
+    @pytest.mark.asyncio
+    async def test_buttons_are_off_until_the_agent_turns_them_on(
             self, db, whatsapp_account, use_test_db, test_ai_config, mock_sio):
         response = SimpleNamespace(message="When?", transfer_to_human=False, end_chat=False,
                                    request_lead_capture=False, quick_replies=["Today", "Tomorrow"])
@@ -573,28 +598,40 @@ class TestChoices:
                           AsyncMock(return_value=DeliveryResult(ok=True))) as deliver:
             await process_channel_message(whatsapp_account.id, _wa_tap())
 
-        assert create_async.await_args.kwargs["offer_choices"] is True
-        assert deliver.await_args.kwargs["message_id"] == 7
-        sent = deliver.await_args.kwargs["interactive"]
-        assert [b.title for b in sent.buttons] == ["Today", "Tomorrow"]
-        user_attributes = fake_agent.get_response.await_args.kwargs["user_attributes"]
-        assert user_attributes["interactive_reply"] == {"type": "button_reply", "id": "qr_1"}
+        assert create_async.await_args.kwargs["choice_limits"] is None
+        assert deliver.await_args.kwargs["interactive"] is None
 
     @pytest.mark.asyncio
-    async def test_channels_without_buttons_are_not_offered_choices(
-            self, db, routed_account, use_test_db, test_ai_config, mock_sio):
+    async def test_telegram_agents_get_buttons_when_turned_on(
+            self, db, routed_account, use_test_db, test_ai_config, mock_sio, test_agent):
+        test_agent.channel_quick_replies = True
+        db.commit()
         fake_agent = _agent_persisting_reply(db)
 
         with patch.object(channel_chat.ChatAgent, "create_async", AsyncMock(return_value=fake_agent)) as create_async, \
              patch.object(channel_chat, "deliver_to_customer", AsyncMock(return_value=DeliveryResult(ok=True))):
             await process_channel_message(routed_account.id, make_inbound())
 
-        assert create_async.await_args.kwargs["offer_choices"] is False
+        assert create_async.await_args.kwargs["choice_limits"] is TELEGRAM_LIMITS
+
+    @pytest.mark.asyncio
+    async def test_a_channel_without_buttons_offers_none_even_when_turned_on(
+            self, db, routed_account, use_test_db, test_ai_config, mock_sio, test_agent, monkeypatch):
+        test_agent.channel_quick_replies = True
+        db.commit()
+        monkeypatch.setattr(type(channel_chat.get_adapter("telegram")), "interactive_limits", None)
+        fake_agent = _agent_persisting_reply(db)
+
+        with patch.object(channel_chat.ChatAgent, "create_async", AsyncMock(return_value=fake_agent)) as create_async, \
+             patch.object(channel_chat, "deliver_to_customer", AsyncMock(return_value=DeliveryResult(ok=True))):
+            await process_channel_message(routed_account.id, make_inbound())
+
+        assert create_async.await_args.kwargs["choice_limits"] is None
 
     @pytest.mark.asyncio
     async def test_human_path_stores_and_relays_the_tap(self, db, whatsapp_account, use_test_db, mock_sio):
         with patch.object(channel_chat.AgentRepository, "get_agent",
-                          return_value=SimpleNamespace(ai_replies_enabled=False)), \
+                          return_value=SimpleNamespace(ai_replies_enabled=False, channel_quick_replies=False)), \
              patch.object(channel_chat, "notify_customer", AsyncMock()):
             await process_channel_message(whatsapp_account.id, _wa_tap())
 

@@ -26,6 +26,7 @@ from app.channels.app_hooks import HandledBy
 from app.channels.base import InteractiveMessage
 from app.channels.constants import MessageSource
 from app.channels.interactive import from_options
+from app.channels.interactive_limits import InteractiveLimits
 from app.core.security import decrypt_api_key
 from app.core.logger import get_logger
 from app.database import SessionLocal
@@ -105,13 +106,13 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
 
         # A human-only agent answers nothing — the chat waits in the inbox for
         # someone to pick it up, so it takes the same path as one a human
-        # already holds. Unlike the widget there is no socket session to cache
-        # the flag on, so the lookup is skipped for the sessions that take that
-        # path regardless.
-        ai_replies_enabled = True
-        if session_record.user_id is None and session_record.status == SessionStatus.OPEN:
-            agent = AgentRepository(db).get_agent(agent_id)
-            ai_replies_enabled = agent.ai_replies_enabled if agent else True
+        # already holds.
+        agent = AgentRepository(db).get_agent(agent_id)
+        ai_replies_enabled = agent.ai_replies_enabled if agent else True
+        # Buttons are the agent's choice (off unless turned on), where the
+        # channel can show them
+        choice_limits = (adapter.choice_limits_for(conversation)
+                         if adapter is not None and agent is not None and agent.channel_quick_replies else None)
 
         # An installed extension (an external app) may answer first. Its reply
         # can land while we wait, so the customer's message keeps the time it
@@ -173,7 +174,7 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
             org_id=org_id, agent_id=str(agent_id),
             customer_id=customer_id, session_id=session_id,
             conversation=conversation,
-            offer_choices=bool(adapter and adapter.supports_interactive),
+            choice_limits=choice_limits,
         )
         if response is None:
             # The agent hard-failed. Still send a reply so a typing indicator /
@@ -199,7 +200,7 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
             'transfer_to_human': getattr(response, 'transfer_to_human', False),
             'end_chat': getattr(response, 'end_chat', False),
         }, source=MessageSource.AI, message_id=bot_message_id,
-            interactive=_offered_choices(response))
+            interactive=_offered_choices(response, choice_limits))
         if not delivery.ok and bot_message_id is not None:
             ChatRepository(db).mark_delivery_failed(bot_message_id, delivery.reason)
 
@@ -434,7 +435,7 @@ def _store_customer_message(db: Session, inbound: InboundMessage, session_record
     path persists inside ChatAgent.get_response). Returns the stored row for
     the relay."""
     message = {
-        "message": reply_text(db, account.organization_id, inbound),
+        "message": reply_text(db, account.id, inbound),
         "message_type": "user",
         "session_id": str(session_record.session_id),
         "organization_id": org_id,
@@ -462,7 +463,7 @@ async def _within_message_limit(db: Session, org_id: str, ai_config) -> bool:
 async def _run_chat_agent(db: Session, account: ChannelAccount, ai_config,
                           inbound: InboundMessage, org_id: str, agent_id: str,
                           customer_id: str, session_id: str, conversation=None,
-                          offer_choices: bool = False):
+                          choice_limits: Optional[InteractiveLimits] = None):
     """Run the AI agent for one turn. Workflow-enabled agents fall back to the
     plain agent on external channels (workflow forms are widget-only).
 
@@ -479,11 +480,11 @@ async def _run_chat_agent(db: Session, account: ChannelAccount, ai_config,
         session_id=session_id,
         channel=account.channel_type,
         extra_context=business_message_context(conversation),
-        offer_choices=offer_choices,
+        choice_limits=choice_limits,
     )
     try:
         response = await chat_agent.get_response(
-            message=reply_text(db, account.organization_id, inbound),
+            message=reply_text(db, account.id, inbound),
             session_id=session_id,
             org_id=org_id,
             agent_id=agent_id,
@@ -498,10 +499,10 @@ async def _run_chat_agent(db: Session, account: ChannelAccount, ai_config,
         await chat_agent.safe_cleanup_mcp_tools()
 
 
-def _offered_choices(response) -> Optional[InteractiveMessage]:
+def _offered_choices(response, limits: Optional[InteractiveLimits]) -> Optional[InteractiveMessage]:
     """The agent's choices as the interactive message to send with its reply."""
     options = getattr(response, 'quick_replies', None)
-    return from_options(response.message, options) if options else None
+    return from_options(response.message, options, limits) if options and limits is not None else None
 
 
 async def _deliver(db: Session, session_record, payload: dict, *, source: MessageSource,

@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.api.webhooks.common import is_duplicate_message
 from app.channels import get_adapter
+from app.channels import telegram as telegram_channel
 from app.core.logger import get_logger
 from app.database import get_db
 from app.models.channels import ChannelType
@@ -58,12 +59,23 @@ async def telegram_webhook(
         background_tasks.add_task(process_channel_interaction, account.id, interaction)
         return {"ok": True}
 
+    tap_taken = False
     for inbound in adapter.parse_inbound(payload):
-        # Telegram message_id is only unique within a chat — key by conversation too
+        # Telegram message_id is only unique within a chat — key by conversation
+        # too. A tap is keyed by the keyboard it was on: only the first tap on
+        # a keyboard counts, so a double tap isn't answered twice.
         if is_duplicate_message(ChannelType.TELEGRAM.value,
-                                f"{account.id}:{inbound.external_conversation_id}:{inbound.external_message_id}"):
+                                f"{account.id}:{inbound.external_conversation_id}:{telegram_channel.dedupe_id(inbound)}"):
             logger.info(f"Skipping duplicate Telegram message {inbound.external_message_id}")
             continue
         background_tasks.add_task(process_channel_message, account.id, inbound)
+        if inbound.interactive is not None:
+            tap_taken = True
+            # Take the keyboard off the message: it has been answered. After
+            # the reply — background tasks run in turn, and a slow edit must
+            # not hold it up (a second tap meanwhile is refused as a duplicate).
+            background_tasks.add_task(adapter.clear_buttons, account, inbound.external_conversation_id,
+                                      inbound.reply_to_message_id)
 
-    return {"ok": True}
+    # A tap is answered in the reply, so its button stops spinning
+    return telegram_channel.callback_answer(payload, taken=tap_taken) or {"ok": True}

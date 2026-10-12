@@ -27,6 +27,7 @@ from app.models.schemas.channel import AgentChannelConfigRequest, ChannelAccount
 from app.models.user import User
 from app.repositories.agent import AgentRepository
 from app.repositories.channels import AgentChannelConfigRepository
+from app.services import telegram_webhooks
 from app.core.logger import get_logger
 
 router = APIRouter()
@@ -49,6 +50,8 @@ async def set_account_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     AgentChannelConfigRepository(db).set_agent(account.id, request.agent_id, request.is_active)
+    # A bot connected before buttons existed doesn't receive taps yet
+    await telegram_webhooks.reregister_if_buttons_on(account, agent)
     return to_account_out(db, account)
 
 

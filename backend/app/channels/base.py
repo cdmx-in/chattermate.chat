@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import ClassVar, List, Optional
 
+from app.channels.interactive_limits import InteractiveLimits
 from app.models.channels import ChannelAccount, ChannelConversation
 
 
@@ -74,6 +75,8 @@ class InteractiveKind(str, enum.Enum):
 class InteractiveButton:
     id: str
     title: str
+    # The choice's full text when the title had to be cut to fit (not sent)
+    description: Optional[str] = None
 
 
 @dataclass
@@ -170,13 +173,23 @@ class ChannelAdapter(ABC):
     """
 
     channel_type: ClassVar[str]
-    # Whether send_interactive is implemented (buttons / lists)
-    supports_interactive: ClassVar[bool] = False
+    # What send_interactive can carry on this channel; None when it can't
+    # send choices at all
+    interactive_limits: ClassVar[Optional[InteractiveLimits]] = None
     # Whether the platform sends delivery receipts (parse_status_events) for
     # the messages we send, so their ids are worth recording
     reports_delivery_status: ClassVar[bool] = False
     # The platform's cap on one text message, when it has one
     max_text_length: ClassVar[Optional[int]] = None
+
+    @property
+    def supports_interactive(self) -> bool:
+        return self.interactive_limits is not None
+
+    def choice_limits_for(self, conversation: ChannelConversation) -> Optional[InteractiveLimits]:
+        """What choices can be offered in this conversation; None where a tap
+        couldn't come back to us. Default: the channel's limits."""
+        return self.interactive_limits
 
     @abstractmethod
     async def verify_webhook(self, headers: dict, raw_body: bytes, account: Optional[ChannelAccount]) -> bool:

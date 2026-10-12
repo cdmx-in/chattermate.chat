@@ -42,6 +42,7 @@ from PIL import Image
 from uuid import UUID
 from app.core.s3 import upload_file_to_s3
 from app.core.config import settings
+from app.services import telegram_webhooks
 from app.services.file_storage import local_upload_path
 from pydantic import BaseModel
 from agno.agent import Agent as AgnoAgent
@@ -213,6 +214,7 @@ async def create_agent(
             customization=None,
             transfer_to_human=agent.transfer_to_human or False,
             ai_replies_enabled=agent.ai_replies_enabled,
+            channel_quick_replies=agent.channel_quick_replies,
             ask_for_rating=agent.ask_for_rating or False,
             handoff_collect_email=agent.handoff_collect_email,
             handoff_collect_name=agent.handoff_collect_name,
@@ -293,7 +295,11 @@ async def update_agent(
                     # If rating feature is not available, force ask_for_rating to False
                     update_dict["ask_for_rating"] = False
         
+        buttons_turned_on = update_dict.get("channel_quick_replies") is True and not agent.channel_quick_replies
         agent = agent_repo.update_agent(agent_id, **update_dict)
+        if buttons_turned_on:
+            # Telegram bots connected before buttons existed don't receive taps yet
+            await telegram_webhooks.reregister_for_agent(db, agent.id)
         # Get knowledge sources for response
         knowledge_items = knowledge_repo.get_by_agent(agent.id)
 
@@ -316,6 +322,7 @@ async def update_agent(
             customization=customization,
             transfer_to_human=agent.transfer_to_human,
             ai_replies_enabled=agent.ai_replies_enabled,
+            channel_quick_replies=agent.channel_quick_replies,
             ask_for_rating=agent.ask_for_rating,
             handoff_collect_email=agent.handoff_collect_email,
             handoff_collect_name=agent.handoff_collect_name,
@@ -419,6 +426,7 @@ async def get_organization_agents(
                 organization_id=agent.organization_id,
                 transfer_to_human=agent.transfer_to_human or False,
                 ai_replies_enabled=agent.ai_replies_enabled,
+                channel_quick_replies=agent.channel_quick_replies,
                 ask_for_rating=agent.ask_for_rating or False,
                 handoff_collect_email=agent.handoff_collect_email,
                 handoff_collect_name=agent.handoff_collect_name,
@@ -616,6 +624,7 @@ async def update_agent_groups(
             customization=customization,
             transfer_to_human=agent.transfer_to_human,
             ai_replies_enabled=agent.ai_replies_enabled,
+            channel_quick_replies=agent.channel_quick_replies,
             ask_for_rating=agent.ask_for_rating,
             handoff_collect_email=agent.handoff_collect_email,
             handoff_collect_name=agent.handoff_collect_name,
