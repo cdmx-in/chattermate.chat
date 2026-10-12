@@ -458,6 +458,10 @@ window.chattermateConfig;
         #${config.buttonId} .cm-ring,
         #${config.buttonId} .cm-dot,
         .initiation-orb { animation: none !important; }
+        /* Open and close in place: no slide, scale or fade for people who asked for less motion. */
+        #${config.buttonId},
+        #${config.containerId},
+        #${config.backdropId} { transition: none !important; }
       }
 
       #${config.containerId} {
