@@ -14,15 +14,16 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status, Header, Request
-from fastapi.responses import JSONResponse
-from typing import Optional
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status, Header, Request, Query
+from fastapi.responses import FileResponse, JSONResponse
+from typing import Optional, Tuple
 import uuid
 import os
 from datetime import datetime
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
+from app.core.local_file_urls import verify_local_signature
 from app.core.logger import get_logger
 from app.core.security import verify_conversation_token
 from app.models import User
@@ -105,50 +106,75 @@ async def get_current_user_or_widget(
     )
 
 
-def authorized_attachment_key(file_path: str, org_id: Optional[str]) -> str:
-    """Resolve a download path to a storage key the caller is allowed to read.
+def _not_found() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+
+def attachment_key(file_path: str) -> Tuple[str, str]:
+    """Parse a download path into (org_id, storage key), or 404.
 
     Uploads only ever land at `chat_attachments/<org_id>/<uuid>.<ext>` (see
     FileUploadService.upload_file), so anything else is not a servable
-    attachment. Matching that shape exactly is what both scopes the read to the
-    caller's organization and rules out traversal — no `..` segment can
-    survive a three-part match on a UUID directory.
+    attachment. Matching that shape exactly rules out traversal: no `..`
+    segment can survive a three-part match on a UUID directory.
     """
-    if not org_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
-
     # Accept the stored form ("/uploads/chat_attachments/...") and the bare key.
     clean_path = file_path.lstrip('/')
     if clean_path.startswith('uploads/'):
         clean_path = clean_path[len('uploads/'):]
 
     parts = clean_path.split('/')
-    if len(parts) != 3 or parts[0] != 'chat_attachments' or not parts[2]:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
-
+    if len(parts) != 3 or parts[0] != 'chat_attachments' or not parts[2] or parts[2] in ('.', '..'):
+        raise _not_found()
     try:
-        path_org_id = uuid.UUID(parts[1])
+        path_org_id = str(uuid.UUID(parts[1]))
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
+        raise _not_found()
+    return path_org_id, '/'.join(('chat_attachments', path_org_id, parts[2]))
 
+
+def authorized_attachment_key(file_path: str, org_id: Optional[str]) -> str:
+    """Resolve a download path to a storage key the caller's org may read."""
+    if not org_id:
+        raise _not_found()
+    path_org_id, key = attachment_key(file_path)
     # 404 rather than 403: whether another org's attachment exists is itself
     # something the caller shouldn't learn.
-    if str(path_org_id) != str(org_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
+    if path_org_id != str(org_id):
+        raise _not_found()
+    return key
 
-    return '/'.join(('chat_attachments', str(path_org_id), parts[2]))
+
+@router.get("/local/{file_path:path}")
+async def serve_signed_local_file(
+    file_path: str,
+    exp: Optional[int] = Query(None),
+    sig: Optional[str] = Query(None),
+):
+    """Serve a local-storage attachment through a link from sign_local_key.
+
+    The signature is the authorization, as with an S3 presigned URL, because
+    the widget loads attachments with plain <img>/<a> tags.
+    """
+    _, key = attachment_key(file_path)
+    if not verify_local_signature(key, exp, sig):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid or expired link")
+    path = os.path.join("uploads", key)
+    if not os.path.isfile(path):
+        raise _not_found()
+    # Visitor-uploaded files (SVG included) are served from the API origin, so
+    # one opened directly must not run script there. Only scripts are
+    # blocked: a sandbox CSP would also stop the browser's PDF viewer.
+    return FileResponse(
+        path,
+        content_disposition_type="inline",
+        filename=os.path.basename(key),
+        headers={
+            "Content-Security-Policy": "script-src 'none'",
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, max-age=300",
+        },
+    )
 
 
 @router.get("/download/{file_path:path}")

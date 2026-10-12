@@ -31,10 +31,10 @@ from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, decode_sent_choice
 from app.models.user import User
 from app.repositories.customer import CustomerRepository
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.attributes import set_committed_value
 from datetime import datetime
 from pydantic import BaseModel
-from app.core.s3 import get_s3_signed_url
-from app.core.config import settings
+from app.services.file_storage import resolve_public_url
 from app.services.sentiment import analyze_sentiment, compute_session_sentiment
 
 logger = get_logger(__name__)
@@ -338,20 +338,16 @@ class ChatRepository:
             .all()
         )
         
-        # Generate signed URLs for S3 attachments
-        if settings.S3_FILE_STORAGE:
-            for message in messages:
-                if message.attachments:
-                    for attachment in message.attachments:
-                        if attachment.file_url:
-                            try:
-                                signed_url = await get_s3_signed_url(attachment.file_url)
-                                # Store the signed URL in a temporary attribute
-                                attachment.file_url = signed_url
-                            except Exception as e:
-                                logger.error(f"Error generating signed URL for attachment {attachment.id}: {str(e)}")
-                                
-        
+        # Hand out signed URLs. set_committed_value, not assignment: a plain
+        # assignment marks the row dirty, and the next commit on this session
+        # would store a link that expires in place of the file's real path.
+        for message in messages:
+            for attachment in message.attachments or []:
+                if attachment.file_url:
+                    set_committed_value(
+                        attachment, "file_url", await resolve_public_url(attachment.file_url)
+                    )
+
         return messages
 
     def get_last_messages(self, session_ids: List[UUID]) -> Dict[UUID, str]:

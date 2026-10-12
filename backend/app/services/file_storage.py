@@ -14,14 +14,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 Storage backend shim shared by upload endpoints: S3 when configured, else the
-local uploads/ directory (served by the /api/v1/uploads static mount).
+local uploads/ directory. Only PUBLIC_UPLOAD_FOLDERS are static-mounted under
+/api/v1/uploads; private files are reached through signed links.
 """
 
 import os
+from typing import Optional
 
 import aiofiles
 
 from app.core.config import settings
+from app.core.local_file_urls import sign_local_key
 from app.core.s3 import (
     delete_file_from_s3,
     download_file_from_s3,
@@ -32,25 +35,34 @@ from app.core.s3 import (
 
 async def store_upload(content: bytes, folder: str, file_name: str, content_type: str) -> str:
     """Persist bytes and return the URL to store. S3 mode returns the raw S3
-    URL (sign with resolve_public_url before handing to clients); local mode
-    returns the path under the /api/v1/uploads static mount."""
+    URL, local mode the {API_V1_STR}/uploads/... path; either way, pass it
+    through resolve_public_url before handing it to a client."""
     if settings.S3_FILE_STORAGE:
         return await upload_file_to_s3(content, folder, file_name, content_type=content_type)
     upload_dir = os.path.join("uploads", folder)
     os.makedirs(upload_dir, exist_ok=True)
     async with aiofiles.open(os.path.join(upload_dir, file_name), "wb") as f:
         await f.write(content)
-    # The uploads/ directory is static-mounted at {API_V1_STR}/uploads.
     return f"{settings.API_V1_STR}/uploads/{folder}/{file_name}"
 
 
-def local_upload_path(stored: str) -> str:
-    """Filesystem path under `uploads/` for a stored local upload URL.
+# Local-storage folders anyone may read, static-mounted at {API_V1_STR}/uploads/<folder>:
+# agent avatars and agents' profile pictures shown to anonymous widget visitors,
+# and help-center logos and article images. Everything else under uploads/ (chat
+# attachments, PDF imports awaiting a worker) is private.
+PUBLIC_UPLOAD_FOLDERS = ("agents", "user", "help_center")
+# Private folders handed to clients as short-lived signed links, the local
+# counterpart of an S3 presigned URL.
+SIGNED_UPLOAD_FOLDERS = ("chat_attachments",)
+
+
+def upload_key(stored: str) -> str:
+    """Key relative to `uploads/` for a stored local upload URL.
 
     Tolerates every shape the app has ever written: the current
     `{API_V1_STR}/uploads/...`, the legacy bare `/uploads/...` that
-    agent photos and profile pictures carried before they were normalised,
-    and a plain relative key with no prefix at all.
+    agent photos, profile pictures and chat attachments carried, and a plain
+    relative key with no prefix at all.
     """
     relative = stored.lstrip("/")
     api_prefix = f"{settings.API_V1_STR.strip('/')}/"
@@ -58,7 +70,21 @@ def local_upload_path(stored: str) -> str:
         relative = relative[len(api_prefix):]
     if relative.startswith("uploads/"):
         relative = relative[len("uploads/"):]
-    return os.path.join("uploads", relative)
+    return relative
+
+
+def local_upload_path(stored: str) -> str:
+    """Filesystem path under `uploads/` for a stored local upload URL."""
+    return os.path.join("uploads", upload_key(stored))
+
+
+def signed_upload_key(stored: Optional[str]) -> Optional[str]:
+    """The key of a stored local upload that is only served through a signed
+    link, or None for anything else (S3 and other absolute URLs, public files)."""
+    if not stored or "://" in stored or stored.startswith(("data:", "blob:")):
+        return None
+    key = upload_key(stored)
+    return key if key.split("/", 1)[0] in SIGNED_UPLOAD_FOLDERS else None
 
 
 async def load_upload(stored: str) -> bytes:
@@ -83,8 +109,9 @@ async def delete_upload(stored: str) -> None:
 
 
 async def resolve_public_url(stored_url: str) -> str:
-    """Client-facing URL for a stored upload: signed for private S3 objects,
-    verbatim otherwise."""
+    """Client-facing URL for a stored upload: presigned for S3 objects, a
+    signed link for private local files, verbatim otherwise."""
     if stored_url and settings.S3_FILE_STORAGE and stored_url.startswith("http"):
         return await get_s3_signed_url(stored_url)
-    return stored_url
+    key = signed_upload_key(stored_url)
+    return sign_local_key(key) if key else stored_url
