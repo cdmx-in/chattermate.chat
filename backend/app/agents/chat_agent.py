@@ -51,7 +51,7 @@ from datetime import datetime
 from app.repositories.jira import JiraRepository
 from app.tools.jira_toolkit import JiraTools
 from app.tools.shopify_toolkit import ShopifyTools
-from app.utils.response_parser import parse_response_content
+from app.utils.response_parser import GENERIC_ERROR_MESSAGE, parse_response_content
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
 import re
 import asyncio
@@ -1098,7 +1098,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Chat agent error: {str(e)}")
-            error_message = f"I apologize, but I encountered an error, please try again later."
+            error_message = GENERIC_ERROR_MESSAGE
             
             # Create error response without storing
             error_response = ChatResponse(
@@ -1571,7 +1571,7 @@ Keep your responses concise and focused. Provide clear, actionable information i
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Chat agent error: {str(e)}")
-            error_message = f"I apologize, but I encountered an error, please try again later."
+            error_message = GENERIC_ERROR_MESSAGE
             
             # Create error response
             error_response = ChatResponse(
