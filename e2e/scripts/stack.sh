@@ -7,11 +7,13 @@
 #   stack.sh down          stop what `up` started
 #   stack.sh reset         fresh database (restarts the backend)
 #   stack.sh logs [name]   tail backend | frontend | fake-llm logs
-#   stack.sh backend|frontend|fake-llm|customer-site   run one service in the foreground
+#   stack.sh backend|frontend|fake-llm|customer-site|mail   run one service in the foreground
 #                                        (what playwright.config.ts webServer calls)
 #
 # Knobs (all optional):
-#   E2E_EDITION=oss|enterprise   oss (default) blocks the enterprise submodule even if present
+#   E2E_EDITION=oss|enterprise   oss (default) blocks the enterprise submodule even if present;
+#                                enterprise also starts Mailpit and applies the private suite's
+#                                .env.e2e overlay and seed.sql (frontend/src/modules/enterprise/e2e)
 #   E2E_PG_URL                   admin URL of a Postgres with pgvector, no db name
 #                                (default postgresql://$USER@127.0.0.1:5432)
 #   E2E_PYTHON                   python with backend deps (default backend/venv/bin/python, else python3)
@@ -21,6 +23,7 @@ set -euo pipefail
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPO_DIR="$(cd "$E2E_DIR/.." && pwd)"
 STATE_DIR="$E2E_DIR/.stack"
+ENTERPRISE_E2E_DIR="$REPO_DIR/frontend/src/modules/enterprise/e2e"
 CACHE_DIR="$E2E_DIR/.cache"
 
 EDITION="${E2E_EDITION:-oss}"
@@ -33,6 +36,8 @@ BACKEND_PORT=18000
 FRONTEND_PORT=15173
 FAKE_LLM_PORT=14010
 CUSTOMER_SITE_PORT=13000
+MAIL_SMTP_PORT=11025
+MAIL_WEB_PORT=18025
 
 if [[ -z "${E2E_PYTHON:-}" ]]; then
   if [[ -x "$REPO_DIR/backend/venv/bin/python" ]]; then E2E_PYTHON="$REPO_DIR/backend/venv/bin/python"; else E2E_PYTHON="python3"; fi
@@ -43,6 +48,9 @@ log() { printf '\033[36m[e2e]\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[31m[e2e]\033[0m %s\n' "$*" >&2; exit 1; }
 
 case "$EDITION" in oss|enterprise) ;; *) die "E2E_EDITION must be oss or enterprise, got '$EDITION'";; esac
+if [[ "$EDITION" == enterprise && ! -d "$ENTERPRISE_E2E_DIR" ]]; then
+  die "E2E_EDITION=enterprise needs the enterprise_frontend submodule (with its e2e/ folder) checked out"
+fi
 # The suite drops and recreates this database on every run. Refuse anything that
 # is not obviously a throwaway, so a typo can never point it at a dev DB.
 [[ "$DB_NAME" == *_e2e ]] || die "refusing to manage database '$DB_NAME': name must end in _e2e"
@@ -54,7 +62,14 @@ db_url() { local base="${PG_URL#postgres://}"; base="${base#postgresql://}"; ech
 backend_env() {
   export ENV_FILE="$E2E_DIR/.env.e2e"
   export DATABASE_URL; DATABASE_URL="$(db_url "$1")"
-  if [[ "$EDITION" == oss ]]; then export NO_ENTERPRISE=1; else unset NO_ENTERPRISE; fi
+  if [[ "$EDITION" == oss ]]; then
+    export NO_ENTERPRISE=1
+  else
+    unset NO_ENTERPRISE
+    # Enterprise-only settings (SMTP to Mailpit, default AI key, …) live with the
+    # private suite; exported values override the shared .env.e2e.
+    if [[ -f "$ENTERPRISE_E2E_DIR/.env.e2e" ]]; then set -a; source "$ENTERPRISE_E2E_DIR/.env.e2e"; set +a; fi
+  fi
 }
 
 # Fingerprint of everything that shapes the schema: migration contents + edition.
@@ -63,7 +78,9 @@ schema_fingerprint() {
   {
     echo "$EDITION"
     cat "$REPO_DIR"/backend/alembic/versions/*.py
-    if [[ "$EDITION" == enterprise ]]; then cat "$REPO_DIR"/backend/app/enterprise/migrations/versions/*.py 2>/dev/null || true; fi
+    if [[ "$EDITION" == enterprise ]]; then
+      cat "$REPO_DIR"/backend/app/enterprise/migrations/versions/*.py "$ENTERPRISE_E2E_DIR/seed.sql" 2>/dev/null || true
+    fi
   } | shasum | cut -c1-16
 }
 
@@ -87,6 +104,9 @@ ensure_template() {
       "$E2E_PYTHON" -m alembic -c app/enterprise/migrations/alembic.ini upgrade head
     fi
   ) >&2
+  if [[ "$EDITION" == enterprise && -f "$ENTERPRISE_E2E_DIR/seed.sql" ]]; then
+    psql "$PG_URL/$TPL_NAME" -v ON_ERROR_STOP=1 -q -f "$ENTERPRISE_E2E_DIR/seed.sql"
+  fi
   psql_admin -c "COMMENT ON DATABASE $TPL_NAME IS '$fp'"
 }
 
@@ -189,6 +209,13 @@ run_customer_site() {
     --loader "http://127.0.0.1:$FRONTEND_PORT/webclient/chattermate.min.js"
 }
 
+# SMTP capture (Mailpit): account emails and notifications land here, readable
+# through its API (src/fakes/mailbox.ts).
+run_mail() {
+  command -v mailpit >/dev/null || die "mailpit not found (brew install mailpit, or see https://mailpit.axllent.org)"
+  exec mailpit --smtp "127.0.0.1:$MAIL_SMTP_PORT" --listen "127.0.0.1:$MAIL_WEB_PORT" --disable-version-check --quiet
+}
+
 wait_for() {
   local name="$1" url="$2" timeout="$3" i
   for ((i = 0; i < timeout; i++)); do
@@ -226,6 +253,10 @@ cmd_up() {
   wait_for fake-llm "http://127.0.0.1:$FAKE_LLM_PORT/health" 30
   start_bg customer-site
   wait_for customer-site "http://127.0.0.1:$CUSTOMER_SITE_PORT/health" 30
+  if [[ "$EDITION" == enterprise ]]; then
+    start_bg mail
+    wait_for mail "http://127.0.0.1:$MAIL_WEB_PORT/livez" 30
+  fi
   start_bg backend
   wait_for backend "http://127.0.0.1:$BACKEND_PORT/health" 180
   start_bg frontend
@@ -233,7 +264,7 @@ cmd_up() {
   log "stack ready — dashboard http://127.0.0.1:$FRONTEND_PORT"
 }
 
-cmd_down() { for s in frontend backend customer-site fake-llm; do stop_bg "$s"; done; log "stack stopped"; }
+cmd_down() { for s in frontend backend customer-site fake-llm mail; do stop_bg "$s"; done; log "stack stopped"; }
 
 wait_port_free() {
   local port="$1" i
@@ -261,5 +292,6 @@ case "${1:-}" in
   frontend) run_frontend ;;
   fake-llm) run_fake_llm ;;
   customer-site) run_customer_site ;;
-  *) sed -n '2,19p' "$0"; exit 1 ;;
+  mail) run_mail ;;
+  *) sed -n '2,21p' "$0"; exit 1 ;;
 esac

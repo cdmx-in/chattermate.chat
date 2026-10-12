@@ -12,8 +12,12 @@ export const env = {
   backendUrl,
   apiUrl: `${backendUrl}/api/v1`,
   fakeLlmUrl: 'http://127.0.0.1:14010',
+  /** Mailpit's web/API port (its SMTP side is 127.0.0.1:11025). Enterprise edition only for now. */
+  mailUrl: 'http://127.0.0.1:18025',
   /** The pretend customer website the widget is embedded on (services/customer-site). */
   customerSiteUrl: 'http://127.0.0.1:13000',
+  /** The private enterprise suite, present only where the enterprise_frontend submodule is checked out. */
+  enterpriseSpecDir: fileURLToPath(new URL('../../frontend/src/modules/enterprise/e2e/', import.meta.url)),
   /** Where the setup project writes the org contract (see src/org-state.ts). */
   authDir: fileURLToPath(new URL('../.auth/', import.meta.url)),
 } as const

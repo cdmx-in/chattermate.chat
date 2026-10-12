@@ -1,12 +1,13 @@
 import type { BrowserContext } from '@playwright/test'
 
 /**
- * Third-party hosts the app reaches for but no test depends on (the widget pulls
- * Google Fonts). Blocking them keeps runs offline-safe and fast; text still renders
+ * Everything off the local stack — fonts, analytics, geo-IP lookups, CDNs. No
+ * journey depends on them, and blocking them keeps runs hermetic: nothing leaves
+ * the machine, and an outage elsewhere can't fail a test. Text still renders
  * with fallback fonts.
  */
-const THIRD_PARTY = /^https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com|www\.googletagmanager\.com)\//
+const OFF_STACK = /^https?:\/\/(?!(127\.0\.0\.1|localhost)[:/])/
 
 export async function blockThirdParty(context: BrowserContext): Promise<void> {
-  await context.route(THIRD_PARTY, (route) => route.abort())
+  await context.route(OFF_STACK, (route) => route.abort())
 }

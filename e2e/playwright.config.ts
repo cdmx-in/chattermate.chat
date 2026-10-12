@@ -1,4 +1,5 @@
-import { defineConfig, devices } from '@playwright/test'
+import { existsSync } from 'node:fs'
+import { defineConfig, devices, type PlaywrightTestConfig } from '@playwright/test'
 import { env } from './src/env'
 import { storageStatePath } from './src/org-state'
 
@@ -6,6 +7,42 @@ const isCI = !!process.env.CI
 // Locally, reuse a stack already started with `./scripts/stack.sh up` (fast reruns);
 // on CI always start clean.
 const reuse = !isCI
+const enterprise = env.edition === 'enterprise'
+if (enterprise && !existsSync(env.enterpriseSpecDir)) {
+  throw new Error(`E2E_EDITION=enterprise but ${env.enterpriseSpecDir} is missing — check out the enterprise_frontend submodule`)
+}
+
+const signedInAsAdmin = { ...devices['Desktop Chrome'], storageState: storageStatePath('admin') }
+const ORG_WIDE = /\.org\.spec\.ts$/
+
+// Both editions share the project names `setup`, `chromium` and `org`, so the same
+// commands run either way. Each edition brings its own setup (OSS: first-run form;
+// enterprise: signup), and both write the same org contract, so the OSS specs in
+// `chromium`/`org` run unchanged against the enterprise stack.
+const projects: PlaywrightTestConfig['projects'] = [
+  enterprise
+    ? { name: 'setup', testDir: env.enterpriseSpecDir, testMatch: /.*\.setup\.ts/ }
+    : { name: 'setup', testMatch: /.*\.setup\.ts/ },
+  { name: 'chromium', dependencies: ['setup'], testIgnore: ORG_WIDE, use: signedInAsAdmin },
+  // Specs that change org-wide settings (AI config, business hours, …). Run them in a
+  // separate invocation with --workers=1 (see package.json "test") so they never race
+  // the parallel suite, and are not skipped when an unrelated parallel test fails.
+  { name: 'org', dependencies: ['setup'], testMatch: ORG_WIDE, use: signedInAsAdmin },
+  ...(enterprise
+    ? [
+        { name: 'enterprise', testDir: env.enterpriseSpecDir, dependencies: ['setup'], testIgnore: ORG_WIDE, use: signedInAsAdmin },
+        { name: 'enterprise-org', testDir: env.enterpriseSpecDir, dependencies: ['setup'], testMatch: ORG_WIDE, use: signedInAsAdmin },
+      ]
+    : []),
+]
+
+const service = (name: string, url: string, timeout: number) => ({
+  name,
+  command: `./scripts/stack.sh ${name}`,
+  url,
+  reuseExistingServer: reuse,
+  timeout,
+})
 
 export default defineConfig({
   testDir: './specs',
@@ -32,53 +69,13 @@ export default defineConfig({
     contextOptions: { reducedMotion: 'reduce' },
   },
 
-  projects: [
-    { name: 'setup', testMatch: /.*\.setup\.ts/ },
-    {
-      name: 'chromium',
-      dependencies: ['setup'],
-      testIgnore: /\.org\.spec\.ts$/,
-      use: { ...devices['Desktop Chrome'], storageState: storageStatePath('admin') },
-    },
-    // Specs that change org-wide settings (AI config, business hours, …). Run them in a
-    // separate invocation with --workers=1 (see package.json "test") so they never race
-    // the parallel suite, and are not skipped when an unrelated parallel test fails.
-    {
-      name: 'org',
-      dependencies: ['setup'],
-      testMatch: /\.org\.spec\.ts$/,
-      use: { ...devices['Desktop Chrome'], storageState: storageStatePath('admin') },
-    },
-  ],
+  projects,
 
   webServer: [
-    {
-      name: 'fake-llm',
-      command: './scripts/stack.sh fake-llm',
-      url: `${env.fakeLlmUrl}/health`,
-      reuseExistingServer: reuse,
-      timeout: 30_000,
-    },
-    {
-      name: 'customer-site',
-      command: './scripts/stack.sh customer-site',
-      url: `${env.customerSiteUrl}/health`,
-      reuseExistingServer: reuse,
-      timeout: 30_000,
-    },
-    {
-      name: 'backend',
-      command: './scripts/stack.sh backend',
-      url: `${env.backendUrl}/health`,
-      reuseExistingServer: reuse,
-      timeout: 180_000,
-    },
-    {
-      name: 'frontend',
-      command: './scripts/stack.sh frontend',
-      url: `${env.frontendUrl}/config.js`,
-      reuseExistingServer: reuse,
-      timeout: 300_000,
-    },
+    service('fake-llm', `${env.fakeLlmUrl}/health`, 30_000),
+    service('customer-site', `${env.customerSiteUrl}/health`, 30_000),
+    ...(enterprise ? [service('mail', `${env.mailUrl}/livez`, 30_000)] : []),
+    service('backend', `${env.backendUrl}/health`, 180_000),
+    service('frontend', `${env.frontendUrl}/config.js`, 300_000),
   ],
 })
