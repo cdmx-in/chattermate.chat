@@ -12,6 +12,8 @@ export const env = {
   backendUrl,
   apiUrl: `${backendUrl}/api/v1`,
   fakeLlmUrl: 'http://127.0.0.1:14010',
+  /** Recording stand-in for Telegram, Meta, Slack, … (services/fake-externals). */
+  fakeExternalsUrl: 'http://127.0.0.1:14020',
   /** Mailpit's web/API port (its SMTP side is 127.0.0.1:11025). Enterprise edition only for now. */
   mailUrl: 'http://127.0.0.1:18025',
   /** The pretend customer website the widget is embedded on (services/customer-site). */

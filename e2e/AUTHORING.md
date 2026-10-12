@@ -115,6 +115,16 @@ const sent = await llm.requests(agent)    // what the backend sent the model: sy
 - **Pace conversations like a person:** wait for the agent's reply before the visitor's next message. Replies to back-to-back messages are produced concurrently and can arrive in either order.
 - **Contract check:** `services/fake-llm/contract_check.py` runs agno itself against the fake. Run it after upgrading agno.
 
+## Channels and other third parties
+
+The backend's calls to Telegram, Meta, Slack, LINE, SMS providers and HubSpot go to `services/fake-externals`. The `*_API_BASE` overrides in `.env.e2e` point them there; production never sets these.
+
+The fake records every call and answers like the provider would. Use `FakeExternals` to assert on what the backend sent.
+
+`src/channels/telegram.ts` shows the pattern for a channel:
+- deliver updates to the backend's webhook the way the provider does, including the secret the backend handed the provider
+- read the bot's replies back from the fake
+
 ## Adding a test
 
 1. Find or create `specs/<feature>/`, and add a row to `FEATURES.md`.

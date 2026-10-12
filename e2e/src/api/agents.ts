@@ -16,6 +16,8 @@ export interface NewAgent {
   askForRating?: boolean
   /** The widget only loads with a conversation token from /generate-token. */
   requireTokenAuth?: boolean
+  /** Offer the AI's quick replies as tappable buttons on messaging channels. */
+  channelQuickReplies?: boolean
 }
 
 export async function createAgent(api: ApiClient, agent: NewAgent): Promise<Agent> {
@@ -27,6 +29,7 @@ export async function createAgent(api: ApiClient, agent: NewAgent): Promise<Agen
       transfer_to_human: agent.transferToHuman ?? false,
       ask_for_rating: agent.askForRating ?? false,
       require_token_auth: agent.requireTokenAuth ?? false,
+      channel_quick_replies: agent.channelQuickReplies ?? false,
     },
   })
   if (agent.groupIds?.length) {

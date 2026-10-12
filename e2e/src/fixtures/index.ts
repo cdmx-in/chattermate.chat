@@ -28,6 +28,8 @@ export interface AgentSettings {
   requireTokenAuth: boolean
   /** Lead capture on, without the consent gate. */
   leadCapture: boolean
+  /** Quick replies become tappable buttons on messaging channels. */
+  channelQuickReplies: boolean
 }
 
 const DEFAULT_AGENT_SETTINGS: AgentSettings = {
@@ -35,6 +37,7 @@ const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   askForRating: false,
   requireTokenAuth: false,
   leadCapture: false,
+  channelQuickReplies: false,
 }
 
 export type TestAgent = ScriptedAgent & { id: string }
@@ -115,6 +118,7 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
       groupIds: settings.transferToHuman ? [org.supportGroupId] : [],
       askForRating: settings.askForRating,
       requireTokenAuth: settings.requireTokenAuth,
+      channelQuickReplies: settings.channelQuickReplies,
     })
     if (settings.leadCapture) await enableLeadCapture(adminApi, created.id)
     await use({ ...created, scenarioId })

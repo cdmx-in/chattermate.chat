@@ -28,11 +28,13 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Widget JS API | open/close/isOpen; hidden launcher + page's own trigger button | `specs/widget/js-api.spec.ts` | P1 | ✅ |
 | Widget placement | displayMode, position, `open({message})`, events | — | P1 | ⬜ |
 | Token-auth widget | Server-issued token → chat works; no token → "Chat Unavailable" | `specs/widget/token-auth.spec.ts` | P1 | ✅ |
-| Reply buttons | Quick replies; typed-number matching | — | P2 | ⬜ |
+| Reply buttons | Telegram: AI offers buttons, a tap gets the next answer | `specs/channels/telegram.spec.ts` | P2 | ✅ |
+| Reply buttons | Widget quick replies; typed-number matching; other channels | — | P2 | ⬜ |
 | Help center | Publish an article → public page; search | — | P2 | ⬜ |
 | Workflows | Simple flow runs in the widget | — | P2 | ⬜ |
 | MCP connectors | Add/edit/delete; agent calls a tool | — | P2 | ⬜ |
-| Channels | Inbound webhook → AI reply (Telegram, WhatsApp, Messenger, Instagram, Slack, LINE, SMS, email) | — | P2 | ⬜ |
+| Channels | Telegram: inbound update → AI reply sent back through the Bot API | `specs/channels/telegram.spec.ts` | P2 | ✅ |
+| Channels | WhatsApp, Messenger, Instagram, Slack, LINE, SMS, email (fake-externals already answers for each) | — | P2 | ⬜ |
 | Analytics, People | Pages render; counters move | — | P2 | ⬜ |
 | CRM push, URL/PDF knowledge | Worker-backed | — | N | ⬜ |
 | Visual and cross-browser widget | Light/dark; placements; Firefox/WebKit | — | P2 | ⬜ |
