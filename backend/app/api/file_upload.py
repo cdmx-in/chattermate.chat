@@ -20,6 +20,7 @@ from typing import Optional, Tuple
 import uuid
 import os
 from datetime import datetime
+from urllib.parse import quote
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
@@ -145,6 +146,21 @@ def authorized_attachment_key(file_path: str, org_id: Optional[str]) -> str:
     return key
 
 
+# Visitor-uploaded files (SVG included) are served from the API origin, so one
+# opened directly must not run script there. Only scripts are blocked: a
+# sandbox CSP would also stop the browser's PDF viewer.
+ATTACHMENT_HEADERS = {
+    "Content-Security-Policy": "script-src 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "private, max-age=300",
+}
+
+
+def _inline_attachment(path: str, filename: str) -> FileResponse:
+    return FileResponse(path, content_disposition_type="inline", filename=filename,
+                        headers=ATTACHMENT_HEADERS)
+
+
 @router.get("/local/{file_path:path}")
 async def serve_signed_local_file(
     file_path: str,
@@ -162,19 +178,7 @@ async def serve_signed_local_file(
     path = os.path.join("uploads", key)
     if not os.path.isfile(path):
         raise _not_found()
-    # Visitor-uploaded files (SVG included) are served from the API origin, so
-    # one opened directly must not run script there. Only scripts are
-    # blocked: a sandbox CSP would also stop the browser's PDF viewer.
-    return FileResponse(
-        path,
-        content_disposition_type="inline",
-        filename=os.path.basename(key),
-        headers={
-            "Content-Security-Policy": "script-src 'none'",
-            "X-Content-Type-Options": "nosniff",
-            "Cache-Control": "private, max-age=300",
-        },
-    )
+    return _inline_attachment(path, os.path.basename(key))
 
 
 @router.get("/download/{file_path:path}")
@@ -193,7 +197,6 @@ async def download_file(
     try:
         from fastapi.responses import StreamingResponse
         from app.core.s3 import get_s3_client
-        import io
 
         # Authentication is required, and the result is what authorizes the
         # read below. This used to swallow the failure and serve the file
@@ -203,29 +206,11 @@ async def download_file(
         storage_key = authorized_attachment_key(file_path, auth_info.get("org_id"))
 
         if not settings.S3_FILE_STORAGE:
-            # Serve local file
-            import os
             local_file_path = os.path.join("uploads", storage_key)
+            if not os.path.isfile(local_file_path):
+                raise _not_found()
+            return _inline_attachment(local_file_path, os.path.basename(storage_key))
 
-            if os.path.exists(local_file_path):
-                with open(local_file_path, "rb") as f:
-                    file_content = f.read()
-                
-                import mimetypes
-                content_type, _ = mimetypes.guess_type(local_file_path)
-                content_type = content_type or "application/octet-stream"
-                
-                return StreamingResponse(
-                    io.BytesIO(file_content),
-                    media_type=content_type,
-                    headers={"Content-Disposition": f"inline; filename={os.path.basename(storage_key)}"}
-                )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File not found"
-                )
-        
         # For AWS S3 - stream file from S3
         try:
             s3_client = get_s3_client()
@@ -286,7 +271,10 @@ async def download_file(
         return StreamingResponse(
             generate(),
             media_type=content_type,
-            headers={"Content-Disposition": f"inline; filename={filename}"}
+            headers={
+                **ATTACHMENT_HEADERS,
+                "Content-Disposition": f"inline; filename*=utf-8''{quote(filename)}",
+            }
         )
         
     except HTTPException:
@@ -295,7 +283,7 @@ async def download_file(
         logger.error(f"Error downloading file {file_path}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download file: {str(e)}"
+            detail="Failed to download file"
         )
 
 
