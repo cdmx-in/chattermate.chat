@@ -52,6 +52,7 @@ def db():
 def client(test_user, monkeypatch):
     widget_install._recorded_installs.clear()
     widget_install._recorded_blocks.clear()
+    widget_install._blocks_per_day.clear()
     monkeypatch.setattr(widget_install, "SessionLocal", TestingSessionLocal)
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://app.chattermate.chat")
     monkeypatch.setattr(widget_install, "get_cors_origins", lambda: {"https://test.com", "https://www.test.com"})
@@ -96,6 +97,23 @@ def test_first_install_is_kept(client, db, test_widget):
     assert widget.installed_origin == "https://test.com"
 
 
+def from_visitor(ip, origin="https://test.com"):
+    # Behind our nginx: it appends the real client IP to X-Forwarded-For
+    return {"Origin": origin, "X-Forwarded-For": f"10.9.9.9, {ip}"}
+
+
+def test_a_second_visitor_confirms_the_install(client, db, test_widget):
+    url = f"/api/v1/widgets/{test_widget.id}/data"
+    client.get(url, headers=from_visitor("198.51.100.1"))
+    client.get(url, headers=from_visitor("198.51.100.1"))
+    assert reload(db, test_widget.id).install_confirmed_at is None  # one visitor is not proof
+
+    client.get(url, headers=from_visitor("198.51.100.2", "https://www.test.com"))
+    widget = reload(db, test_widget.id)
+    assert widget.install_confirmed_at is not None
+    assert widget.install_visitor and "198.51" not in widget.install_visitor
+
+
 def test_load_from_another_site_records_a_block(client, db, test_widget):
     client.get(f"/api/v1/widgets/{test_widget.id}/data", headers={"Origin": "https://shop.test.com"})
     widget = reload(db, test_widget.id)
@@ -118,6 +136,7 @@ def test_org_reads_install_status(client, test_widget):
     assert status["installed_origin"] == "https://test.com"
     assert status["installed_at"]
     assert status["blocked_origin"] == "https://blog.example.org"
+    assert status["allowed_domain"] == "test.com"
 
 
 def test_install_status_is_org_scoped(client, db, test_widget):

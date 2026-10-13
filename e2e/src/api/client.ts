@@ -7,6 +7,7 @@ interface CallOptions {
   data?: Body
   form?: Record<string, string>
   params?: Record<string, string | number | boolean>
+  headers?: Record<string, string>
 }
 
 /**
@@ -40,7 +41,7 @@ export class ApiClient {
       data: options.data,
       form: options.form,
       params: options.params,
-      headers: this.token ? { Authorization: `Bearer ${this.token}` } : undefined,
+      headers: { ...options.headers, ...(this.token ? { Authorization: `Bearer ${this.token}` } : {}) },
       failOnStatusCode: false,
     })
   }

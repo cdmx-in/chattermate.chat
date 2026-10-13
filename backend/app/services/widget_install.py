@@ -24,13 +24,23 @@ That makes two useful facts visible:
 - blocked: loaded from some other public site, where CORS stops it and the
   widget silently never appears.
 
+Origin is only a header: anyone with the widget id can send one. The first
+load from the org's site sets installed_at at once (the owner, checking their
+own site, sees "Live" straight away); a load from a second, different visitor
+confirms it, and only a confirmed install counts as live for email.
+
 Our own surfaces (dashboard, help centers, configured CORS origins) and local
-or development addresses are ignored. Recording costs at most one write per
-widget for the install, and one per widget/site/day for a block.
+or development addresses are ignored. Recording costs at most two writes per
+widget for the install, and one per widget/site/day for a block, for at most
+a few sites a day.
 """
 
+import hashlib
+import hmac
 import ipaddress
 import re
+from collections import Counter
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional, Set, Tuple
@@ -44,24 +54,52 @@ from app.core.logger import get_logger
 from app.database import SessionLocal
 from app.models.widget import Widget
 from app.utils.datetimes import as_utc
+from app.utils.domain_check import site_host
 
 logger = get_logger(__name__)
 
 _LOCAL_SUFFIXES = (".localhost", ".local", ".test", ".internal", ".lan", ".home.arpa")
 _STANDARD_PORTS = (None, 80, 443)
 _BLOCKED_REFRESH = timedelta(days=1)
+# Distinct blocked sites recorded per widget per day: a few real mistakes
+# (staging, a second shop), not one write per forged Origin.
+_BLOCKED_SITES_PER_DAY = 5
 _ORIGIN_MAX = 255  # the widgets.*_origin column width
+_VISITOR_HASH_LENGTH = 16  # the widgets.install_visitor column width
 # In-process memory of what was already written, so a busy page doesn't
 # queue a write per load. Bounded: cleared when it grows past this.
 _MEMORY_LIMIT = 10_000
-_recorded_installs: Set[str] = set()
+_recorded_installs: Set[Tuple[str, "Write"]] = set()
 _recorded_blocks: Set[Tuple[str, str, date]] = set()
+_blocks_per_day: Counter = Counter()
 
 
 class OriginKind(Enum):
     INSTALLED = "installed"
     BLOCKED = "blocked"
     IGNORED = "ignored"
+
+
+class Write(Enum):
+    INSTALL = "install"   # first load from the org's own site
+    CONFIRM = "confirm"   # then a load there from a different visitor
+    BLOCK = "block"
+
+
+@dataclass(frozen=True)
+class Sighting:
+    """One write to make after the response."""
+    write: Write
+    origin: str
+    visitor: Optional[str]
+
+
+def visitor_key(client_ip: Optional[str]) -> Optional[str]:
+    """Tells visitors apart without storing their IP: a keyed hash."""
+    if not client_ip:
+        return None
+    digest = hmac.new(settings.SECRET_KEY.encode(), client_ip.encode(), hashlib.sha256).hexdigest()
+    return digest[:_VISITOR_HASH_LENGTH]
 
 
 def _origin_of(url: str) -> Optional[str]:
@@ -85,12 +123,6 @@ def _is_local(host: str, port: Optional[int]) -> bool:
     return not address.is_global
 
 
-def _bare_domain(domain: str) -> str:
-    """An org domain as hostnames compare: no scheme, path, port or www."""
-    host = urlparse(domain if "//" in domain else f"//{domain}").hostname or ""
-    return host.lower().removeprefix("www.")
-
-
 def _public_origin(origin: Optional[str]) -> Optional[str]:
     """The normalised origin when it is a public site that isn't ours, else
     None. Needs no database, so it screens out previews and dev loads first."""
@@ -109,9 +141,13 @@ def _public_origin(origin: Optional[str]) -> Optional[str]:
     return normalized
 
 
+def _same_site(public_origin: str, other: str) -> bool:
+    return site_host(public_origin) == site_host(other)
+
+
 def _kind(public_origin: str, org_domain: Optional[str]) -> OriginKind:
-    domain = _bare_domain(org_domain or "")
-    if domain and (urlparse(public_origin).hostname or "").removeprefix("www.") == domain:
+    # The same rule CORS uses (app/core/cors.py): the org's site and its www.
+    if org_domain and site_host(org_domain) and _same_site(public_origin, org_domain):
         return OriginKind.INSTALLED
     # Allowed by CORS for another reason (a verified help-center domain, say):
     # the widget works there, so it is neither this install nor a block.
@@ -127,49 +163,83 @@ def classify_origin(origin: Optional[str], org_domain: Optional[str]) -> OriginK
     return _kind(public_origin, org_domain) if public_origin else OriginKind.IGNORED
 
 
-def claim_write(widget: Widget, origin: Optional[str]) -> Optional[OriginKind]:
-    """Whether this load should be recorded: the kind to write, or None.
+def claim_write(widget: Widget, origin: Optional[str], client_ip: Optional[str] = None) -> Optional[Sighting]:
+    """Whether this load should be recorded: the write to make, or None.
 
     The steady state - loads from the site it is already installed on - is
     answered from the loaded row with no query. Otherwise the org's domain is
-    read (one lookup) to classify. A returned kind is claimed in memory
+    read (one lookup) to classify. A returned write is claimed in memory
     straight away, so a burst of loads queues one write, not many."""
     if widget.id == settings.EXPLORE_WIDGET_ID or not origin:
         return None
     public_origin = _public_origin(origin)
-    if public_origin is None or public_origin == widget.installed_origin:
+    if public_origin is None:
         return None
-    org_domain = widget.organization.domain if widget.organization else None
-    kind = _kind(public_origin, org_domain)
-    origin = public_origin
+    if (
+        widget.install_confirmed_at is not None
+        and widget.installed_origin
+        and _same_site(public_origin, widget.installed_origin)
+    ):
+        return None  # the steady state: nothing left to learn from its own site
+    kind = _kind(public_origin, widget.organization.domain if widget.organization else None)
     if kind is OriginKind.INSTALLED:
-        if widget.installed_at is not None or widget.id in _recorded_installs:
-            return None
+        sighting = _install_sighting(widget, public_origin, visitor_key(client_ip))
     elif kind is OriginKind.BLOCKED:
-        fresh = (
-            widget.blocked_origin == origin
-            and widget.blocked_origin_seen_at is not None
-            and as_utc(widget.blocked_origin_seen_at) > datetime.now(timezone.utc) - _BLOCKED_REFRESH
-        )
-        if fresh or (widget.id, origin, date.today()) in _recorded_blocks:
-            return None
+        sighting = _block_sighting(widget, public_origin)
+    else:
+        sighting = None
+    if sighting:
+        _remember(widget.id, sighting)
+    return sighting
+
+
+def _install_sighting(widget: Widget, origin: str, visitor: Optional[str]) -> Optional[Sighting]:
+    if widget.install_confirmed_at is not None:
+        return None
+    if widget.installed_at is None:
+        write = Write.INSTALL
+    elif visitor and visitor != widget.install_visitor:
+        write = Write.CONFIRM
     else:
         return None
-    _remember(widget.id, kind, origin)
-    return kind
+    if (widget.id, write) in _recorded_installs:
+        return None
+    return Sighting(write, origin, visitor)
 
 
-def record(widget_id: str, kind: OriginKind, origin: str) -> None:
-    """Write one install or block. Runs as a background task after the
-    response, in its own session: the request's session is gone by then."""
-    origin = origin.lower()
+def _block_sighting(widget: Widget, origin: str) -> Optional[Sighting]:
+    fresh = (
+        widget.blocked_origin == origin
+        and widget.blocked_origin_seen_at is not None
+        and as_utc(widget.blocked_origin_seen_at) > datetime.now(timezone.utc) - _BLOCKED_REFRESH
+    )
+    today = date.today()
+    if (
+        fresh
+        or (widget.id, origin, today) in _recorded_blocks
+        or _blocks_per_day[(widget.id, today)] >= _BLOCKED_SITES_PER_DAY
+    ):
+        return None
+    return Sighting(Write.BLOCK, origin, None)
+
+
+def record(widget_id: str, sighting: Sighting) -> None:
+    """Make one write. Runs as a background task after the response, in its
+    own session: the request's session is gone by then."""
     now = datetime.now(timezone.utc)
-    if kind is OriginKind.INSTALLED:
+    if sighting.write is Write.INSTALL:
         # First write wins, across every worker process.
         statement = (
             update(Widget)
             .where(Widget.id == widget_id, Widget.installed_at.is_(None))
-            .values(installed_at=now, installed_origin=origin)
+            .values(installed_at=now, installed_origin=sighting.origin, install_visitor=sighting.visitor)
+        )
+    elif sighting.write is Write.CONFIRM:
+        statement = (
+            update(Widget)
+            .where(Widget.id == widget_id, Widget.installed_at.isnot(None),
+                   Widget.install_confirmed_at.is_(None))
+            .values(install_confirmed_at=now)
         )
     else:
         statement = (
@@ -177,10 +247,10 @@ def record(widget_id: str, kind: OriginKind, origin: str) -> None:
             .where(Widget.id == widget_id)
             .where(or_(
                 Widget.blocked_origin.is_(None),
-                Widget.blocked_origin != origin,
+                Widget.blocked_origin != sighting.origin,
                 Widget.blocked_origin_seen_at < now - _BLOCKED_REFRESH,
             ))
-            .values(blocked_origin=origin, blocked_origin_seen_at=now)
+            .values(blocked_origin=sighting.origin, blocked_origin_seen_at=now)
         )
     try:
         with SessionLocal() as db:
@@ -188,23 +258,27 @@ def record(widget_id: str, kind: OriginKind, origin: str) -> None:
             db.commit()
     except Exception:
         # Losing one sighting is harmless.
-        logger.exception(f"Could not record widget {kind.value} for {widget_id}")
-        _forget(widget_id, kind, origin)  # let the next load retry
+        logger.exception(f"Could not record widget {sighting.write.value} for {widget_id}")
+        _forget(widget_id, sighting)  # let the next load retry
 
 
-def _remember(widget_id: str, kind: OriginKind, origin: str) -> None:
-    memory = _recorded_installs if kind is OriginKind.INSTALLED else _recorded_blocks
-    if len(memory) >= _MEMORY_LIMIT:
-        memory.clear()
-    if kind is OriginKind.INSTALLED:
-        _recorded_installs.add(widget_id)
+def _remember(widget_id: str, sighting: Sighting) -> None:
+    if len(_recorded_installs) + len(_recorded_blocks) >= _MEMORY_LIMIT:
+        _recorded_installs.clear()
+        _recorded_blocks.clear()
+        _blocks_per_day.clear()
+    if sighting.write is Write.BLOCK:
+        today = date.today()
+        _recorded_blocks.add((widget_id, sighting.origin, today))
+        _blocks_per_day[(widget_id, today)] += 1
     else:
-        _recorded_blocks.add((widget_id, origin, date.today()))
+        _recorded_installs.add((widget_id, sighting.write))
 
 
-def _forget(widget_id: str, kind: OriginKind, origin: str) -> None:
-    if kind is OriginKind.INSTALLED:
-        _recorded_installs.discard(widget_id)
+def _forget(widget_id: str, sighting: Sighting) -> None:
+    if sighting.write is Write.BLOCK:
+        today = date.today()
+        _recorded_blocks.discard((widget_id, sighting.origin, today))
+        _blocks_per_day[(widget_id, today)] -= 1
     else:
-        _recorded_blocks.discard((widget_id, origin, date.today()))
-
+        _recorded_installs.discard((widget_id, sighting.write))

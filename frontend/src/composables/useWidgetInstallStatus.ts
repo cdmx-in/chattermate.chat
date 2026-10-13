@@ -39,10 +39,13 @@ export function useWidgetInstallStatus(widgetId: Ref<string | null>) {
   }
 
   const refresh = async () => {
-    if (!widgetId.value || document.hidden) return
+    const id = widgetId.value
+    if (!id || document.hidden) return
     try {
-      status.value = await widgetService.getInstallStatus(widgetId.value)
-      if (status.value.installed_at) stop()
+      const latest = await widgetService.getInstallStatus(id)
+      if (id !== widgetId.value) return // the widget changed while this was in flight
+      status.value = latest
+      if (latest.installed_at) stop()
     } catch (err) {
       // Status is a nicety: keep the last known value and try again next tick.
       console.error('Failed to load widget install status:', err)
@@ -70,5 +73,6 @@ export function useWidgetInstallStatus(widgetId: Ref<string | null>) {
     status,
     liveOn: computed(() => hostOf(status.value?.installed_origin)),
     blockedOn: computed(() => hostOf(status.value?.blocked_origin)),
+    allowedDomain: computed(() => status.value?.allowed_domain ?? null),
   }
 }

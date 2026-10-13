@@ -49,6 +49,12 @@ def bare_host(domain: str) -> str:
     return (urlparse(value if "//" in value else f"//{value}").hostname or "").lower()
 
 
+def site_host(domain: str) -> str:
+    """An org's site as hostnames compare: 'https://WWW.Acme.com/' -> 'acme.com'.
+    CORS admits this host and its www., however the domain was typed."""
+    return bare_host(domain).removeprefix("www.")
+
+
 def _lookup(host: str) -> Optional[bool]:
     try:
         socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)

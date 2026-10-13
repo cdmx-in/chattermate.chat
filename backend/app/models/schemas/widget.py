@@ -103,6 +103,8 @@ class WidgetInstallStatus(BaseModel):
     installed_origin: Optional[str] = None
     blocked_origin: Optional[str] = None
     blocked_origin_seen_at: Optional[datetime] = None
+    # The site CORS admits (the org's domain): named when explaining a block
+    allowed_domain: Optional[str] = None
 
     class Config:
         from_attributes = True

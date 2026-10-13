@@ -23,6 +23,8 @@ depends_on: Union[str, Sequence[str], None] = None
 COLUMNS = (
     ('installed_at', sa.DateTime(timezone=True)),
     ('installed_origin', sa.String(255)),
+    ('install_visitor', sa.String(16)),
+    ('install_confirmed_at', sa.DateTime(timezone=True)),
     ('blocked_origin', sa.String(255)),
     ('blocked_origin_seen_at', sa.DateTime(timezone=True)),
 )

@@ -35,7 +35,7 @@ const widgetSnippet = computed(() =>
   props.widgetId ? buildWidgetEmbed(props.widgetId, false) : '',
 )
 
-const { liveOn, blockedOn } = useWidgetInstallStatus(toRef(props, 'widgetId'))
+const { liveOn, blockedOn, allowedDomain } = useWidgetInstallStatus(toRef(props, 'widgetId'))
 
 // Built in the browser and handed to the user's own mail app: nothing is sent
 // from our servers, so it can't be used to mail arbitrary addresses.
@@ -81,10 +81,13 @@ const copy = async (text: string, label: string) => {
       </div>
     </div>
 
-    <p v-if="liveOn" class="install-status live">✓ Live on {{ liveOn }}</p>
-    <p v-if="blockedOn" class="install-status blocked">
-      Blocked on {{ blockedOn }}: only your signup domain can show the chat.
-    </p>
+    <!-- Appears on its own once their site loads the widget: announce it -->
+    <div role="status" aria-live="polite">
+      <p v-if="liveOn" class="install-status live">✓ Live on {{ liveOn }}</p>
+      <p v-if="blockedOn" class="install-status blocked">
+        Blocked on {{ blockedOn }}: the chat only shows on {{ allowedDomain || 'your signup domain' }}.
+      </p>
+    </div>
 
     <div class="step-actions">
       <button type="button" class="btn-ghost" @click="emit('back')">Back</button>

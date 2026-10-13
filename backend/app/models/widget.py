@@ -37,6 +37,11 @@ class Widget(Base):
     # app/services/widget_install.py). Never overwritten once set.
     installed_at = Column(DateTime(timezone=True), nullable=True)
     installed_origin = Column(String(255), nullable=True)
+    # A keyed hash of the first visitor's IP (never the IP), and when a second,
+    # different visitor loaded it there: the Origin header can be forged by
+    # anyone with the widget id, a second real visitor much less easily.
+    install_visitor = Column(String(16), nullable=True)
+    install_confirmed_at = Column(DateTime(timezone=True), nullable=True)
     # The latest site that loaded it but isn't allowed to (CORS admits only the
     # org's domain), so the widget silently fails there.
     blocked_origin = Column(String(255), nullable=True)

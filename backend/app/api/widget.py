@@ -33,6 +33,8 @@ from app.repositories.widget import WidgetRepository
 from app.repositories.agent import AgentRepository
 from app.core.security import create_conversation_token, verify_conversation_token
 from app.services import conversation_token, widget_install
+from app.utils.client_ip import forwarded_client_ip
+from app.utils.domain_check import site_host
 from app.repositories.customer import CustomerRepository
 from app.models.schemas.widget import WidgetCreate, WidgetInstallStatus, WidgetResponse
 from app.core.logger import get_logger
@@ -198,9 +200,9 @@ async def get_widget_ui(
 
     # Note where the widget is live (or blocked), after the response is sent.
     origin = request.headers.get("origin")
-    install_kind = widget_install.claim_write(widget, origin)
-    if install_kind:
-        background_tasks.add_task(widget_install.record, widget.id, install_kind, origin)
+    sighting = widget_install.claim_write(widget, origin, forwarded_client_ip(request))
+    if sighting:
+        background_tasks.add_task(widget_install.record, widget.id, sighting)
 
     # Get agent data
     agent_repo = AgentRepository(db)
@@ -671,7 +673,10 @@ def get_widget_install_status(
     widget = WidgetRepository(db).get_widget(widget_id)
     if not widget or widget.organization_id != current_user.organization_id:
         raise HTTPException(status_code=404, detail="Widget not found")
-    return widget
+    status = WidgetInstallStatus.model_validate(widget)
+    org_domain = widget.organization.domain if widget.organization else None
+    status.allowed_domain = site_host(org_domain) if org_domain else None
+    return status
 
 
 @router.get("/agent/{agent_id}", response_model=List[WidgetResponse])

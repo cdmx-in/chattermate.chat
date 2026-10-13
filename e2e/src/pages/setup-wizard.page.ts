@@ -36,7 +36,7 @@ export class SetupWizard {
   async pasteTextInstead(text: string): Promise<void> {
     await step('Paste some text instead of the website', async () => {
       await this.page.getByRole('button', { name: 'Paste some text instead' }).click()
-      await this.page.getByPlaceholder(/Paste what customers ask about/).fill(text)
+      await this.page.getByLabel('Text about your business').fill(text)
       await this.page.getByRole('button', { name: 'Add this text' }).click()
     })
   }

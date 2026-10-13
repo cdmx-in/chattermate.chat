@@ -24,7 +24,7 @@ import pytest
 
 from app.core.config import settings
 from app.services import widget_install
-from app.services.widget_install import OriginKind, classify_origin, claim_write
+from app.services.widget_install import OriginKind, Write, classify_origin, claim_write, visitor_key
 
 ORG_DOMAIN = "teeckbox.com"
 
@@ -33,6 +33,7 @@ ORG_DOMAIN = "teeckbox.com"
 def clean_memory(monkeypatch):
     widget_install._recorded_installs.clear()
     widget_install._recorded_blocks.clear()
+    widget_install._blocks_per_day.clear()
     monkeypatch.setattr(settings, "FRONTEND_URL", "https://app.chattermate.chat")
     monkeypatch.setattr(settings, "BACKEND_URL", "https://api.chattermate.chat")
     monkeypatch.setattr(widget_install, "BASE_CORS_ORIGINS", ["https://chattermate.chat"])
@@ -81,27 +82,61 @@ def test_no_org_domain_means_blocked():
 
 
 def widget(**fields):
-    base = dict(id="w-1", installed_at=None, installed_origin=None, blocked_origin=None,
+    base = dict(id="w-1", installed_at=None, installed_origin=None, install_visitor=None,
+                install_confirmed_at=None, blocked_origin=None,
                 blocked_origin_seen_at=None, organization=SimpleNamespace(domain=ORG_DOMAIN))
     return SimpleNamespace(**{**base, **fields})
 
 
+def written(sighting):
+    return sighting.write if sighting else None
+
+
 def test_first_install_is_claimed_once():
-    assert claim_write(widget(), "https://teeckbox.com") is OriginKind.INSTALLED
-    assert claim_write(widget(), "https://www.teeckbox.com") is None  # already claimed
+    sighting = claim_write(widget(), "https://teeckbox.com", "1.1.1.1")
+    assert (sighting.write, sighting.origin, sighting.visitor) == (Write.INSTALL, "https://teeckbox.com", visitor_key("1.1.1.1"))
+    assert claim_write(widget(), "https://www.teeckbox.com", "2.2.2.2") is None  # already claimed
 
 
-def test_installed_widget_is_not_rewritten():
-    w = widget(installed_at=datetime.now(timezone.utc), installed_origin="https://teeckbox.com")
-    assert claim_write(w, "https://teeckbox.com") is None
-    assert claim_write(w, "https://www.teeckbox.com") is None
+def installed(**fields):
+    return widget(installed_at=datetime.now(timezone.utc), installed_origin="https://teeckbox.com",
+                  install_visitor=visitor_key("1.1.1.1"), **fields)
+
+
+def test_a_second_visitor_confirms_the_install():
+    assert claim_write(installed(), "https://teeckbox.com", "1.1.1.1") is None  # the same visitor again
+    assert written(claim_write(installed(), "https://www.teeckbox.com", "2.2.2.2")) is Write.CONFIRM
+    assert claim_write(installed(), "https://teeckbox.com", "3.3.3.3") is None  # already claimed
+
+
+def test_confirmed_install_is_not_rewritten_and_reads_no_org():
+    class Unloaded:
+        @property
+        def domain(self):
+            raise AssertionError("org looked up in the steady state")
+    w = installed(install_confirmed_at=datetime.now(timezone.utc), organization=Unloaded())
+    assert claim_write(w, "https://teeckbox.com", "2.2.2.2") is None
+    assert claim_write(w, "https://www.teeckbox.com", "2.2.2.2") is None  # www. is the same site
+
+
+def test_visitor_key_hides_the_ip():
+    key = visitor_key("203.0.113.9")
+    assert key and "203" not in key and len(key) == 16
+    assert visitor_key("203.0.113.9") == key and visitor_key(None) is None
 
 
 def test_blocked_site_is_claimed_once_a_day():
-    assert claim_write(widget(), "https://shop.teeckbox.com") is OriginKind.BLOCKED
+    assert written(claim_write(widget(), "https://shop.teeckbox.com")) is Write.BLOCK
     assert claim_write(widget(), "https://shop.teeckbox.com") is None
     # A different blocked site is new information
-    assert claim_write(widget(), "https://other.io") is OriginKind.BLOCKED
+    assert written(claim_write(widget(), "https://other.io")) is Write.BLOCK
+
+
+def test_blocked_sites_are_capped_per_day():
+    """Forged Origins can't turn a read-only endpoint into a write per request."""
+    sites = [f"https://site{i}.io" for i in range(widget_install._BLOCKED_SITES_PER_DAY + 3)]
+    claims = [claim_write(widget(), site) for site in sites]
+    assert sum(1 for c in claims if c) == widget_install._BLOCKED_SITES_PER_DAY
 
 
 def test_recently_recorded_block_is_not_rewritten():
@@ -109,7 +144,7 @@ def test_recently_recorded_block_is_not_rewritten():
     assert claim_write(w, "https://shop.teeckbox.com") is None
     stale = widget(blocked_origin="https://shop.teeckbox.com",
                    blocked_origin_seen_at=datetime.now(timezone.utc) - timedelta(days=2))
-    assert claim_write(stale, "https://shop.teeckbox.com") is OriginKind.BLOCKED
+    assert written(claim_write(stale, "https://shop.teeckbox.com")) is Write.BLOCK
 
 
 def test_preview_loads_never_read_the_org(monkeypatch):
@@ -123,12 +158,12 @@ def test_preview_loads_never_read_the_org(monkeypatch):
 
 
 def test_explore_widget_and_missing_origin_are_skipped():
-    assert claim_write(widget(id=settings.EXPLORE_WIDGET_ID), "https://teeckbox.com") is None
+    assert claim_write(widget(id=settings.EXPLORE_WIDGET_ID), "https://teeckbox.com", "1.1.1.1") is None
     assert claim_write(widget(), None) is None
 
 
 def test_memory_is_bounded(monkeypatch):
     monkeypatch.setattr(widget_install, "_MEMORY_LIMIT", 2)
     for i in range(5):
-        claim_write(widget(id=f"w-{i}"), "https://teeckbox.com")
+        claim_write(widget(id=f"w-{i}"), "https://teeckbox.com", "1.1.1.1")
     assert len(widget_install._recorded_installs) <= 2

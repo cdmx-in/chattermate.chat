@@ -117,4 +117,6 @@ export interface WidgetInstallStatus {
   installed_origin: string | null
   blocked_origin: string | null
   blocked_origin_seen_at: string | null
+  /** The site the widget is allowed on (the org's domain) */
+  allowed_domain: string | null
 }
