@@ -37,6 +37,7 @@ from app.knowledge.enhanced_website_reader import (
     EmptyCrawlError,
     FAILURE_ADVICE,
 )
+from app.knowledge.failure_advice import FailureCause
 
 # Initialize logger for this module
 logger = get_logger(__name__)
@@ -323,10 +324,9 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
 
         # Bot protection first: it is the specific, actionable cause.
         if getattr(self.reader, '_challenge_blocked', 0) > 0:
+            # The shared advice, so onboarding and the setup email can say it too
             raise BotProtectionError(
-                "This site blocked automated crawling (its bot protection served a "
-                "“Checking your browser” page). Add the content manually with "
-                "Upload PDF or Text."
+                FAILURE_ADVICE[FailureCause.BOT_BLOCKED].format(url=self._source_label())
             )
 
         # Every URL was already in the vector store, so there was nothing new to
@@ -343,6 +343,9 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
 
         raise EmptyCrawlError(self._failure_message())
 
+    def _source_label(self) -> str:
+        return self.urls[0] if self.urls else 'this source'
+
     def _failure_message(self) -> str:
         """What to tell the user, based on what the crawl actually hit.
 
@@ -350,7 +353,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
         the source as a whole ran into. Only when it recorded nothing do we fall
         back to the old catch-all.
         """
-        url = self.urls[0] if self.urls else 'this source'
+        url = self._source_label()
         cause = None
         if self.reader is not None and hasattr(self.reader, 'dominant_failure_cause'):
             cause = self.reader.dominant_failure_cause()

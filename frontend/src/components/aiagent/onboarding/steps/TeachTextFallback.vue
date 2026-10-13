@@ -27,7 +27,10 @@ const emit = defineEmits<{
   (e: 'added'): void
 }>()
 
-const DEFAULT_TITLE = 'About us'
+// Titles must be unique per org, and someone may paste more than once (or
+// already have an "About us"): stamp it so a second paste isn't refused.
+const titleNow = () =>
+  `About us (${new Date().toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })})`
 const MIN_LENGTH = 40 // enough to answer something from; less is a typo
 
 const content = ref('')
@@ -40,7 +43,7 @@ const add = async () => {
   saving.value = true
   error.value = null
   try {
-    await knowledgeService.addText(props.organizationId, DEFAULT_TITLE, content.value.trim(), props.agentId)
+    await knowledgeService.addText(props.organizationId, titleNow(), content.value.trim(), props.agentId)
     content.value = ''
     emit('added')
   } catch (err: any) {
@@ -57,6 +60,7 @@ const add = async () => {
       v-model="content"
       class="text-area"
       rows="6"
+      aria-label="Text about your business"
       placeholder="Paste what customers ask about: what you sell, prices, delivery, opening hours…"
       :disabled="saving"
     ></textarea>

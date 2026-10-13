@@ -212,8 +212,20 @@ describe('StepTeach - a website that fails fast', () => {
     await wrapper.findAll('button').find((b: any) => b.text() === 'Add this text')!.trigger('click')
     await flushPromises()
 
-    expect(addText).toHaveBeenCalledWith('org-1', 'About us', expect.stringContaining('handmade candles'), 'agent-1')
+    expect(addText).toHaveBeenCalledWith('org-1', expect.stringMatching(/^About us \(/), expect.stringContaining('handmade candles'), 'agent-1')
     expect(wrapper.emitted('next')).toBeTruthy()
+  })
+
+  it('offers a PDF upload too', async () => {
+    getAgentQueueItems.mockResolvedValueOnce({ queue_items: [] }).mockResolvedValue({ queue_items: [failedItem] })
+    const wrapper = await mountStep()
+    await clickContinue(wrapper)
+    const picker = vi.spyOn(HTMLInputElement.prototype, 'click').mockImplementation(() => {})
+
+    await wrapper.find('.crawl-failure').findAll('button').find((b: any) => b.text() === 'Upload a PDF')!.trigger('click')
+
+    expect(picker).toHaveBeenCalled()
+    picker.mockRestore()
   })
 
   it('lets them continue without it', async () => {

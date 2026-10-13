@@ -19,16 +19,28 @@ some people sign up before their site is live.
 
 import asyncio
 import socket
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, Optional, Tuple
 from urllib.parse import urlparse
 
 LOOKUP_TIMEOUT_SECONDS = 2.0
-# The field re-checks on every pause in typing, and the endpoint is public:
-# remember answers for a while so neither costs a lookup each time.
+# getaddrinfo blocks, and a thread can't be cancelled: a dead nameserver holds
+# one until the system resolver gives up, long after our timeout. So lookups
+# get a small pool of their own (never the event loop's shared one) and never
+# queue: when every slot is busy the answer is "can't tell".
+MAX_LOOKUPS = 4
+_executor = ThreadPoolExecutor(max_workers=MAX_LOOKUPS, thread_name_prefix="domain-check")
+_slots = threading.BoundedSemaphore(MAX_LOOKUPS)
+# Only these mean "no such name"; anything else (EAI_AGAIN, a failing
+# resolver) is a temporary failure and says nothing about the domain.
+_NOT_FOUND = {socket.EAI_NONAME, getattr(socket, "EAI_NODATA", socket.EAI_NONAME)}
+# The field re-checks on every pause in typing: remember definite answers
+# for a while so that doesn't cost a lookup each time.
 CACHE_SECONDS = 600
 CACHE_LIMIT = 1000
-_cache: Dict[str, Tuple[float, Optional[bool]]] = {}
+_cache: Dict[str, Tuple[float, bool]] = {}
 
 
 def bare_host(domain: str) -> str:
@@ -37,13 +49,33 @@ def bare_host(domain: str) -> str:
     return (urlparse(value if "//" in value else f"//{value}").hostname or "").lower()
 
 
-async def _resolves(host: str) -> bool:
-    loop = asyncio.get_running_loop()
+def _lookup(host: str) -> Optional[bool]:
     try:
-        await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+        socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)
         return True
-    except socket.gaierror:
-        return False
+    except socket.gaierror as e:
+        return False if e.errno in _NOT_FOUND else None
+
+
+async def _resolves(host: str) -> Optional[bool]:
+    if not _slots.acquire(blocking=False):
+        return None
+    try:
+        future = _executor.submit(_lookup, host)
+    except RuntimeError:  # pool shut down
+        _slots.release()
+        return None
+    # Released when the lookup ends - or is cancelled before it ever ran,
+    # which a release inside _lookup would miss.
+    future.add_done_callback(lambda _: _slots.release())
+    return await asyncio.wrap_future(future)
+
+
+def _combine(answers) -> Optional[bool]:
+    """Any address is enough; "doesn't exist" only when every name said so."""
+    if any(answer is True for answer in answers):
+        return True
+    return False if answers and all(answer is False for answer in answers) else None
 
 
 async def domain_resolves(domain: str) -> Optional[bool]:
@@ -59,13 +91,13 @@ async def domain_resolves(domain: str) -> Optional[bool]:
         return cached[1]
     candidates = {host, f"www.{host.removeprefix('www.')}"}
     try:
-        answers = await asyncio.wait_for(
+        result = _combine(await asyncio.wait_for(
             asyncio.gather(*(_resolves(candidate) for candidate in candidates)), LOOKUP_TIMEOUT_SECONDS
-        )
-        result: Optional[bool] = any(answers)
+        ))
     except asyncio.TimeoutError:
         result = None
-    if len(_cache) >= CACHE_LIMIT:
-        _cache.clear()
-    _cache[host] = (time.monotonic(), result)
+    if result is not None:
+        if len(_cache) >= CACHE_LIMIT:
+            _cache.clear()
+        _cache[host] = (time.monotonic(), result)
     return result

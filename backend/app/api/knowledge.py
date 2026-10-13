@@ -31,12 +31,13 @@ from app.models.knowledge import Knowledge
 from app.repositories.knowledge import KnowledgeRepository
 from app.knowledge import page_editor
 from app.knowledge.crawl_scope import CRAWL_SCOPES
-from app.knowledge.failure_advice import plain_reason
+from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause, plain_reason
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.agent import AgentRepository
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.core.config import settings
+from app.utils.domain_check import bare_host, domain_resolves
 from app.services import knowledge_vector_links
 from sqlalchemy.orm import Session
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
@@ -428,6 +429,14 @@ async def get_explore_progress(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _hosts_that_do_not_exist(urls: List[str]) -> set:
+    """Hosts DNS says have no such name. Lookups that time out or can't tell
+    are left to the crawler."""
+    hosts = sorted({bare_host(url) for url in urls} - {""})
+    answers = await asyncio.gather(*(domain_resolves(host) for host in hosts))
+    return {host for host, answer in zip(hosts, answers) if answer is False}
+
+
 @router.post("/add/urls")
 async def add_urls(
     request: UrlsRequest = Body(...),
@@ -499,49 +508,35 @@ async def add_urls(
                 "duplicate_urls": duplicate_urls
             }
 
-        # Queue PDF URLs with user_id
+        # A domain that doesn't exist fails now, not after its turn in the
+        # processor (up to a minute or more): onboarding is waiting to hear.
+        missing_hosts = await _hosts_that_do_not_exist(all_urls)
+
+        def queue(source_type: str, url: str, metadata: dict) -> None:
+            dead = bare_host(url) in missing_hosts
+            queued_items.append(queue_repo.create(KnowledgeQueue(
+                organization_id=request.org_id,
+                agent_id=agent_uuid,
+                user_id=current_user.id,
+                source_type=source_type,
+                source=url,
+                status=QueueStatus.FAILED if dead else QueueStatus.PENDING,
+                error=FAILURE_ADVICE[FailureCause.DNS].format(url=url) if dead else None,
+                queue_metadata=metadata,
+            )))
+
         for url in request.pdf_urls:
-            queue_item = KnowledgeQueue(
-                organization_id=request.org_id,
-                agent_id=agent_uuid,
-                user_id=current_user.id,
-                source_type='pdf_url',
-                source=url,
-                status=QueueStatus.PENDING,
-                queue_metadata={"max_links": plan_sub_pages}
-            )
-            queued_items.append(queue_repo.create(queue_item))
-
-        # Queue websites with user_id
+            queue('pdf_url', url, {"max_links": plan_sub_pages})
         for url in request.websites:
-            queue_item = KnowledgeQueue(
-                organization_id=request.org_id,
-                agent_id=agent_uuid,
-                user_id=current_user.id,
-                source_type='website',
-                source=url,
-                status=QueueStatus.PENDING,
-                queue_metadata={
-                    "max_links": website_max_links,
-                    # Omitted (None) means the crawler's default: the seed's host.
-                    "crawl_scope": request.crawl_scope,
-                }
-            )
-            queued_items.append(queue_repo.create(queue_item))
-
-        # Queue sitemaps — one source each; pages are discovered from the sitemap
+            queue('website', url, {
+                "max_links": website_max_links,
+                # Omitted (None) means the crawler's default: the seed's host.
+                "crawl_scope": request.crawl_scope,
+            })
+        # Sitemaps — one source each; pages are discovered from the sitemap
         # and capped at the plan's sub-page limit (no per-request crawl scope).
         for url in request.sitemaps:
-            queue_item = KnowledgeQueue(
-                organization_id=request.org_id,
-                agent_id=agent_uuid,
-                user_id=current_user.id,
-                source_type='sitemap',
-                source=url,
-                status=QueueStatus.PENDING,
-                queue_metadata={"max_links": plan_sub_pages}
-            )
-            queued_items.append(queue_repo.create(queue_item))
+            queue('sitemap', url, {"max_links": plan_sub_pages})
 
         return {
             "message": "URLs queued for processing, it will take a while to process, we will notify you when it is done",

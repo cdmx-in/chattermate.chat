@@ -25,7 +25,7 @@ const sameSource = (a: string, b: string) => normalizeSource(a) === normalizeSou
 
 /** The newest row for each source: a retry must not be judged by the old failure.
  *  The queue API lists newest first. */
-const newestPerSource = (items: QueueItem[]) => {
+export const newestPerSource = (items: QueueItem[]) => {
   const seen = new Set<string>()
   return items.filter((item) => {
     const key = normalizeSource(item.source)

@@ -216,9 +216,10 @@ const removeFile = (index: number) => {
 
     <div v-if="crawlFailure" class="crawl-failure" role="alert">
       <p class="step-error">We couldn't read {{ crawlFailure.source }}. {{ crawlFailure.reason }}</p>
-      <button v-if="!showTextFallback" type="button" class="btn-soft" @click="showTextFallback = true">
-        Paste some text instead
-      </button>
+      <div v-if="!showTextFallback" class="failure-actions">
+        <button type="button" class="btn-soft" @click="showTextFallback = true">Paste some text instead</button>
+        <button type="button" class="btn-soft" @click="triggerFileInput">Upload a PDF</button>
+      </div>
       <TeachTextFallback
         v-else
         :agent-id="agentId"
@@ -392,6 +393,12 @@ const removeFile = (index: number) => {
   padding: 14px 16px;
   border: 1px solid var(--o12);
   border-radius: var(--radius-input);
+}
+
+.failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .step-error {

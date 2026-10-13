@@ -21,6 +21,8 @@ import { sanitizeHtml } from '@/utils/sanitize'
 import { widgetService } from '@/services/widget'
 import { knowledgeService } from '@/services/knowledge'
 import { useOnboardingTestChat } from '@/composables/useOnboardingTestChat'
+import { newestPerSource } from '@/composables/useCrawlCheck'
+import type { QueueItem } from '@/types/knowledge'
 
 const props = defineProps<{
   agentId: string
@@ -55,18 +57,24 @@ const knowledgeProcessing = ref(false)
 const knowledgeJustFinished = ref(false)
 // Nothing indexed and nothing indexing: answers can only be generic
 const noKnowledge = ref(false)
+// The newest source that failed, to say why when nothing was learned. A crawl
+// often fails long after Teach moved on: this is where the user finds out.
+const failure = ref<QueueItem | null>(null)
 let knowledgePoll: ReturnType<typeof setInterval> | null = null
 
 const checkKnowledgeStatus = async () => {
   try {
     const data = await knowledgeService.getAgentQueueItems(props.agentId)
-    const items = (data?.queue_items ?? []) as Array<{ status: string }>
+    const items = (data?.queue_items ?? []) as QueueItem[]
     const pending = items.filter(i => i.status === 'pending' || i.status === 'processing').length
+    failure.value = newestPerSource(items).find(i => i.status === 'failed') ?? null
     const wasProcessing = knowledgeProcessing.value
     knowledgeProcessing.value = pending > 0
     if (wasProcessing && pending === 0) {
-      knowledgeJustFinished.value = true
       stopKnowledgePoll()
+      // Finished is not the same as learned: every source may have failed
+      await checkHasKnowledge()
+      knowledgeJustFinished.value = !noKnowledge.value
     }
   } catch (err) {
     console.error('Failed to check knowledge status:', err)
@@ -160,8 +168,9 @@ const formatMessage = (content: string) => sanitizeHtml(marked(content) as strin
       <span class="kb-check" aria-hidden="true">✓</span>
       <span>Knowledge indexed — your agent can now answer from it.</span>
     </div>
-    <div v-else-if="noKnowledge" class="kb-note empty">
+    <div v-else-if="noKnowledge" class="kb-note empty" role="status">
       <span>
+        <template v-if="failure">We couldn't read {{ failure.source }}. {{ failure.reason }}</template>
         It hasn't learned anything about your business yet, so answers will be generic.
         <button type="button" class="kb-link" @click="emit('back')">Add your website or some text</button>
       </span>

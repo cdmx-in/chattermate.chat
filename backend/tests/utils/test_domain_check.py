@@ -40,19 +40,14 @@ def empty_cache():
     domain_check._cache.clear()
 
 
-def fake_dns(monkeypatch, known=(), slow=False):
-    async def getaddrinfo(host, port, type=None):
+def fake_dns(monkeypatch, known=(), slow=False, errno=socket.EAI_NONAME):
+    def getaddrinfo(host, port, type=None):
         if slow:
-            await asyncio.sleep(10)
+            time.sleep(0.3)
         if host in known:
             return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("1.2.3.4", 0))]
-        raise socket.gaierror("Name or service not known")
-
-    class Loop:
-        pass
-    loop = Loop()
-    loop.getaddrinfo = getaddrinfo
-    monkeypatch.setattr(domain_check.asyncio, "get_running_loop", lambda: loop)
+        raise socket.gaierror(errno, "Name or service not known")
+    monkeypatch.setattr(domain_check.socket, "getaddrinfo", getaddrinfo)
 
 
 def test_resolving_domain(monkeypatch):
@@ -82,6 +77,24 @@ def test_non_hostnames_are_unknown(monkeypatch, value):
     assert asyncio.run(domain_resolves(value)) is None
 
 
+def test_temporary_failure_is_unknown(monkeypatch):
+    """EAI_AGAIN means the resolver had trouble, not that the site is gone."""
+    fake_dns(monkeypatch, errno=socket.EAI_AGAIN)
+    assert asyncio.run(domain_resolves("teeckbox.com")) is None
+
+
+def test_full_pool_answers_unknown_without_queueing(monkeypatch):
+    fake_dns(monkeypatch, known={"teeckbox.com"})
+    for _ in range(domain_check.MAX_LOOKUPS):
+        domain_check._slots.acquire()
+    try:
+        assert asyncio.run(domain_resolves("teeckbox.com")) is None
+    finally:
+        for _ in range(domain_check.MAX_LOOKUPS):
+            domain_check._slots.release()
+    assert "teeckbox.com" not in domain_check._cache  # "can't tell" isn't remembered
+
+
 def test_answers_are_cached(monkeypatch):
     lookups = []
     fake_dns(monkeypatch, known={"teeckbox.com"})
@@ -107,3 +120,14 @@ async def _timed(coro):
     start = time.monotonic()
     await coro
     return time.monotonic() - start
+
+
+def test_slots_come_back_after_timeouts(monkeypatch):
+    fake_dns(monkeypatch, slow=True)
+    monkeypatch.setattr(domain_check, "LOOKUP_TIMEOUT_SECONDS", 0.01)
+    for _ in range(domain_check.MAX_LOOKUPS):
+        asyncio.run(domain_resolves(f"slow{_}.example"))
+    time.sleep(0.5)  # the abandoned lookups finish
+    fake_dns(monkeypatch, known={"teeckbox.com"})
+    monkeypatch.setattr(domain_check, "LOOKUP_TIMEOUT_SECONDS", 1.0)
+    assert asyncio.run(domain_resolves("teeckbox.com")) is True
