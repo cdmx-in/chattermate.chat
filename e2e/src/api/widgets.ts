@@ -21,7 +21,11 @@ export interface WidgetInstallStatus {
  * anonymous, like a visitor.
  */
 export async function loadWidgetFrom(api: ApiClient, widgetId: string, origin: string, visitorIp: string): Promise<void> {
-  await api.get(`/widgets/${widgetId}/data`, { headers: { Origin: origin, 'X-Forwarded-For': visitorIp } })
+  // The endpoint serves the widget's HTML, not JSON: only the status matters
+  const response = await api.raw('GET', `/widgets/${widgetId}/data`, {
+    headers: { Origin: origin, 'X-Forwarded-For': visitorIp },
+  })
+  if (!response.ok()) throw new Error(`widget load from ${origin} → ${response.status()}`)
 }
 
 export async function installStatus(api: ApiClient, widgetId: string): Promise<WidgetInstallStatus> {
