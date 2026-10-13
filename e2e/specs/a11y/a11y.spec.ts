@@ -1,7 +1,7 @@
 import { test, expect, expectNoNewA11yViolations, InboxPage } from '@e2e'
 
 // Serious and critical axe findings, per screen, held to a baseline
-// (a11y-baseline.json): today's known issues pass, anything new fails, and the
+// (a11y-baseline/): today's known issues pass, anything new fails, and the
 // baseline shrinks as they are fixed. The widget is checked in both themes.
 
 test.describe('accessibility', () => {
@@ -11,18 +11,26 @@ test.describe('accessibility', () => {
     await expectNoNewA11yViolations(anonymousPage, 'login')
   })
 
-  test('dashboard screens @a11y', async ({ page, agentsPage, aiConfigPage, ticketsPage, peoplePage }) => {
-    await new InboxPage(page).goto()
-    await expectNoNewA11yViolations(page, 'inbox')
-    await agentsPage.goto()
-    await expectNoNewA11yViolations(page, 'ai-agents')
-    await aiConfigPage.goto()
-    await expectNoNewA11yViolations(page, 'ai-config')
-    await ticketsPage.goto()
-    await expectNoNewA11yViolations(page, 'tickets')
-    await peoplePage.goto()
-    await expectNoNewA11yViolations(page, 'people')
-  })
+  // The dashboard is dark unless the user picks light (stored as cm-theme); both are checked.
+  for (const scheme of ['dark', 'light'] as const) {
+    const suffix = scheme === 'dark' ? '' : '-light'
+    test(`dashboard screens, ${scheme} theme @a11y`, async ({ page, agent, agentsPage, aiConfigPage, ticketsPage, peoplePage }) => {
+      // An agent of its own, so the agents screen is the list (with a card to check), not first-run setup.
+      expect(agent.id).toBeTruthy()
+      await page.addInitScript((theme) => localStorage.setItem('cm-theme', theme), scheme)
+      await new InboxPage(page).goto()
+      await expect(page.locator('html')).toHaveAttribute('data-theme', scheme)
+      await expectNoNewA11yViolations(page, `inbox${suffix}`)
+      await agentsPage.goto()
+      await expectNoNewA11yViolations(page, `ai-agents${suffix}`)
+      await aiConfigPage.goto()
+      await expectNoNewA11yViolations(page, `ai-config${suffix}`)
+      await ticketsPage.goto()
+      await expectNoNewA11yViolations(page, `tickets${suffix}`)
+      await peoplePage.goto()
+      await expectNoNewA11yViolations(page, `people${suffix}`)
+    })
+  }
 
   for (const scheme of ['light', 'dark'] as const) {
     test(`widget, ${scheme} theme @a11y @widget`, async ({ widget }) => {
