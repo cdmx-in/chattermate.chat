@@ -42,6 +42,15 @@ from app.core.outbound_http import (
     guarded_http_client,
 )
 from app.core.outbound_policy import OutboundTargetBlocked, check_outbound_target
+
+
+def refused_by_policy(error: BaseException) -> bool:
+    """The guard surfaces as a connect error; the policy refusal is in its causes."""
+    while error is not None:
+        if isinstance(error, OutboundTargetBlocked):
+            return True
+        error = error.__cause__ or error.__context__
+    return False
 from app.models.mcp_tool import MCPTransportType
 from app.services import db_connector_service
 from app.services.db_connector_service import DBConnectorConfig
@@ -178,8 +187,9 @@ class TestGuard:
         check_outbound_target("https://rebind.example.com/v1", "Base URL")  # passes: public
         client, recorder = _sync_client({})
 
-        with pytest.raises(OutboundTargetBlocked):
+        with pytest.raises(httpx.ConnectError) as exc:
             client.get("https://rebind.example.com/v1/models")
+        assert refused_by_policy(exc.value)
         assert recorder.dialled == []
 
     def test_any_internal_answer_refuses_the_host(self, public_only, monkeypatch):
@@ -188,8 +198,9 @@ class TestGuard:
             (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.0.0.7", 443)),
         ])
         client, recorder = _sync_client({})
-        with pytest.raises(OutboundTargetBlocked):
+        with pytest.raises(httpx.ConnectError) as exc:
             client.get("https://mixed.example.com/")
+        assert refused_by_policy(exc.value)
         assert recorder.dialled == []
 
     @pytest.mark.parametrize("location", [
@@ -202,8 +213,9 @@ class TestGuard:
         dns["internal.example.com"] = ["10.0.0.5"]
         client, recorder = _sync_client({PUBLIC_IP: _redirect(location)})
 
-        with pytest.raises(OutboundTargetBlocked):
+        with pytest.raises(httpx.ConnectError) as exc:
             client.get("https://api.example.com/v1/models")
+        assert refused_by_policy(exc.value)
         assert recorder.dialled == [(PUBLIC_IP, 443)]
 
     def test_redirect_to_another_public_host_is_followed(self, public_only, dns):
@@ -230,8 +242,9 @@ class TestGuard:
         dns["api.example.com"] = [PUBLIC_IP]
         client, recorder = _async_client({PUBLIC_IP: _redirect("http://169.254.169.254/")})
 
-        with pytest.raises(OutboundTargetBlocked):
+        with pytest.raises(httpx.ConnectError) as exc:
             await client.get("https://api.example.com/v1")
+        assert refused_by_policy(exc.value)
         assert recorder.dialled == [(PUBLIC_IP, 443)]
 
     @pytest.mark.asyncio
@@ -240,8 +253,9 @@ class TestGuard:
         check_outbound_target("https://rebind.example.com", "MCP server URL")
         client, recorder = _async_client({})
 
-        with pytest.raises(OutboundTargetBlocked):
+        with pytest.raises(httpx.ConnectError) as exc:
             await client.get("https://rebind.example.com/mcp")
+        assert refused_by_policy(exc.value)
         assert recorder.dialled == []
 
     def test_unresolvable_host_is_a_connect_error(self, public_only, monkeypatch):
@@ -291,7 +305,7 @@ class TestAIModelWiring:
 
         with pytest.raises(openai.APIConnectionError) as exc:
             client.models.list()
-        assert isinstance(exc.value.__cause__, OutboundTargetBlocked)
+        assert refused_by_policy(exc.value)
         assert recorder.dialled == [(PUBLIC_IP, 443)]
 
 

@@ -41,12 +41,19 @@ from app.core.outbound_policy import OutboundTargetBlocked, public_only, vetted_
 logger = get_logger(__name__)
 
 
+class OutboundConnectRefused(httpcore.ConnectError):
+    """The guard refused an address. Raised as a connect error so httpx, and
+    every SDK built on it (whatever its version), reports an ordinary
+    connection failure rather than letting an unknown exception escape; the
+    policy's OutboundTargetBlocked is its __cause__."""
+
+
 def _vet(host: str, port: int):
     try:
         return vetted_addresses(host, port, host)
-    except OutboundTargetBlocked:
+    except OutboundTargetBlocked as e:
         logger.warning(f"Refused outbound connection to internal address via {host}")
-        raise
+        raise OutboundConnectRefused(str(e)) from e
     except OSError as e:  # DNS failure: report it the way httpx would
         raise httpcore.ConnectError(str(e)) from e
 
@@ -70,7 +77,7 @@ class GuardedBackend(httpcore.NetworkBackend):
         raise last_error
 
     def connect_unix_socket(self, *args, **kwargs):
-        raise OutboundTargetBlocked("Unix sockets are not allowed for outbound targets.")
+        raise OutboundConnectRefused("Unix sockets are not allowed for outbound targets.")
 
     def sleep(self, seconds: float) -> None:
         self._inner.sleep(seconds)
@@ -95,7 +102,7 @@ class AsyncGuardedBackend(httpcore.AsyncNetworkBackend):
         raise last_error
 
     async def connect_unix_socket(self, *args, **kwargs):
-        raise OutboundTargetBlocked("Unix sockets are not allowed for outbound targets.")
+        raise OutboundConnectRefused("Unix sockets are not allowed for outbound targets.")
 
     async def sleep(self, seconds: float) -> None:
         await self._inner.sleep(seconds)
