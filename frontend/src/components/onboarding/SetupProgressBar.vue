@@ -45,7 +45,7 @@ onMounted(() => load())
 </script>
 
 <template>
-  <div v-if="showBar" class="setup-bar" role="status">
+  <section v-if="showBar" class="setup-bar" aria-label="Finish setup">
     <div class="setup-text">
       <span class="setup-step">Finish setup · step {{ stepNumber }} of {{ stepCount }}</span>
       <span class="setup-label">{{ label }}</span>
@@ -54,7 +54,7 @@ onMounted(() => load())
       <button type="button" class="setup-hide" @click="hideBar">Hide</button>
       <button type="button" class="setup-cta" @click="resume">Continue setup →</button>
     </div>
-  </div>
+  </section>
 </template>
 
 <style scoped>

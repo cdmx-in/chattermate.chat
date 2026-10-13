@@ -17,6 +17,7 @@ limitations under the License.
 import { computed, ref } from 'vue'
 import { onboardingService, type SetupProgress, type SetupStep } from '@/services/onboarding'
 import { permissionChecks } from '@/utils/permissions'
+import { userService } from '@/services/user'
 
 // The wizard's four steps; "live" is past the end.
 const WIZARD_STEPS: SetupStep[] = ['create', 'teach', 'test', 'launch']
@@ -24,17 +25,28 @@ const STALE_AFTER_MS = 60_000
 
 // Shared by every page in the session: fetched once, refreshed when stale or
 // when something (the wizard) says it changed. Never polled.
+// Kept per signed-in user: signing in as someone else in the same tab must
+// not show the previous org's step (a 401 redirect doesn't go through logout).
 const progress = ref<SetupProgress | null>(null)
+let loadedFor = ''
 let loadedAt = 0
 let inFlight: Promise<void> | null = null
 
 export function useSetupProgress() {
   const load = (force = false): Promise<void> => {
-    if (inFlight) return inFlight
+    const user = userService.getUserId()
+    if (user !== loadedFor) {
+      progress.value = null
+      loadedAt = 0
+      loadedFor = user
+    }
+    // A forced load means something just changed: don't settle for an older request
+    if (inFlight) return force ? inFlight.then(() => load(true)) : inFlight
     if (!force && progress.value && Date.now() - loadedAt < STALE_AFTER_MS) return Promise.resolve()
     inFlight = onboardingService
       .getProgress()
       .then((value) => {
+        if (user !== loadedFor) return // signed out or switched while this was in flight
         progress.value = value
         loadedAt = Date.now()
       })

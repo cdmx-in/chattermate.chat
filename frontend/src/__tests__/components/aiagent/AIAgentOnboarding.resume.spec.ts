@@ -11,7 +11,7 @@ vi.mock('@/services/agent', () => ({
   agentService: { getAgentById: (id: string) => getAgentById(id) }
 }))
 vi.mock('@/services/user', () => ({
-  userService: { getCurrentUser: () => ({ organization_id: 'org-1' }) }
+  userService: { getCurrentUser: () => ({ organization_id: 'org-1' }), getUserId: () => 'user-1' }
 }))
 vi.mock('@/utils/permissions', () => ({ permissionChecks: { canManageAgents: () => true } }))
 

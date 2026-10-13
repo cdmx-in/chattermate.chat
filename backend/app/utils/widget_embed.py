@@ -14,9 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 The embed snippet for a widget, server-side - the twin of the frontend's
-buildWidgetEmbed (frontend/src/utils/widgetEmbed.ts, simple variant). Keep
-the two in step: an email that hands out a different snippet than the
-dashboard would install a widget that behaves differently.
+buildWidgetEmbed (frontend/src/utils/widgetEmbed.ts, simple variant). Both
+tests compare against one fixture (frontend/src/__tests__/fixtures/
+widget-snippet.txt), so the two can't drift apart unnoticed.
 """
 
 from app.core.config import settings

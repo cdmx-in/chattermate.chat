@@ -16,8 +16,15 @@ limitations under the License.
 The server-side embed snippet matches what the dashboard hands out.
 """
 
+from pathlib import Path
+
+import pytest
+
 from app.core.config import settings
 from app.utils.widget_embed import widget_snippet
+
+# Shared with the frontend's buildWidgetEmbed test
+GOLDEN = Path(__file__).resolve().parents[3] / "frontend/src/__tests__/fixtures/widget-snippet.txt"
 
 
 def test_snippet_points_at_this_install(monkeypatch):
@@ -30,3 +37,13 @@ def test_snippet_points_at_this_install(monkeypatch):
         "</script>\n"
         '<script src="https://app.example.com/webclient/chattermate.min.js"></script>'
     )
+
+
+@pytest.mark.skipif(not GOLDEN.exists(), reason="needs the frontend checkout alongside")
+def test_snippet_matches_the_dashboard(monkeypatch):
+    monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://app.example.com")
+    expected = GOLDEN.read_text().format(
+        widget_id="w-1", api_url="https://api.example.com/api/v1", loader_origin="https://app.example.com",
+    )
+    assert widget_snippet("w-1") == expected

@@ -10,7 +10,7 @@ export class SetupBar {
   }
 
   get bar(): Locator {
-    return this.page.getByRole('status').filter({ hasText: 'Finish setup' })
+    return this.page.getByRole('region', { name: 'Finish setup' })
   }
 
   async continueSetup(): Promise<void> {

@@ -10,6 +10,7 @@ vi.mock('@/services/onboarding', () => ({
   onboardingService: { getProgress: () => getProgress(), hide: () => hideRequest() }
 }))
 vi.mock('@/utils/permissions', () => ({ permissionChecks: { canManageAgents: () => true } }))
+vi.mock('@/services/user', () => ({ userService: { getUserId: () => 'user-1' } }))
 
 const mountBar = async (step: string, hidden = false) => {
   vi.resetModules()

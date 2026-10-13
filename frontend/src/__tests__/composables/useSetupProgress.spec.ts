@@ -6,6 +6,8 @@ const canManageAgents = vi.fn()
 vi.mock('@/services/onboarding', () => ({
   onboardingService: { getProgress: () => getProgress(), hide: () => hideRequest() }
 }))
+let userId = 'user-1'
+vi.mock('@/services/user', () => ({ userService: { getUserId: () => userId } }))
 vi.mock('@/utils/permissions', () => ({
   permissionChecks: { canManageAgents: () => canManageAgents() }
 }))
@@ -24,6 +26,7 @@ describe('useSetupProgress', () => {
     getProgress.mockReset()
     hideRequest.mockReset()
     canManageAgents.mockReturnValue(true)
+    userId = 'user-1'
   })
 
   it('numbers the wizard steps and shows the bar until live', async () => {
@@ -68,5 +71,32 @@ describe('useSetupProgress', () => {
     getProgress.mockRejectedValue(new Error('offline'))
     await setup.load()
     expect(setup.showBar.value).toBe(false)
+  })
+
+  it("never shows the previous sign-in's progress", async () => {
+    const setup = await fresh()
+    getProgress.mockResolvedValue(progress('teach'))
+    await setup.load()
+
+    userId = 'user-2'
+    let answer: (v: unknown) => void = () => {}
+    getProgress.mockReturnValue(new Promise((r) => (answer = r)))
+    const loading = setup.load()
+    expect(setup.progress.value).toBeNull() // not user-1's step while user-2's loads
+    answer(progress('live'))
+    await loading
+    expect(setup.progress.value?.step).toBe('live')
+  })
+
+  it('a forced load waits for the one in flight, then fetches again', async () => {
+    const setup = await fresh()
+    let first: (v: unknown) => void = () => {}
+    getProgress.mockReturnValueOnce(new Promise((r) => (first = r))).mockResolvedValue(progress('live'))
+    const stale = setup.load()
+    const forced = setup.load(true)
+    first(progress('teach'))
+    await Promise.all([stale, forced])
+    expect(getProgress).toHaveBeenCalledTimes(2)
+    expect(setup.progress.value?.step).toBe('live')
   })
 })

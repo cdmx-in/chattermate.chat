@@ -17,6 +17,9 @@ limitations under the License.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+// Shared with the backend's widget_snippet() test: the setup email must hand
+// out exactly the snippet the dashboard does.
+import golden from '../fixtures/widget-snippet.txt?raw'
 
 /**
  * The embed snippet runs on the CUSTOMER's own site, where window.APP_CONFIG is
@@ -56,5 +59,13 @@ describe('buildWidgetEmbed', () => {
   it('never hardcodes the vendor cloud when self-host config is present', () => {
     const code = buildWidgetEmbed('w-123')
     expect(code).not.toContain('api.chattermate.chat')
+  })
+
+  it('matches the snippet the setup emails send (backend/app/utils/widget_embed.py)', () => {
+    const expected = golden
+      .replace('{widget_id}', 'w-123')
+      .replace('{api_url}', API_URL)
+      .replace('{loader_origin}', ORIGIN)
+    expect(buildWidgetEmbed('w-123')).toBe(expected)
   })
 })
