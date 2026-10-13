@@ -56,6 +56,13 @@ describe('StepTeach - signup domain prefill', () => {
     expect(urlInput(wrapper).value).toBe('')
   })
 
+  it('does not suggest a domain the server would refuse', async () => {
+    getOrganization.mockResolvedValue({ id: 'org-1', domain: 'localhost' })
+    const wrapper = await mountStep()
+    expect(wrapper.find('.source-list').exists()).toBe(false)
+    expect(urlInput(wrapper).value).toBe('')
+  })
+
   it('lets the suggestion be removed', async () => {
     getOrganization.mockResolvedValue({ id: 'org-1', domain: 'testypo.com' })
 

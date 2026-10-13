@@ -98,6 +98,9 @@ const prefillFromOrgDomain = async () => {
     // Back from a later step, the domain may still be crawling — not indexed
     // yet, so the dedupe below can't see it. Staging it again would re-send it.
     if (crawling.value.some((q) => q.source === domainUrl)) return
+    // The server only accepts websites with a full domain (acme.com, not
+    // localhost): don't suggest one it will refuse.
+    if (!new URL(domainUrl).hostname.includes('.')) return
 
     newUrl.value = domainUrl
     stageUrl()
