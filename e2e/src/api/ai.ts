@@ -31,7 +31,8 @@ export async function currentAiConfig(api: ApiClient): Promise<AiConfig> {
  */
 export async function restoreAi(api: ApiClient, before: AiConfig): Promise<void> {
   if (before.model_type.toUpperCase() === 'CHATTERMATE') {
-    await api.post('/ai/setup', { data: { model_type: 'chattermate', model_name: 'chattermate' } })
+    // As the dashboard's onboarding sends it: the backend injects the key.
+    await api.post('/ai/setup', { data: { model_type: 'CHATTERMATE', model_name: 'chattermate', api_key: '' } })
   } else {
     await useFakeLlm(api)
   }
