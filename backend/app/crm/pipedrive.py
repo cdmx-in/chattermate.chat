@@ -21,6 +21,7 @@ from urllib.parse import urlencode, urlparse
 import httpx
 
 from app.core.config import settings
+from app.core.external_urls import external_base
 from app.core.logger import get_logger
 from app.crm.base import (
     CrmAdapter, CrmAuthError, CrmPushResult, CrmTransientError,
@@ -33,9 +34,13 @@ from app.models.crm import CrmProvider
 
 logger = get_logger(__name__)
 
-AUTHORIZE_URL = "https://oauth.pipedrive.com/oauth/authorize"
-TOKEN_URL = "https://oauth.pipedrive.com/oauth/token"
-REVOKE_URL = "https://oauth.pipedrive.com/oauth/revoke"
+OAUTH_BASE = external_base("PIPEDRIVE_OAUTH_BASE", "https://oauth.pipedrive.com")
+AUTHORIZE_URL = f"{OAUTH_BASE}/oauth/authorize"
+TOKEN_URL = f"{OAUTH_BASE}/oauth/token"
+REVOKE_URL = f"{OAUTH_BASE}/oauth/revoke"
+# The API host is per company (the token response's api_domain), so there is no
+# fixed base to swap. When set, this is the one extra api_domain we accept.
+API_BASE = external_base("PIPEDRIVE_API_BASE", "")
 # Refresh tokens die 60 days after their LAST use (sliding window) — every
 # refresh restamps this; the worker's proactive sweep keeps idle tenants alive.
 REFRESH_TOKEN_LIFETIME_DAYS = 60
@@ -48,6 +53,8 @@ def _validated_api_domain(api_domain) -> Optional[str]:
     malformed value point our requests at an arbitrary host."""
     if not api_domain:
         return None
+    if API_BASE and str(api_domain).rstrip("/") == API_BASE:
+        return API_BASE
     try:
         host = urlparse(api_domain).hostname or ""
     except Exception:
