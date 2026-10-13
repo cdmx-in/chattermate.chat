@@ -35,10 +35,54 @@ export class SetupWizard {
 
   async pasteTextInstead(text: string): Promise<void> {
     await step('Paste some text instead of the website', async () => {
-      await this.page.getByRole('button', { name: 'Paste some text instead' }).click()
-      await this.page.getByLabel('Text about your business').fill(text)
+      await this.openPasteText()
+      await this.pasteTextBox.fill(text)
       await this.page.getByRole('button', { name: 'Add this text' }).click()
     })
+  }
+
+  async openPasteText(): Promise<void> {
+    await step('Open "Paste some text instead"', async () => {
+      await this.pasteTextChoice.click()
+    })
+  }
+
+  async cancelPasteText(): Promise<void> {
+    await step('Cancel pasting text', async () => {
+      await this.page.getByRole('button', { name: 'Cancel' }).click()
+    })
+  }
+
+  /** Picks a PDF in the Teach step's file picker. */
+  async uploadPdf(name: string, pdf: Buffer): Promise<void> {
+    await step(`Pick the PDF "${name}"`, async () => {
+      // The picker is a hidden <input type=file> behind the "Upload PDF" button
+      await this.page.locator('input[type="file"]').setInputFiles({ name, mimeType: 'application/pdf', buffer: pdf })
+    })
+  }
+
+  async back(): Promise<void> {
+    await step('Go back a step', async () => {
+      await this.page.getByRole('button', { name: 'Back' }).click()
+    })
+  }
+
+  /** The step's main button: "Continue", "Continue without it", "Looks good"… */
+  get continueButton(): Locator {
+    return this.page.getByRole('button', { name: /^Continue/ })
+  }
+
+  /** The Test step's note when the agent has learned nothing yet (and why). */
+  get knowledgeNotice(): Locator {
+    return this.page.getByRole('status').filter({ hasText: "hasn't learned anything" })
+  }
+
+  get pasteTextChoice(): Locator {
+    return this.page.getByRole('button', { name: 'Paste some text instead' })
+  }
+
+  get pasteTextBox(): Locator {
+    return this.page.getByLabel('Text about your business')
   }
 
   /** A staged source on the Teach step, e.g. the signup domain. */
