@@ -247,13 +247,14 @@
   --surface: #FFFFFF;
   --topbar: rgba(255,255,255,.85);
 
-  /* Accent inks are used as text on white and on their own pale tints: darkened
-     until they reach WCAG AA 4.5:1 on both. */
+  /* Accent and status inks are used as text on white and on their own pale
+     tints: darkened until they reach WCAG AA 4.5:1 on both. */
   --accent-ink: #44700A;
   --c-lime: #44700A;
-  --c-teal: #0A7878;
-  --c-purple: #6D5BD0;
+  --c-teal: #097171;
+  --c-purple: #6454BF;
   --c-coral: #AC4829;
+  --warning-color: #9C5604;
 
   --text: #171A21;
   --text2: #222732;
@@ -306,14 +307,15 @@
   --mode-wf-bg: #6D5BD0;
   --mode-wf-fg: #FFFFFF;
 
-  /* Extended status / chart palette tuned for light bg */
-  --c-danger: #E04F4F;
-  --c-warn: #B7791F;
-  --c-info: #2563EB;
-  --c-positive: #1F9D57;
-  --c-neutral: #6B7280;
-  --c-online: #0A7878;
-  --c-pro: #6D5BD0;
+  /* Extended status / chart palette tuned for light bg: each reaches WCAG AA
+     4.5:1 as text on white and on its own pale tint. */
+  --c-danger: #B33F3F;
+  --c-warn: #8F5E18;
+  --c-info: #225BD8;
+  --c-positive: #187742;
+  --c-neutral: #606773;
+  --c-online: #097171;
+  --c-pro: #6454BF;
 
   /* Generate gradient — darker end stop for light */
   --grad-generate: linear-gradient(135deg, var(--c-purple), #5B49C9);

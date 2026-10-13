@@ -286,7 +286,7 @@ onMounted(() => {
 .pv-tabs { display: flex; gap: 4px; padding: 4px; background: var(--o05); border-radius: 11px; }
 .pv-tab { padding: 8px 14px; border: none; background: transparent; border-radius: 8px; font-size: 13.5px; cursor: pointer; color: var(--muted); }
 .pv-tab.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
-.pv-tab-count { margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--o10); font-size: 11px; font-variant-numeric: tabular-nums; }
+.pv-tab-count { margin-left: 6px; padding: 1px 7px; border-radius: 999px; background: var(--o10); color: var(--text3); font-size: 11px; font-variant-numeric: tabular-nums; }
 .pv-phone { color: var(--muted); font-variant-numeric: tabular-nums; }
 .pv-search { flex: 1; min-width: 240px; max-width: 340px; padding: 9px 13px; border: 1px solid var(--border-color); border-radius: 10px; font-size: 13.5px; background: var(--bg); color: var(--text); }
 .pv-table { background: var(--surface); border: 1px solid var(--border-color); border-radius: 16px; overflow: hidden; }
@@ -305,7 +305,7 @@ onMounted(() => {
 .pv-person-text { min-width: 0; display: flex; flex-direction: column; }
 .pv-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pv-email { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pv-id { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; color: var(--muted); opacity: 0.75; margin-left: 6px; }
+.pv-id { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11px; color: var(--muted2); margin-left: 6px; }
 .pv-stage { display: flex; align-items: center; gap: 6px; }
 .pv-badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
 .pv-badge.visitor { background: rgba(0,0,0,.06); color: var(--muted); }
