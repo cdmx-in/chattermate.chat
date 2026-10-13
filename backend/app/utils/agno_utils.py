@@ -17,9 +17,11 @@ limitations under the License.
 import re
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
+from openai import AsyncOpenAI, OpenAI
 from app.core.logger import get_logger
 from app.core.config import settings
-from app.core.outbound_policy import check_outbound_target
+from app.core.outbound_http import guarded_async_http_client, guarded_http_client
+from app.core.outbound_policy import check_outbound_target, public_only
 from app.utils.agno_patches import apply_agno_patches
 from typing import Dict, Any, Optional, List
 from fastapi import HTTPException
@@ -29,6 +31,24 @@ logger = get_logger(__name__)
 # Every code path that builds an agno model goes through this module, so this
 # is the single choke point where the 1.7.6 runtime patches get applied.
 apply_agno_patches()
+
+
+class PinnedOpenAIChat(OpenAIChat):
+    """OpenAIChat for a user-supplied base URL under OUTBOUND_URL_POLICY=
+    public_only: every connection, redirect included, goes to a vetted public
+    address. agno 1.7.6 takes a single http_client for both its sync and
+    async OpenAI clients, so each getter supplies its own guarded one, fresh
+    per call like agno's default."""
+
+    def get_client(self):
+        # follow_redirects matches the OpenAI SDK's own default client.
+        return OpenAI(**{**self._get_client_params(),
+                         "http_client": guarded_http_client(follow_redirects=True)})
+
+    def get_async_client(self):
+        return AsyncOpenAI(**{**self._get_client_params(),
+                              "http_client": guarded_async_http_client(follow_redirects=True)})
+
 
 def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int = 1000, response_format: Optional[Dict[str, Any]] = None, base_url: Optional[str] = None) -> Any:
     """
@@ -62,10 +82,11 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
             # Re-checked on every build, not only on save: DNS can change.
             check_outbound_target(base_url, "Base URL")
             base_url = re.sub(r'/chat/completions/?$', '', base_url.strip(), flags=re.IGNORECASE).rstrip('/')
+            model_cls = PinnedOpenAIChat if public_only() else OpenAIChat
             if response_format:
-                return OpenAIChat(api_key=api_key, id=model_name, base_url=base_url, max_tokens=max_tokens, response_format=response_format)
+                return model_cls(api_key=api_key, id=model_name, base_url=base_url, max_tokens=max_tokens, response_format=response_format)
             else:
-                return OpenAIChat(api_key=api_key, id=model_name, base_url=base_url, max_tokens=max_tokens)
+                return model_cls(api_key=api_key, id=model_name, base_url=base_url, max_tokens=max_tokens)
         elif model_type == 'ANTHROPIC':
             from agno.models.anthropic import Claude
             return Claude(api_key=api_key, id=model_name, max_tokens=max_tokens)

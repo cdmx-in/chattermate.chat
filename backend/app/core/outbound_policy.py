@@ -23,17 +23,21 @@ allows everything. A shared, multi-tenant deployment sets
 OUTBOUND_URL_POLICY=public_only so no tenant can use these features to reach
 the server's own network or the cloud metadata endpoint.
 
-Targets are checked when saved and again right before each connection, since
-what a hostname resolves to can change in between.
+Targets are checked when saved and again before connecting. The connection
+itself is then pinned: the address that passed the check is the one dialled
+(app.core.outbound_http for HTTP clients, pin_outbound_target for databases),
+so a hostname that re-resolves elsewhere (DNS rebinding) or a redirect to an
+internal host is refused at connect time too.
 """
 
 import ipaddress
-from typing import Optional
+import socket
+from typing import List, Optional
 
 from fastapi import HTTPException, status
 
 from app.core.config import settings
-from app.knowledge.url_safety import resolves_to_blocked_host
+from app.knowledge.url_safety import is_public_ip, resolves_to_blocked_host
 
 POLICY_ANY = "any"
 POLICY_PUBLIC_ONLY = "public_only"
@@ -41,6 +45,17 @@ POLICY_PUBLIC_ONLY = "public_only"
 
 class OutboundTargetBlocked(ValueError):
     """A configured target is internal and the policy is public_only."""
+
+
+def public_only() -> bool:
+    return settings.OUTBOUND_URL_POLICY == POLICY_PUBLIC_ONLY
+
+
+def _blocked(label: str) -> OutboundTargetBlocked:
+    return OutboundTargetBlocked(
+        f"{label} must be a public address. This server does not allow "
+        "private, loopback, link-local or reserved network targets."
+    )
 
 
 def _as_url(target: str) -> str:
@@ -61,13 +76,39 @@ def check_outbound_target(target: Optional[str], label: str) -> None:
     """Raise OutboundTargetBlocked when the policy is public_only and
     ``target`` (a URL or a bare host) is, or resolves to, a private, loopback,
     link-local or reserved address. ``label`` names the field in the error."""
-    if settings.OUTBOUND_URL_POLICY != POLICY_PUBLIC_ONLY or not target:
+    if not public_only() or not target:
         return
     if resolves_to_blocked_host(_as_url(target.strip())):
-        raise OutboundTargetBlocked(
-            f"{label} must be a public address. This server does not allow "
-            "private, loopback, link-local or reserved network targets."
-        )
+        raise _blocked(label)
+
+
+def vetted_addresses(host: str, port: Optional[int], label: str) -> List[str]:
+    """Resolve ``host`` once and return its addresses for dialling, refusing
+    it if ANY of them is not public. Unlike the save-time check this fails
+    closed: an address that can't be parsed is refused, and a name that
+    doesn't resolve raises socket.gaierror. Callers connect to the returned
+    addresses directly, so nothing resolves the name a second time."""
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    addresses = list(dict.fromkeys(info[4][0] for info in infos))
+    if not addresses:
+        raise socket.gaierror(f"{host} did not resolve to any address")
+    for address in addresses:
+        try:
+            public = is_public_ip(ipaddress.ip_address(address))
+        except ValueError:
+            public = False
+        if not public:
+            raise _blocked(label)
+    return addresses
+
+
+def pin_outbound_target(host: Optional[str], label: str) -> Optional[str]:
+    """For drivers that dial a host themselves (databases, SSH): under
+    public_only, vet ``host`` and return the address to connect to instead of
+    the name. None under policy "any", meaning connect as before."""
+    if not public_only() or not host:
+        return None
+    return vetted_addresses(host.strip(), None, label)[0]
 
 
 def require_public_target(target: Optional[str], label: str) -> None:

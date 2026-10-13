@@ -18,7 +18,7 @@ import asyncio
 from datetime import timedelta
 from time import monotonic
 from typing import List, Optional
-from agno.tools.mcp import MCPTools, SSEClientParams, StreamableHTTPClientParams
+from agno.tools.mcp import MCPTools
 from app.channels.interactive_limits import InteractiveLimits
 from app.database import SessionLocal
 from app.repositories.mcp_tool import MCPToolRepository
@@ -26,6 +26,7 @@ from app.models.mcp_tool import MCPTransportType
 from app.models.schemas.mcp_tool import MAX_USAGE_GUIDANCE_CHARS
 from app.core.logger import get_logger
 from app.core.outbound_policy import check_outbound_target
+from app.tools.mcp_outbound import remote_params_classes
 from app.core.config import settings
 
 logger = get_logger(__name__)
@@ -327,11 +328,13 @@ class MCPToolsManager:
             return None
         # Checked again at connect time, not only on save: DNS can change.
         check_outbound_target(config.url, MCP_URL_LABEL)
+        # Under public_only these also pin every connect to a vetted address.
+        sse_params_cls, http_params_cls = remote_params_classes()
         headers = config.headers or None
         timeout = _session_timeout(config)
         sse_read_timeout = config.sse_read_timeout or 300
         if config.transport_type == MCPTransportType.SSE:
-            server_params = SSEClientParams(
+            server_params = sse_params_cls(
                 url=config.url,
                 headers=headers,
                 timeout=timeout,
@@ -343,7 +346,7 @@ class MCPToolsManager:
                 server_params=server_params,
                 timeout_seconds=timeout,
             )
-        server_params = StreamableHTTPClientParams(
+        server_params = http_params_cls(
             url=config.url,
             headers=headers,
             timeout=timedelta(seconds=timeout),
