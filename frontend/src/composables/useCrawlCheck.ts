@@ -17,9 +17,6 @@ limitations under the License.
 import type { Ref } from 'vue'
 import type { QueueItem } from '@/types/knowledge'
 
-const CHECK_FOR_MS = 15_000
-const POLL_EVERY_MS = 2_500
-
 const normalizeSource = (source: string) => source.trim().toLowerCase().replace(/\/+$/, '')
 const sameSource = (a: string, b: string) => normalizeSource(a) === normalizeSource(b)
 
@@ -36,30 +33,31 @@ export const newestPerSource = (items: QueueItem[]) => {
 }
 
 /**
- * Watch just-queued sources long enough to catch a fast failure - a domain
- * that doesn't resolve, a refused connection - before the wizard moves on.
- * Crawls that are still running when time is up carry on in the background.
+ * Whether any just-sent source has already failed - a domain that doesn't
+ * exist is refused the moment it is added. One look, no waiting: every other
+ * failure only shows once the crawl has run (often minutes), so holding the
+ * wizard for it would delay every site that reads fine. Later failures are
+ * reported on the Test step.
  */
 export function useCrawlCheck(fetchQueueItems: () => Promise<unknown>, queueItems: Ref<QueueItem[]>) {
   let cancelled = false
 
-  /** The first of `sources` that failed within the window, or null. */
-  const firstFailure = async (sources: string[], checkForMs = CHECK_FOR_MS): Promise<QueueItem | null> => {
+  /** The first of `sources` that has already failed, or null. */
+  const firstFailure = async (sources: string[]): Promise<QueueItem | null> => {
     cancelled = false
-    const deadline = Date.now() + checkForMs
-    while (!cancelled) {
+    try {
       await fetchQueueItems()
-      const mine = newestPerSource(queueItems.value).filter((item) => sources.some((s) => sameSource(s, item.source)))
-      const failed = mine.find((item) => item.status === 'failed')
-      if (failed) return failed
-      const unsettled = mine.some((item) => item.status === 'pending' || item.status === 'processing')
-      if (!unsettled || Date.now() >= deadline) return null
-      await new Promise((resolve) => setTimeout(resolve, POLL_EVERY_MS))
+    } catch (err) {
+      // Not knowing is not a failure: move on, the Test step will tell.
+      console.error('Failed to check the knowledge queue:', err)
+      return null
     }
-    return null
+    if (cancelled) return null
+    const mine = newestPerSource(queueItems.value).filter((item) => sources.some((s) => sameSource(s, item.source)))
+    return mine.find((item) => item.status === 'failed') ?? null
   }
 
-  /** Stop waiting (the user went Back, or the step unmounted). */
+  /** Ignore the answer (the user went Back, or the step unmounted). */
   const cancel = () => {
     cancelled = true
   }
