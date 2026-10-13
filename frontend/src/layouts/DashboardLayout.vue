@@ -26,7 +26,6 @@ import userAvatar from '@/assets/user.svg'
 import notificationIcon from '@/assets/notification.svg'
 import NotificationList from '@/components/notifications/NotificationList.vue'
 import EnablePushPrompt from '@/components/notifications/EnablePushPrompt.vue'
-import SetupProgressBar from '@/components/onboarding/SetupProgressBar.vue'
 import { userService } from '@/services/user'
 import { permissionChecks } from '@/utils/permissions'
 import type { User } from '@/types/user'
@@ -88,6 +87,8 @@ const pageTitle = computed(() => PAGE_TITLES[route.path] || '')
 const { hasEnterpriseModule, subscriptionStore, initializeSubscriptionStore, showMessageLimitWarning, messageLimitStatus, enterpriseComponent, moduleImports } = useEnterpriseFeatures()
 // Promo strip / usage nudge / post-signup popup (enterprise only; empty in OSS)
 const PromoSurfaces = enterpriseComponent(moduleImports.promoSurfaces)
+// "Finish setup" bar until the org's agent is live (enterprise only; empty in OSS)
+const SetupProgressBar = enterpriseComponent(moduleImports.setupProgressBar)
 // Always-on offer pill in the header: survives the strip being dismissed
 const PromoHeaderPill = enterpriseComponent(moduleImports.promoHeaderPill)
 // Help button opening the hosted support chat (empty in OSS)

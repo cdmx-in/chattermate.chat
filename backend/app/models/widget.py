@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from sqlalchemy import Column, DateTime, String, ForeignKey, Integer
+from sqlalchemy import Column, String, ForeignKey, Integer
 from sqlalchemy.orm import relationship
 from uuid import  uuid4
 from sqlalchemy.dialects.postgresql import UUID
@@ -32,20 +32,6 @@ class Widget(Base):
     # Agent relationship
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
     agent = relationship("Agent", back_populates="widgets")
-
-    # Where it is live: the first load from the org's own site (see
-    # app/services/widget_install.py). Never overwritten once set.
-    installed_at = Column(DateTime(timezone=True), nullable=True)
-    installed_origin = Column(String(255), nullable=True)
-    # A keyed hash of the first visitor's IP (never the IP), and when a second,
-    # different visitor loaded it there: the Origin header can be forged by
-    # anyone with the widget id, a second real visitor much less easily.
-    install_visitor = Column(String(16), nullable=True)
-    install_confirmed_at = Column(DateTime(timezone=True), nullable=True)
-    # The latest site that loaded it but isn't allowed to (CORS admits only the
-    # org's domain), so the widget silently fails there.
-    blocked_origin = Column(String(255), nullable=True)
-    blocked_origin_seen_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     organization = relationship("Organization", back_populates="widgets")

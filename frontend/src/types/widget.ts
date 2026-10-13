@@ -110,13 +110,3 @@ export const getErrorMessage = (error: SocketError): string => {
             return error.error || 'Something went wrong. Please try again.'
     }
 }
-
-/** Where a widget is live, and the latest site it is blocked on. */
-export interface WidgetInstallStatus {
-  installed_at: string | null
-  installed_origin: string | null
-  blocked_origin: string | null
-  blocked_origin_seen_at: string | null
-  /** The site the widget is allowed on (the org's domain) */
-  allowed_domain: string | null
-}

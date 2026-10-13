@@ -9,12 +9,6 @@ export async function createWidget(api: ApiClient, agentId: string, name: string
   return { id: String(created.id) }
 }
 
-export interface WidgetInstallStatus {
-  installed_origin: string | null
-  blocked_origin: string | null
-  allowed_domain: string | null
-}
-
 /**
  * The widget's first request on a page, as a visitor's browser on `origin`
  * sends it (through our nginx, which appends the client IP). `api` should be
@@ -26,8 +20,4 @@ export async function loadWidgetFrom(api: ApiClient, widgetId: string, origin: s
     headers: { Origin: origin, 'X-Forwarded-For': visitorIp },
   })
   if (!response.ok()) throw new Error(`widget load from ${origin} → ${response.status()}`)
-}
-
-export async function installStatus(api: ApiClient, widgetId: string): Promise<WidgetInstallStatus> {
-  return api.get<WidgetInstallStatus>(`/widgets/${widgetId}/install`)
 }

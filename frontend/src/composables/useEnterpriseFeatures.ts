@@ -71,6 +71,7 @@ type EnterpriseModule = {
   initShopifyApp?: () => any
   getSessionToken?: (app: any) => Promise<string>
   useShopifyIntegration?: (agentId: string) => any
+  setupService?: { getProgress: () => Promise<{ step: string; agent_id: string | null; widget_id: string | null }> }
 }
 
 // Create a mapping of module paths to their direct imports
@@ -102,6 +103,11 @@ const moduleImports = {
   supportChatButton: '/src/modules/enterprise/components/support/SupportChatButton.vue',
   // External apps driving channel conversations (settings page)
   appIntegrationsView: '/src/modules/enterprise/views/AppIntegrationsView.vue',
+  // Setup progress: the "Finish setup" bar, where the widget is live, and the
+  // server-side step the wizard resumes at (nothing / null in open source)
+  setupProgressBar: '/src/modules/enterprise/components/setup/SetupProgressBar.vue',
+  widgetInstallStatus: '/src/modules/enterprise/components/setup/WidgetInstallStatus.vue',
+  setupService: '/src/modules/enterprise/utils/setupService.ts',
 }
 
 /** Renders nothing: the open-source stand-in for an enterprise-only surface. */

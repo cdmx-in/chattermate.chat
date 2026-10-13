@@ -25,7 +25,6 @@ from app.api import chat, organizations, users, ai_setup, knowledge, agent, noti
 from app.api import help_center as help_center_api
 from app.api import help_center_images
 from app.api import channels as channels_api
-from app.api import onboarding as onboarding_api
 from app.api import webhooks as channel_webhooks
 # Import widget_chat to register socket.io event handlers for /widget namespace
 from app.api import widget_chat  # noqa: F401 - imported for side effects (socket.io handlers registration)
@@ -168,12 +167,6 @@ app.include_router(
     organizations.router,
     prefix=f"{settings.API_V1_STR}/organizations",
     tags=["organizations"]
-)
-
-app.include_router(
-    onboarding_api.router,
-    prefix=f"{settings.API_V1_STR}/onboarding",
-    tags=["onboarding"]
 )
 
 app.include_router(

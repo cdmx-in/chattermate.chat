@@ -15,7 +15,6 @@ limitations under the License.
 """
 
 from pydantic import BaseModel, field_serializer
-from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -92,19 +91,5 @@ class WidgetResponse(BaseModel):
     # Include agent ID in response if set
     agent_id: Optional[UUID] = None
     token: Optional[str] = None
-    class Config:
-        from_attributes = True
-
-
-class WidgetInstallStatus(BaseModel):
-    """Where a widget is live, and the latest site that tried to load it but
-    isn't allowed to. Org-only: never part of the public widget payload."""
-    installed_at: Optional[datetime] = None
-    installed_origin: Optional[str] = None
-    blocked_origin: Optional[str] = None
-    blocked_origin_seen_at: Optional[datetime] = None
-    # The site CORS admits (the org's domain): named when explaining a block
-    allowed_domain: Optional[str] = None
-
     class Config:
         from_attributes = True

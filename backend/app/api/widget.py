@@ -32,11 +32,10 @@ from app.database import get_db
 from app.repositories.widget import WidgetRepository
 from app.repositories.agent import AgentRepository
 from app.core.security import create_conversation_token, verify_conversation_token
-from app.services import conversation_token, widget_install
+from app.services import conversation_token
 from app.utils.client_ip import forwarded_client_ip
-from app.utils.domain_check import site_host
 from app.repositories.customer import CustomerRepository
-from app.models.schemas.widget import WidgetCreate, WidgetInstallStatus, WidgetResponse
+from app.models.schemas.widget import WidgetCreate, WidgetResponse
 from app.core.logger import get_logger
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
@@ -46,6 +45,13 @@ from app.utils.business_hours import is_within_business_hours
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+# Where each widget is live feeds setup progress and the setup emails, which
+# are enterprise features; the community edition records nothing.
+try:
+    from app.enterprise.services import widget_install
+except ImportError:
+    widget_install = None
 
 
 def _identity_expired() -> HTTPException:
@@ -182,6 +188,19 @@ def create_new_widget(
     return widget_repo.create_widget(widget, current_user.organization_id)
 
 
+def _note_install(db: Session, widget: Widget, request: Request, background_tasks: BackgroundTasks) -> None:
+    """Note where the widget is live (or blocked), after the response is
+    sent. Never lets a tracking error break the widget itself."""
+    if widget_install is None:
+        return
+    try:
+        sighting = widget_install.claim_write(db, widget, request.headers.get("origin"), forwarded_client_ip(request))
+        if sighting:
+            background_tasks.add_task(widget_install.record, widget.id, sighting)
+    except Exception:
+        logger.exception(f"Install tracking failed for widget {widget.id}")
+
+
 @router.get("/{widget_id}/data", response_class=HTMLResponse)
 async def get_widget_ui(
     widget_id: str,
@@ -198,11 +217,7 @@ async def get_widget_ui(
     if not widget:
         raise HTTPException(status_code=404, detail="Widget not found")
 
-    # Note where the widget is live (or blocked), after the response is sent.
-    origin = request.headers.get("origin")
-    sighting = widget_install.claim_write(widget, origin, forwarded_client_ip(request))
-    if sighting:
-        background_tasks.add_task(widget_install.record, widget.id, sighting)
+    _note_install(db, widget, request, background_tasks)
 
     # Get agent data
     agent_repo = AgentRepository(db)
@@ -655,22 +670,6 @@ def list_widgets(
     """List all widgets for the organization"""
     widget_repo = WidgetRepository(db)
     return widget_repo.get_widgets(current_user.organization_id)
-
-
-@router.get("/{widget_id}/install", response_model=WidgetInstallStatus)
-def get_widget_install_status(
-    widget_id: str,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user)
-):
-    """Where this widget is live, and any site it is blocked on."""
-    widget = WidgetRepository(db).get_widget(widget_id)
-    if not widget or widget.organization_id != current_user.organization_id:
-        raise HTTPException(status_code=404, detail="Widget not found")
-    status = WidgetInstallStatus.model_validate(widget)
-    org_domain = widget.organization.domain if widget.organization else None
-    status.allowed_domain = site_host(org_domain) if org_domain else None
-    return status
 
 
 @router.get("/agent/{agent_id}", response_model=List[WidgetResponse])

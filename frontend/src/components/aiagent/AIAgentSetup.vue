@@ -18,7 +18,7 @@ limitations under the License.
 import { onMounted, ref, watch, defineAsyncComponent } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
-import { useSetupProgress } from '@/composables/useSetupProgress'
+import { notifySetupChanged } from '@/utils/setupEvents'
 
 // Lazy load components
 const AISetup = defineAsyncComponent(() => import('../ai/AISetup.vue'))
@@ -88,10 +88,8 @@ const handleFullscreenToggle = (isFullscreen: boolean) => {
 
 const route = useRoute()
 const router = useRouter()
-const setupProgress = useSetupProgress()
-
-// The "Finish setup" bar links here with ?setup=1: reopen the wizard, which
-// resumes at the step the server says the org has reached.
+// Links into setup (the hosted "Finish setup" bar, setup emails) carry
+// ?setup=1: reopen the wizard where the org left off.
 const openWizardIfAsked = () => {
     if (route.query.setup === '1' && permissionChecks.canManageAgents()) showOnboarding.value = true
 }
@@ -102,7 +100,12 @@ const handleOnboardingComplete = async () => {
     showOnboarding.value = false
     isAISetupMode.value = false
     if (route.query.setup) router.replace({ query: { ...route.query, setup: undefined } })
-    await Promise.all([fetchAgents(), setupProgress.load(true)])
+    notifySetupChanged()
+    await fetchAgents()
+}
+
+const resumeOnboarding = () => {
+    showOnboarding.value = true
 }
 
 onMounted(async () => {
@@ -152,7 +155,7 @@ onMounted(async () => {
                 </div>
             </div>
             <div v-else class="agent-list-container">
-                <AgentList @toggle-fullscreen="handleFullscreenToggle" />
+                <AgentList @toggle-fullscreen="handleFullscreenToggle" @resume-onboarding="resumeOnboarding" />
             </div>
         </div>
     </div>

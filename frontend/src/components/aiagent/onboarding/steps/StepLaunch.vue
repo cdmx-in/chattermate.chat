@@ -15,11 +15,11 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { computed, toRef } from 'vue'
+import { computed } from 'vue'
 import { toast } from 'vue-sonner'
 import { buildWidgetEmbed } from '@/utils/widgetEmbed'
 import { WIDGET_INSTALL_GUIDE_URL } from '@/config/docs'
-import { useWidgetInstallStatus } from '@/composables/useWidgetInstallStatus'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const props = defineProps<{
   widgetId: string | null
@@ -35,7 +35,9 @@ const widgetSnippet = computed(() =>
   props.widgetId ? buildWidgetEmbed(props.widgetId, false) : '',
 )
 
-const { liveOn, blockedOn, allowedDomain } = useWidgetInstallStatus(toRef(props, 'widgetId'))
+// Where the widget is live, or blocked (hosted edition; nothing in open source)
+const { enterpriseComponent, moduleImports } = useEnterpriseFeatures()
+const WidgetInstallStatus = enterpriseComponent(moduleImports.widgetInstallStatus)
 
 // Built in the browser and handed to the user's own mail app: nothing is sent
 // from our servers, so it can't be used to mail arbitrary addresses.
@@ -81,13 +83,7 @@ const copy = async (text: string, label: string) => {
       </div>
     </div>
 
-    <!-- Appears on its own once their site loads the widget: announce it -->
-    <div role="status" aria-live="polite">
-      <p v-if="liveOn" class="install-status live">✓ Live on {{ liveOn }}</p>
-      <p v-if="blockedOn" class="install-status blocked">
-        Blocked on {{ blockedOn }}: the chat only shows on {{ allowedDomain || 'your signup domain' }}.
-      </p>
-    </div>
+    <WidgetInstallStatus :widget-id="widgetId" />
 
     <div class="step-actions">
       <button type="button" class="btn-ghost" @click="emit('back')">Back</button>
@@ -133,19 +129,6 @@ const copy = async (text: string, label: string) => {
 .guide-link {
   font-size: 14px;
   color: var(--accent-ink);
-}
-
-.install-status {
-  margin: 0;
-  font-size: 14px;
-}
-
-.install-status.live {
-  color: var(--accent-ink);
-}
-
-.install-status.blocked {
-  color: var(--c-warn);
 }
 
 .code-block {

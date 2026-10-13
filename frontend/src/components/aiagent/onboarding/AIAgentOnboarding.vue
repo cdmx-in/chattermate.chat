@@ -20,8 +20,7 @@ import { userService } from '@/services/user'
 import { agentService } from '@/services/agent'
 import { widgetService } from '@/services/widget'
 import { useOnboardingState, type OnboardingStepIndex } from '@/composables/useOnboardingState'
-import { useSetupProgress } from '@/composables/useSetupProgress'
-import type { SetupStep } from '@/services/onboarding'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import type { Agent } from '@/types/agent'
 import StepCreate from './steps/StepCreate.vue'
 import StepTeach from './steps/StepTeach.vue'
@@ -34,23 +33,33 @@ const emit = defineEmits<{
 }>()
 
 const onboarding = useOnboardingState()
-const setupProgress = useSetupProgress()
+const { loadModule, moduleImports } = useEnterpriseFeatures()
 
 // The wizard step to reopen at for each server-side stage
-const WIZARD_STEP_FOR: Record<SetupStep, OnboardingStepIndex> = {
+const WIZARD_STEP_FOR: Record<string, OnboardingStepIndex> = {
   create: 0, teach: 1, test: 2, launch: 3, live: 3,
 }
 
+/** Where the server says the org is, when the hosted edition tracks it. */
+const serverProgress = async () => {
+  try {
+    const module = await loadModule(moduleImports.setupService)
+    return (await module?.setupService?.getProgress()) ?? null
+  } catch (err) {
+    console.error('Failed to load setup progress:', err)
+    return null
+  }
+}
+
 /**
- * This browser's run if it has one, else where the server says the org is:
- * another device, cleared storage, or a link from a setup email.
+ * This browser's run if it has one, else (hosted edition) where the server
+ * says the org is: another device, cleared storage, a setup email's link.
  */
 const resumePoint = async () => {
   const record = onboarding.get(orgId)
   if (record.agentId) return record
-  await setupProgress.load(true)
-  const server = setupProgress.progress.value
-  if (!server?.agent_id) return record
+  const server = await serverProgress()
+  if (!server?.agent_id || !(server.step in WIZARD_STEP_FOR)) return record
   return onboarding.patch(orgId, {
     agentId: server.agent_id,
     widgetId: server.widget_id,

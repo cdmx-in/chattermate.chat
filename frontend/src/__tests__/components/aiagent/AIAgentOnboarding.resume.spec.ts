@@ -4,8 +4,13 @@ import { mount, flushPromises } from '@vue/test-utils'
 
 const getProgress = vi.fn()
 const getAgentById = vi.fn()
-vi.mock('@/services/onboarding', () => ({
-  onboardingService: { getProgress: () => getProgress(), hide: vi.fn() }
+// The hosted edition's setup service; null when the enterprise module is absent
+let enterprise = true
+vi.mock('@/composables/useEnterpriseFeatures', () => ({
+  useEnterpriseFeatures: () => ({
+    moduleImports: { setupService: 'setup-service' },
+    loadModule: async () => (enterprise ? { setupService: { getProgress: () => getProgress() } } : null),
+  })
 }))
 vi.mock('@/services/agent', () => ({
   agentService: { getAgentById: (id: string) => getAgentById(id) }
@@ -15,7 +20,7 @@ vi.mock('@/services/widget', () => ({
   widgetService: { createAgentWidget: (...a: unknown[]) => createAgentWidget(...a) }
 }))
 vi.mock('@/services/user', () => ({
-  userService: { getCurrentUser: () => ({ organization_id: 'org-1' }), getUserId: () => 'user-1' }
+  userService: { getCurrentUser: () => ({ organization_id: 'org-1' }) }
 }))
 vi.mock('@/utils/permissions', () => ({ permissionChecks: { canManageAgents: () => true } }))
 
@@ -41,6 +46,7 @@ const mountWizard = async () => {
 describe('AIAgentOnboarding - where it resumes', () => {
   beforeEach(() => {
     localStorage.clear()
+    enterprise = true
     getProgress.mockReset()
     createAgentWidget.mockReset().mockResolvedValue({ id: 'w-new' })
     getAgentById.mockReset().mockResolvedValue({ id: 'agent-9', name: 'Tom', agent_type: 'CUSTOMER_SUPPORT' })
@@ -91,5 +97,12 @@ describe('AIAgentOnboarding - where it resumes', () => {
     await wrapper.find('.step-create').trigger('click')
     await flushPromises()
     expect(wrapper.find('.step-teach').exists()).toBe(true)
+  })
+
+  it('in open source, resumes only from this browser', async () => {
+    enterprise = false
+    const wrapper = await mountWizard()
+    expect(getProgress).not.toHaveBeenCalled()
+    expect(wrapper.find('.step-create').exists()).toBe(true)
   })
 })

@@ -75,7 +75,6 @@ vi.mock('@/composables/useEnterpriseFeatures', () => ({
 // Mock the services
 vi.mock('@/services/user', () => ({
   userService: {
-    getUserId: () => '1',
     getCurrentUser: () => ({
       id: '1',
       profile_pic: null,

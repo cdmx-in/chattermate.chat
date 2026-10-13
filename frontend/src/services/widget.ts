@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 import api from '@/services/api'
-import type { Widget, WidgetCreate, WidgetInstallStatus } from '@/types/widget'
+import type { Widget, WidgetCreate } from '@/types/widget'
 
 class WidgetService {
   private baseUrl = '/widgets'
@@ -42,11 +42,6 @@ class WidgetService {
 
   async deleteWidget(id: string): Promise<void> {
     await api.delete(`${this.baseUrl}/${id}`)
-  }
-
-  async getInstallStatus(id: string): Promise<WidgetInstallStatus> {
-    const response = await api.get(`${this.baseUrl}/${id}/install`)
-    return response.data
   }
 
   async getWidgetDetails(id: string): Promise<Widget> {

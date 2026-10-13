@@ -14,24 +14,13 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-import api from '@/services/api'
+/**
+ * The setup wizard announces that the org's setup moved on (an agent, a
+ * source, a finished run). Anything showing setup progress listens and
+ * refreshes - in the hosted edition, the "Finish setup" bar.
+ */
+export const SETUP_CHANGED_EVENT = 'chattermate:setup-changed'
 
-export type SetupStep = 'create' | 'teach' | 'test' | 'launch' | 'live'
-
-export interface SetupProgress {
-  step: SetupStep
-  agent_id: string | null
-  widget_id: string | null
-  hidden: boolean
-}
-
-export const onboardingService = {
-  async getProgress(): Promise<SetupProgress> {
-    const response = await api.get('/onboarding/progress')
-    return response.data
-  },
-
-  async hide(): Promise<void> {
-    await api.post('/onboarding/progress/hide')
-  },
+export function notifySetupChanged(): void {
+  window.dispatchEvent(new Event(SETUP_CHANGED_EVENT))
 }
