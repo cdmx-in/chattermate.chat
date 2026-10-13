@@ -21,6 +21,8 @@ import { sanitizeHtml } from '@/utils/sanitize'
 import { widgetService } from '@/services/widget'
 import { knowledgeService } from '@/services/knowledge'
 import { useOnboardingTestChat } from '@/composables/useOnboardingTestChat'
+import { newestPerSource } from '@/composables/useCrawlCheck'
+import type { QueueItem } from '@/types/knowledge'
 
 const props = defineProps<{
   agentId: string
@@ -53,21 +55,39 @@ const scrollEl = ref<HTMLElement | null>(null)
 // know it'll get smarter once indexing finishes.
 const knowledgeProcessing = ref(false)
 const knowledgeJustFinished = ref(false)
+// Nothing indexed and nothing indexing: answers can only be generic
+const noKnowledge = ref(false)
+// The newest source that failed, to say why when nothing was learned. A crawl
+// often fails long after Teach moved on: this is where the user finds out.
+const failure = ref<QueueItem | null>(null)
 let knowledgePoll: ReturnType<typeof setInterval> | null = null
 
 const checkKnowledgeStatus = async () => {
   try {
     const data = await knowledgeService.getAgentQueueItems(props.agentId)
-    const items = (data?.queue_items ?? []) as Array<{ status: string }>
+    const items = (data?.queue_items ?? []) as QueueItem[]
     const pending = items.filter(i => i.status === 'pending' || i.status === 'processing').length
+    failure.value = newestPerSource(items).find(i => i.status === 'failed') ?? null
     const wasProcessing = knowledgeProcessing.value
     knowledgeProcessing.value = pending > 0
     if (wasProcessing && pending === 0) {
-      knowledgeJustFinished.value = true
       stopKnowledgePoll()
+      // Finished is not the same as learned: every source may have failed
+      await checkHasKnowledge()
+      knowledgeJustFinished.value = !noKnowledge.value
     }
   } catch (err) {
     console.error('Failed to check knowledge status:', err)
+  }
+}
+
+const checkHasKnowledge = async () => {
+  if (knowledgeProcessing.value) return
+  try {
+    const page = await knowledgeService.getKnowledgeByAgent(props.agentId, 1, 1)
+    noKnowledge.value = !(page?.pagination?.total_count || page?.knowledge?.length)
+  } catch (err) {
+    console.error('Failed to check agent knowledge:', err)
   }
 }
 
@@ -81,10 +101,7 @@ const stopKnowledgePoll = () => {
 const ensureWidget = async (): Promise<string | null> => {
   if (props.widgetId) return props.widgetId
   try {
-    const widget = await widgetService.createWidget({
-      name: `${props.agentName} Widget`,
-      agent_id: props.agentId,
-    })
+    const widget = await widgetService.createAgentWidget(props.agentId, props.agentName)
     emit('widget-created', widget.id)
     return widget.id
   } catch (err: any) {
@@ -98,6 +115,7 @@ onMounted(async () => {
   if (widgetId) await start(widgetId)
   // Watch the knowledge queue and poll while anything is still indexing
   await checkKnowledgeStatus()
+  await checkHasKnowledge()
   if (knowledgeProcessing.value) {
     knowledgePoll = setInterval(checkKnowledgeStatus, 5000)
   }
@@ -146,6 +164,13 @@ const formatMessage = (content: string) => sanitizeHtml(marked(content) as strin
     <div v-else-if="knowledgeJustFinished" class="kb-note done">
       <span class="kb-check" aria-hidden="true">✓</span>
       <span>Knowledge indexed — your agent can now answer from it.</span>
+    </div>
+    <div v-else-if="noKnowledge" class="kb-note empty" role="status">
+      <span>
+        <template v-if="failure">We couldn't read {{ failure.source }}. {{ failure.reason }}</template>
+        It hasn't learned anything about your business yet, so answers will be generic.
+        <button type="button" class="kb-link" @click="emit('back')">Add your website or some text</button>
+      </span>
     </div>
 
     <div class="test-chat">
@@ -233,6 +258,20 @@ const formatMessage = (content: string) => sanitizeHtml(marked(content) as strin
   background: var(--purple-bg);
   border: 1px solid var(--purple-border);
   color: var(--text3);
+}
+
+.kb-note.empty {
+  border-color: var(--c-warn);
+}
+
+.kb-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-ink);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .kb-note.done {

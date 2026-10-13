@@ -43,6 +43,11 @@ export class Mailbox {
     return { subject: latest!.Subject, text: String(message.Text ?? '') }
   }
 
+  /** Subjects of every email to `address` (newest first), optionally only those since a time. */
+  async subjectsTo(address: string, { since }: Lookup = {}): Promise<string[]> {
+    return (await this.search(`to:"${address}"`)).filter((m) => !since || new Date(m.Created) >= since).map((m) => m.Subject)
+  }
+
   /** Every email to `address` so far, oldest first — no waiting; poll it. */
   async messagesTo(address: string): Promise<Email[]> {
     const messages = await this.search(`to:"${address}"`)

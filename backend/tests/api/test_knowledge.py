@@ -220,6 +220,32 @@ def test_upload_pdf(client: TestClient, test_organization):
         assert "queue_items" in response.json()
         assert len(response.json()["queue_items"]) == 1
 
+@pytest.fixture(autouse=True)
+def dns(monkeypatch):
+    """No real lookups from tests: DNS "can't tell" unless a test says so."""
+    answers = {}
+
+    async def resolves(host):
+        return answers.get(host)
+    monkeypatch.setattr(knowledge_router, "domain_resolves", resolves)
+    return answers
+
+
+def test_add_urls_fails_a_domain_that_does_not_exist_at_once(client: TestClient, test_organization, dns, db):
+    dns["teeckbox.com"] = False
+    dns["example.com"] = True
+    response = client.post("/api/v1/knowledge/add/urls", json={
+        "org_id": str(test_organization.id),
+        "websites": ["https://teeckbox.com", "https://example.com"],
+    })
+
+    assert response.status_code == 200
+    assert [item["status"] for item in response.json()["queue_items"]] == ["failed", "pending"]
+    failed = db.query(KnowledgeQueue).filter(KnowledgeQueue.source == "https://teeckbox.com").one()
+    # The same words the crawler would have stored, so the reason reads the same
+    assert knowledge_router._serialize_queue_item(failed)["reason"].startswith("This site could not be found")
+
+
 def test_add_urls(client: TestClient, test_organization):
     """Test adding URLs for processing"""
     urls_data = {
@@ -565,6 +591,18 @@ def test_get_organization_queue_items(client: TestClient, test_organization, tes
     assert response.status_code == 200
     sources = [item["source"] for item in response.json()["queue_items"]]
     assert test_knowledge_queue.source in sources
+
+
+def test_failed_queue_items_carry_a_plain_reason(client: TestClient, db: Session, test_organization, test_user):
+    """Raw errors stay in `error`; people get one sentence in `reason`."""
+    db.add(KnowledgeQueue(organization_id=test_organization.id, user_id=test_user.id, source_type="website",
+                          source="https://nope.invalid", status=QueueStatus.FAILED,
+                          error="Traceback: KeyError 'x'", created_at=datetime.now(timezone.utc)))
+    db.commit()
+    response = client.get(f"/api/v1/knowledge/queue/organization/{test_organization.id}")
+    (item,) = [i for i in response.json()["queue_items"] if i["source"] == "https://nope.invalid"]
+    assert item["reason"].startswith("We couldn't read any pages there")
+    assert "Traceback" not in item["reason"]
 
 
 def test_get_organization_queue_items_wrong_org(client: TestClient):

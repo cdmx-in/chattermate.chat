@@ -15,8 +15,12 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useKnowledgeManagement } from '@/composables/useKnowledgeManagement'
+import { useStagedSourceCap } from '@/composables/useStagedSourceCap'
+import { useCrawlCheck } from '@/composables/useCrawlCheck'
+import TeachTextFallback from './TeachTextFallback.vue'
+import type { QueueItem } from '@/types/knowledge'
 import { organizationService } from '@/services/organization'
 
 const props = defineProps<{
@@ -40,6 +44,9 @@ const {
   urlFormError,
   successMessage,
   knowledgeItems,
+  orgTotalCount,
+  queueItems,
+  fetchQueueItems,
   handleUrlAdd,
   removeUrl,
   triggerFileInput,
@@ -51,6 +58,32 @@ const {
 } = useKnowledgeManagement(props.agentId, props.organizationId)
 
 const advancing = ref(false)
+// A website that failed fast (e.g. a domain that doesn't resolve), shown with
+// a way round it instead of moving on with nothing learned
+const crawlFailure = ref<QueueItem | null>(null)
+const showTextFallback = ref(false)
+const { firstFailure, cancel: stopCrawlCheck } = useCrawlCheck(fetchQueueItems, queueItems)
+onBeforeUnmount(stopCrawlCheck)
+
+// Crawls still running count against the cap too (the server counts them).
+const crawling = computed(() =>
+  queueItems.value.filter((q) => q.status === 'pending' || q.status === 'processing'),
+)
+const inUseCount = computed(() => orgTotalCount.value + crawling.value.length)
+const { fitToCap } = useStagedSourceCap(inUseCount, urls, files)
+
+// Stage the typed URL, then keep the batch within the plan's source cap —
+// over the cap the server rejects the whole batch, signup domain included.
+const stageUrl = () => {
+  const before = urls.value.length
+  handleUrlAdd()
+  if (urls.value.length > before) urlFormError.value = fitToCap('urls')
+}
+
+const stageFiles = (event: Event) => {
+  handleFileSelect(event)
+  if (files.value.length) urlFormError.value = fitToCap('files', files.value.length)
+}
 
 // The site they gave us at signup is almost always what they want indexed
 // first. Stage it as a source rather than dropping it in the input: sitting in
@@ -61,12 +94,16 @@ const prefillFromOrgDomain = async () => {
   try {
     const org = await organizationService.getOrganization(props.organizationId)
     if (!org?.domain || newUrl.value || urls.value.length) return
+    const domainUrl = withScheme(org.domain)
+    // Back from a later step, the domain may still be crawling — not indexed
+    // yet, so the dedupe below can't see it. Staging it again would re-send it.
+    if (crawling.value.some((q) => q.source === domainUrl)) return
 
-    newUrl.value = withScheme(org.domain)
-    handleUrlAdd()
-    // handleUrlAdd flags an already-indexed URL. That is worth saying when a
-    // person typed it, but not for a suggestion they never asked for — it just
-    // ends up not staged.
+    newUrl.value = domainUrl
+    stageUrl()
+    // stageUrl flags an already-indexed URL, or a plan with no room left. That
+    // is worth saying when a person typed it, but not for a suggestion they
+    // never asked for — it just ends up not staged.
     urlFormError.value = null
   } catch {
     // A missing prefill is not worth blocking or alarming the user over.
@@ -79,24 +116,34 @@ onMounted(async () => {
   await prefillFromOrgDomain()
 })
 
-// Flush any staged URLs/files, then advance. Ingestion runs async in the
-// background — we don't block the wizard on it.
+// Flush any staged URLs/files, then advance — but only when the server took
+// them. Ingestion itself runs async in the background; we don't wait on it.
 const handleContinue = async () => {
   // A URL sitting in the box (the prefill, or one they typed without pressing
   // "Add") reads as accepted. Stage it rather than silently dropping it.
   if (newUrl.value.trim()) {
-    handleUrlAdd()
+    stageUrl()
     if (urlFormError.value) return
   }
 
   advancing.value = true
+  crawlFailure.value = null
   try {
-    if (urls.value.length) await handleUrlUpload()
-    if (files.value.length) await handleFileUpload()
+    const sentUrls = [...urls.value]
+    const accepted = (await handleUrlUpload()) && (await handleFileUpload())
+    // On failure the error is on screen and the batch stays staged to fix.
+    if (!accepted) return
+    crawlFailure.value = sentUrls.length ? await firstFailure(sentUrls) : null
+    if (!crawlFailure.value) emit('next')
   } finally {
     advancing.value = false
-    emit('next')
   }
+}
+
+const handleTextAdded = () => {
+  crawlFailure.value = null
+  showTextFallback.value = false
+  emit('next')
 }
 
 const removeFile = (index: number) => {
@@ -118,12 +165,12 @@ const removeFile = (index: number) => {
         type="text"
         placeholder="https://docs.yourcompany.com"
         :disabled="isUploading"
-        @keydown.enter.prevent="handleUrlAdd"
+        @keydown.enter.prevent="stageUrl"
       />
       <!-- "Add" acts on the URL beside it, so the object is implicit. The PDF
            button opens a file picker, a different action — it keeps its own
            label rather than reading as a second way to add the same thing. -->
-      <button type="button" class="btn-soft" :disabled="isUploading" @click="handleUrlAdd">Add</button>
+      <button type="button" class="btn-soft" :disabled="isUploading" @click="stageUrl">Add</button>
       <button type="button" class="btn-soft" :disabled="isUploading" @click="triggerFileInput">Upload PDF</button>
       <input
         ref="fileInput"
@@ -131,7 +178,7 @@ const removeFile = (index: number) => {
         accept="application/pdf"
         multiple
         hidden
-        @change="handleFileSelect"
+        @change="stageFiles"
       />
     </div>
 
@@ -164,13 +211,27 @@ const removeFile = (index: number) => {
       <div class="progress-bar" :style="{ width: `${uploadProgress}%` }"></div>
     </div>
 
-    <p v-if="successMessage" class="step-hint">{{ successMessage }} Processing in the background — you can continue.</p>
+    <p v-if="successMessage && !crawlFailure" class="step-hint">{{ successMessage }} Processing in the background — you can continue.</p>
     <p v-if="uploadError" class="step-error">{{ uploadError }}</p>
+
+    <div v-if="crawlFailure" class="crawl-failure" role="alert">
+      <p class="step-error">We couldn't read {{ crawlFailure.source }}. {{ crawlFailure.reason }}</p>
+      <div v-if="!showTextFallback" class="failure-actions">
+        <button type="button" class="btn-soft" @click="showTextFallback = true">Paste some text instead</button>
+        <button type="button" class="btn-soft" @click="triggerFileInput">Upload a PDF</button>
+      </div>
+      <TeachTextFallback
+        v-else
+        :agent-id="agentId"
+        :organization-id="organizationId"
+        @added="handleTextAdded"
+      />
+    </div>
 
     <div class="step-actions">
       <button type="button" class="btn-ghost" :disabled="advancing || isUploading" @click="emit('back')">Back</button>
       <button type="button" class="btn-accent" :disabled="advancing || isUploading" @click="handleContinue">
-        {{ advancing ? 'Saving…' : 'Continue' }}
+        {{ advancing ? 'Reading your site…' : crawlFailure ? 'Continue without it' : 'Continue' }}
         <span v-if="!advancing" class="arrow">→</span>
       </button>
     </div>
@@ -322,6 +383,22 @@ const removeFile = (index: number) => {
   margin: 0;
   font-size: 13px;
   color: var(--muted);
+}
+
+.crawl-failure {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--o12);
+  border-radius: var(--radius-input);
+}
+
+.failure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .step-error {

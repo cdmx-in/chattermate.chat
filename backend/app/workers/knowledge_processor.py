@@ -229,6 +229,12 @@ async def run_processor():
         PROCESSOR_STATUS["is_running"] = False
 
 
+# Between runs. A new source waits up to this long before its crawl starts,
+# and someone in onboarding is watching it: keep it short. An idle run is one
+# small query.
+IDLE_POLL_SECONDS = 10
+
+
 # Main entry point for running as a standalone service
 if __name__ == "__main__":
     import time
@@ -238,14 +244,13 @@ if __name__ == "__main__":
     async def processor_loop():
         while True:
             try:
-                logger.info("Running knowledge processor")
+                logger.debug("Running knowledge processor")
                 await run_processor()
-                logger.info("Knowledge processor completed, sleeping for 60 seconds")
+                logger.debug(f"Knowledge processor completed, sleeping for {IDLE_POLL_SECONDS} seconds")
             except Exception as e:
                 logger.error(f"Error in knowledge processor loop: {str(e)}")
 
-            # Sleep for 60 seconds before next run
-            await asyncio.sleep(60)
+            await asyncio.sleep(IDLE_POLL_SECONDS)
 
     async def main():
         """Knowledge and FAQ loops run as independent tasks in this container:

@@ -56,6 +56,8 @@ export function useKnowledgeManagement(agentId: string, organizationId: string) 
   const orgKnowledgeItems = ref<KnowledgeItem[]>([])
   const orgCurrentPage = ref(1)
   const orgTotalPages = ref(0)
+  // Every source the org has indexed (all pages), for plan-cap checks.
+  const orgTotalCount = ref(0)
   const isLoadingOrg = ref(false)
 
   // Delete state
@@ -96,6 +98,7 @@ export function useKnowledgeManagement(agentId: string, organizationId: string) 
       // Update org knowledge
       orgKnowledgeItems.value = orgResponse?.knowledge || []
       orgTotalPages.value = orgResponse?.pagination?.total_pages || 0
+      orgTotalCount.value = orgResponse?.pagination?.total_count || 0
     } catch (err) {
       error.value = 'Failed to load knowledge sources'
       console.error(err)
@@ -197,8 +200,10 @@ export function useKnowledgeManagement(agentId: string, organizationId: string) 
     }
   }
 
-  const handleFileUpload = async () => {
-    if (!files.value.length) return
+  // Resolves true when the batch was accepted (or there was nothing to send),
+  // so a caller like the onboarding wizard can stop instead of moving on.
+  const handleFileUpload = async (): Promise<boolean> => {
+    if (!files.value.length) return true
 
     try {
       isUploading.value = true
@@ -218,9 +223,11 @@ export function useKnowledgeManagement(agentId: string, organizationId: string) 
       }
       files.value = []
       if (fileInput.value) fileInput.value.value = ''
+      return true
     } catch (error: any) {
       console.error('Upload failed:', error)
       uploadError.value = error.message || 'Failed to upload files'
+      return false
     } finally {
       isUploading.value = false
       uploadProgress.value = 0
@@ -271,8 +278,9 @@ export function useKnowledgeManagement(agentId: string, organizationId: string) 
     urls.value.splice(index, 1)
   }
 
-  const handleUrlUpload = async () => {
-    if (!urls.value.length) return
+  // Same contract as handleFileUpload: true when the batch was accepted.
+  const handleUrlUpload = async (): Promise<boolean> => {
+    if (!urls.value.length) return true
 
     try {
       isUploading.value = true
@@ -286,14 +294,22 @@ export function useKnowledgeManagement(agentId: string, organizationId: string) 
           uploadProgress.value = progress
         },
       )
+      // A duplicate comes back as a 200 with `error` and nothing queued; keep
+      // the batch staged so the user sees which URL to drop.
+      if (response.error) {
+        uploadError.value = response.error
+        return false
+      }
       if (response.message) {
         successMessage.value = response.message
         await fetchKnowledge() // Refresh knowledge list
       }
       urls.value = []
+      return true
     } catch (error: any) {
       console.error('URL upload failed:', error)
       uploadError.value = error.message || 'Failed to upload URLs'
+      return false
     } finally {
       isUploading.value = false
       uploadProgress.value = 0
@@ -441,6 +457,7 @@ export function useKnowledgeManagement(agentId: string, organizationId: string) 
     orgKnowledgeItems,
     orgCurrentPage,
     orgTotalPages,
+    orgTotalCount,
     isLoadingOrg,
     showDeleteConfirm,
     knowledgeToDelete,

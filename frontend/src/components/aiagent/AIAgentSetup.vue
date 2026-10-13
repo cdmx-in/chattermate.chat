@@ -15,8 +15,10 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { onMounted, ref, defineAsyncComponent } from 'vue'
+import { onMounted, ref, watch, defineAsyncComponent } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
+import { notifySetupChanged } from '@/utils/setupEvents'
 
 // Lazy load components
 const AISetup = defineAsyncComponent(() => import('../ai/AISetup.vue'))
@@ -84,10 +86,20 @@ const handleFullscreenToggle = (isFullscreen: boolean) => {
     emit('toggle-fullscreen', isFullscreen)
 }
 
+const route = useRoute()
+const router = useRouter()
+// Links into setup carry ?setup=1: reopen the wizard where the org left off.
+const openWizardIfAsked = () => {
+    if (route.query.setup === '1' && permissionChecks.canManageAgents()) showOnboarding.value = true
+}
+watch(() => route.query.setup, openWizardIfAsked)
+
 // Onboarding wizard finished (or was skipped) — refresh and show the list
 const handleOnboardingComplete = async () => {
     showOnboarding.value = false
     isAISetupMode.value = false
+    if (route.query.setup) router.replace({ query: { ...route.query, setup: undefined } })
+    notifySetupChanged()
     await fetchAgents()
 }
 
@@ -102,6 +114,7 @@ onMounted(async () => {
         const agents = await agentService.getOrganizationAgents()
         if (agents.length > 0) {
             agentStorage.setAgents(agents)
+            openWizardIfAsked()
             return
         }
         // No agents yet → show the guided first-agent setup, but only to

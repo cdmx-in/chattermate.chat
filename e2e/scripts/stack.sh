@@ -12,6 +12,7 @@
 #                          instead of waiting on always-on workers' poll intervals)
 #   stack.sh backend|frontend|fake-llm|fake-externals|fake-mcp|customer-site|mail   run one service in the foreground
 #                                        (what playwright.config.ts webServer calls)
+#   stack.sh python ARGS...  run python with the stack's backend settings (one-off jobs a test needs)
 #
 # Knobs (all optional):
 #   E2E_EDITION=oss|enterprise   oss (default) blocks the enterprise submodule even if present;
@@ -152,6 +153,14 @@ run_backend() {
   fi
   log "backend ($EDITION${E2E_REDIS_URL:+, redis}) on http://127.0.0.1:$BACKEND_PORT"
   exec "$E2E_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
+}
+
+# Python with the running stack's backend settings (database, ENV_FILE, edition),
+# for one-off jobs a test needs - e.g. one run of the setup-email sender.
+run_python() {
+  backend_env "$DB_NAME"
+  cd "$REPO_DIR/backend"
+  exec "$E2E_PYTHON" "$@"
 }
 
 # Copies frontend/ into the cache so e2e builds never touch the developer's dist/,
@@ -351,5 +360,6 @@ case "${1:-}" in
   fake-mcp) run_fake_mcp ;;
   customer-site) run_customer_site ;;
   mail) run_mail ;;
+  python) shift; run_python "$@" ;;
   *) sed -n '2,21p' "$0"; exit 1 ;;
 esac

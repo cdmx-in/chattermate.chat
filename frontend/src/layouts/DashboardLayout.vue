@@ -87,6 +87,8 @@ const pageTitle = computed(() => PAGE_TITLES[route.path] || '')
 const { hasEnterpriseModule, subscriptionStore, initializeSubscriptionStore, showMessageLimitWarning, messageLimitStatus, enterpriseComponent, moduleImports } = useEnterpriseFeatures()
 // Promo strip / usage nudge / post-signup popup (enterprise only; empty in OSS)
 const PromoSurfaces = enterpriseComponent(moduleImports.promoSurfaces)
+// "Finish setup" bar until the org's agent is live (enterprise only; empty in OSS)
+const SetupProgressBar = enterpriseComponent(moduleImports.setupProgressBar)
 // Always-on offer pill in the header: survives the strip being dismissed
 const PromoHeaderPill = enterpriseComponent(moduleImports.promoHeaderPill)
 // Help button opening the hosted support chat (empty in OSS)
@@ -368,6 +370,8 @@ const openNotificationsFromSheet = () => {
 
             <!-- Main Content Area -->
             <main class="content">
+                <!-- The agents page shows its own copy, beside the wizard and list -->
+                <SetupProgressBar v-if="route.name !== 'ai-agents'" />
                 <slot></slot>
             </main>
 
