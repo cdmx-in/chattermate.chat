@@ -14,12 +14,13 @@ test.describe('accessibility', () => {
   // The dashboard is dark unless the user picks light (stored as cm-theme); both are checked.
   for (const scheme of ['dark', 'light'] as const) {
     const suffix = scheme === 'dark' ? '' : '-light'
+
     test(`dashboard screens, ${scheme} theme @a11y`, async ({ page, agent, agentsPage, aiConfigPage, ticketsPage, peoplePage }) => {
       // An agent of its own, so the agents screen is the list (with a card to check), not first-run setup.
       expect(agent.id).toBeTruthy()
       await page.addInitScript((theme) => localStorage.setItem('cm-theme', theme), scheme)
       await new InboxPage(page).goto()
-      await expect(page.locator('html')).toHaveAttribute('data-theme', scheme)
+      expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe(scheme)
       await expectNoNewA11yViolations(page, `inbox${suffix}`)
       await agentsPage.goto()
       await expectNoNewA11yViolations(page, `ai-agents${suffix}`)

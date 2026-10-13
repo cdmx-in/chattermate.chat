@@ -24,8 +24,10 @@
 #   E2E_REDIS_URL                run with Redis on (webhook dedupe, rate limits, socket.io fan-out),
 #                                as production does. Use a database of its own, e.g. redis://127.0.0.1:6379/5:
 #                                the stack shares its cors:origins cache with anything else on it
-#   E2E_BACKEND_WORKERS          run the backend under gunicorn with this many workers, as production
-#                                does (scripts/start.sh), instead of a single uvicorn process
+#   E2E_BACKEND_WORKERS          run the backend under gunicorn (--preload, as scripts/start.sh does)
+#                                with this many workers, instead of a single uvicorn process
+#   FASTEMBED_CACHE_PATH         where the embedding model is cached (default e2e/.cache/fastembed;
+#                                fastembed's own default is the OS temp dir, which macOS purges)
 set -euo pipefail
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,6 +35,7 @@ REPO_DIR="$(cd "$E2E_DIR/.." && pwd)"
 STATE_DIR="$E2E_DIR/.stack"
 ENTERPRISE_E2E_DIR="$REPO_DIR/frontend/src/modules/enterprise/e2e"
 CACHE_DIR="$E2E_DIR/.cache"
+export FASTEMBED_CACHE_PATH="${FASTEMBED_CACHE_PATH:-$CACHE_DIR/fastembed}"
 
 EDITION="${E2E_EDITION:-oss}"
 DB_NAME="chattermate_e2e"

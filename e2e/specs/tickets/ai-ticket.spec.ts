@@ -1,4 +1,4 @@
-import { test, expect, runWorkerOnce, sql, unique, uuid, AI_REPLY } from '@e2e'
+import { test, expect, chatMessages, chatsWithAgent, runWorkerOnce, sql, unique, uuid, AI_REPLY } from '@e2e'
 
 test.describe('tickets', () => {
   test('the AI opens a ticket that an agent then works in the dashboard @tickets', async ({ agent, widget, llm, ticketsPage }) => {
@@ -74,5 +74,10 @@ test.describe('ticket satisfaction', () => {
     await expect(widget.ratingThanks).toBeVisible()
     await expect.poll(async () => (await adminApi.get<{ ticket: { status: string; csat_score: number | null } }>(`/tickets/${ticketId}`)).ticket)
       .toMatchObject({ status: 'closed', csat_score: 4 })
+
+    // The ask is part of the conversation, so agents see it in the thread too.
+    const [chat] = await chatsWithAgent(adminApi, agent.id)
+    const asks = (await chatMessages(adminApi, chat.session_id)).filter((m) => m.message?.startsWith('How did we do on ticket'))
+    expect(asks).toHaveLength(1)
   })
 })

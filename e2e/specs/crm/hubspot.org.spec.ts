@@ -1,4 +1,4 @@
-import { test, expect, connectHubSpot, disconnectHubSpot, findPerson, FakeExternals, runWorkerOnce, syncPersonToCrm, unique, AI_REPLY } from '@e2e'
+import { test, expect, connectCrm, disconnectCrm, findPerson, FakeExternals, runWorkerOnce, syncPersonToCrm, unique, AI_REPLY } from '@e2e'
 
 // One HubSpot connection per org, so this runs in the serial `org` project and
 // disconnects afterwards.
@@ -6,11 +6,11 @@ import { test, expect, connectHubSpot, disconnectHubSpot, findPerson, FakeExtern
 test.describe('HubSpot', () => {
   test.use({ agentSettings: { leadCapture: true } })
 
-  test.afterEach(async ({ adminApi }) => { await disconnectHubSpot(adminApi) })
+  test.afterEach(async ({ adminApi }) => { await disconnectCrm(adminApi, 'hubspot') })
 
   test('a captured lead is pushed to HubSpot with what they told us @crm', async ({ agent, widget, llm, adminApi, request }) => {
     const code = unique('hs-code')
-    await connectHubSpot(adminApi, code)
+    await connectCrm(adminApi, 'hubspot', code)
 
     const { email, name } = widget.customer
     await llm.script(agent, (s) => s
@@ -39,7 +39,7 @@ test.describe('HubSpot', () => {
   })
 
   test('with HubSpot as the agent\'s CRM, a captured lead is pushed on its own @crm @workers', async ({ agent, widget, llm, adminApi, request }) => {
-    await connectHubSpot(adminApi, unique('hs-code'))
+    await connectCrm(adminApi, 'hubspot', unique('hs-code'))
     await adminApi.put(`/agent/${agent.id}/lead-capture`, { data: { enabled: true, require_consent: false, crm_sync_target: 'hubspot' } })
 
     const { email, name } = widget.customer

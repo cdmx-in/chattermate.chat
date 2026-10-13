@@ -6,7 +6,7 @@ name: E2E
 #
 # On pull requests and main: the suite on Chromium (parallel, then the org-wide
 # specs serially). Nightly (and on demand) it also runs, as separate jobs:
-#   prod-like  Redis on and gunicorn with 2 workers, as production runs
+#   prod-like  Redis on and gunicorn (--preload) with 2 workers, as a scaled-out deployment runs
 #   browsers   the widget on Firefox, WebKit, Android and iPhone
 #   visual     widget screenshots (run by hand with update_snapshots to refresh them)
 #   upgrade    the last release's schema upgraded to HEAD equals a fresh install

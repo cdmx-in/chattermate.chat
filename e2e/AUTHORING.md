@@ -119,7 +119,7 @@ const sent = await llm.requests(agent)    // what the backend sent the model: sy
 
 ## Channels and other third parties
 
-The backend's calls to Telegram, Meta, Slack, LINE, SMS providers, HubSpot, Jira and Shopify go to `services/fake-externals`. The `*_API_BASE` (and `JIRA_AUTH_BASE`, `SHOPIFY_ADMIN_BASE`) overrides in `.env.e2e` point them there; production never sets these. Email replies go over SMTP into Mailpit.
+The backend's calls to Telegram, Meta, Slack, LINE, SMS providers, HubSpot, Pipedrive, Jira and Shopify go to `services/fake-externals`. The `*_API_BASE` (and `PIPEDRIVE_OAUTH_BASE`, `JIRA_AUTH_BASE`, `SHOPIFY_ADMIN_BASE`) overrides in `.env.e2e` point them there; production never sets these. Email replies go over SMTP into Mailpit.
 
 The fake records every call and answers like the provider would. Use `FakeExternals` to assert on what the backend sent.
 

@@ -1,6 +1,6 @@
 // A recording stand-in for the third-party APIs the backend calls on its own:
 // Telegram, Meta Graph (WhatsApp / Messenger / Instagram), Slack, LINE, SMS
-// providers, HubSpot, Jira, Shopify. The backend reaches it through the *_API_BASE overrides in
+// providers, HubSpot, Pipedrive, Jira, Shopify. The backend reaches it through the *_API_BASE overrides in
 // .env.e2e (see backend/app/core/external_urls.py); each provider is a path prefix.
 //
 // Every request is recorded (method, path, query, headers, body, the answer) and
@@ -25,6 +25,9 @@
 //   Slack oauth.v2.access  team id and bot token derived from the OAuth code
 //   HubSpot oauth/v1/token  an access token derived from the code; introspecting it
 //                           (oauth/v1/access-tokens/<token>) gives a hub id from it
+//   Pipedrive oauth/token   tokens derived from the code, and this fake as the
+//                           company's api_domain; users/me gives a company id
+//                           derived from the token
 //   Jira authorize          consent granted at once: redirects to redirect_uri with a
 //                           fresh code and the state; the token is derived from the
 //                           code and accessible-resources gives a site derived from it
@@ -133,6 +136,8 @@ function bearer(headers: Record<string, string>): string {
 
 interface Call {
   provider: string
+  /** Where the backend reached this fake, e.g. http://127.0.0.1:14020. */
+  origin: string
   action: string
   method: string
   url: URL
@@ -214,6 +219,10 @@ function answer(call: Call): Answer {
       return ok({ message_uuid: [`e2e-${counter}`], api_id: `e2e-${counter}` })
     case 'hubspot':
       return hubspot(call)
+    case 'pipedrive-oauth':
+      return pipedriveOauth(call)
+    case 'pipedrive':
+      return pipedrive(call)
     case 'jira-auth':
       return jiraAuth(call)
     case 'jira':
@@ -243,17 +252,46 @@ function remember<V>(map: Map<string, V>, key: string, value: V, max = 1000) {
   if (map.size > max) map.delete(map.keys().next().value as string)
 }
 
+// Pipedrive: OAuth on pipedrive-oauth (oauth.pipedrive.com); the API on the
+// company's own host, which the token response names — here, this fake.
+
+/** Consent granted at once: back to the app with a fresh code and the state. */
+function consentRedirect(url: URL): Answer {
+  const redirect = url.searchParams.get('redirect_uri')
+  if (!redirect) return { status: 400, body: { error: 'invalid_request', error_description: 'redirect_uri is required' } }
+  const back = new URL(redirect)
+  back.searchParams.set('code', `code-${counter}`)
+  back.searchParams.set('state', url.searchParams.get('state') ?? '')
+  return { status: 302, body: {}, headers: { location: back.toString() } }
+}
+
+function pipedriveOauth({ action, url, origin, body }: Call): Answer {
+  if (action === 'authorize') return consentRedirect(url)
+  if (action === 'revoke') return ok({})
+  const seed = String(body?.code ?? body?.refresh_token ?? '')
+  return ok({
+    access_token: `pd-${digest(seed).slice(0, 16)}`, refresh_token: `pd-refresh-${digest(seed).slice(0, 8)}`,
+    token_type: 'Bearer', expires_in: 3600, scope: 'base,contacts:full,leads:full', api_domain: `${origin}/pipedrive`,
+  })
+}
+
+function pipedrive({ method, url, headers, body }: Call): Answer {
+  const path = url.pathname.replace(/^\/pipedrive/, '')
+  if (path === '/api/v1/users/me') {
+    return ok({ success: true, data: { id: 1, company_id: parseInt(digest(bearer(headers)).slice(0, 7), 16), company_name: 'E2E Pipedrive Co' } })
+  }
+  // Nothing exists yet: searches find nobody, and every create gets a fresh id.
+  if (path.endsWith('/search')) return ok({ success: true, data: { items: [] } })
+  if (path === '/api/v1/leads' && method === 'GET') return ok({ success: true, data: [] })
+  if (method === 'POST' && path === '/api/v1/leads') return ok({ success: true, data: { id: `00000000-0000-4000-8000-${String(counter).padStart(12, '0')}`, title: body?.title } })
+  if (method === 'POST' || method === 'PATCH') return ok({ success: true, data: { id: counter, ...(body ?? {}) } })
+  return { status: 404, body: { success: false, error: `e2e fake has no answer for ${method} ${path}` } }
+}
+
 // Jira Cloud: OAuth on jira-auth (auth.atlassian.com), the REST API on jira (api.atlassian.com).
 
 function jiraAuth({ action, url, body }: Call): Answer {
-  if (action === 'authorize') {
-    const redirect = url.searchParams.get('redirect_uri')
-    if (!redirect) return { status: 400, body: { error: 'invalid_request', error_description: 'redirect_uri is required' } }
-    const back = new URL(redirect)
-    back.searchParams.set('code', `jira-code-${counter}`)
-    back.searchParams.set('state', url.searchParams.get('state') ?? '')
-    return { status: 302, body: {}, headers: { location: back.toString() } }
-  }
+  if (action === 'authorize') return consentRedirect(url)
   // oauth/token, for both the code grant and a refresh.
   const seed = String(body?.code ?? body?.refresh_token ?? '')
   return ok({ access_token: `jira-${digest(seed).slice(0, 16)}`, refresh_token: `jira-refresh-${digest(seed).slice(0, 8)}`, token_type: 'Bearer', expires_in: 3600, scope: 'read:jira-work write:jira-work read:jira-user offline_access' })
@@ -440,7 +478,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   if (fault) result = { status: fault.status, body: fault.body ?? {} }
   else if (rejected) result = providerRejection(provider, rejected)
   else if (provider === 'telegram') result = telegram(action, token, body)
-  else result = answer({ provider, action, method, url, headers, body })
+  else result = answer({ provider, origin: `http://${headers.host ?? '127.0.0.1'}`, action, method, url, headers, body })
 
   calls.push({
     at: new Date().toISOString(),
