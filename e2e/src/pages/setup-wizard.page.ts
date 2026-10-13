@@ -48,7 +48,7 @@ export class SetupWizard {
 
   /** The explanation shown when a website couldn't be read. */
   get crawlFailure(): Locator {
-    return this.page.getByRole('alert')
+    return this.page.getByRole('alert').filter({ hasText: "We couldn't read" })
   }
 
   get createHeading(): Locator {

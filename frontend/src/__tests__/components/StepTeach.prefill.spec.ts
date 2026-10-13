@@ -27,7 +27,7 @@ const empty = { knowledge: [], pagination: { total_pages: 0 } }
 const mountStep = async () => {
   const wrapper = mount(StepTeach, {
     props: { agentId: 'agent-1', organizationId: 'org-1' },
-    global: { plugins: [createPinia()] }
+    global: { plugins: [createPinia()], stubs: { 'font-awesome-icon': true } }
   })
   await flushPromises()
   return wrapper
