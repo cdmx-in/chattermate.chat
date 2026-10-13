@@ -151,7 +151,9 @@ export function useOrganizationSettings() {
       
       originalData.value = JSON.parse(JSON.stringify(formData.value))
     } catch (err: any) {
-      error.value = err.message || 'Failed to update organization'
+      // Show the API's own message (e.g. a domain another org already uses)
+      const detail = err.response?.data?.detail
+      error.value = typeof detail === 'string' ? detail : err.message || 'Failed to update organization'
     } finally {
       loading.value = false
     }
