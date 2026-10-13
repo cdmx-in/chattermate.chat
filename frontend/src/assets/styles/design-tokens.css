@@ -81,8 +81,9 @@
   --text2: #E7EAF0;
   --text3: #C7CCD6;
   --muted: #9CA3B0;
-  --muted2: #7A8190;
-  --faint: #5B6271;
+  /* Small text on every surface (down to #1A1C23) must reach WCAG AA 4.5:1. */
+  --muted2: #868D9C;
+  --faint: #7F8696;
   --code: #D7DBE3;
 
   /* White-opacity tokens — borders, dividers, overlays */
@@ -246,18 +247,21 @@
   --surface: #FFFFFF;
   --topbar: rgba(255,255,255,.85);
 
-  --accent-ink: #4C7A0B;
-  --c-lime: #4C7A0B;
-  --c-teal: #0E8C8C;
+  /* Accent inks are used as text on white and on their own pale tints: darkened
+     until they reach WCAG AA 4.5:1 on both. */
+  --accent-ink: #44700A;
+  --c-lime: #44700A;
+  --c-teal: #0A7878;
   --c-purple: #6D5BD0;
-  --c-coral: #CF5B38;
+  --c-coral: #AC4829;
 
   --text: #171A21;
   --text2: #222732;
   --text3: #3C424E;
   --muted: #5C6473;
-  --muted2: #838A98;
-  --faint: #A6ACB6;
+  /* Small text on every surface (down to #EEF0F4) must reach WCAG AA 4.5:1. */
+  --muted2: #626977;
+  --faint: #646B79;
   --code: #3C424E;
 
   --o03: rgba(17,21,30,.03);
@@ -308,7 +312,7 @@
   --c-info: #2563EB;
   --c-positive: #1F9D57;
   --c-neutral: #6B7280;
-  --c-online: #0E8C8C;
+  --c-online: #0A7878;
   --c-pro: #6D5BD0;
 
   /* Generate gradient — darker end stop for light */

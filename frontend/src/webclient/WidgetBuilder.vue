@@ -2960,7 +2960,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
             </div>
 
             <!-- AI disclosure — dropped as soon as a human agent takes over -->
-            <div v-if="showAiDisclaimer" class="ai-disclaimer" :style="messageNameStyles">
+            <div v-if="showAiDisclaimer" class="ai-disclaimer">
                 {{ AI_DISCLAIMER_TEXT }}
             </div>
 
@@ -3602,7 +3602,9 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
     padding: 0 var(--space-md) 2px;
     font-size: 0.6875rem;
     line-height: 1.3;
-    opacity: 0.55;
+    /* The theme's muted colour, not opacity over the text colour: dimming
+       by opacity fell below readable contrast on light themes. */
+    color: var(--cm-muted);
 }
 
 /* Close the gap between the two footer lines, but only when the disclosure is
@@ -3624,7 +3626,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
 
 /* Footer: "Powered by" muted, "ChatterMate" emphasized (comp). Dimming lives on the
    prefix span (not the container) so the brand keeps the full text colour. */
-.cm-powered-prefix { opacity: 0.6; }
+.cm-powered-prefix { color: var(--cm-muted); }
 .cm-brand { font-weight: 700; }
 .cm-powered-link { color: inherit; text-decoration: none; cursor: pointer; }
 .cm-powered-link:hover .cm-brand { text-decoration: underline; }

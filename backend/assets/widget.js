@@ -10630,7 +10630,7 @@ const Kg = {
   border: "rgba(0,0,0,.07)",
   card: "#FFFFFF",
   text: "#2A2730",
-  muted: "#9A93A3",
+  muted: "#736C7C",
   agentBg: "#F4F1F6",
   accent: "#FF8A73"
 }, gi = {
@@ -10642,7 +10642,7 @@ const Kg = {
   border: "rgba(0,0,0,.08)",
   card: "#FFFFFF",
   text: "#2A2A33",
-  muted: "#8A8A99",
+  muted: "#6E6E7B",
   agentBg: "#F3F3F6",
   accent: "#FF8A73"
 }, Jg = {
@@ -10669,7 +10669,7 @@ function t_(e) {
 }
 const n_ = "#212529";
 function s_(e, t) {
-  const n = t_(e), s = (t == null ? void 0 : t.chat_background_color) || "", r = /^#[0-9a-fA-F]{6}$/.test(s), i = s || n.card, o = (t == null ? void 0 : t.chat_text_color) || "", l = /^#[0-9a-fA-F]{6}$/.test(o) && o.toLowerCase() !== n_ ? o : r ? Hs(s) ? "#FFFFFF" : "#111111" : n.text, d = r ? Hs(s) ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.5)" : n.muted, c = r ? Rd(s, 20) : n.agentBg, v = (t == null ? void 0 : t.accent_color) || n.accent, w = r ? !Hs(s) : n.light, U = lc(v) === "#0B0C10", L = w === U ? d : v, K = n.mono ? Qg : t != null && t.font_family ? `${t.font_family}, ${ac}` : ac;
+  const n = t_(e), s = (t == null ? void 0 : t.chat_background_color) || "", r = /^#[0-9a-fA-F]{6}$/.test(s), i = s || n.card, o = (t == null ? void 0 : t.chat_text_color) || "", l = /^#[0-9a-fA-F]{6}$/.test(o) && o.toLowerCase() !== n_ ? o : r ? Hs(s) ? "#FFFFFF" : "#111111" : n.text, d = r ? Hs(s) ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.62)" : n.muted, c = r ? Rd(s, 20) : n.agentBg, v = (t == null ? void 0 : t.accent_color) || n.accent, w = r ? !Hs(s) : n.light, U = lc(v) === "#0B0C10", L = w === U ? d : v, K = n.mono ? Qg : t != null && t.font_family ? `${t.font_family}, ${ac}` : ac;
   return {
     "--cm-card": i,
     "--cm-text": l,
@@ -10906,14 +10906,17 @@ const i_ = {
   class: "new-conversation-section"
 }, ev = { class: "conversation-ended-message" }, tv = {
   key: 8,
+  class: "ai-disclaimer"
+}, nv = {
+  key: 8,
   class: "rating-dialog"
-}, nv = { class: "rating-content" }, sv = { class: "star-rating" }, rv = ["onClick"], iv = { class: "rating-actions" }, ov = ["disabled"], av = {
+}, sv = { class: "rating-content" }, rv = { class: "star-rating" }, iv = ["onClick"], ov = { class: "rating-actions" }, av = ["disabled"], lv = {
   key: 0,
   class: "preview-modal-image-container"
-}, lv = ["src", "alt"], cv = { class: "preview-modal-filename" }, uv = {
+}, cv = ["src", "alt"], uv = { class: "preview-modal-filename" }, fv = {
   key: 3,
   class: "widget-loading"
-}, uc = 3, fv = "image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.xls", hv = /* @__PURE__ */ ua({
+}, uc = 3, hv = "image/*,.pdf,.doc,.docx,.txt,.csv,.xlsx,.xls", dv = /* @__PURE__ */ ua({
   __name: "WidgetBuilder",
   props: {
     widgetId: {},
@@ -11646,7 +11649,7 @@ const i_ = {
         title: "Close",
         onClick: ks
       }, "×"),
-      m[20] || (m[20] = hs('<div class="widget-unavailable-card" data-v-d67c50ab><div class="widget-unavailable-icon-wrapper" data-v-d67c50ab><svg class="widget-unavailable-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" data-v-d67c50ab><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" data-v-d67c50ab></path><path d="M9 12l2 2 4-4" data-v-d67c50ab></path></svg></div><h2 class="widget-unavailable-title" data-v-d67c50ab>Chat Unavailable</h2><p class="widget-unavailable-message" data-v-d67c50ab> This chat widget is not currently configured. Please contact the website administrator to enable chat support. </p><div class="widget-unavailable-footer" data-v-d67c50ab><svg class="chattermate-logo-small" width="14" height="14" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-d67c50ab><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-d67c50ab></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-d67c50ab><span class="cm-powered-prefix" data-v-d67c50ab>Powered by </span><strong class="cm-brand" data-v-d67c50ab>ChatterMate</strong></a></div></div>', 1))
+      m[20] || (m[20] = hs('<div class="widget-unavailable-card" data-v-361bc165><div class="widget-unavailable-icon-wrapper" data-v-361bc165><svg class="widget-unavailable-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" data-v-361bc165><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" data-v-361bc165></path><path d="M9 12l2 2 4-4" data-v-361bc165></path></svg></div><h2 class="widget-unavailable-title" data-v-361bc165>Chat Unavailable</h2><p class="widget-unavailable-message" data-v-361bc165> This chat widget is not currently configured. Please contact the website administrator to enable chat support. </p><div class="widget-unavailable-footer" data-v-361bc165><svg class="chattermate-logo-small" width="14" height="14" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-361bc165><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-361bc165></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-361bc165><span class="cm-powered-prefix" data-v-361bc165>Powered by </span><strong class="cm-brand" data-v-361bc165>ChatterMate</strong></a></div></div>', 1))
     ])) : J.value ? (x(), S("div", o_, [
       b("button", {
         type: "button",
@@ -11656,7 +11659,7 @@ const i_ = {
         onClick: ks
       }, "×"),
       b("div", a_, [
-        m[21] || (m[21] = hs('<div class="auth-error-header" data-v-d67c50ab><svg class="auth-error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-v-d67c50ab><circle cx="12" cy="12" r="10" data-v-d67c50ab></circle><line x1="12" y1="8" x2="12" y2="12" data-v-d67c50ab></line><line x1="12" y1="16" x2="12.01" y2="16" data-v-d67c50ab></line></svg><h2 data-v-d67c50ab>Authentication Error</h2></div>', 1)),
+        m[21] || (m[21] = hs('<div class="auth-error-header" data-v-361bc165><svg class="auth-error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" data-v-361bc165><circle cx="12" cy="12" r="10" data-v-361bc165></circle><line x1="12" y1="8" x2="12" y2="12" data-v-361bc165></line><line x1="12" y1="16" x2="12.01" y2="16" data-v-361bc165></line></svg><h2 data-v-361bc165>Authentication Error</h2></div>', 1)),
         b("p", l_, te(j.value), 1),
         b("button", {
           class: "auth-error-refresh-btn",
@@ -11669,7 +11672,7 @@ const i_ = {
       style: Ce({ ...E(oe), ...ef.value, ...Yu.value })
     }, [
       W.value ? (x(), S("div", c_, m[22] || (m[22] = [
-        hs('<div class="loading-spinner" data-v-d67c50ab><div class="dot" data-v-d67c50ab></div><div class="dot" data-v-d67c50ab></div><div class="dot" data-v-d67c50ab></div></div><div class="loading-text" data-v-d67c50ab>Initializing chat...</div>', 2)
+        hs('<div class="loading-spinner" data-v-361bc165><div class="dot" data-v-361bc165></div><div class="dot" data-v-361bc165></div><div class="dot" data-v-361bc165></div></div><div class="loading-text" data-v-361bc165>Initializing chat...</div>', 2)
       ]))) : ae("", !0),
       !W.value && E(L) !== "connected" ? (x(), S("div", {
         key: 1,
@@ -11805,7 +11808,7 @@ const i_ = {
           class: "powered-by-welcome",
           style: Ce(E(A))
         }, m[27] || (m[27] = [
-          hs('<svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-d67c50ab><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-d67c50ab></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-d67c50ab><span class="cm-powered-prefix" data-v-d67c50ab>Powered by </span><strong class="cm-brand" data-v-d67c50ab>ChatterMate</strong></a>', 2)
+          hs('<svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-361bc165><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-361bc165></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-361bc165><span class="cm-powered-prefix" data-v-361bc165>Powered by </span><strong class="cm-brand" data-v-361bc165>ChatterMate</strong></a>', 2)
         ]), 4)
       ], 6)) : ae("", !0),
       Ot.value && os.value ? (x(), S("div", {
@@ -11829,7 +11832,7 @@ const i_ = {
           class: "powered-by-landing",
           style: Ce(E(A))
         }, m[28] || (m[28] = [
-          hs('<svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-d67c50ab><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-d67c50ab></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-d67c50ab><span class="cm-powered-prefix" data-v-d67c50ab>Powered by </span><strong class="cm-brand" data-v-d67c50ab>ChatterMate</strong></a>', 2)
+          hs('<svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-361bc165><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-361bc165></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-361bc165><span class="cm-powered-prefix" data-v-361bc165>Powered by </span><strong class="cm-brand" data-v-361bc165>ChatterMate</strong></a>', 2)
         ]), 4)
       ], 4)) : fn.value && kt.value ? (x(), S("div", {
         key: 6,
@@ -11958,7 +11961,7 @@ const i_ = {
           class: "powered-by-landing",
           style: Ce(E(A))
         }, m[30] || (m[30] = [
-          hs('<svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-d67c50ab><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-d67c50ab></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-d67c50ab><span class="cm-powered-prefix" data-v-d67c50ab>Powered by </span><strong class="cm-brand" data-v-d67c50ab>ChatterMate</strong></a>', 2)
+          hs('<svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-361bc165><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-361bc165></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-361bc165><span class="cm-powered-prefix" data-v-361bc165>Powered by </span><strong class="cm-brand" data-v-361bc165>ChatterMate</strong></a>', 2)
         ]), 4)
       ], 4)) : !Ua.value && st.value && !no.value ? (x(), S("div", {
         key: 7,
@@ -12314,7 +12317,7 @@ const i_ = {
                                 type: "radio",
                                 value: qe.trim(),
                                 checked: Xe.value[F.name] === qe.trim(),
-                                onChange: (_v) => _t(F.name, qe.trim()),
+                                onChange: (yv) => _t(F.name, qe.trim()),
                                 class: "form-radio",
                                 disabled: ht.value
                               }, null, 40, Zy),
@@ -12547,7 +12550,7 @@ const i_ = {
             ref_key: "fileInputRef",
             ref: Le,
             type: "file",
-            accept: fv,
+            accept: hv,
             multiple: "",
             style: { display: "none" },
             onChange: m[7] || (m[7] = //@ts-ignore
@@ -12682,27 +12685,23 @@ const i_ = {
             }, " Click here to start a new conversation ", 4)
           ])
         ])) : ae("", !0),
-        Ma.value ? (x(), S("div", {
-          key: 8,
-          class: "ai-disclaimer",
-          style: Ce(E(A))
-        }, te(E(Xl)), 5)) : ae("", !0),
+        Ma.value ? (x(), S("div", tv, te(E(Xl)), 1)) : ae("", !0),
         b("div", {
           class: "powered-by",
           style: Ce(E(A))
         }, m[51] || (m[51] = [
-          hs('<svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-d67c50ab><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-d67c50ab></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-d67c50ab></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-d67c50ab><span class="cm-powered-prefix" data-v-d67c50ab>Powered by </span><strong class="cm-brand" data-v-d67c50ab>ChatterMate</strong></a>', 2)
+          hs('<svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg" data-v-361bc165><path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E" data-v-361bc165></path><circle cx="19.7" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="30" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle><circle cx="40.3" cy="30" r="4.3" fill="#0B0C10" data-v-361bc165></circle></svg><a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener" data-v-361bc165><span class="cm-powered-prefix" data-v-361bc165>Powered by </span><strong class="cm-brand" data-v-361bc165>ChatterMate</strong></a>', 2)
         ]), 4)
       ], 6)) : ae("", !0),
-      Js.value ? (x(), S("div", tv, [
-        b("div", nv, [
+      Js.value ? (x(), S("div", nv, [
+        b("div", sv, [
           m[52] || (m[52] = b("h3", null, "Rate your conversation", -1)),
-          b("div", sv, [
+          b("div", rv, [
             (x(), S(ze, null, Tt(5, (u) => b("button", {
               key: u,
               onClick: (se) => xs.value = u,
               class: Ue([{ active: u <= xs.value }, "star-button"])
-            }, " ★ ", 10, rv)), 64))
+            }, " ★ ", 10, iv)), 64))
           ]),
           Hn(b("textarea", {
             "onUpdate:modelValue": m[14] || (m[14] = (u) => Qs.value = u),
@@ -12711,13 +12710,13 @@ const i_ = {
           }, null, 512), [
             [ds, Qs.value]
           ]),
-          b("div", iv, [
+          b("div", ov, [
             b("button", {
               onClick: m[15] || (m[15] = (u) => f.submitRating(xs.value, Qs.value)),
               disabled: !xs.value,
               class: "submit-button",
               style: Ce(E(O))
-            }, " Submit ", 12, ov),
+            }, " Submit ", 12, av),
             b("button", {
               onClick: m[16] || (m[16] = (u) => Js.value = !1),
               class: "skip-rating"
@@ -12741,28 +12740,28 @@ const i_ = {
             onClick: m[17] || (m[17] = //@ts-ignore
             (...u) => E(Mn) && E(Mn)(...u))
           }, "×"),
-          E(Pe) && E(Xs)(E(Pe).type) ? (x(), S("div", av, [
+          E(Pe) && E(Xs)(E(Pe).type) ? (x(), S("div", lv, [
             b("img", {
               src: E(es)(E(Pe)),
               alt: E(Pe).filename,
               class: "preview-modal-image"
-            }, null, 8, lv),
-            b("div", cv, te(E(Pe).filename), 1)
+            }, null, 8, cv),
+            b("div", uv, te(E(Pe).filename), 1)
           ])) : ae("", !0)
         ])
       ])) : ae("", !0)
-    ], 6)) : (x(), S("div", uv));
+    ], 6)) : (x(), S("div", fv));
   }
-}), dv = /* @__PURE__ */ xa(hv, [["__scopeId", "data-v-d67c50ab"]]);
+}), pv = /* @__PURE__ */ xa(dv, [["__scopeId", "data-v-361bc165"]]);
 window.process || (window.process = { env: { NODE_ENV: "production" } });
 const nn = window.__INITIAL_DATA__, qu = new URL(window.location.href), ju = qu.searchParams.get("preview") === "true", Vu = (e) => {
   const t = qu.searchParams.get(e);
   if (!(!t || t === "undefined" || t.trim() === ""))
     return t;
-}, pv = ju ? Vu("widget_id") || (nn == null ? void 0 : nn.widgetId) || void 0 : (nn == null ? void 0 : nn.widgetId) || void 0, mv = ju ? (nn == null ? void 0 : nn.initialToken) || Vu("token") || void 0 : (nn == null ? void 0 : nn.initialToken) || void 0, gv = Sd(dv, {
-  widgetId: pv,
-  token: mv || void 0,
+}, mv = ju ? Vu("widget_id") || (nn == null ? void 0 : nn.widgetId) || void 0 : (nn == null ? void 0 : nn.widgetId) || void 0, gv = ju ? (nn == null ? void 0 : nn.initialToken) || Vu("token") || void 0 : (nn == null ? void 0 : nn.initialToken) || void 0, _v = Sd(pv, {
+  widgetId: mv,
+  token: gv || void 0,
   initialAuthError: null
   // Let backend determine if auth is required
 });
-gv.mount("#app");
+_v.mount("#app");
