@@ -33,6 +33,8 @@ class ChatHistory(Base):
         Index('ix_chat_history_org_external_message', 'organization_id', 'external_message_id',
               postgresql_where=text('external_message_id IS NOT NULL'),
               sqlite_where=text('external_message_id IS NOT NULL')),
+        # Setup progress: has anyone chatted with this org (setup_progress_idx_001)
+        Index('ix_chat_history_org_type', 'organization_id', 'message_type'),
     )
 
     id = Column(Integer, primary_key=True, index=True)

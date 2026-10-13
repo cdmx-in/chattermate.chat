@@ -25,7 +25,8 @@ the same step on any device:
 - launch: tested, but not live anywhere a customer can reach it
 - live:   the widget loaded on the org's own site, a messaging channel is
           connected, or a real visitor has chatted (covers orgs that went
-          live before install detection existed)
+          live before install detection existed). Checked first: a live org
+          is done whatever else it skipped.
 """
 
 from dataclasses import dataclass
@@ -88,7 +89,7 @@ def is_live(db: Session, org_id) -> bool:
 
 
 def get_progress(db: Session, organization: Organization) -> SetupProgress:
-    """A handful of EXISTS checks; stops at the first missing stage."""
+    """A handful of EXISTS checks: live first, then the first missing stage."""
     org_id = organization.id
     hidden = bool((organization.settings or {}).get(SETTINGS_KEY, {}).get("hidden_at"))
     agent = (
@@ -107,6 +108,10 @@ def get_progress(db: Session, organization: Organization) -> SetupProgress:
     def progress(step: SetupStep) -> SetupProgress:
         return SetupProgress(step, agent_id, widget_id, hidden)
 
+    # Live wins over any missing step: a human-only or channel-only org may
+    # never add knowledge, and must not be told to finish setup.
+    if is_live(db, org_id):
+        return progress(SetupStep.LIVE)
     has_knowledge = _exists(db, select(Knowledge.id).where(Knowledge.organization_id == org_id)) or _exists(
         db, select(KnowledgeQueue.id).where(
             KnowledgeQueue.organization_id == org_id, KnowledgeQueue.status.in_(_ACTIVE_QUEUE))
@@ -115,7 +120,7 @@ def get_progress(db: Session, organization: Organization) -> SetupProgress:
         return progress(SetupStep.TEACH)
     if not _exists(db, select(ChatHistory.id).where(ChatHistory.organization_id == org_id)):
         return progress(SetupStep.TEST)
-    return progress(SetupStep.LIVE if is_live(db, org_id) else SetupStep.LAUNCH)
+    return progress(SetupStep.LAUNCH)
 
 
 def hide(db: Session, organization: Organization) -> None:

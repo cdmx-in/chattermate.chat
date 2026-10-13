@@ -107,3 +107,12 @@ def test_a_real_visitor_chat_is_live(db, test_organization, test_agent):
     assert step(db, test_organization) is SetupStep.LAUNCH
     add_chat(db, test_organization, email="1791639646437@noemail.com")  # a site visitor
     assert step(db, test_organization) is SetupStep.LIVE
+
+
+def test_live_without_knowledge_is_live(db, test_organization, test_agent):
+    """A human-only or channel-only org may never add knowledge: once it is
+    live it must not be sent back to Teach."""
+    db.add(ChannelAccount(organization_id=test_organization.id, channel_type="telegram",
+                          external_account_id="123", encrypted_credentials="x", webhook_secret="s"))
+    db.commit()
+    assert step(db, test_organization) is SetupStep.LIVE

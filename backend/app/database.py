@@ -30,8 +30,9 @@ engine = create_engine(
     max_overflow=10,  # Allow up to 15 total connections from this pool
     pool_timeout=30,  # Timeout waiting for connection
     pool_recycle=1800,  # Recycle connections after 30 minutes
-    # Ensure proper Unicode handling
-    connect_args={"options": "-c client_encoding=utf8"} if "postgresql" in settings.DATABASE_URL else {},
+    # Unicode, and UTC: naive timestamp columns default to now(), which is the
+    # session's local time. The code reads them as UTC, so pin the session.
+    connect_args={"options": "-c client_encoding=utf8 -c timezone=UTC"} if "postgresql" in settings.DATABASE_URL else {},
     json_serializer=lambda obj: __import__('json').dumps(obj, ensure_ascii=False),
     json_deserializer=lambda s: __import__('json').loads(s)
 )

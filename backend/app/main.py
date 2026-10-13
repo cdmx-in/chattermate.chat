@@ -156,8 +156,12 @@ try:
     from app.enterprise import router as enterprise_router
     app.include_router(enterprise_router, prefix=f"{settings.API_V1_STR}/enterprise", tags=["enterprise"])
 except ImportError as e:
-    logger.info("Enterprise module not available - running in community edition mode")
-    logger.debug(f"Import error: {e}")
+    if os.path.exists(os.path.join(os.path.dirname(__file__), "enterprise", "__init__.py")):
+        # The module is there but won't load (e.g. it needs newer core code):
+        # signup and billing would vanish silently, so say so loudly.
+        logger.error(f"Enterprise module present but failed to import: {e}")
+    else:
+        logger.info("Enterprise module not available - running in community edition mode")
 
 app.include_router(
     organizations.router,

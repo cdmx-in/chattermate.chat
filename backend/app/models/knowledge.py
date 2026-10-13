@@ -38,7 +38,7 @@ class Knowledge(Base):
     schema = Column(String)  # JSON schema of the data structure
     table_name = Column(String)
     organization_id = Column(UUID(as_uuid=True), ForeignKey(
-        "organizations.id"), nullable=False)
+        "organizations.id"), nullable=False, index=True)  # setup_progress_idx_001
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(),
                         onupdate=func.now())
