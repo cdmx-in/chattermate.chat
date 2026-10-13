@@ -15,7 +15,7 @@ limitations under the License.
 """
 
 from typing import List
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -54,11 +54,23 @@ except ImportError:
     HAS_EMAIL_VALIDATION = False
 
 DOMAIN_TAKEN_MESSAGE = "That domain is already used by another organization."
+LOCALHOST_DOMAIN_MESSAGE = "Localhost can't be used as your domain. Use the domain of the site where you'll add the widget."
+LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
 logger = get_logger(__name__)
 router = APIRouter(
     tags=["organizations"]
 )
+
+
+def is_localhost_domain(domain: str) -> bool:
+    """Whether a domain (bare host, host:port or URL) points at localhost"""
+    domain = domain.strip()
+    try:
+        host = urlparse(domain if "://" in domain else f"//{domain}").hostname
+    except ValueError:
+        return False
+    return (host or "") in LOCALHOST_HOSTS
 
 
 @router.post("", response_model=OrganizationCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -358,6 +370,11 @@ async def update_organization(
                     )
 
         new_domain = update_data.get('domain')
+        if new_domain and new_domain.lower() != org.domain.lower() and is_localhost_domain(new_domain):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=LOCALHOST_DOMAIN_MESSAGE
+            )
         if new_domain and OrganizationRepository(db).is_domain_taken(new_domain, exclude_org_id=org.id):
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,

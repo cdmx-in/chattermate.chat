@@ -500,3 +500,41 @@ def test_update_organization_unique_domain(client, db, test_organization, other_
     assert response.json()["domain"] == "fresh.example.com"
     db.refresh(test_organization)
     assert test_organization.domain == "fresh.example.com"
+
+
+@pytest.mark.parametrize("domain", ["localhost", "LocalHost", "localhost:3000", "http://localhost:5173", "127.0.0.1"])
+def test_update_organization_localhost_domain_is_refused(client, db, test_organization, domain):
+    """Localhost is refused as an org domain with a plain message"""
+    response = client.patch(
+        f"/api/v1/organizations/{test_organization.id}",
+        json={"domain": domain}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == organizations_router.LOCALHOST_DOMAIN_MESSAGE
+    db.refresh(test_organization)
+    assert test_organization.domain == "test.com"
+
+
+def test_update_organization_keeps_existing_localhost_domain(client, db, test_organization):
+    """An org already on localhost can still save other changes"""
+    test_organization.domain = "localhost"
+    db.commit()
+
+    response = client.patch(
+        f"/api/v1/organizations/{test_organization.id}",
+        json={"name": "Renamed", "domain": "localhost"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Renamed"
+
+
+def test_update_organization_localhost_lookalike_is_allowed(client, test_organization):
+    """Only the host itself counts, not domains that merely contain the word"""
+    response = client.patch(
+        f"/api/v1/organizations/{test_organization.id}",
+        json={"domain": "localhost.example.com"}
+    )
+
+    assert response.status_code == 200
