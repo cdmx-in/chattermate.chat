@@ -5,6 +5,14 @@ interface MailpitMessage {
   ID: string
   Subject: string
   Created: string
+  From: { Address: string; Name: string }
+}
+
+export interface Email {
+  id: string
+  from: string
+  subject: string
+  text: string
 }
 
 interface Lookup {
@@ -27,7 +35,7 @@ export class Mailbox {
   async latestTo(address: string, { since }: Lookup = {}): Promise<{ subject: string; text: string }> {
     let latest: MailpitMessage | undefined
     await expect.poll(async () => {
-      const newest = (await this.search(address))[0]
+      const newest = (await this.search(`to:"${address}"`))[0]
       latest = newest && (!since || new Date(newest.Created) >= since) ? newest : undefined
       return latest?.ID
     }, { message: `an email to ${address}`, timeout: 15_000 }).toBeTruthy()
@@ -37,12 +45,27 @@ export class Mailbox {
 
   /** Subjects of every email to `address` (newest first), optionally only those since a time. */
   async subjectsTo(address: string, { since }: Lookup = {}): Promise<string[]> {
-    return (await this.search(address)).filter((m) => !since || new Date(m.Created) >= since).map((m) => m.Subject)
+    return (await this.search(`to:"${address}"`)).filter((m) => !since || new Date(m.Created) >= since).map((m) => m.Subject)
   }
 
-  /** Every email to `address`, newest first. */
-  private async search(address: string): Promise<MailpitMessage[]> {
-    const response = await this.request.get(`${env.mailUrl}/api/v1/search`, { params: { query: `to:"${address}"` } })
+  /** Every email to `address` so far, oldest first — no waiting; poll it. */
+  async messagesTo(address: string): Promise<Email[]> {
+    const messages = await this.search(`to:"${address}"`)
+    return Promise.all(messages.reverse().map(async (m) => ({
+      id: m.ID,
+      from: m.From.Address,
+      subject: m.Subject,
+      text: String((await (await this.request.get(`${env.mailUrl}/api/v1/message/${m.ID}`)).json()).Text ?? ''),
+    })))
+  }
+
+  /** One email's raw headers, e.g. In-Reply-To for threading. */
+  async headers(id: string): Promise<Record<string, string[]>> {
+    return (await this.request.get(`${env.mailUrl}/api/v1/message/${id}/headers`)).json()
+  }
+
+  private async search(query: string): Promise<MailpitMessage[]> {
+    const response = await this.request.get(`${env.mailUrl}/api/v1/search`, { params: { query } })
     return ((await response.json()) as { messages: MailpitMessage[] }).messages
   }
 

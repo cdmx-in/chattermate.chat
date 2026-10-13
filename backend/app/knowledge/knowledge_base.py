@@ -15,7 +15,6 @@ limitations under the License.
 """
 
 from agno.knowledge.pdf import PDFKnowledgeBase, PDFImageReader, PDFReader
-from agno.knowledge.pdf_url import PDFUrlKnowledgeBase
 from agno.vectordb.pgvector import PgVector, SearchType
 from app.knowledge.optimized_pgvector import OptimizedPgVector
 from app.core.config import settings
@@ -24,11 +23,10 @@ from app.knowledge.crawl_scope import DEFAULT_CRAWL_SCOPE
 from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
 from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
 from app.knowledge.sitemap_reader import SitemapReader
-from agno.document.reader.pdf_reader import PDFUrlReader
 from app.knowledge.chunking import PageChunking
 from app.knowledge.enhanced_pdf_kb import EnhancedPDFKnowledgeBase
-from app.knowledge.enhanced_pdf_url_kb import EnhancedPDFUrlKnowledgeBase
-from app.core.s3 import delete_file_from_s3, is_s3_url
+from app.core.s3 import delete_file_from_s3, owned_s3_key
+from app.knowledge.pdf_download import download_pdf
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
@@ -39,9 +37,10 @@ from app.repositories.knowledge import KnowledgeRepository
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from typing import List, Optional, Dict, Union
 import os
-import requests
+import shutil
+import tempfile
 import asyncio
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 from uuid import UUID
 from app.knowledge.embedder import get_embedder
 
@@ -53,6 +52,21 @@ except ImportError:
     HAS_ENTERPRISE = False
 
 logger = get_logger(__name__)
+
+# Downloaded PDFs land under backend/temp rather than the system temp dir so
+# they stay reachable inside the Docker image.
+PDF_TEMP_ROOT = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "temp")
+_MAX_PDF_NAME_CHARS = 200
+
+
+def _pdf_name_from_url(url: str) -> str:
+    """Knowledge-source name for a PDF URL: the decoded last path segment
+    without its extension, falling back to the host. basename() after decoding
+    strips any separator an encoded "..%2F" smuggled in."""
+    parsed = urlparse(url)
+    name = os.path.basename(unquote(parsed.path.rstrip("/").split("/")[-1]))
+    name = os.path.splitext(name)[0].strip(". ")
+    return (name or parsed.hostname or "document")[:_MAX_PDF_NAME_CHARS]
 
 
 class KnowledgeManager:
@@ -114,117 +128,42 @@ class KnowledgeManager:
             return knowledge
 
     async def add_pdf_urls(self, urls: List[str]) -> bool:
-        """Add knowledge from PDF URLs"""
+        """Add knowledge from PDF URLs: user-supplied links, and the presigned
+        S3 links of PDFs uploaded through the dashboard. Every fetch goes
+        through download_pdf, which refuses internal hosts on each redirect hop
+        and caps the size."""
         try:
-            # Convert agent_id to string if it exists
-            agent_id_filter = [str(self.agent_id)] if self.agent_id else []
-            
             for url in urls:
                 logger.info(f"Adding PDF URL: {url}")
-                # Check if the URL ends with .pdf
-                if url.lower().endswith('.pdf'):
-                    logger.info(f"PDF URL detected, adding to knowledge base: {url}")
-                    # Use EnhancedPDFUrlKnowledgeBase for direct PDF URLs
-                    knowledge_base = EnhancedPDFUrlKnowledgeBase(
-                        urls=[url],  # Pass single URL in a list
-                        vector_db=self.vector_db,
-                        reader=PDFUrlReader(chunking_strategy=PageChunking()),
-                    )
-                    # Extract filename from URL and remove extension
-                    filename = os.path.splitext(os.path.basename(url))[0]
-                    filters = {
-                        "name": filename,
-                        "agent_id": agent_id_filter,
-                        "org_id": str(self.org_id)
-                    }
-                    # Run PDF URL processing in thread pool to avoid blocking other APIs
-                    await asyncio.to_thread(
-                        knowledge_base.load,
-                        recreate=False,
-                        upsert=True,
-                        filters=filters
-                    )
-                    self._add_knowledge_source(filename, SourceType.FILE)
-                else:
-                    # For non-PDF URLs, download to temp file and process with add_pdf_files
-                    logger.info(f"Non-PDF URL detected, downloading from: {url}")
-                    temp_file = None
-                    try:
-                        # Extract filename from URL for metadata
-                        parsed_url = urlparse(url)
-                        
-                        # Parse filename from URL, handling S3 URLs specially
-                        if is_s3_url(url):
-                            # Extract the actual filename from S3 URL path
-                            path_parts = parsed_url.path.split('/')
-                            # Get the last part of the path and decode URL encoded characters
-                            s3_filename = path_parts[-1].split('?')[0]  # Remove query parameters
-                            import urllib.parse
-                            decoded_filename = urllib.parse.unquote(s3_filename)
-                            # Use the decoded filename without removing extension
-                            temp_filename = decoded_filename
-                            # Remove extension for the knowledge base name
-                            filename = os.path.splitext(decoded_filename)[0]
-                        else:
-                            # For non-S3 URLs
-                            filename = os.path.basename(parsed_url.path)
-                            if not filename:
-                                filename = parsed_url.netloc
-                            temp_filename = filename + ".pdf"  # Add extension for the temp file
-                            filename = os.path.splitext(filename)[0]  # Remove extension for knowledge base name
-
-                        # Create a temporary file with a meaningful name
-                        # Use /app/temp instead of system temp to ensure it's accessible in Docker
-                        temp_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "temp")
-                        os.makedirs(temp_dir, exist_ok=True)
-                        temp_path = os.path.join(temp_dir, temp_filename)
-                        temp_file = open(temp_path, 'wb')
-                        temp_file.close()
-                        
-                        # Download content in thread pool to avoid blocking other APIs
-                        def download_file():
-                            response = requests.get(url, stream=True)
-                            response.raise_for_status()
-                            
-                            # Write content to the temporary file
-                            with open(temp_path, 'wb') as f:
-                                for chunk in response.iter_content(chunk_size=8192):
-                                    f.write(chunk)
-                            return temp_path
-                        
-                        downloaded_path = await asyncio.to_thread(download_file)
-                        
-                        logger.info(f"Downloaded URL to temporary file: {temp_path}, will process as: {filename}")
-                        
-                        # Process the downloaded file
-                        await self.add_pdf_files([temp_path], filename=filename)
-                        
-                        # Delete the S3 URL from storage if it's an S3 URL
-                        if is_s3_url(url):
-                            try:
-                                # Delete the file from S3 using the centralized utility function
-                                success = await delete_file_from_s3(url)
-                                if success:
-                                    logger.info(f"Deleted S3 object: {url}")
-                                else:
-                                    logger.warning(f"Failed to delete S3 file: {url}")
-                            except Exception as s3_err:
-                                # Ignore errors when deleting S3 file
-                                logger.warning(f"Failed to delete S3 file, ignoring: {str(s3_err)}")
-                        
-                    except Exception as download_err:
-                        logger.error(f"Error downloading from URL: {str(download_err)}")
-                        raise
-                    finally:
-                        # Clean up temp file
-                        if temp_file and os.path.exists(temp_path):
-                            os.unlink(temp_path)
-                            logger.info(f"Deleted temporary file: {temp_path}")
-                
+                filename = _pdf_name_from_url(url)
+                os.makedirs(PDF_TEMP_ROOT, exist_ok=True)
+                # A private directory per download: the readable file name
+                # comes from the URL, and must not collide or escape.
+                temp_dir = tempfile.mkdtemp(dir=PDF_TEMP_ROOT)
+                try:
+                    temp_path = os.path.join(temp_dir, f"{filename}.pdf")
+                    await asyncio.to_thread(download_pdf, url, temp_path)
+                    logger.info(f"Downloaded {url} to {temp_path}, processing as: {filename}")
+                    await self.add_pdf_files([temp_path], filename=filename)
+                    await self._delete_uploaded_pdf(url)
+                finally:
+                    shutil.rmtree(temp_dir, ignore_errors=True)
             return True
         except Exception as e:
             logger.error(f"Error adding PDF URLs: {str(e)}")
             return False
+
+    async def _delete_uploaded_pdf(self, url: str) -> None:
+        """Remove a dashboard-uploaded PDF from S3 once it is indexed. Only this
+        org's own knowledge uploads qualify: the URL is user-supplied, and any
+        other S3 object it names is not ours to delete."""
+        key = owned_s3_key(url)
+        if not key or not key.startswith(f"knowledge/{self.org_id}/"):
+            return
+        if await delete_file_from_s3(url):
+            logger.info(f"Deleted S3 object: {key}")
+        else:
+            logger.warning(f"Failed to delete S3 file: {key}")
 
     async def add_websites(self, urls: List[str], max_links: int = 10) -> bool:
         """Add knowledge from websites using the enhanced website reader"""

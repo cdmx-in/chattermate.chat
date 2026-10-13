@@ -76,10 +76,11 @@ class TestNoIndexHeader:
     being indexed regardless."""
 
     def test_api_success_response_is_noindex(self, client):
-        probe = Path("uploads") / "crawler-policy-probe.txt"
+        probe = Path("uploads") / "agents" / "crawler-policy-probe.txt"
+        probe.parent.mkdir(parents=True, exist_ok=True)
         probe.write_text("probe")
         try:
-            response = client.get("/api/v1/uploads/crawler-policy-probe.txt")
+            response = client.get("/api/v1/uploads/agents/crawler-policy-probe.txt")
         finally:
             probe.unlink(missing_ok=True)
 

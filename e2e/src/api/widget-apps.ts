@@ -12,9 +12,11 @@ export async function issueConversationToken(
   apiKey: string,
   widgetId: string,
   customer: { email: string; name: string },
+  /** How long the token lives; the backend's minimum is 60 seconds. */
+  ttlSeconds?: number,
 ): Promise<string> {
   const body = await api.withToken(apiKey).post<{ data: { token: string } }>('/generate-token', {
-    data: { widget_id: widgetId, customer_email: customer.email, customer_name: customer.name },
+    data: { widget_id: widgetId, customer_email: customer.email, customer_name: customer.name, ttl_seconds: ttlSeconds },
   })
   return body.data.token
 }

@@ -126,7 +126,7 @@ function openTicket(id: string) {
       <TicketFilterBar :filters="filters" />
 
       <div class="ticket-table">
-        <div class="table-scroll">
+        <div class="table-scroll" tabindex="0" aria-label="Tickets">
           <div class="table-head">
             <span>Ticket</span><span>Title</span><span>Status</span><span>Priority</span>
             <span>AI state</span><span>Assignee / SLA</span><span class="right">Updated</span>

@@ -17,7 +17,8 @@ limitations under the License.
 import { ref, type Ref } from 'vue'
 import type { ChatDetail } from '@/types/chat'
 import FileUpload from '@/components/common/FileUpload.vue'
-import { apiPath, resolveUploadUrl } from '@/config/api'
+import { getApiUrl } from '@/config/api'
+import { buildAttachmentUrl } from '@/utils/avatars'
 import { newClientId } from '@/utils/messageMatch'
 
 export function useConversationFiles(
@@ -149,39 +150,10 @@ export function useConversationFiles(
     return contentType.startsWith('image/')
   }
 
-  // Generate download URL for attachments
-  const getDownloadUrl = (fileUrl: string | undefined | null): string => {
-    if (!fileUrl) return ''
-    
-    // If it's a blob URL (temporary), return as-is
-    if (fileUrl.startsWith('blob:')) {
-      return fileUrl
-    }
-    
-    // If it's already a full URL (AWS S3), return as-is
-    if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) {
-      return fileUrl
-    }
-    
-    // Already a full download path (carries its own /api/v1) — resolve against
-    // the API origin so the prefix isn't emitted twice.
-    if (fileUrl.startsWith('/api/v1/files/download/')) {
-      return resolveUploadUrl(fileUrl)
-    }
-
-    // For local storage, construct the download URL
-    // fileUrl format: "/uploads/chat_attachments/org-id/filename.jpg"
-    const cleanUrl = fileUrl.startsWith('/uploads/')
-                     ? fileUrl.replace('/uploads/', '')
-                     : fileUrl.replace('/', '')
-    return apiPath(`/files/download/${cleanUrl}`)
-  }
-
-  // Generate image URL for attachments. Blob previews and absolute S3 URLs pass
-  // through; local paths already carry /api/v1 and resolve against the origin.
-  const getImageUrl = (fileUrl: string | undefined | null): string => {
-    return resolveUploadUrl(fileUrl)
-  }
+  // Attachment links and image sources resolve the same way: see buildAttachmentUrl.
+  const getDownloadUrl = (fileUrl: string | undefined | null): string =>
+    buildAttachmentUrl(fileUrl, getApiUrl())
+  const getImageUrl = getDownloadUrl
 
   return {
     fileUploadRef,

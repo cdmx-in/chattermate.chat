@@ -54,6 +54,11 @@ const currentUserId = userService.getUserId()
 
 // The preview used to be prefixed with the AI agent's name unconditionally,
 // which read as "the bot said this" even on a chat a colleague had taken over.
+// Anonymous visitors have neither a name nor a real email (the backend hides the
+// placeholder), so the row would otherwise show nothing at all.
+const customerName = (conv: Conversation) =>
+  conv.customer?.full_name || conv.customer?.email || 'Visitor'
+
 const previewPrefix = (conv: Conversation) => {
   const handler = chatHandler(conv, currentUserId)
   return handler.kind === 'human' ? handler.label : conv.agent.name
@@ -270,16 +275,22 @@ onBeforeUnmount(() => {
         No conversations yet
       </div>
 
-      <div v-else class="conversations-list" ref="listContainer">
+      <div v-else class="conversations-list" ref="listContainer" tabindex="0" aria-label="Conversations">
         <div 
           v-for="conv in formattedConversations" 
           :key="conv.session_id"
           class="conversation-item"
           :class="{ active: selectedId === conv.session_id }"
+          role="button"
+          tabindex="0"
+          :aria-label="`Conversation with ${customerName(conv)}`"
+          :aria-current="selectedId === conv.session_id ? 'true' : undefined"
           @click="handleConversationClick(conv.session_id)"
+          @keydown.enter.prevent="handleConversationClick(conv.session_id)"
+          @keydown.space.prevent="handleConversationClick(conv.session_id)"
         >
           <div class="conversation-item-header">
-            <h3>{{ conv.customer.full_name || conv.customer.email }}</h3>
+            <h3>{{ customerName(conv) }}</h3>
             <ChannelBadge :channel="conv.channel" />
             <span class="timestamp">{{ conv.timeAgo }}</span>
           </div>

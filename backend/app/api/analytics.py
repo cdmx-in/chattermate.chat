@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.core.auth import get_current_user, require_permissions
+from app.services.feature_gate import check_feature_access
 from app.models.user import User
 from app.models.agent import Agent
 from app.models.customer import Customer
@@ -31,7 +32,16 @@ from app.core.logger import get_logger
 from uuid import UUID
 
 logger = get_logger(__name__)
-router = APIRouter()
+UPGRADE_MESSAGE = "Analytics are available on paid plans. Upgrade to see them."
+
+
+def analytics_enabled(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> None:
+    """Every analytics endpoint is a plan feature: the dashboard's upgrade
+    overlay is not the gate, this is."""
+    check_feature_access(db, current_user.organization_id, "analytics", UPGRADE_MESSAGE)
+
+
+router = APIRouter(dependencies=[Depends(analytics_enabled)])
 
 def get_time_range_dates(time_range: str) -> tuple[datetime, datetime]:
     """Get start and end dates based on time range"""

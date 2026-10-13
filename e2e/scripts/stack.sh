@@ -7,18 +7,28 @@
 #   stack.sh down          stop what `up` started
 #   stack.sh reset         fresh database (restarts the backend)
 #   stack.sh logs [name]   tail backend | frontend | fake-llm logs
-#   stack.sh backend|frontend|fake-llm|fake-externals|customer-site|mail   run one service in the foreground
+#   stack.sh tick <worker> one pass of a background worker against the stack's DB:
+#                          crm-sync | knowledge | ticket-lifecycle (tests call this
+#                          instead of waiting on always-on workers' poll intervals)
+#   stack.sh backend|frontend|fake-llm|fake-externals|fake-mcp|customer-site|mail   run one service in the foreground
 #                                        (what playwright.config.ts webServer calls)
 #   stack.sh python ARGS...  run python with the stack's backend settings (one-off jobs a test needs)
 #
 # Knobs (all optional):
 #   E2E_EDITION=oss|enterprise   oss (default) blocks the enterprise submodule even if present;
-#                                enterprise also starts Mailpit and applies the private suite's
-#                                .env.e2e overlay and seed.sql (frontend/src/modules/enterprise/e2e)
+#                                enterprise also applies the private suite's .env.e2e overlay
+#                                and seed.sql (frontend/src/modules/enterprise/e2e)
 #   E2E_PG_URL                   admin URL of a Postgres with pgvector, no db name
 #                                (default postgresql://$USER@127.0.0.1:5432)
 #   E2E_PYTHON                   python with backend deps (default backend/venv/bin/python, else python3)
 #   E2E_FRONTEND_NODE_MODULES    frontend node_modules to build with (default frontend/node_modules)
+#   E2E_REDIS_URL                run with Redis on (webhook dedupe, rate limits, socket.io fan-out),
+#                                as production does. Use a database of its own, e.g. redis://127.0.0.1:6379/5:
+#                                the stack shares its cors:origins cache with anything else on it
+#   E2E_BACKEND_WORKERS          run the backend under gunicorn (--preload, as scripts/start.sh does)
+#                                with this many workers, instead of a single uvicorn process
+#   FASTEMBED_CACHE_PATH         where the embedding model is cached (default e2e/.cache/fastembed;
+#                                fastembed's own default is the OS temp dir, which macOS purges)
 set -euo pipefail
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -26,6 +36,7 @@ REPO_DIR="$(cd "$E2E_DIR/.." && pwd)"
 STATE_DIR="$E2E_DIR/.stack"
 ENTERPRISE_E2E_DIR="$REPO_DIR/frontend/src/modules/enterprise/e2e"
 CACHE_DIR="$E2E_DIR/.cache"
+export FASTEMBED_CACHE_PATH="${FASTEMBED_CACHE_PATH:-$CACHE_DIR/fastembed}"
 
 EDITION="${E2E_EDITION:-oss}"
 DB_NAME="chattermate_e2e"
@@ -37,6 +48,7 @@ BACKEND_PORT=18000
 FRONTEND_PORT=15173
 FAKE_LLM_PORT=14010
 FAKE_EXTERNALS_PORT=14020
+FAKE_MCP_PORT=14030
 CUSTOMER_SITE_PORT=13000
 MAIL_SMTP_PORT=11025
 MAIL_WEB_PORT=18025
@@ -71,6 +83,9 @@ backend_env() {
     # Enterprise-only settings (SMTP to Mailpit, default AI key, …) live with the
     # private suite; exported values override the shared .env.e2e.
     if [[ -f "$ENTERPRISE_E2E_DIR/.env.e2e" ]]; then set -a; source "$ENTERPRISE_E2E_DIR/.env.e2e"; set +a; fi
+  fi
+  if [[ -n "${E2E_REDIS_URL:-}" ]]; then
+    export REDIS_ENABLED=true REDIS_URL="$E2E_REDIS_URL"
   fi
 }
 
@@ -127,7 +142,16 @@ run_backend() {
   export WIDGET_ASSETS_DIR; WIDGET_ASSETS_DIR="$(widget_assets_dir)"
   mkdir -p "$WIDGET_ASSETS_DIR"
   cd "$REPO_DIR/backend"
-  log "backend ($EDITION) on http://127.0.0.1:$BACKEND_PORT"
+  if [[ -n "${E2E_BACKEND_WORKERS:-}" ]]; then
+    # The same server and flags as production (scripts/start.sh). On macOS, a
+    # preloaded app that forks trips the Objective-C fork-safety abort.
+    if [[ "$(uname)" == Darwin ]]; then export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES; fi
+    log "backend ($EDITION, gunicorn × $E2E_BACKEND_WORKERS${E2E_REDIS_URL:+, redis}) on http://127.0.0.1:$BACKEND_PORT"
+    exec "$E2E_PYTHON" -m gunicorn app.main:app --workers "$E2E_BACKEND_WORKERS" \
+      --worker-class uvicorn.workers.UvicornWorker --bind "127.0.0.1:$BACKEND_PORT" \
+      --timeout 120 --keep-alive 5 --access-logfile - --error-logfile - --preload
+  fi
+  log "backend ($EDITION${E2E_REDIS_URL:+, redis}) on http://127.0.0.1:$BACKEND_PORT"
   exec "$E2E_PYTHON" -m uvicorn app.main:app --host 127.0.0.1 --port "$BACKEND_PORT"
 }
 
@@ -217,6 +241,11 @@ run_fake_externals() {
   exec node services/fake-externals/server.ts --port "$FAKE_EXTERNALS_PORT"
 }
 
+run_fake_mcp() {
+  cd "$E2E_DIR"
+  exec node services/fake-mcp/server.ts --port "$FAKE_MCP_PORT"
+}
+
 run_customer_site() {
   cd "$E2E_DIR"
   exec node services/customer-site/server.ts --port "$CUSTOMER_SITE_PORT" \
@@ -224,11 +253,29 @@ run_customer_site() {
     --loader "http://127.0.0.1:$FRONTEND_PORT/webclient/chattermate.min.js"
 }
 
-# SMTP capture (Mailpit): account emails and notifications land here, readable
-# through its API (src/fakes/mailbox.ts).
+# SMTP capture (Mailpit): everything the backend emails — email-channel replies,
+# account emails, notifications — lands here, readable through its API
+# (src/fakes/mailbox.ts).
 run_mail() {
   command -v mailpit >/dev/null || die "mailpit not found (brew install mailpit, or see https://mailpit.axllent.org)"
   exec mailpit --smtp "127.0.0.1:$MAIL_SMTP_PORT" --listen "127.0.0.1:$MAIL_WEB_PORT" --disable-version-check --quiet
+}
+
+# One pass of a worker production runs on a loop (docker-compose's knowledge_processor,
+# ticket_investigator, crm_sync), with the backend's exact environment.
+run_tick() {
+  local import
+  case "${1:-}" in
+    crm-sync) import="from app.workers.crm_sync import run_sync_pass as tick" ;;
+    knowledge) import="from app.workers.knowledge_processor import run_processor as tick" ;;
+    # Its main() routes socket emits through Redis and loads extensions first; so must a tick.
+    ticket-lifecycle) import="from app.core.socketio import configure_socketio; configure_socketio(); from app.channels.app_hooks import load_extensions; load_extensions(); from app.workers.ticket_investigator import run_ticket_lifecycle as tick" ;;
+    *) die "unknown worker '${1:-}' (crm-sync | knowledge | ticket-lifecycle)" ;;
+  esac
+  backend_env "$DB_NAME"
+  export WIDGET_ASSETS_DIR; WIDGET_ASSETS_DIR="$(widget_assets_dir)"
+  cd "$REPO_DIR/backend"
+  "$E2E_PYTHON" -c "import asyncio; $import; asyncio.run(tick())"
 }
 
 wait_for() {
@@ -268,12 +315,12 @@ cmd_up() {
   wait_for fake-llm "http://127.0.0.1:$FAKE_LLM_PORT/health" 30
   start_bg fake-externals
   wait_for fake-externals "http://127.0.0.1:$FAKE_EXTERNALS_PORT/health" 30
+  start_bg fake-mcp
+  wait_for fake-mcp "http://127.0.0.1:$FAKE_MCP_PORT/health" 30
   start_bg customer-site
   wait_for customer-site "http://127.0.0.1:$CUSTOMER_SITE_PORT/health" 30
-  if [[ "$EDITION" == enterprise ]]; then
-    start_bg mail
-    wait_for mail "http://127.0.0.1:$MAIL_WEB_PORT/livez" 30
-  fi
+  start_bg mail
+  wait_for mail "http://127.0.0.1:$MAIL_WEB_PORT/livez" 30
   start_bg backend
   wait_for backend "http://127.0.0.1:$BACKEND_PORT/health" 180
   start_bg frontend
@@ -281,7 +328,7 @@ cmd_up() {
   log "stack ready — dashboard http://127.0.0.1:$FRONTEND_PORT"
 }
 
-cmd_down() { for s in frontend backend customer-site fake-externals fake-llm mail; do stop_bg "$s"; done; log "stack stopped"; }
+cmd_down() { for s in frontend backend customer-site fake-mcp fake-externals fake-llm mail; do stop_bg "$s"; done; log "stack stopped"; }
 
 wait_port_free() {
   local port="$1" i
@@ -305,10 +352,12 @@ case "${1:-}" in
   down) cmd_down ;;
   reset) cmd_reset ;;
   logs) tail -n 100 -f "$STATE_DIR/${2:-backend}.log" ;;
+  tick) run_tick "${2:-}" ;;
   backend) run_backend ;;
   frontend) run_frontend ;;
   fake-llm) run_fake_llm ;;
   fake-externals) run_fake_externals ;;
+  fake-mcp) run_fake_mcp ;;
   customer-site) run_customer_site ;;
   mail) run_mail ;;
   python) shift; run_python "$@" ;;

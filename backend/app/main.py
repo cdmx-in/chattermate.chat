@@ -33,6 +33,7 @@ from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings, verify_secret_configuration
 from app.core.encryption import verify_encryption_key
+from app.services.file_storage import PUBLIC_UPLOAD_FOLDERS
 from app.services.firebase import initialize_firebase
 from app.database import engine, Base
 import asyncio
@@ -363,8 +364,16 @@ if not os.path.exists("uploads"):
 if not os.path.exists("uploads/agents"):
     os.makedirs("uploads/agents")
 
-# Mount static files
-app.mount("/api/v1/uploads", StaticFiles(directory="uploads"), name="uploads")
+# Only the public upload folders are static-mounted. Chat attachments are
+# served through signed links (GET {API_V1_STR}/files/local/...), and the rest
+# of uploads/ is never served. check_dir=False: a folder may not exist until
+# its first upload.
+for folder in PUBLIC_UPLOAD_FOLDERS:
+    app.mount(
+        f"{settings.API_V1_STR}/uploads/{folder}",
+        StaticFiles(directory=os.path.join("uploads", folder), check_dir=False),
+        name=f"uploads_{folder}",
+    )
 app.mount("/assets", StaticFiles(directory=settings.WIDGET_ASSETS_DIR), name="assets")
 
 # The API origin is not a website: no robots.txt meant crawlers were free to

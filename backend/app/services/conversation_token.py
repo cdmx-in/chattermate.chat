@@ -113,7 +113,7 @@ def is_identified(payload: Dict[str, Any]) -> bool:
     """True when the EMBEDDING APP vouched for this visitor.
 
     Deliberately narrower than "has a customer id": every widget visitor gets a
-    customer row, including the anonymous `<timestamp>@noemail.com` ones the widget
+    customer row, including the anonymous `…@noemail.com` ones the widget
     mints for itself. Only a token from POST /generate-token carries the email the
     app asserted, and only that identity is worth refusing a request over - an
     anonymous token that lapses can simply be replaced, exactly as before.

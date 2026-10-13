@@ -20,6 +20,8 @@ customer the moment their token lapsed and anything re-checked it - which, on a 
 left open, is exactly when they start a new chat. The widget now rotates a live token
 before it expires, and a lapsed one is refused rather than quietly replaced.
 """
+import time
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -156,6 +158,21 @@ class TestWidgetDataIdentity:
 
         assert response.status_code == 200, response.text
         assert response.json()["token"]
+
+    def test_visitors_arriving_in_the_same_millisecond_each_get_a_customer(
+        self, client, db, test_widget, monkeypatch
+    ):
+        # The placeholder email used to be the clock in ms, so the second visitor
+        # hit the (email, org) unique key and their widget never loaded.
+        monkeypatch.setattr(time, "time", lambda: 1_791_833_067.582)
+        customers_before = db.query(Customer).count()
+
+        first = client.get(f"/api/v1/widgets/{test_widget.id}")
+        second = client.get(f"/api/v1/widgets/{test_widget.id}")
+
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        assert db.query(Customer).count() == customers_before + 2
 
     def test_widget_frame_refuses_to_render_a_lapsed_identity(
         self, client, test_widget, identified_token, token_has_lapsed

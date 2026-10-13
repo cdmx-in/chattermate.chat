@@ -14,15 +14,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status, Header, Request
-from fastapi.responses import JSONResponse
-from typing import Optional
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status, Header, Request, Query
+from fastapi.responses import FileResponse, JSONResponse
+from typing import Optional, Tuple
 import uuid
 import os
 from datetime import datetime
+from urllib.parse import quote
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
+from app.core.local_file_urls import verify_local_signature
 from app.core.logger import get_logger
 from app.core.security import verify_conversation_token
 from app.models import User
@@ -105,50 +107,78 @@ async def get_current_user_or_widget(
     )
 
 
-def authorized_attachment_key(file_path: str, org_id: Optional[str]) -> str:
-    """Resolve a download path to a storage key the caller is allowed to read.
+def _not_found() -> HTTPException:
+    return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+
+def attachment_key(file_path: str) -> Tuple[str, str]:
+    """Parse a download path into (org_id, storage key), or 404.
 
     Uploads only ever land at `chat_attachments/<org_id>/<uuid>.<ext>` (see
     FileUploadService.upload_file), so anything else is not a servable
-    attachment. Matching that shape exactly is what both scopes the read to the
-    caller's organization and rules out traversal — no `..` segment can
-    survive a three-part match on a UUID directory.
+    attachment. Matching that shape exactly rules out traversal: no `..`
+    segment can survive a three-part match on a UUID directory.
     """
-    if not org_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
-
     # Accept the stored form ("/uploads/chat_attachments/...") and the bare key.
     clean_path = file_path.lstrip('/')
     if clean_path.startswith('uploads/'):
         clean_path = clean_path[len('uploads/'):]
 
     parts = clean_path.split('/')
-    if len(parts) != 3 or parts[0] != 'chat_attachments' or not parts[2]:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
-
+    if len(parts) != 3 or parts[0] != 'chat_attachments' or not parts[2] or parts[2] in ('.', '..'):
+        raise _not_found()
     try:
-        path_org_id = uuid.UUID(parts[1])
+        path_org_id = str(uuid.UUID(parts[1]))
     except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
+        raise _not_found()
+    return path_org_id, '/'.join(('chat_attachments', path_org_id, parts[2]))
 
+
+def authorized_attachment_key(file_path: str, org_id: Optional[str]) -> str:
+    """Resolve a download path to a storage key the caller's org may read."""
+    if not org_id:
+        raise _not_found()
+    path_org_id, key = attachment_key(file_path)
     # 404 rather than 403: whether another org's attachment exists is itself
     # something the caller shouldn't learn.
-    if str(path_org_id) != str(org_id):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="File not found"
-        )
+    if path_org_id != str(org_id):
+        raise _not_found()
+    return key
 
-    return '/'.join(('chat_attachments', str(path_org_id), parts[2]))
+
+# Visitor-uploaded files (SVG included) are served from the API origin, so one
+# opened directly must not run script there. Only scripts are blocked: a
+# sandbox CSP would also stop the browser's PDF viewer.
+ATTACHMENT_HEADERS = {
+    "Content-Security-Policy": "script-src 'none'",
+    "X-Content-Type-Options": "nosniff",
+    "Cache-Control": "private, max-age=300",
+}
+
+
+def _inline_attachment(path: str, filename: str) -> FileResponse:
+    return FileResponse(path, content_disposition_type="inline", filename=filename,
+                        headers=ATTACHMENT_HEADERS)
+
+
+@router.get("/local/{file_path:path}")
+async def serve_signed_local_file(
+    file_path: str,
+    exp: Optional[int] = Query(None),
+    sig: Optional[str] = Query(None),
+):
+    """Serve a local-storage attachment through a link from sign_local_key.
+
+    The signature is the authorization, as with an S3 presigned URL, because
+    the widget loads attachments with plain <img>/<a> tags.
+    """
+    _, key = attachment_key(file_path)
+    if not verify_local_signature(key, exp, sig):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid or expired link")
+    path = os.path.join("uploads", key)
+    if not os.path.isfile(path):
+        raise _not_found()
+    return _inline_attachment(path, os.path.basename(key))
 
 
 @router.get("/download/{file_path:path}")
@@ -167,7 +197,6 @@ async def download_file(
     try:
         from fastapi.responses import StreamingResponse
         from app.core.s3 import get_s3_client
-        import io
 
         # Authentication is required, and the result is what authorizes the
         # read below. This used to swallow the failure and serve the file
@@ -177,29 +206,11 @@ async def download_file(
         storage_key = authorized_attachment_key(file_path, auth_info.get("org_id"))
 
         if not settings.S3_FILE_STORAGE:
-            # Serve local file
-            import os
             local_file_path = os.path.join("uploads", storage_key)
+            if not os.path.isfile(local_file_path):
+                raise _not_found()
+            return _inline_attachment(local_file_path, os.path.basename(storage_key))
 
-            if os.path.exists(local_file_path):
-                with open(local_file_path, "rb") as f:
-                    file_content = f.read()
-                
-                import mimetypes
-                content_type, _ = mimetypes.guess_type(local_file_path)
-                content_type = content_type or "application/octet-stream"
-                
-                return StreamingResponse(
-                    io.BytesIO(file_content),
-                    media_type=content_type,
-                    headers={"Content-Disposition": f"inline; filename={os.path.basename(storage_key)}"}
-                )
-            else:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="File not found"
-                )
-        
         # For AWS S3 - stream file from S3
         try:
             s3_client = get_s3_client()
@@ -260,7 +271,10 @@ async def download_file(
         return StreamingResponse(
             generate(),
             media_type=content_type,
-            headers={"Content-Disposition": f"inline; filename={filename}"}
+            headers={
+                **ATTACHMENT_HEADERS,
+                "Content-Disposition": f"inline; filename*=utf-8''{quote(filename)}",
+            }
         )
         
     except HTTPException:
@@ -269,7 +283,7 @@ async def download_file(
         logger.error(f"Error downloading file {file_path}: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to download file: {str(e)}"
+            detail="Failed to download file"
         )
 
 

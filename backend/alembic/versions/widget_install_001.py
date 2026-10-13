@@ -6,7 +6,7 @@ but isn't allowed to (CORS only admits the org's domain), so it silently fails
 there.
 
 Revision ID: widget_install_001
-Revises: agent_quick_replies_001
+Revises: auth_sessions_001
 Create Date: 2026-10-12
 """
 from typing import Sequence, Union
@@ -16,7 +16,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'widget_install_001'
-down_revision: Union[str, None] = 'agent_quick_replies_001'
+down_revision: Union[str, None] = 'auth_sessions_001'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

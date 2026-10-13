@@ -288,3 +288,73 @@ class TestConnectionLifecycle:
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
         monkeypatch.setattr(crm_base, "_http_client", client)
         await adapter.revoke(tokens)  # must not raise
+
+
+FAKE_OAUTH_BASE = "http://127.0.0.1:14020/pipedrive-oauth"
+FAKE_API_BASE = "http://127.0.0.1:14020/pipedrive"
+
+
+@pytest.fixture
+def reload_pipedrive(monkeypatch):
+    """Re-import app.crm.pipedrive under the given Pipedrive bases, then restore it."""
+    import importlib
+    import app.crm.pipedrive as pipedrive_module
+
+    names = ("PIPEDRIVE_OAUTH_BASE", "PIPEDRIVE_API_BASE")
+
+    def _reload(**env):
+        for name in names:
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        return importlib.reload(pipedrive_module)
+
+    yield _reload
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    importlib.reload(pipedrive_module)
+
+
+class TestHostOverrides:
+
+    def test_urls_default_to_pipedrive(self, reload_pipedrive, monkeypatch):
+        pipedrive = reload_pipedrive()
+        monkeypatch.setattr(settings, "PIPEDRIVE_CLIENT_ID", "cid")
+        assert pipedrive.AUTHORIZE_URL == "https://oauth.pipedrive.com/oauth/authorize"
+        assert pipedrive.TOKEN_URL == "https://oauth.pipedrive.com/oauth/token"
+        assert pipedrive.REVOKE_URL == "https://oauth.pipedrive.com/oauth/revoke"
+        assert pipedrive.PipedriveAdapter().get_authorize_url("s", "https://app/cb").startswith(
+            "https://oauth.pipedrive.com/oauth/authorize?client_id=cid&")
+        # Without the override only https pipedrive.com hosts are trusted.
+        assert pipedrive._validated_api_domain(API_DOMAIN) == API_DOMAIN
+        assert pipedrive._validated_api_domain(FAKE_API_BASE) is None
+
+    def test_bases_are_overridable(self, reload_pipedrive):
+        pipedrive = reload_pipedrive(PIPEDRIVE_OAUTH_BASE=FAKE_OAUTH_BASE + "/",
+                                     PIPEDRIVE_API_BASE=FAKE_API_BASE + "/")
+        assert pipedrive.AUTHORIZE_URL == f"{FAKE_OAUTH_BASE}/oauth/authorize"
+        assert pipedrive.TOKEN_URL == f"{FAKE_OAUTH_BASE}/oauth/token"
+        assert pipedrive.REVOKE_URL == f"{FAKE_OAUTH_BASE}/oauth/revoke"
+        assert pipedrive._validated_api_domain(FAKE_API_BASE + "/") == FAKE_API_BASE
+        # The override widens the guard by exactly one origin.
+        assert pipedrive._validated_api_domain(API_DOMAIN) == API_DOMAIN
+        assert pipedrive._validated_api_domain("http://127.0.0.1:14020/other") is None
+
+    @pytest.mark.asyncio
+    async def test_install_flow_reaches_the_override(self, reload_pipedrive, http, monkeypatch):
+        pipedrive = reload_pipedrive(PIPEDRIVE_OAUTH_BASE=FAKE_OAUTH_BASE,
+                                     PIPEDRIVE_API_BASE=FAKE_API_BASE)
+        monkeypatch.setattr(settings, "PIPEDRIVE_CLIENT_ID", "cid")
+        monkeypatch.setattr(settings, "PIPEDRIVE_CLIENT_SECRET", "sek")
+        http["respond"]["/oauth/token"] = (200, {
+            "access_token": "at", "refresh_token": "rt", "expires_in": 3600,
+            "api_domain": FAKE_API_BASE})
+        http["respond"]["users/me"] = (200, {
+            "data": {"company_id": 777, "company_name": "Acme"}})
+
+        tokens = await pipedrive.PipedriveAdapter().exchange_code("code-1", "https://app/cb")
+
+        assert [str(r.url) for r in http["requests"]] == [
+            f"{FAKE_OAUTH_BASE}/oauth/token", f"{FAKE_API_BASE}/api/v1/users/me"]
+        assert tokens.api_domain == FAKE_API_BASE
+        assert tokens.external_account_id == "777"

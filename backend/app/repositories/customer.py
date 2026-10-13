@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.models.customer import Customer
 from app.utils.phone import normalize_phone
-from uuid import UUID
+from uuid import UUID, uuid4
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -343,6 +343,16 @@ class CustomerRepository:
         except Exception as e:
             logger.error(f"Error getting customer email: {str(e)}")
             return None
+
+    @staticmethod
+    def anonymous_email() -> str:
+        """A fresh stand-in email for an anonymous widget visitor.
+
+        Random, not time-based: two visitors arriving in the same millisecond
+        would otherwise collide on the (email, organization) unique key and one
+        of them would get a widget that never loads.
+        """
+        return f"{uuid4().hex}@noemail.com"
 
     @staticmethod
     def is_placeholder_email(email: str | None) -> bool:

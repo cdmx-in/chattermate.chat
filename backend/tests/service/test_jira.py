@@ -770,3 +770,47 @@ async def test_is_priority_available(jira_service):
             "10001",
             "priority"
         ) 
+
+
+@pytest.fixture
+def reload_jira_urls(monkeypatch):
+    """Re-import app.services.jira under the given Atlassian bases, then restore it."""
+    import importlib
+    import app.services.jira as jira_module
+
+    def _reload(**env):
+        for name in ("JIRA_API_BASE", "JIRA_AUTH_BASE"):
+            monkeypatch.delenv(name, raising=False)
+        for name, value in env.items():
+            monkeypatch.setenv(name, value)
+        return importlib.reload(jira_module)
+
+    yield _reload
+    for name in ("JIRA_API_BASE", "JIRA_AUTH_BASE"):
+        monkeypatch.delenv(name, raising=False)
+    importlib.reload(jira_module)
+
+
+def test_jira_urls_default_to_atlassian(reload_jira_urls):
+    jira = reload_jira_urls()
+    assert jira.jira_authorize_url() == "https://auth.atlassian.com/authorize"
+    assert jira.jira_token_url() == "https://auth.atlassian.com/oauth/token"
+    assert jira.jira_accessible_resources_url() == "https://api.atlassian.com/oauth/token/accessible-resources"
+    assert jira.jira_rest_url("cid", "issue") == "https://api.atlassian.com/ex/jira/cid/rest/api/3/issue"
+
+
+def test_jira_bases_are_overridable(reload_jira_urls):
+    jira = reload_jira_urls(
+        JIRA_AUTH_BASE="http://127.0.0.1:14020/jira-auth/",
+        JIRA_API_BASE="http://127.0.0.1:14020/jira-api",
+    )
+    assert jira.jira_token_url() == "http://127.0.0.1:14020/jira-auth/oauth/token"
+    assert jira.jira_accessible_resources_url() == (
+        "http://127.0.0.1:14020/jira-api/oauth/token/accessible-resources"
+    )
+    assert jira.jira_rest_url("cid", "project") == "http://127.0.0.1:14020/jira-api/ex/jira/cid/rest/api/3/project"
+
+    service = jira.JiraService()
+    assert service.token_url == "http://127.0.0.1:14020/jira-auth/oauth/token"
+    assert service.get_authorization_url("abc").startswith("http://127.0.0.1:14020/jira-auth/authorize?")
+    assert "state=abc" in service.get_authorization_url("abc")

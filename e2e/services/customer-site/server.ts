@@ -41,7 +41,7 @@ function page(embed: Embed): string {
   ].filter(Boolean).join('\n      ')
   return `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><title>Acme Store</title></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Acme Store</title></head>
   <body>
     <h1>Acme Store</h1>
     ${embed.trigger ? '<button type="button" data-chattermate-open>Chat with us</button>' : ''}

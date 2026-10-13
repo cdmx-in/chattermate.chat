@@ -68,6 +68,16 @@ export class ChatWidget {
     })
   }
 
+  /** Attaches a file and sends it with `text`, as a visitor picking it from their device. */
+  async sendFile(file: { name: string; mimeType: string; content: string }, text: string): Promise<void> {
+    await step(`Customer sends ${file.name}`, async () => {
+      await this.frame.locator('input[type="file"]').setInputFiles({ name: file.name, mimeType: file.mimeType, buffer: Buffer.from(file.content) })
+      await this.messageInput.fill(text)
+      await this.messageInput.press('Enter')
+      await expect(this.customerMessages.last()).toContainText(text)
+    })
+  }
+
   /** Fills the "Before we connect you to a teammate" form the widget shows on handover. */
   async shareContactDetails(): Promise<void> {
     await step('Customer shares contact details', async () => {
@@ -122,9 +132,14 @@ export class ChatWidget {
     return this.frame.getByPlaceholder('Type a message...', { exact: true })
   }
 
+  /** The conversation — the widget's message log. */
+  get messageLog(): Locator {
+    return this.frame.getByRole('log', { name: 'Messages' })
+  }
+
   /** Bot and human-agent replies — the widget renders both the same way. */
   get agentMessages(): Locator {
-    return this.frame.locator('.message.agent-message .message-bubble')
+    return this.messageLog.locator('.message.agent-message .message-bubble')
   }
 
   lastAgentMessage(): Locator {
@@ -132,7 +147,17 @@ export class ChatWidget {
   }
 
   get customerMessages(): Locator {
-    return this.frame.locator('.message.user-message .message-bubble')
+    return this.messageLog.locator('.message.user-message .message-bubble')
+  }
+
+  /** The agent's name in the chat header. */
+  get agentName(): Locator {
+    return this.frame.locator('.header-info h3')
+  }
+
+  /** The agent's welcome message, shown when the chat opens. */
+  get welcomeMessage(): Locator {
+    return this.frame.locator('.cm-welcome-block .message-bubble')
   }
 
   get contactForm(): Locator {

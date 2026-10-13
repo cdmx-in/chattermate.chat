@@ -3,7 +3,6 @@ import { login } from '../../src/api/auth'
 import { ApiClient } from '../../src/api/client'
 import { isSetUp } from '../../src/api/organizations'
 import { seedOrg, seedUsers } from '../../src/env'
-import { FakeLlm } from '../../src/fakes/llm'
 import { storageStatePath } from '../../src/org-state'
 import { prepareOrg } from '../../src/org-setup'
 import { LoginPage } from '../../src/pages/login.page'
@@ -17,7 +16,6 @@ import { SetupPage } from '../../src/pages/setup.page'
 
 setup('organization, AI and support team are ready', async ({ page, request, browser }) => {
   const anonymous = new ApiClient(request)
-  await new FakeLlm(request).reset()
   const { admin } = seedUsers
 
   if (await isSetUp(anonymous)) {

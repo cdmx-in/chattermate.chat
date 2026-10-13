@@ -1,4 +1,4 @@
-import { test, expect, addKnowledgeText, unique } from '@e2e'
+import { test, expect, addKnowledgeText, unique, AI_REPLY } from '@e2e'
 
 test.describe('knowledge base', () => {
   test('an answer is grounded in text added to the knowledge base @smoke @knowledge', async ({ agent, widget, llm, adminApi, org }) => {
@@ -20,7 +20,7 @@ test.describe('knowledge base', () => {
     await widget.open()
     await widget.send('What is your returns policy?')
 
-    await expect(widget.lastAgentMessage()).toHaveText('You can return items within 45 days of delivery.')
+    await expect(widget.lastAgentMessage()).toHaveText('You can return items within 45 days of delivery.', AI_REPLY)
     const searchResults = (await llm.requests(agent)).flatMap((request) => request.toolResults)
     expect(searchResults.join('\n')).toContain(policyCode)
   })

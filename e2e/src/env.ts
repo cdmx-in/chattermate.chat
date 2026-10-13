@@ -8,13 +8,17 @@ const backendUrl = 'http://127.0.0.1:18000'
 
 export const env = {
   edition: (process.env.E2E_EDITION ?? 'oss') as 'oss' | 'enterprise',
+  /** The stack runs with Redis (scripts/stack.sh E2E_REDIS_URL): dedupe and rate limits are live. */
+  redis: Boolean(process.env.E2E_REDIS_URL),
   frontendUrl: 'http://127.0.0.1:15173',
   backendUrl,
   apiUrl: `${backendUrl}/api/v1`,
   fakeLlmUrl: 'http://127.0.0.1:14010',
   /** Recording stand-in for Telegram, Meta, Slack, … (services/fake-externals). */
   fakeExternalsUrl: 'http://127.0.0.1:14020',
-  /** Mailpit's web/API port (its SMTP side is 127.0.0.1:11025). Enterprise edition only for now. */
+  /** A real MCP server with a lookup_order tool (services/fake-mcp). */
+  fakeMcpUrl: 'http://127.0.0.1:14030',
+  /** Mailpit's web/API port (its SMTP side is 127.0.0.1:11025, where .env.e2e sends all mail). */
   mailUrl: 'http://127.0.0.1:18025',
   /** The pretend customer website the widget is embedded on (services/customer-site). */
   customerSiteUrl: 'http://127.0.0.1:13000',
@@ -26,6 +30,13 @@ export const env = {
   stackScript: fileURLToPath(new URL('../scripts/stack.sh', import.meta.url)),
   /** Where the setup project writes the org contract (see src/org-state.ts). */
   authDir: fileURLToPath(new URL('../.auth/', import.meta.url)),
+  /** App-wide webhook signing secrets; the same values are set in .env.e2e. */
+  channelSecrets: {
+    meta: 'e2e-meta-app-secret',
+    slack: 'e2e-slack-signing-secret',
+  },
+  /** The Shopify app's key and secret, which sign embedded-app session tokens. */
+  shopifyApp: { key: 'e2e-shopify-api-key', secret: 'e2e-shopify-api-secret' },
 } as const
 
 /**

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response, Request, Body, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Response, Request, Body, File, UploadFile
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -30,8 +30,11 @@ from app.models.user import User
 from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.models.schemas.user import AdminPasswordReset, TeammateResponse, UserCreate, UserStatusUpdate, UserUpdate, UserResponse, TokenResponse
 from datetime import datetime, timezone
-from app.core.security import create_access_token, create_refresh_token, validate_password_strength, verify_token
-from app.core.auth import INBOX_PERMISSIONS, get_current_user, require_any_permission, require_permissions
+from app.core.security import validate_password_strength
+from app.core.auth import INBOX_PERMISSIONS, get_current_user, request_token, require_any_permission, require_permissions
+from app.services.auth_sessions import (
+    REFRESH, issue_tokens, live_payload, revoke_session, revoke_user_sessions, session_id_of,
+)
 from app.core.logger import get_logger
 from app.repositories.user import UserRepository
 from app.repositories.fcm_token import FCMTokenRepository
@@ -45,6 +48,7 @@ from app.repositories.shopify_shop_repository import ShopifyShopRepository
 from app.models.schemas.shopify.shopify_shop import ShopifyShopUpdate
 from app.core.cors import update_cors_middleware
 from app.core.application import app
+from app.core.params import MAX_DB_INT
 # Try to import enterprise modules
 try:
     from app.enterprise.repositories.subscription import SubscriptionRepository
@@ -200,8 +204,8 @@ async def create_user(
 
 @router.get("", response_model=List[UserResponse])
 async def list_users(
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0, le=MAX_DB_INT),
+    limit: int = Query(100, ge=1, le=1000),
     current_user: User = Depends(require_permissions("manage_users")),
     db: Session = Depends(get_db)
 ):
@@ -442,7 +446,7 @@ async def get_my_avatar(current_user: User = Depends(get_current_user)):
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
-    user_id: str,
+    user_id: UUID,
     current_user: User = Depends(require_permissions("manage_users")),
     db: Session = Depends(get_db)
 ):
@@ -507,18 +511,14 @@ async def login(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Update online status
+        # Update online status and open a session for this sign-in
         user.is_online = True
         user.last_seen = func.now()
+        access_token, refresh_token = issue_tokens(db, user.id, user.organization_id)
         db.commit()
 
         # Get role info
         role = db.query(Role).filter(Role.id == user.role_id).first()
-
-        # Generate tokens
-        token_data = {"sub": str(user.id), "org": str(user.organization_id)}
-        access_token = create_access_token(token_data)
-        refresh_token = create_refresh_token(token_data)
 
         # Set secure cookies
         response.set_cookie(
@@ -651,9 +651,9 @@ async def refresh_token(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        payload = verify_token(refresh_token)
+        payload = live_payload(db, refresh_token, REFRESH)
 
-        if not payload or payload.get("type") != "refresh":
+        if not payload:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid refresh token",
@@ -690,16 +690,13 @@ async def refresh_token(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        # Update last seen
+        # Update last seen, and re-mint tokens for the same session (a legacy
+        # token without one gets a new session)
         user.last_seen = func.now()
+        access_token, refresh_token = issue_tokens(db, user_id, org_id, sid=payload.get("sid"))
         db.commit()
 
         role = db.query(Role).filter(Role.id == user.role_id).first()
-  
-        # Generate new tokens
-        token_data = {"sub": str(user_id), "org": str(org_id)}
-        access_token = create_access_token(token_data)
-        refresh_token = create_refresh_token(token_data)
 
         # Set secure cookies
         response.set_cookie(
@@ -765,11 +762,18 @@ async def refresh_token(
 @router.post("/logout")
 async def logout(
     response: Response,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Logout user and clear cookies"""
-    # Update online status
+    """Logout user, end the session and clear cookies"""
+    # End the session server-side, so a copy of either token stops working
+    for token in (request_token(request), request.cookies.get("refresh_token")):
+        sid = session_id_of(token)
+        if sid:
+            revoke_session(db, sid)
+
+    # Update online status (commits the revocation too)
     user_repo = UserRepository(db)
     user_repo.update_user(current_user.id, is_online=False, last_seen=func.now())
 
@@ -844,6 +848,7 @@ async def unregister_fcm_token(
 @router.patch("/me", response_model=UserResponse)
 async def update_profile(
     data: UserUpdate,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -897,6 +902,10 @@ async def update_profile(
                 )
 
             fields['hashed_password'] = User.get_password_hash(new_password)
+            # Sign out everywhere else; the session making the change stays.
+            revoke_user_sessions(
+                db, current_user.id, keep_sid=session_id_of(request_token(request))
+            )
 
         updated_user = user_repo.update_user(
             current_user.id,
@@ -989,6 +998,11 @@ async def update_user(
                 db, current_user, base_role, see_all_ai_chats, see_all_org_chats
             ).id
 
+        if fields.get('is_active') is False:
+            # Already refused at every auth check; ending the sessions too
+            # means reactivating the user does not bring them back.
+            revoke_user_sessions(db, user.id)
+
         updated_user = user_repo.update_user(user_id, **fields)
 
         # Generate signed URL if using S3 and user has a profile picture
@@ -1037,6 +1051,8 @@ async def reset_user_password(
         )
 
     try:
+        # Whoever holds the old password may already be signed in; end that.
+        revoke_user_sessions(db, user.id)
         user_repo.update_user(user_id, hashed_password=User.get_password_hash(data.new_password))
     except Exception as e:
         logger.error(f"Failed to reset password for user {user_id}: {str(e)}")

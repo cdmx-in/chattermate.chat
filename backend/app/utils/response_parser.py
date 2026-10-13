@@ -22,6 +22,12 @@ from app.models.schemas.chat import ChatResponse
 
 logger = get_logger(__name__)
 
+# What the customer sees when a turn fails, instead of anything half-made.
+GENERIC_ERROR_MESSAGE = "I apologize, but I encountered an error, please try again later."
+
+# The reply's "message" string, only when it arrived whole (closing quote and all).
+_MESSAGE_FIELD = re.compile(r'"message"\s*:\s*"((?:[^"\\]|\\.)*)"', re.DOTALL)
+
 def parse_response_content(response: Any, model: Type[ChatResponse] = ChatResponse) -> ChatResponse:
     """
     Parse the response content from the LLM into a ChatResponse object.
@@ -173,6 +179,11 @@ def extract_json_from_text(text: str, model: Type[ChatResponse] = ChatResponse) 
             except json.JSONDecodeError:
                 logger.debug("Failed to extract JSON using braces")
     
+    # It set out to be the JSON object we asked for and broke (cut off, malformed):
+    # never show the customer raw JSON.
+    if not content_dict and cleaned_text.lstrip().startswith('{'):
+        return salvage_broken_json(cleaned_text)
+
     # If we failed to extract valid JSON, try to parse potential field values from the text
     if not content_dict:
         content_dict = extract_fields_from_text(cleaned_text)
@@ -189,6 +200,21 @@ def extract_json_from_text(text: str, model: Type[ChatResponse] = ChatResponse) 
     
     # If no JSON structure found, create a basic response
     return create_basic_chat_response(cleaned_text)
+
+def salvage_broken_json(text: str) -> ChatResponse:
+    """A reply that began as a JSON object but does not parse. Keeps its message if
+    that field arrived complete; otherwise the generic error, never the fragment."""
+    match = _MESSAGE_FIELD.search(text)
+    if match:
+        try:
+            message = json.loads(f'"{match.group(1)}"')
+            if message.strip():
+                return create_basic_chat_response(message)
+        except json.JSONDecodeError:
+            pass
+    logger.warning(f"Unparseable structured reply, answering with the generic error: {text[:200]}")
+    return create_basic_chat_response(GENERIC_ERROR_MESSAGE)
+
 
 def clean_malformed_output(text: str) -> str:
     """

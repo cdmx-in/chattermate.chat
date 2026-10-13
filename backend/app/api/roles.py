@@ -27,6 +27,7 @@ from app.core.auth import (
 )
 from app.repositories.role import RoleRepository
 from app.models.permission import Permission
+from app.core.params import DbIntId
 from app.models.schemas.role import (
     RoleCreate,
     RoleUpdate,
@@ -103,7 +104,7 @@ async def list_roles(
 
 @router.get("/{role_id}", response_model=RoleResponse)
 async def get_role(
-    role_id: int,  # Changed from UUID to int
+    role_id: DbIntId,
     current_user: User = Depends(require_any_permission(*ROLE_READ_PERMISSIONS)),
     db: Session = Depends(get_db)
 ):
@@ -118,7 +119,7 @@ async def get_role(
 
 @router.put("/{role_id}", response_model=RoleResponse)
 async def update_role(
-    role_id: int,
+    role_id: DbIntId,
     role_data: RoleUpdate,
     current_user: User = Depends(require_permissions("manage_roles")),
     db: Session = Depends(get_db)
@@ -179,7 +180,7 @@ async def update_role(
 
 @router.delete("/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_role(
-    role_id: int,
+    role_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_roles")),
     db: Session = Depends(get_db)
 ):
@@ -206,7 +207,7 @@ async def delete_role(
 
 @router.post("/{role_id}/permissions/{permission}")
 async def add_role_permission(
-    role_id: int,
+    role_id: DbIntId,
     permission: str,
     current_user: User = Depends(require_permissions("manage_roles")),
     db: Session = Depends(get_db)
@@ -231,7 +232,7 @@ async def add_role_permission(
 
 @router.delete("/{role_id}/permissions/{permission}")
 async def remove_role_permission(
-    role_id: int,
+    role_id: DbIntId,
     permission: str,
     current_user: User = Depends(require_permissions("manage_roles")),
     db: Session = Depends(get_db)

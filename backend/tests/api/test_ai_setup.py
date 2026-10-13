@@ -740,4 +740,35 @@ def test_setup_ai_unsupported_model_type(client, db, test_user):
         # Should fail validation because CHATTERMATE with non-"chattermate" model name is invalid
         assert response.status_code == 400
         data = response.json()
-        assert "error" in data["detail"] 
+        assert "error" in data["detail"]
+
+
+def test_public_only_policy_refuses_an_internal_base_url(client, db, test_user, monkeypatch):
+    """Under OUTBOUND_URL_POLICY=public_only the base URL is refused before the
+    server ever dials it for the live key test."""
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "OUTBOUND_URL_POLICY", "public_only")
+    with patch.object(ai_setup_router.ChatAgent, "test_api_key") as key_test:
+        response = client.post("/api/ai/setup", json={
+            "model_type": "OPENAI_COMPATIBLE",
+            "model_name": "local-model",
+            "api_key": "test_valid_key",
+            "base_url": "http://169.254.169.254/v1",
+        })
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert detail["type"] == "invalid_base_url"
+    assert "must be a public address" in detail["details"]
+    key_test.assert_not_called()
+
+
+def test_public_only_policy_refuses_an_internal_base_url_on_update(client, db, test_user, test_ai_config, monkeypatch):
+    from app.core.config import settings
+    monkeypatch.setattr(settings, "OUTBOUND_URL_POLICY", "public_only")
+    response = client.put("/api/ai/config", json={
+        "model_type": "OPENAI_COMPATIBLE",
+        "model_name": "local-model",
+        "base_url": "http://localhost:11434/v1",
+    })
+    assert response.status_code == 400
+    assert response.json()["detail"]["type"] == "invalid_base_url"

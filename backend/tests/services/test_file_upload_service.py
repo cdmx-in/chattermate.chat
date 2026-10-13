@@ -149,7 +149,7 @@ class TestFileUploadServiceUpload:
         
         with patch('app.services.file_upload_service.settings') as mock_settings, \
              patch('app.services.file_upload_service.upload_file_to_s3') as mock_s3_upload, \
-             patch('app.services.file_upload_service.get_s3_signed_url') as mock_signed_url, \
+             patch('app.services.file_upload_service.resolve_public_url') as mock_signed_url, \
              patch('uuid.uuid4') as mock_uuid:
             
             # Configure mocks
@@ -218,7 +218,9 @@ class TestFileUploadServiceUpload:
             
             # Verify result
             assert result['file_url'] == f'/uploads/chat_attachments/{org_id}/test-uuid-456.txt'
-            assert result['signed_url'] == f'/uploads/chat_attachments/{org_id}/test-uuid-456.txt'
+            # Local attachments are never static-served: clients get a signed link.
+            assert result['signed_url'].startswith(
+                f'/api/v1/files/local/chat_attachments/{org_id}/test-uuid-456.txt?exp=')
             assert result['filename'] == 'test_file.txt'
             assert result['content_type'] == 'text/plain'
     
@@ -385,7 +387,7 @@ class TestFileUploadServiceUpload:
         
         with patch('app.services.file_upload_service.settings') as mock_settings, \
              patch('app.services.file_upload_service.upload_file_to_s3') as mock_s3_upload, \
-             patch('app.services.file_upload_service.get_s3_signed_url') as mock_signed_url:
+             patch('app.services.file_upload_service.resolve_public_url') as mock_signed_url:
             
             mock_settings.S3_FILE_STORAGE = True
             mock_s3_upload.return_value = 'https://s3.amazonaws.com/bucket/file.txt'
@@ -409,7 +411,7 @@ class TestFileUploadServiceUpload:
         
         with patch('app.services.file_upload_service.settings') as mock_settings, \
              patch('app.services.file_upload_service.upload_file_to_s3') as mock_s3_upload, \
-             patch('app.services.file_upload_service.get_s3_signed_url') as mock_signed_url:
+             patch('app.services.file_upload_service.resolve_public_url') as mock_signed_url:
             
             mock_settings.S3_FILE_STORAGE = True
             mock_s3_upload.return_value = 'https://s3.amazonaws.com/bucket/file.txt'
@@ -432,7 +434,7 @@ class TestFileUploadServiceUpload:
         
         with patch('app.services.file_upload_service.settings') as mock_settings, \
              patch('app.services.file_upload_service.upload_file_to_s3') as mock_s3_upload, \
-             patch('app.services.file_upload_service.get_s3_signed_url') as mock_signed_url, \
+             patch('app.services.file_upload_service.resolve_public_url') as mock_signed_url, \
              patch('uuid.uuid4') as mock_uuid:
             
             mock_settings.S3_FILE_STORAGE = True

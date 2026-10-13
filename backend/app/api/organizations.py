@@ -15,7 +15,7 @@ limitations under the License.
 """
 
 from typing import List
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -31,7 +31,7 @@ from app.models.schemas.organization import (
     OrganizationCreateResponse
 )
 from app.core.auth import get_current_user, require_permissions
-from app.core.security import create_access_token, create_refresh_token
+from app.services.auth_sessions import issue_tokens
 from app.core.logger import get_logger
 from app.models.role import Role
 from app.models.permission import Permission, DEFAULT_AGENT_ROLE_PERMISSIONS
@@ -53,10 +53,24 @@ try:
 except ImportError:
     HAS_EMAIL_VALIDATION = False
 
+DOMAIN_TAKEN_MESSAGE = "That domain is already used by another organization."
+LOCALHOST_DOMAIN_MESSAGE = "Localhost can't be used as your domain. Use the domain of the site where you'll add the widget."
+LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
+
 logger = get_logger(__name__)
 router = APIRouter(
     tags=["organizations"]
 )
+
+
+def is_localhost_domain(domain: str) -> bool:
+    """Whether a domain (bare host, host:port or URL) points at localhost"""
+    domain = domain.strip()
+    try:
+        host = urlparse(domain if "://" in domain else f"//{domain}").hostname
+    except ValueError:
+        return False
+    return (host or "") in LOCALHOST_HOSTS
 
 
 @router.post("", response_model=OrganizationCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -144,10 +158,8 @@ async def create_organization(
         db.add(admin)
         db.flush()
 
-        # Generate tokens and set cookies
-        token_data = {"sub": str(admin.id), "org": str(organization.id)}
-        access_token = create_access_token(token_data)
-        refresh_token = create_refresh_token(token_data)
+        # Open the admin's first session and set cookies
+        access_token, refresh_token = issue_tokens(db, admin.id, organization.id)
 
         # Set cookies and return response
         response.set_cookie(
@@ -355,10 +367,32 @@ async def update_organization(
                         detail=f"Invalid time format for {day}. Use HH:MM format (24-hour)"
                     )
 
+        new_domain = update_data.get('domain')
+        if new_domain and new_domain.lower() != org.domain.lower() and is_localhost_domain(new_domain):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=LOCALHOST_DOMAIN_MESSAGE
+            )
+        if new_domain and OrganizationRepository(db).is_domain_taken(new_domain, exclude_org_id=org.id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=DOMAIN_TAKEN_MESSAGE
+            )
+
         for field, value in update_data.items():
             setattr(org, field, value)
 
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Another org claimed the domain between the check and the write
+            if 'domain' not in update_data:
+                raise
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=DOMAIN_TAKEN_MESSAGE
+            )
         db.refresh(org)
 
         # Update CORS origins after updating organization
