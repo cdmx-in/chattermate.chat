@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto'
+
 let counter = 0
 
 /**
@@ -6,6 +8,6 @@ let counter = 0
  */
 export function unique(prefix: string): string {
   counter += 1
-  const random = Math.random().toString(36).slice(2, 6)
+  const random = randomBytes(3).toString('hex')
   return `${prefix}-${Date.now().toString(36)}${counter}${random}`
 }

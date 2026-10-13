@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto'
 import type { APIRequestContext } from '@playwright/test'
 import { connectTelegram, routeToAgent, type ChannelAccount } from '../api/channels'
 import type { ApiClient } from '../api/client'
@@ -43,7 +44,7 @@ export class TelegramBot {
   static async connect(api: ApiClient, request: APIRequestContext, agentId: string): Promise<TelegramBot> {
     return step('Connect a Telegram bot', async () => {
       const externals = new FakeExternals(request)
-      const token = `${Math.floor(Math.random() * 1e9)}:${unique('E2E')}`
+      const token = `${randomInt(1e9)}:${unique('E2E')}`
       const account = await connectTelegram(api, token)
       await routeToAgent(api, account.id, agentId)
       // The secret Telegram would echo back — the backend sent it in setWebhook.
@@ -54,7 +55,7 @@ export class TelegramBot {
 
   /** A private chat with one Telegram user. */
   chatWith(firstName: string): TelegramChat {
-    return new TelegramChat(this, Math.floor(Math.random() * 1e9), firstName)
+    return new TelegramChat(this, randomInt(1e9), firstName)
   }
 
   async deliver(update: Record<string, unknown>): Promise<void> {
