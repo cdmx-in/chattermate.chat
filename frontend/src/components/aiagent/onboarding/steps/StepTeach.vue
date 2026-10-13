@@ -204,19 +204,24 @@ const handleContinue = async () => {
   advancing.value = true
   setFailure(null)
   let failed: QueueItem | null = null
+  let filesAccepted = true
   try {
     const sentUrls = [...urls.value]
     reading.value = sentUrls.length > 0
-    const accepted = (await handleUrlUpload()) && (await handleFileUpload())
     // On failure the error is on screen and the batch stays staged to fix.
-    if (!accepted) return
+    if (!(await handleUrlUpload())) return
+    filesAccepted = await handleFileUpload()
+    // The websites went in even if a PDF didn't: say now if one already failed.
     if (sentUrls.length) failed = await firstFailure(sentUrls)
   } finally {
     advancing.value = false
     reading.value = false
   }
 
-  if (!failed) return emit('next')
+  if (!failed) {
+    if (filesAccepted) emit('next') // else the PDF error is on screen
+    return
+  }
   setFailure(failed)
   // Focus was on the button, disabled while it read the site. Trying another
   // address is the likeliest next move; the ways round it follow in tab order.

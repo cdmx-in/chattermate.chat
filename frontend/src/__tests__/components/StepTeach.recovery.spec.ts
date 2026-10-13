@@ -373,4 +373,35 @@ describe('StepTeach - staged PDFs', () => {
     await wrapper.find('button[aria-label="Remove https://acme.com"]').trigger('click')
     expect(wrapper.text()).not.toContain('Some URLs already exist')
   })
+
+  it('a site that failed is still reported when a PDF in the same batch fails', async () => {
+    getAgentQueueItems.mockResolvedValueOnce({ queue_items: [] }).mockResolvedValue({ queue_items: [firstSite] })
+    uploadPdfFiles.mockRejectedValue(new Error('That PDF is too large.'))
+    addUrls.mockResolvedValue({ message: 'Queued' })
+    await mountStep()
+    await typeAndAdd('https://erfanpv.com')
+    await pickPdfs('menu.pdf')
+    await clickContinue()
+
+    expect(panel().exists()).toBe(true)
+    expect(panel().text()).toContain("We couldn't read https://erfanpv.com.")
+    expect(wrapper.text()).toContain('That PDF is too large.')
+    expect(wrapper.emitted('next')).toBeFalsy()
+  })
+
+  it('a PDF that fails keeps the step even when the site is fine', async () => {
+    const reading = { ...firstSite, status: 'pending', reason: null }
+    getAgentQueueItems.mockResolvedValueOnce({ queue_items: [] }).mockResolvedValue({ queue_items: [reading] })
+    uploadPdfFiles.mockRejectedValue(new Error('That PDF is too large.'))
+    addUrls.mockResolvedValue({ message: 'Queued' })
+    await mountStep()
+    await typeAndAdd('https://erfanpv.com')
+    await pickPdfs('menu.pdf')
+    await clickContinue()
+
+    expect(addUrls).toHaveBeenCalled() // the site went in
+    expect(panel().exists()).toBe(false)
+    expect(wrapper.text()).toContain('That PDF is too large.')
+    expect(wrapper.emitted('next')).toBeFalsy()
+  })
 })
