@@ -42,7 +42,6 @@ const {
   uploadProgress,
   uploadError,
   urlFormError,
-  successMessage,
   knowledgeItems,
   orgTotalCount,
   queueItems,
@@ -58,6 +57,9 @@ const {
 } = useKnowledgeManagement(props.agentId, props.organizationId)
 
 const advancing = ref(false)
+// Sending the sources, or waiting to hear whether they could be read: the
+// batch is in flight, so nothing on the step may change it.
+const busy = computed(() => advancing.value || isUploading.value)
 // A website that failed fast (e.g. a domain that doesn't resolve), shown with
 // a way round it instead of moving on with nothing learned
 const crawlFailure = ref<QueueItem | null>(null)
@@ -167,14 +169,14 @@ const removeFile = (index: number) => {
         class="text-input mono"
         type="text"
         placeholder="https://docs.yourcompany.com"
-        :disabled="isUploading"
+        :disabled="busy"
         @keydown.enter.prevent="stageUrl"
       />
       <!-- "Add" acts on the URL beside it, so the object is implicit. The PDF
            button opens a file picker, a different action — it keeps its own
            label rather than reading as a second way to add the same thing. -->
-      <button type="button" class="btn-soft" :disabled="isUploading" @click="stageUrl">Add</button>
-      <button type="button" class="btn-soft" :disabled="isUploading" @click="triggerFileInput">Upload PDF</button>
+      <button type="button" class="btn-soft" :disabled="busy" @click="stageUrl">Add</button>
+      <button type="button" class="btn-soft" :disabled="busy" @click="triggerFileInput">Upload PDF</button>
       <input
         ref="fileInput"
         type="file"
@@ -192,12 +194,12 @@ const removeFile = (index: number) => {
       <li v-for="(url, i) in urls" :key="`u-${i}`" class="source-row">
         <span class="source-icon" aria-hidden="true">🌐</span>
         <span class="source-name">{{ url }}</span>
-        <button type="button" class="source-remove" :disabled="isUploading" @click="removeUrl(i)" aria-label="Remove">×</button>
+        <button type="button" class="source-remove" :disabled="busy" @click="removeUrl(i)" aria-label="Remove">×</button>
       </li>
       <li v-for="(file, i) in files" :key="`f-${i}`" class="source-row">
         <span class="source-icon" aria-hidden="true">📄</span>
         <span class="source-name">{{ file.name }}</span>
-        <button type="button" class="source-remove" :disabled="isUploading" @click="removeFile(i)" aria-label="Remove">×</button>
+        <button type="button" class="source-remove" :disabled="busy" @click="removeFile(i)" aria-label="Remove">×</button>
       </li>
     </ul>
 
@@ -214,7 +216,6 @@ const removeFile = (index: number) => {
       <div class="progress-bar" :style="{ width: `${uploadProgress}%` }"></div>
     </div>
 
-    <p v-if="successMessage && !crawlFailure" class="step-hint">{{ successMessage }} Processing in the background — you can continue.</p>
     <p v-if="uploadError" class="step-error">{{ uploadError }}</p>
 
     <div v-if="crawlFailure" class="crawl-failure" role="alert">
@@ -232,8 +233,8 @@ const removeFile = (index: number) => {
     </div>
 
     <div class="step-actions">
-      <button type="button" class="btn-ghost" :disabled="advancing || isUploading" @click="emit('back')">Back</button>
-      <button type="button" class="btn-accent" :disabled="advancing || isUploading" @click="handleContinue">
+      <button type="button" class="btn-ghost" :disabled="busy" @click="emit('back')">Back</button>
+      <button type="button" class="btn-accent" :disabled="busy" @click="handleContinue">
         {{ advancing ? 'Reading your site…' : crawlFailure ? 'Continue without it' : 'Continue' }}
         <span v-if="!advancing" class="arrow">→</span>
       </button>

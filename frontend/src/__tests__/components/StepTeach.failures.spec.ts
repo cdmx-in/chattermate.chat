@@ -235,4 +235,21 @@ describe('StepTeach - a website that fails fast', () => {
     await clickContinue(wrapper)
     expect(wrapper.emitted('next')).toBeTruthy()
   })
+
+  it('locks the step while it checks the site can be read', async () => {
+    getAgentQueueItems.mockResolvedValue({ queue_items: [{ id: 1, source: 'https://teeckbox.com', source_type: 'website', status: 'pending', created_at: '' }] })
+    addUrls.mockResolvedValue({ message: 'URLs queued for processing' })
+    const wrapper = await mountStep()
+    await typeAndAdd(wrapper, 'https://teeckbox.com')
+    await flushPromises()
+    await wrapper.findAll('button').find((b: any) => b.text().includes('Continue'))!.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('.btn-accent').text()).toContain('Reading your site')
+    for (const label of ['Add', 'Upload PDF', 'Back']) {
+      expect(wrapper.findAll('button').find((b: any) => b.text() === label)!.attributes('disabled')).toBeDefined()
+    }
+    expect(wrapper.find('input[type="text"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('you can continue')
+  })
 })
