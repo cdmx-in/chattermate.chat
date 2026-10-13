@@ -10,6 +10,10 @@ vi.mock('@/services/onboarding', () => ({
 vi.mock('@/services/agent', () => ({
   agentService: { getAgentById: (id: string) => getAgentById(id) }
 }))
+const createAgentWidget = vi.fn()
+vi.mock('@/services/widget', () => ({
+  widgetService: { createAgentWidget: (...a: unknown[]) => createAgentWidget(...a) }
+}))
 vi.mock('@/services/user', () => ({
   userService: { getCurrentUser: () => ({ organization_id: 'org-1' }), getUserId: () => 'user-1' }
 }))
@@ -17,7 +21,10 @@ vi.mock('@/utils/permissions', () => ({ permissionChecks: { canManageAgents: () 
 
 const STORAGE_KEY = 'chattermate:onboarding:v1'
 const stubs = {
-  StepCreate: { template: '<div class="step-create" />' },
+  StepCreate: {
+    emits: ['created'],
+    template: `<button class="step-create" @click="$emit('created', { id: 'agent-1', name: 'Tom', agent_type: 'CUSTOMER_SUPPORT' })" />`,
+  },
   StepTeach: { props: ['agentId'], template: '<div class="step-teach">{{ agentId }}</div>' },
   StepTest: { props: ['widgetId'], template: '<div class="step-test">{{ widgetId }}</div>' },
   StepLaunch: { props: ['widgetId'], template: '<div class="step-launch">{{ widgetId }}</div>' },
@@ -35,6 +42,7 @@ describe('AIAgentOnboarding - where it resumes', () => {
   beforeEach(() => {
     localStorage.clear()
     getProgress.mockReset()
+    createAgentWidget.mockReset().mockResolvedValue({ id: 'w-new' })
     getAgentById.mockReset().mockResolvedValue({ id: 'agent-9', name: 'Tom', agent_type: 'CUSTOMER_SUPPORT' })
   })
 
@@ -64,5 +72,24 @@ describe('AIAgentOnboarding - where it resumes', () => {
     const wrapper = await mountWizard()
     expect(getProgress).not.toHaveBeenCalled()
     expect(wrapper.find('.step-teach').text()).toBe('agent-9')
+  })
+
+  it('creates the widget with the agent, so it exists if they stop at Teach', async () => {
+    getProgress.mockResolvedValue({ step: 'create', agent_id: null, widget_id: null, hidden: false })
+    const wrapper = await mountWizard()
+    await wrapper.find('.step-create').trigger('click')
+    await flushPromises()
+    expect(createAgentWidget).toHaveBeenCalledWith('agent-1', 'Tom')
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEY)!)['org-1'].widgetId).toBe('w-new')
+    expect(wrapper.find('.step-teach').exists()).toBe(true)
+  })
+
+  it('still moves on to Teach if the widget could not be created', async () => {
+    getProgress.mockResolvedValue({ step: 'create', agent_id: null, widget_id: null, hidden: false })
+    createAgentWidget.mockRejectedValue(new Error('500'))
+    const wrapper = await mountWizard()
+    await wrapper.find('.step-create').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('.step-teach').exists()).toBe(true)
   })
 })

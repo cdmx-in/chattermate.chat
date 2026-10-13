@@ -101,10 +101,7 @@ const stopKnowledgePoll = () => {
 const ensureWidget = async (): Promise<string | null> => {
   if (props.widgetId) return props.widgetId
   try {
-    const widget = await widgetService.createWidget({
-      name: `${props.agentName} Widget`,
-      agent_id: props.agentId,
-    })
+    const widget = await widgetService.createAgentWidget(props.agentId, props.agentName)
     emit('widget-created', widget.id)
     return widget.id
   } catch (err: any) {

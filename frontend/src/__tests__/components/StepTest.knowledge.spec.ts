@@ -12,7 +12,7 @@ vi.mock('@/services/knowledge', () => ({
     getKnowledgeByAgent: (...a: unknown[]) => getKnowledgeByAgent(...a)
   }
 }))
-vi.mock('@/services/widget', () => ({ widgetService: { createWidget: vi.fn() } }))
+vi.mock('@/services/widget', () => ({ widgetService: { createAgentWidget: vi.fn() } }))
 vi.mock('@/composables/useOnboardingTestChat', () => ({
   useOnboardingTestChat: () => ({
     messages: ref([]), loading: ref(false), connecting: ref(false), connectionError: ref(''),

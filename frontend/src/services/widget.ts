@@ -35,6 +35,11 @@ class WidgetService {
     return response.data
   }
 
+  /** The widget the setup wizard installs: one per agent, named after it. */
+  async createAgentWidget(agentId: string, agentName: string): Promise<Widget> {
+    return this.createWidget({ name: `${agentName} Widget`, agent_id: agentId })
+  }
+
   async deleteWidget(id: string): Promise<void> {
     await api.delete(`${this.baseUrl}/${id}`)
   }
