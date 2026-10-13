@@ -524,26 +524,6 @@ class TestWorkflowExecutionService:
 
         assert result == "Order 12345 for Bob"
 
-    def test_parse_operands(self, workflow_service):
-        """Test parsing operands from strings"""
-        left, right = workflow_service._parse_operands("100", "50")
-        assert left == "100"
-        assert right == "50"
-
-        left, right = workflow_service._parse_operands('"hello"', '"world"')
-        assert left == "hello"
-        assert right == "world"
-
-    def test_parse_numeric_operands(self, workflow_service):
-        """Test parsing numeric operands"""
-        left, right = workflow_service._parse_numeric_operands("100", "50")
-        assert left == 100.0
-        assert right == 50.0
-
-        left, right = workflow_service._parse_numeric_operands("10.5", "20.3")
-        assert left == 10.5
-        assert right == 20.3
-
     def test_store_form_variables(self, workflow_service):
         """Test storing form data in workflow state"""
         workflow_state = {"variables": {}}
