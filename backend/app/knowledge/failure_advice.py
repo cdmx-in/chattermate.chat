@@ -15,7 +15,7 @@ limitations under the License.
 
 What to tell someone when a knowledge source couldn't be read: one piece of
 advice per failure cause. Kept apart from the crawler so code that only needs
-the words (the setup emails' worker) doesn't import the crawling stack.
+the words doesn't import the crawling stack.
 """
 
 from typing import Optional

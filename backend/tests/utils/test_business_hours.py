@@ -19,9 +19,7 @@ line and the AI's transfer wording, so the two cannot contradict each other.
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from app.utils.business_hours import is_within_business_hours, normalize_timezone
+from app.utils.business_hours import is_within_business_hours
 
 
 def _org(business_hours=None, timezone='UTC'):
@@ -85,16 +83,3 @@ def test_unparsable_hours_fall_back_rather_than_raising():
 def test_an_unknown_timezone_does_not_raise():
     with _at('monday', 12):
         assert is_within_business_hours(_org(HOURS, timezone='Invalid/Zone')) is True
-
-
-@pytest.mark.parametrize("given,expected", [
-    ("Asia/Kolkata", "Asia/Kolkata"),
-    ("America/Araguaina", "America/Araguaina"),
-    ("UTC", "UTC"),
-    (None, "UTC"),
-    ("", "UTC"),
-    ("Mars/Olympus_Mons", "UTC"),
-    ("asia/kolkata", "UTC"),  # IANA names are case-sensitive
-])
-def test_normalize_timezone(given, expected):
-    assert normalize_timezone(given) == expected

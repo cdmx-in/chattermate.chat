@@ -17,8 +17,7 @@ limitations under the License.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { buildWidgetEmbed } from '@/utils/widgetEmbed'
-// Shared with the backend's widget_snippet() test: the setup email must hand
-// out exactly the snippet the dashboard does.
+// The snippet's exact text, pinned so other code that builds it can match it.
 import golden from '../fixtures/widget-snippet.txt?raw'
 
 /**
@@ -61,7 +60,7 @@ describe('buildWidgetEmbed', () => {
     expect(code).not.toContain('api.chattermate.chat')
   })
 
-  it('matches the snippet the setup emails send (backend/app/utils/widget_embed.py)', () => {
+  it('matches the pinned snippet', () => {
     const expected = golden
       .replace('{widget_id}', 'w-123')
       .replace('{api_url}', API_URL)

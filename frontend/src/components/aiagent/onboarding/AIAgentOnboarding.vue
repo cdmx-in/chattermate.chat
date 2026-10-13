@@ -40,7 +40,7 @@ const WIZARD_STEP_FOR: Record<string, OnboardingStepIndex> = {
   create: 0, teach: 1, test: 2, launch: 3, live: 3,
 }
 
-/** Where the server says the org is, when the hosted edition tracks it. */
+/** Where the server says the org is, when the enterprise module tracks it. */
 const serverProgress = async () => {
   try {
     const module = await loadModule(moduleImports.setupService)
@@ -52,8 +52,8 @@ const serverProgress = async () => {
 }
 
 /**
- * This browser's run if it has one, else (hosted edition) where the server
- * says the org is: another device, cleared storage, a setup email's link.
+ * This browser's run if it has one, else where the server says the org is
+ * (enterprise module only): another device, cleared storage, a link.
  */
 const resumePoint = async () => {
   const record = onboarding.get(orgId)

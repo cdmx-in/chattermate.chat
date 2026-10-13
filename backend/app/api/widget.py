@@ -46,8 +46,8 @@ from app.utils.business_hours import is_within_business_hours
 router = APIRouter()
 logger = get_logger(__name__)
 
-# Where each widget is live feeds setup progress and the setup emails, which
-# are enterprise features; the community edition records nothing.
+# The enterprise module can record where each widget is live; without it,
+# nothing is recorded.
 try:
     from app.enterprise.services import widget_install
 except ImportError:

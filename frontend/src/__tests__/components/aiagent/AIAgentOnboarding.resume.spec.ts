@@ -4,7 +4,7 @@ import { mount, flushPromises } from '@vue/test-utils'
 
 const getProgress = vi.fn()
 const getAgentById = vi.fn()
-// The hosted edition's setup service; null when the enterprise module is absent
+// The enterprise module's setup service; null when the module is absent
 let enterprise = true
 vi.mock('@/composables/useEnterpriseFeatures', () => ({
   useEnterpriseFeatures: () => ({

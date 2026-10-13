@@ -324,7 +324,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
 
         # Bot protection first: it is the specific, actionable cause.
         if getattr(self.reader, '_challenge_blocked', 0) > 0:
-            # The shared advice, so onboarding and the setup email can say it too
+            # The shared advice, so every place that reports a failure says the same
             raise BotProtectionError(
                 FAILURE_ADVICE[FailureCause.BOT_BLOCKED].format(url=self._source_label())
             )

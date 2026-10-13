@@ -35,7 +35,7 @@ const widgetSnippet = computed(() =>
   props.widgetId ? buildWidgetEmbed(props.widgetId, false) : '',
 )
 
-// Where the widget is live, or blocked (hosted edition; nothing in open source)
+// Where the widget is live, or blocked (enterprise module; nothing in open source)
 const { enterpriseComponent, moduleImports } = useEnterpriseFeatures()
 const WidgetInstallStatus = enterpriseComponent(moduleImports.widgetInstallStatus)
 

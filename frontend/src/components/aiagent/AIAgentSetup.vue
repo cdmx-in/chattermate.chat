@@ -88,8 +88,7 @@ const handleFullscreenToggle = (isFullscreen: boolean) => {
 
 const route = useRoute()
 const router = useRouter()
-// Links into setup (the hosted "Finish setup" bar, setup emails) carry
-// ?setup=1: reopen the wizard where the org left off.
+// Links into setup carry ?setup=1: reopen the wizard where the org left off.
 const openWizardIfAsked = () => {
     if (route.query.setup === '1' && permissionChecks.canManageAgents()) showOnboarding.value = true
 }

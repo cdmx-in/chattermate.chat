@@ -17,7 +17,7 @@ limitations under the License.
 /**
  * The setup wizard announces that the org's setup moved on (an agent, a
  * source, a finished run). Anything showing setup progress listens and
- * refreshes - in the hosted edition, the "Finish setup" bar.
+ * refreshes (the enterprise module's setup bar).
  */
 export const SETUP_CHANGED_EVENT = 'chattermate:setup-changed'
 

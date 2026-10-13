@@ -37,7 +37,7 @@ import { userService } from '@/services/user'
 const agentStorage = useAgentStorage()
 const subscriptionStorage = useSubscriptionStorage()
 const { hasEnterpriseModule, enterpriseComponent, moduleImports } = useEnterpriseFeatures()
-// The hosted edition tracks setup on the server and shows its own bar
+// With the enterprise module, its setup bar takes the place of this banner
 const SetupProgressBar = enterpriseComponent(moduleImports.setupProgressBar)
 
 const agents = ref<Agent[]>([])

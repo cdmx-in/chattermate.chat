@@ -28,9 +28,9 @@ function getLoaderOrigin(): string {
  * - Simple (anonymous) variant: drops `window.chattermateId` + the loader script.
  * - Token-auth variant: fetches a short-lived token from the host's backend
  *   before loading the widget (used when the agent requires token auth).
- * Shared by the AI Agents list and the onboarding Launch step. The setup emails
- * build the simple variant server-side (backend/app/utils/widget_embed.py);
- * both are tested against __tests__/fixtures/widget-snippet.txt.
+ * Shared by the AI Agents list and the onboarding Launch step. Its exact text
+ * is pinned in __tests__/fixtures/widget-snippet.txt, which other code that
+ * builds the snippet tests against too.
  *
  * `window.chattermateBaseUrl` is baked into the snippet from the runtime API URL
  * so the embedded widget (running on the customer's own site, where APP_CONFIG is

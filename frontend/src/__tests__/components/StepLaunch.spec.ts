@@ -40,7 +40,7 @@ describe('StepLaunch', () => {
     expect(wrapper.find(`a[href="${WIDGET_INSTALL_GUIDE_URL}"]`).exists()).toBe(true)
   })
 
-  it('hands the widget to the install status (hosted edition)', async () => {
+  it('hands the widget to the install status slot', async () => {
     const wrapper = await mountStep()
     expect(wrapper.find('.install-slot').text()).toBe('w-1')
   })
