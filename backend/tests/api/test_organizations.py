@@ -447,3 +447,56 @@ def test_get_another_organizations_stats_is_not_found(client, other_organization
     response = client.get(f"/api/v1/organizations/{other_organization.id}/stats")
 
     assert response.status_code == 404
+
+
+@pytest.mark.parametrize("domain", ["other.example.com", "Other.Example.COM"])
+def test_update_organization_domain_taken_is_conflict(client, db, test_organization, other_organization, domain):
+    """A domain another org already uses is refused with 409, ignoring case"""
+    response = client.patch(
+        f"/api/v1/organizations/{test_organization.id}",
+        json={"domain": domain}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == organizations_router.DOMAIN_TAKEN_MESSAGE
+    db.refresh(test_organization)
+    assert test_organization.domain == "test.com"
+
+
+def test_update_organization_domain_taken_race_is_conflict(client, db, test_organization, other_organization, monkeypatch):
+    """A unique violation at commit (domain claimed after the check) is a 409, not a 500"""
+    from app.repositories.organization import OrganizationRepository
+    monkeypatch.setattr(OrganizationRepository, "is_domain_taken", lambda *args, **kwargs: False)
+
+    response = client.patch(
+        f"/api/v1/organizations/{test_organization.id}",
+        json={"domain": other_organization.domain}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == organizations_router.DOMAIN_TAKEN_MESSAGE
+
+
+def test_update_organization_keeps_own_domain(client, test_organization, other_organization):
+    """Saving the form with the org's current domain unchanged is fine"""
+    response = client.patch(
+        f"/api/v1/organizations/{test_organization.id}",
+        json={"name": "Renamed", "domain": test_organization.domain}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["domain"] == "test.com"
+    assert response.json()["name"] == "Renamed"
+
+
+def test_update_organization_unique_domain(client, db, test_organization, other_organization):
+    """A domain nobody else uses is saved"""
+    response = client.patch(
+        f"/api/v1/organizations/{test_organization.id}",
+        json={"domain": "fresh.example.com"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["domain"] == "fresh.example.com"
+    db.refresh(test_organization)
+    assert test_organization.domain == "fresh.example.com"

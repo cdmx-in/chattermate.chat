@@ -73,6 +73,14 @@ def test_get_organization_by_domain(org_repo):
     assert retrieved_org.id == org.id
     assert retrieved_org.domain == domain
 
+def test_is_domain_taken(org_repo):
+    """Domain clashes ignore case and the org being updated"""
+    org = org_repo.create_organization(name="Test Organization", domain="test.com", timezone="UTC")
+
+    assert org_repo.is_domain_taken("TEST.com") is True
+    assert org_repo.is_domain_taken("test.com", exclude_org_id=org.id) is False
+    assert org_repo.is_domain_taken("other.com") is False
+
 def test_get_multi(org_repo):
     """Test retrieving multiple organizations with pagination"""
     # Create multiple organizations

@@ -53,6 +53,8 @@ try:
 except ImportError:
     HAS_EMAIL_VALIDATION = False
 
+DOMAIN_TAKEN_MESSAGE = "That domain is already used by another organization."
+
 logger = get_logger(__name__)
 router = APIRouter(
     tags=["organizations"]
@@ -355,10 +357,27 @@ async def update_organization(
                         detail=f"Invalid time format for {day}. Use HH:MM format (24-hour)"
                     )
 
+        new_domain = update_data.get('domain')
+        if new_domain and OrganizationRepository(db).is_domain_taken(new_domain, exclude_org_id=org.id):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=DOMAIN_TAKEN_MESSAGE
+            )
+
         for field, value in update_data.items():
             setattr(org, field, value)
 
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Another org claimed the domain between the check and the write
+            if 'domain' not in update_data:
+                raise
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=DOMAIN_TAKEN_MESSAGE
+            )
         db.refresh(org)
 
         # Update CORS origins after updating organization
