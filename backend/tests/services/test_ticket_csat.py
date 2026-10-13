@@ -20,6 +20,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.models.chat_history import ChatHistory
 from app.models.rating import Rating
 from app.models.session_to_agent import SessionStatus, SessionToAgent
 from app.models.ticket import Ticket, TicketPriority, TicketSource, TicketStatus
@@ -123,6 +124,24 @@ class TestCsatRequest:
         assert payload["request_rating"] is True
         assert payload["end_chat"] is True
         assert payload["session_id"] == str(test_session.session_id)
+
+    @pytest.mark.asyncio
+    async def test_the_ask_is_kept_in_the_conversation(
+        self, service, db, test_organization, test_session
+    ):
+        """The ask is part of the thread: agents see it and a reloaded widget shows it."""
+        ticket = make_ticket(
+            service, db, test_organization,
+            session_id=test_session.session_id, source=TicketSource.CHAT_AI,
+        )
+        with patch("app.services.ticket.deliver_to_customer", new=AsyncMock()) as deliver:
+            await service.close(ticket)
+        db.commit()
+        stored = db.query(ChatHistory).filter(ChatHistory.session_id == test_session.session_id).all()
+        assert len(stored) == 1
+        assert ticket.display_number in stored[0].message
+        assert stored[0].attributes["request_rating"] is True
+        assert deliver.call_args.kwargs["message_id"] == stored[0].id
 
     @pytest.mark.asyncio
     async def test_close_without_session_never_asks(
