@@ -24,6 +24,7 @@ from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
 from app.api import mcp_tool as mcp_api
+from app.core.config import settings
 from app.core.auth import get_current_user, require_permissions
 from app.database import get_db
 from app.models.user import User
@@ -475,3 +476,69 @@ def test_overlong_usage_guidance_is_rejected(client: TestClient, db):
         "enabled": True,
     })
     assert resp.status_code == 422
+
+
+def test_public_only_policy_refuses_an_internal_server_url(client: TestClient, db, monkeypatch):
+    """OUTBOUND_URL_POLICY=public_only keeps a tenant's connector off the
+    server's own network, on create and on update."""
+    from app.core.config import settings
+    mcp_api.HAS_ENTERPRISE = False
+    monkeypatch.setattr(settings, "OUTBOUND_URL_POLICY", "public_only")
+
+    created = client.post("/api/mcp", json={
+        "name": "Metadata", "transport_type": MCPTransportType.HTTP.value,
+        "url": "http://169.254.169.254/latest", "enabled": True,
+    })
+    assert created.status_code == 400
+    assert "MCP server URL must be a public address" in created.json()["detail"]
+
+    # STDIO has no URL to check.
+    stdio = client.post("/api/mcp", json={
+        "name": "Local", "transport_type": MCPTransportType.STDIO.value,
+        "command": "uvx", "enabled": True,
+    })
+    assert stdio.status_code == 200
+    switched = client.put(f"/api/mcp/{stdio.json()['id']}", json={
+        "transport_type": MCPTransportType.SSE.value, "url": "http://localhost:3001/sse",
+    })
+    assert switched.status_code == 400
+
+
+def test_any_policy_allows_an_internal_server_url(client: TestClient, db, monkeypatch):
+    from app.core.config import settings
+    mcp_api.HAS_ENTERPRISE = False
+    monkeypatch.setattr(settings, "OUTBOUND_URL_POLICY", "any")
+
+    resp = client.post("/api/mcp", json={
+        "name": "Internal", "transport_type": MCPTransportType.HTTP.value,
+        "url": "http://10.0.0.8:8080/mcp", "enabled": True,
+    })
+    assert resp.status_code == 200
+
+
+STDIO_PAYLOAD = {
+    "name": "Shell", "transport_type": MCPTransportType.STDIO.value,
+    "command": "npx", "args": ["-y", "some-server"], "enabled": True,
+}
+
+
+def test_stdio_connectors_are_refused_when_disabled(client: TestClient, db, monkeypatch):
+    """A shared deployment turns STDIO off: no admin-typed command may be saved…"""
+    mcp_api.HAS_ENTERPRISE = False
+    monkeypatch.setattr(settings, "MCP_STDIO_ENABLED", False)
+
+    resp = client.post("/api/mcp", json=STDIO_PAYLOAD)
+
+    assert resp.status_code == 400
+    assert "STDIO" in resp.json()["detail"]
+
+
+def test_stdio_connectors_saved_earlier_never_run_when_disabled(monkeypatch):
+    """…and one saved before the switch is never started."""
+    from types import SimpleNamespace
+    from app.tools.mcp_manager import MCPToolsManager
+
+    monkeypatch.setattr(settings, "MCP_STDIO_ENABLED", False)
+    config = SimpleNamespace(name="Shell", transport_type=MCPTransportType.STDIO, command="npx", args=["-y", "x"], env_vars={})
+
+    assert MCPToolsManager._build_tool(config) is None

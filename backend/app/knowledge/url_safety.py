@@ -18,6 +18,7 @@ limitations under the License.
 
 import ipaddress
 import socket
+from contextlib import contextmanager
 from typing import Optional, Union
 from urllib.parse import urljoin, urlparse
 
@@ -120,6 +121,15 @@ def guard_url(url: str) -> None:
         raise BlockedHostError(f"Refusing to fetch internal/blocked host: {url}")
 
 
+def _redirect_target(resp) -> Optional[str]:
+    """The absolute URL a redirect response points at, or None when ``resp``
+    is final (not a redirect, or a redirect with no Location)."""
+    if not resp.is_redirect:
+        return None
+    location = resp.headers.get("location")
+    return urljoin(str(resp.url), location) if location else None
+
+
 def safe_get(client, url: str, *, max_redirects: int = MAX_REDIRECTS, **kwargs):
     """httpx GET that follows redirects manually, re-validating each hop's host.
 
@@ -131,11 +141,25 @@ def safe_get(client, url: str, *, max_redirects: int = MAX_REDIRECTS, **kwargs):
     for _ in range(max_redirects + 1):
         guard_url(current)
         resp = client.get(current, follow_redirects=False, **kwargs)
-        if resp.is_redirect:
-            location = resp.headers.get("location")
-            if not location:
-                return resp
-            current = urljoin(str(resp.url), location)
-            continue
-        return resp
+        target = _redirect_target(resp)
+        if target is None:
+            return resp
+        current = target
+    raise BlockedHostError(f"Too many redirects while fetching {url}")
+
+
+@contextmanager
+def safe_stream(client, url: str, *, max_redirects: int = MAX_REDIRECTS, **kwargs):
+    """Streaming counterpart of :func:`safe_get`, for bodies too large to hold
+    in memory. Yields the final non-redirect response, unread; every hop is
+    checked with :func:`guard_url` before it is opened."""
+    current = url
+    for _ in range(max_redirects + 1):
+        guard_url(current)
+        with client.stream("GET", current, follow_redirects=False, **kwargs) as resp:
+            target = _redirect_target(resp)
+            if target is None:
+                yield resp
+                return
+        current = target
     raise BlockedHostError(f"Too many redirects while fetching {url}")

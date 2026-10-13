@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto'
 import type { APIRequestContext } from '@playwright/test'
 import { connectTelegram, routeToAgent, type ChannelAccount } from '../api/channels'
 import type { ApiClient } from '../api/client'
@@ -5,6 +6,7 @@ import { env } from '../env'
 import { FakeExternals } from '../fakes/externals'
 import { unique } from '../support/ids'
 import { step } from '../support/step'
+import type { ChannelConnector } from './chat'
 
 interface SetWebhookBody {
   url: string
@@ -27,31 +29,33 @@ export class TelegramBot {
   private readonly request: APIRequestContext
   private readonly externals: FakeExternals
   private readonly secret: string
+  private readonly token: string
   private updateId = 0
 
-  private constructor(account: ChannelAccount, request: APIRequestContext, externals: FakeExternals, secret: string) {
+  private constructor(account: ChannelAccount, request: APIRequestContext, externals: FakeExternals, secret: string, token: string) {
     this.account = account
     this.request = request
     this.externals = externals
     this.secret = secret
+    this.token = token
   }
 
   /** Connects a fresh bot to the org and routes it to `agentId`. */
   static async connect(api: ApiClient, request: APIRequestContext, agentId: string): Promise<TelegramBot> {
     return step('Connect a Telegram bot', async () => {
       const externals = new FakeExternals(request)
-      const token = `${Math.floor(Math.random() * 1e9)}:${unique('E2E')}`
+      const token = `${randomInt(1e9)}:${unique('E2E')}`
       const account = await connectTelegram(api, token)
       await routeToAgent(api, account.id, agentId)
       // The secret Telegram would echo back — the backend sent it in setWebhook.
       const webhook = await externals.waitForCall<SetWebhookBody>('telegram', 'setWebhook', (body) => body.url.includes(account.id))
-      return new TelegramBot(account, request, externals, webhook.secret_token)
+      return new TelegramBot(account, request, externals, webhook.secret_token, token)
     })
   }
 
   /** A private chat with one Telegram user. */
   chatWith(firstName: string): TelegramChat {
-    return new TelegramChat(this, Math.floor(Math.random() * 1e9), firstName)
+    return new TelegramChat(this, randomInt(1e9), firstName)
   }
 
   async deliver(update: Record<string, unknown>): Promise<void> {
@@ -65,9 +69,10 @@ export class TelegramBot {
 
   /** What the bot sent into `chatId`, with the message_id Telegram assigned each. */
   async messagesTo(chatId: number): Promise<Array<SendMessageBody & { message_id: number }>> {
-    const calls = await this.externals.calls('telegram', 'sendMessage')
+    // Only what this bot sent: the Bot API puts the token in the path.
+    const calls = await this.externals.calls('telegram', 'sendMessage', { contains: `/bot${this.token}/` })
     return calls
-      .filter((c) => String((c.body as SendMessageBody).chat_id) === String(chatId))
+      .filter((c) => c.status === 200 && String((c.body as SendMessageBody).chat_id) === String(chatId))
       .map((c) => ({ ...(c.body as SendMessageBody), message_id: (c.response as { result: { message_id: number } }).result.message_id }))
   }
 }
@@ -130,3 +135,6 @@ export class TelegramChat {
     })
   }
 }
+
+/** Telegram as a ChannelConnector, for journeys that loop over every channel. */
+export const telegram: ChannelConnector<TelegramChat> = ({ api, request, agentId }) => TelegramBot.connect(api, request, agentId)

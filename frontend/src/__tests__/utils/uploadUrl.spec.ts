@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 import { describe, it, expect, afterEach } from 'vitest'
-import { buildUploadUrl } from '@/utils/avatars'
+import { buildAttachmentUrl, buildUploadUrl } from '@/utils/avatars'
 import { resolveUploadUrl } from '@/config/api'
 
 const API_BASE = 'https://self.hosted.example/api/v1'
@@ -69,6 +69,41 @@ describe('buildUploadUrl', () => {
     expect(buildUploadUrl('/api/v1/uploads/x.png', 'https://h.example')).toBe(
       'https://h.example/api/v1/uploads/x.png',
     )
+  })
+})
+
+describe('buildAttachmentUrl', () => {
+  const ORG = 'bab82aab-d095-46f8-bf16-da638671bcf4'
+
+  it('resolves a signed local link against the API origin, query intact', () => {
+    const signed = `/api/v1/files/local/chat_attachments/${ORG}/a.png?exp=1700000000&sig=abc`
+    expect(buildAttachmentUrl(signed, API_BASE)).toBe(`https://self.hosted.example${signed}`)
+  })
+
+  it('sends an unsigned stored path through the authenticated download endpoint', () => {
+    expect(buildAttachmentUrl(`/uploads/chat_attachments/${ORG}/a.png`, API_BASE)).toBe(
+      `https://self.hosted.example/api/v1/files/download/chat_attachments/${ORG}/a.png`,
+    )
+    expect(buildAttachmentUrl(`uploads/chat_attachments/${ORG}/a.png`, `${API_BASE}/`)).toBe(
+      `https://self.hosted.example/api/v1/files/download/chat_attachments/${ORG}/a.png`,
+    )
+  })
+
+  it('keeps an existing download path from repeating the /api/v1 prefix', () => {
+    expect(buildAttachmentUrl(`/api/v1/files/download/chat_attachments/${ORG}/a.png`, API_BASE)).toBe(
+      `https://self.hosted.example/api/v1/files/download/chat_attachments/${ORG}/a.png`,
+    )
+  })
+
+  it('passes presigned S3 URLs and blob previews through untouched', () => {
+    const presigned = 'https://bucket.s3.amazonaws.com/chat_attachments/a.png?X-Amz-Signature=abc'
+    expect(buildAttachmentUrl(presigned, API_BASE)).toBe(presigned)
+    expect(buildAttachmentUrl('blob:https://h.example/abc', API_BASE)).toBe('blob:https://h.example/abc')
+  })
+
+  it('returns an empty string for empty input', () => {
+    expect(buildAttachmentUrl(null, API_BASE)).toBe('')
+    expect(buildAttachmentUrl('', API_BASE)).toBe('')
   })
 })
 

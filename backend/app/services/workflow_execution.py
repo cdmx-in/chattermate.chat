@@ -33,8 +33,18 @@ from app.repositories.session_to_agent import SessionToAgentRepository
 from app.repositories.chat import ChatRepository
 from app.agents.chat_agent import ChatAgent, ChatResponse
 from app.core.logger import get_logger
+from app.services.workflow_conditions import (
+    MISSING,
+    evaluate_condition_config,
+    evaluate_expression,
+    resolve_variable,
+)
 
 logger = get_logger(__name__)
+
+
+def _branch_label(value: Any) -> Optional[str]:
+    return value.strip().lower() if isinstance(value, str) else None
 
 
 @dataclass
@@ -163,7 +173,8 @@ class WorkflowExecutionService:
             # Automatic execution loop - continue executing nodes until we reach one that requires user interaction
             final_result = None
             intermediate_messages = []  # Collect messages from MESSAGE nodes during execution
-            
+            final_message_collected = False
+
             while current_node:
                 logger.debug(f"Executing node: {current_node.id} ({current_node.node_type})")
                 
@@ -184,6 +195,8 @@ class WorkflowExecutionService:
                     source
                 )
                 
+                collected_before = len(intermediate_messages)
+
                 # Collect messages from MESSAGE nodes during automatic execution
                 if current_node.node_type == NodeType.MESSAGE and result.message:
                     intermediate_messages.append(result.message)
@@ -205,7 +218,8 @@ class WorkflowExecutionService:
                     logger.debug(f"Collected confirmation message from USER_INPUT node: {result.message}")
                 
                 final_result = result
-                
+                final_message_collected = len(intermediate_messages) > collected_before
+
                 # Check if we should continue to next node automatically
                 if not result.success:
                     logger.error(f"Node execution failed: {result.error}")
@@ -244,7 +258,13 @@ class WorkflowExecutionService:
                     message="No execution result",
                     error="No execution result"
                 )
-            
+
+            # The node we stopped on is returned as the final message, which every
+            # caller sends and stores on top of the intermediate ones. Leaving it
+            # in both lists sent the visitor the same text twice.
+            if final_message_collected:
+                intermediate_messages.pop()
+
             # Update session workflow state based on final result
             if (final_result.landing_page_data or 
                 final_result.form_data or 
@@ -689,19 +709,14 @@ class WorkflowExecutionService:
         """Execute a condition node"""
         try:
             logger.info(f"Executing condition node: {node.id}")
-            config = node.config or {}
-            condition_expression = config.get("condition_expression")
-            
-            if not condition_expression:
+            condition_result = evaluate_condition_config(node.config or {}, workflow_state)
+            if condition_result is None:
                 logger.error(f"No condition expression configured for condition node: {node.id}")
                 return WorkflowExecutionResult(
                     success=False,
                     message="No condition expression configured",
                     error="No condition expression configured"
                 )
-            
-            # Evaluate condition
-            condition_result = self._evaluate_condition(condition_expression, workflow_state)
             logger.info(f"Condition result: {condition_result}")
             
             # Find next node based on condition result
@@ -909,8 +924,10 @@ class WorkflowExecutionService:
         # This is a simplified implementation
         # In a full implementation, you'd handle timed waits and conditions
         
-        wait_duration = node.wait_duration or 0
-        message = f"Please wait {wait_duration} seconds..."
+        config = node.config or {}
+        wait_duration = config.get("wait_duration", 0)
+        wait_unit = config.get("wait_unit", "seconds")
+        message = f"Please wait {wait_duration} {wait_unit}..."
         
         # Find next node
         next_node_id = self._find_next_node(node)
@@ -1210,19 +1227,21 @@ class WorkflowExecutionService:
 
     
     def _find_conditional_next_node(self, node: WorkflowNode, condition_result: bool) -> Optional[UUID]:
-        """Find next node based on condition result"""
-        if not node.outgoing_connections:
-            return None
-        
-        # Look for connections with appropriate conditions
-        for connection in node.outgoing_connections:
-            if condition_result and (connection.label == "true" or connection.condition == "true"):
+        """Find the connection labelled for the condition result.
+
+        With no such connection the workflow stops here rather than taking
+        another branch: a false result must never run the "true" path.
+        """
+        wanted = "true" if condition_result else "false"
+        for connection in node.outgoing_connections or []:
+            if wanted in (_branch_label(connection.label), _branch_label(connection.condition)):
                 return connection.target_node_id
-            elif not condition_result and (connection.label == "false" or connection.condition == "false"):
-                return connection.target_node_id
-        
-        # If no specific condition found, return first connection
-        return node.outgoing_connections[0].target_node_id
+
+        logger.warning(
+            f"Condition node '{node.name}' ({node.id}) has no '{wanted}' connection; "
+            f"stopping the workflow here. Connect its '{wanted}' branch to fix this."
+        )
+        return None
     
 
     
@@ -1231,153 +1250,8 @@ class WorkflowExecutionService:
         return self._interpolate_variables(text, workflow_state)
     
     def _evaluate_condition(self, condition: str, workflow_state: Dict[str, Any]) -> bool:
-        """Evaluate a condition expression"""
-        try:
-            logger.info(f"Evaluating condition: {condition}")
-            # Replace variables in condition
-            condition = self._process_variables(condition, workflow_state)
-            logger.debug(f"Processed condition: {condition}")
-            
-            # Handle different condition formats
-            return self._evaluate_single_condition(condition)
-                
-        except Exception as e:
-            logger.error(f"Error evaluating condition: {str(e)}")
-            return False
-    
-    def _evaluate_single_condition(self, condition: str) -> bool:
-        """Evaluate a single condition expression"""
-        try:
-            # Handle JavaScript-style method calls first (includes, startsWith, endsWith)
-            if ".includes(" in condition:
-                return self._evaluate_method_condition(condition, "includes")
-            elif ".startsWith(" in condition:
-                return self._evaluate_method_condition(condition, "startsWith")
-            elif ".endsWith(" in condition:
-                return self._evaluate_method_condition(condition, "endsWith")
-            
-            # Handle comparison operators (order matters - check longer operators first)
-            elif "!==" in condition:
-                left, right = condition.split("!==", 1)
-                left_val, right_val = self._parse_operands(left, right)
-                result = left_val != right_val
-                logger.debug(f"Comparison: '{left_val}' !== '{right_val}' -> {result}")
-                return result
-            elif "===" in condition:
-                left, right = condition.split("===", 1)
-                left_val, right_val = self._parse_operands(left, right)
-                result = left_val == right_val
-                logger.debug(f"Comparison: '{left_val}' === '{right_val}' -> {result}")
-                return result
-            elif ">=" in condition:
-                left, right = condition.split(">=", 1)
-                left_val, right_val = self._parse_numeric_operands(left, right)
-                result = left_val >= right_val
-                logger.debug(f"Comparison: {left_val} >= {right_val} -> {result}")
-                return result
-            elif "<=" in condition:
-                left, right = condition.split("<=", 1)
-                left_val, right_val = self._parse_numeric_operands(left, right)
-                result = left_val <= right_val
-                logger.debug(f"Comparison: {left_val} <= {right_val} -> {result}")
-                return result
-            elif ">" in condition:
-                left, right = condition.split(">", 1)
-                left_val, right_val = self._parse_numeric_operands(left, right)
-                result = left_val > right_val
-                logger.debug(f"Comparison: {left_val} > {right_val} -> {result}")
-                return result
-            elif "<" in condition:
-                left, right = condition.split("<", 1)
-                left_val, right_val = self._parse_numeric_operands(left, right)
-                result = left_val < right_val
-                logger.debug(f"Comparison: {left_val} < {right_val} -> {result}")
-                return result
-            elif "!=" in condition:
-                left, right = condition.split("!=", 1)
-                left_val, right_val = self._parse_operands(left, right)
-                result = left_val != right_val
-                logger.debug(f"Comparison: '{left_val}' != '{right_val}' -> {result}")
-                return result
-            elif "contains" in condition:
-                # Legacy support for "contains" keyword
-                left, right = condition.split("contains", 1)
-                left_val, right_val = self._parse_operands(left, right)
-                result = right_val in left_val
-                logger.debug(f"Contains: '{right_val}' in '{left_val}' -> {result}")
-                return result
-            else:
-                # Default to true for unknown conditions
-                logger.warning(f"Unknown condition format: {condition}, defaulting to True")
-                return True
-                
-        except Exception as e:
-            logger.error(f"Error evaluating single condition '{condition}': {str(e)}")
-            return False
-    
-    def _evaluate_method_condition(self, condition: str, method: str) -> bool:
-        """Evaluate JavaScript-style method conditions like variable.includes(value)"""
-        try:
-            # Parse variable.method(value) format
-            if f".{method}(" not in condition:
-                return False
-                
-            # Split on the method call
-            parts = condition.split(f".{method}(", 1)
-            if len(parts) != 2:
-                return False
-                
-            variable_part = parts[0].strip()
-            value_part = parts[1].strip()
-            
-            # Remove closing parenthesis from value part
-            if not value_part.endswith(")"):
-                return False
-            value_part = value_part[:-1]  # Remove closing )
-            
-            # Parse variable and value
-            left_val = variable_part.strip().strip('"').strip("'")
-            right_val = value_part.strip().strip('"').strip("'")
-            
-            # Evaluate based on method
-            if method == "includes":
-                result = right_val in left_val
-                logger.debug(f"Method call: '{left_val}'.includes('{right_val}') -> {result}")
-            elif method == "startsWith":
-                result = left_val.startswith(right_val)
-                logger.debug(f"Method call: '{left_val}'.startsWith('{right_val}') -> {result}")
-            elif method == "endsWith":
-                result = left_val.endswith(right_val)
-                logger.debug(f"Method call: '{left_val}'.endsWith('{right_val}') -> {result}")
-            else:
-                result = False
-                
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error evaluating method condition '{condition}': {str(e)}")
-            return False
-    
-    def _parse_operands(self, left: str, right: str) -> tuple[str, str]:
-        """Parse and clean operands for string comparison"""
-        left_val = left.strip().strip('"').strip("'")
-        right_val = right.strip().strip('"').strip("'")
-        return left_val, right_val
-    
-    def _parse_numeric_operands(self, left: str, right: str) -> tuple[float, float]:
-        """Parse and clean operands for numeric comparison"""
-        left_val = left.strip().strip('"').strip("'")
-        right_val = right.strip().strip('"').strip("'")
-        
-        try:
-            # Try to convert to numbers
-            left_num = float(left_val)
-            right_num = float(right_val)
-            return left_num, right_num
-        except ValueError:
-            # If conversion fails, compare as strings (lexicographic)
-            logger.warning(f"Non-numeric comparison: '{left_val}' vs '{right_val}' - using string comparison")
-            return float(ord(left_val[0]) if left_val else 0), float(ord(right_val[0]) if right_val else 0)
+        """Evaluate a condition expression string"""
+        return evaluate_expression(condition, workflow_state)
     
     def _update_session_workflow_state(
         self,
@@ -1520,6 +1394,7 @@ class WorkflowExecutionService:
         Replace variable placeholders in text with actual values
         
         Supports syntax:
+        - {{user_message}} - A top-level variable such as the latest user message
         - {{field_name}} - Search all form nodes for field (latest value wins)
         - {{node_id.field_name}} - Specific node's field value
         
@@ -1540,40 +1415,14 @@ class WorkflowExecutionService:
             
             # Pattern to match {{variable}} or {{node_id.field_name}}
             pattern = r'\{\{([^}]+)\}\}'
-            
+
             def replace_variable(match):
                 var_expression = match.group(1).strip()
-                
-                try:
-                    # Check if it's a specific node reference (contains dot)
-                    if '.' in var_expression:
-                        node_id, field_name = var_expression.split('.', 1)
-                        node_id = node_id.strip()
-                        field_name = field_name.strip()
-                        
-                        # Look for the specific node's variables
-                        if node_id in variables and field_name in variables[node_id]:
-                            value = variables[node_id][field_name]
-                            logger.debug(f"Interpolated {{{{node_id.field_name}}}}: {node_id}.{field_name} = {value}")
-                            return str(value)
-                    else:
-                        # Search all nodes for the field (latest value wins)
-                        field_name = var_expression.strip()
-                        
-                        # Search through all node variables (reverse order for latest first)
-                        for node_id in reversed(list(variables.keys())):
-                            if field_name in variables[node_id]:
-                                value = variables[node_id][field_name]
-                                logger.debug(f"Interpolated {{{{field_name}}}}: {field_name} = {value} (from node {node_id})")
-                                return str(value)
-                    
-                    # Variable not found - return original placeholder
+                value = resolve_variable(var_expression, workflow_state)
+                if value is MISSING:
                     logger.warning(f"Variable not found: {var_expression}")
                     return match.group(0)  # Return original {{variable}}
-                    
-                except Exception as e:
-                    logger.error(f"Error processing variable {var_expression}: {str(e)}")
-                    return match.group(0)  # Return original on error
+                return str(value)
             
             # Replace all variable placeholders
             result = re.sub(pattern, replace_variable, text)

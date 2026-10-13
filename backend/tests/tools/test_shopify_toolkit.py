@@ -318,6 +318,17 @@ def test_search_orders(shopify_tools):
     assert result["orders"][0]["tracking_info"][0]["number"] == "12345"
     assert "page_info" in result
     assert _sent_search(mock_post) == "email:john.doe@example.com AND name:1001"
+    assert mock_post.call_args.args[0] == "https://test-shop.myshopify.com/admin/api/2025-10/graphql.json"
+
+
+def test_search_orders_honours_the_admin_base_override(shopify_tools, monkeypatch):
+    monkeypatch.setattr("app.services.shopify_urls.SHOPIFY_ADMIN_BASE", "http://127.0.0.1:14020/shopify")
+    with patch("requests.post", return_value=_orders_response(_order_node())) as mock_post:
+        shopify_tools.search_orders(customer_email="john.doe@example.com", order_number="#1001")
+
+    assert mock_post.call_args.args[0] == (
+        "http://127.0.0.1:14020/shopify/test-shop.myshopify.com/admin/api/2025-10/graphql.json"
+    )
 
 
 def test_search_orders_matches_the_customer_record_email(shopify_tools):

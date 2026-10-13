@@ -44,8 +44,7 @@ from app.services.socket_rate_limit import socket_rate_limit
 from app.services import conversation_token as conversation_token_service
 from app.services.workflow_chat import WorkflowChatService
 from app.services.file_upload_service import FileUploadService
-from app.core.config import settings
-from app.core.s3 import get_s3_signed_url
+from app.services.file_storage import resolve_public_url
 
 from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
@@ -65,7 +64,6 @@ from app.services.ticket_csat import record_conversation_rating
 from app.repositories.jira import JiraRepository
 from app.models.ai_config import AIModelType
 from app.services.workflow_execution import WorkflowExecutionService
-from app.core.config import settings
 
 
 # Try to import enterprise modules
@@ -105,6 +103,19 @@ MAX_RATING_FEEDBACK_LENGTH = 2000
 def format_datetime(dt):
     """Convert datetime to ISO format string"""
     return dt.isoformat() if dt else None
+
+
+async def _client_attachments(uploaded_files: list) -> list:
+    """Socket payload for freshly uploaded files, each with a signed URL."""
+    return [
+        {
+            'filename': file_info['filename'],
+            'file_url': await resolve_public_url(file_info['file_url']),
+            'content_type': file_info['content_type'],
+            'file_size': file_info['size'],
+        }
+        for file_info in uploaded_files or []
+    ]
 
 def validate_email(email: str) -> bool:
     """Validate email format"""
@@ -684,25 +695,7 @@ async def handle_widget_chat(sid, data):
             user_id = str(session_data.user_id) if session_data and session_data.user_id else None
             timestamp = format_datetime(datetime.datetime.now())
             
-            # Prepare attachments data if files were uploaded
-            attachments_data = []
-            if uploaded_files:
-                for file_info in uploaded_files:
-                    file_url = file_info['file_url']
-
-                    # Generate S3 signed URL if S3 storage is enabled
-                    if settings.S3_FILE_STORAGE:
-                        try:
-                            file_url = await get_s3_signed_url(file_url)
-                        except Exception as e:
-                            logger.error(f"Error generating signed URL for attachment: {str(e)}")
-
-                    attachments_data.append({
-                        'filename': file_info['filename'],
-                        'file_url': file_url,
-                        'content_type': file_info['content_type'],
-                        'file_size': file_info['size']
-                    })
+            attachments_data = await _client_attachments(uploaded_files)
 
             if user_id:
                 # Also emit to user-specific room
@@ -761,25 +754,7 @@ async def handle_widget_chat(sid, data):
             user_id = str(session_data.user_id) if session_data and session_data.user_id else None
             timestamp = format_datetime(datetime.datetime.now())
             
-            # Prepare attachments data if files were uploaded
-            attachments_data = []
-            if uploaded_files:
-                for file_info in uploaded_files:
-                    file_url = file_info['file_url']
-
-                    # Generate S3 signed URL if S3 storage is enabled
-                    if settings.S3_FILE_STORAGE:
-                        try:
-                            file_url = await get_s3_signed_url(file_url)
-                        except Exception as e:
-                            logger.error(f"Error generating signed URL for attachment: {str(e)}")
-
-                    attachments_data.append({
-                        'filename': file_info['filename'],
-                        'file_url': file_url,
-                        'content_type': file_info['content_type'],
-                        'file_size': file_info['size']
-                    })
+            attachments_data = await _client_attachments(uploaded_files)
 
             if user_id:
                 # Also emit to user-specific room
@@ -987,21 +962,10 @@ async def get_widget_chat_history(sid):
                     att_dict = {
                         'id': attachment.id,
                         'filename': attachment.filename,
-                        'file_url': attachment.file_url,
+                        'file_url': attachment.file_url,  # signed by get_session_history
                         'content_type': attachment.content_type,
                         'file_size': attachment.file_size
                     }
-                    
-                    # Generate signed URL for S3 files
-                    if settings.S3_FILE_STORAGE and attachment.file_url:
-                        try:
-                            from app.core.s3 import get_s3_signed_url
-                            signed_url = await get_s3_signed_url(attachment.file_url)
-                            att_dict['file_url'] = signed_url
-                        except Exception as e:
-                            logger.error(f"Error generating signed URL for attachment {attachment.id}: {str(e)}")
-                            # Use original file_url if signing fails
-                    
                     attachments.append(att_dict)
                 msg_dict['attachments'] = attachments
             
@@ -1320,24 +1284,7 @@ async def handle_agent_message(sid, data):
         
         # Add attachments to response if files were uploaded
         if uploaded_files:
-            attachments_data = []
-            for file_info in uploaded_files:
-                file_url = file_info['file_url']
-
-                # Generate S3 signed URL if S3 storage is enabled
-                if settings.S3_FILE_STORAGE:
-                    try:
-                        file_url = await get_s3_signed_url(file_url)
-                    except Exception as e:
-                        logger.error(f"Error generating signed URL for attachment: {str(e)}")
-
-                attachments_data.append({
-                    'filename': file_info['filename'],
-                    'file_url': file_url,
-                    'content_type': file_info['content_type'],
-                    'file_size': file_info['size']
-                })
-            response_payload['attachments'] = attachments_data
+            response_payload['attachments'] = await _client_attachments(uploaded_files)
             response_payload['message_id'] = created_message.id
 
         delivery = await deliver_to_customer(db, session_data, response_payload,
@@ -1706,7 +1653,18 @@ async def handle_get_workflow_state(sid):
                                 "initial_message": True
                             }
                         })
-                        
+
+                        # The widget does not render a workflow_state message, so
+                        # send the text as a chat_response like the other handlers.
+                        await sio.emit('chat_response', {
+                            'message': workflow_result.message,
+                            'type': 'chat_response',
+                            'transfer_to_human': workflow_result.transfer_to_human,
+                            'end_chat': workflow_result.end_chat,
+                            'request_rating': workflow_result.request_rating,
+                            'shopify_output': None
+                        }, room=session_id, namespace='/widget')
+
                         await sio.emit('workflow_state', {
                             'type': 'message',
                             'message': workflow_result.message,

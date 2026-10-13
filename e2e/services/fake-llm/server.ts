@@ -12,14 +12,17 @@
 // Control API (used by src/fakes/llm.ts):
 //   PUT    /__scenarios/:id            register/replace a ScenarioSpec
 //   GET    /__scenarios/:id/requests   what the backend sent for that scenario
-//   DELETE /__scenarios                forget everything
+//   DELETE /__scenarios                forget everything (manual use only: scenario
+//                                      ids are unique per test, and a reset would
+//                                      wipe any other run sharing this fake)
 //
 // An API key starting with `e2e-invalid` is rejected with 401, like a real provider.
+// A rule can also fail on purpose (fault: status, delay, malformed output).
 //
 // Run: node services/fake-llm/server.ts --port 14010   (Node >= 22.18 strips the types)
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
-import type { RecordedRequest, Reply, ScenarioRule, ScenarioSpec } from './protocol.ts'
+import type { Fault, RecordedRequest, Reply, ScenarioRule, ScenarioSpec } from './protocol.ts'
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 // JSON Schema is walked generically (properties, $ref, anyOf, …); typing every
@@ -45,6 +48,8 @@ const MARKER = /\[\[e2e:([\w-]+)\]\]/
 const DEFAULT_SCENARIO = '__default'
 const DEFAULT_REPLY: Reply = { message: 'Default reply from the e2e fake LLM.', text: 'OK' }
 const MAX_RECORDED = 50
+// Oldest scenarios are forgotten past this, so a fake that outlives many runs stays small.
+const MAX_SCENARIOS = 5000
 
 const scenarios = new Map<string, ScenarioSpec>()
 const recorded = new Map<string, RecordedRequest[]>()
@@ -119,7 +124,7 @@ function structuredContent(req: ChatRequest, reply: Reply): string {
 
 // ---------- completion ----------
 
-function completion(req: ChatRequest, message: { content: string | null; tool_calls?: unknown[] }) {
+function completion(req: ChatRequest, message: { content: string | null; tool_calls?: unknown[] }, usage = { prompt_tokens: 1, completion_tokens: 1 }) {
   return {
     id: `chatcmpl-e2e-${Date.now()}`,
     object: 'chat.completion',
@@ -130,11 +135,23 @@ function completion(req: ChatRequest, message: { content: string | null; tool_ca
       message: { role: 'assistant', ...message },
       finish_reason: message.tool_calls ? 'tool_calls' : 'stop',
     }],
-    usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+    usage: { ...usage, total_tokens: usage.prompt_tokens + usage.completion_tokens },
   }
 }
 
-function answer(req: ChatRequest) {
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/** A scripted failure: an OpenAI-style error status, or garbage where JSON was asked for. */
+function faulted(req: ChatRequest, fault: Fault, record: RecordedRequest) {
+  if (fault.status) {
+    record.answeredWith = `error:${fault.status}`
+    throw new HttpError(fault.status, fault.message ?? 'The e2e fake LLM failed on purpose.')
+  }
+  record.answeredWith = 'malformed'
+  return completion(req, { content: '{"message": "this reply is cut off' })
+}
+
+async function answer(req: ChatRequest, authorization: string) {
   const scenarioId = selectScenario(req)
   const lastUserMsg = [...req.messages].reverse().find((m) => m.role === 'user')
   const lastUser = textOf(lastUserMsg?.content)
@@ -151,8 +168,17 @@ function answer(req: ChatRequest) {
     tools,
     toolResults: req.messages.filter((m) => m.role === 'tool').map((m) => textOf(m.content)),
     answeredWith: '',
+    model: req.model ?? '',
+    keySuffix: authorization.replace(/^Bearer\s+/i, '').slice(-6),
   }
+  const list = recorded.get(scenarioId) ?? []
+  list.push(record)
+  recorded.set(scenarioId, list.slice(-MAX_RECORDED))
 
+  if (rule?.fault?.delayMs) await sleep(rule.fault.delayMs)
+  if (rule?.fault && (rule.fault.status || rule.fault.malformed)) return faulted(req, rule.fault, record)
+
+  const usage = rule?.reply.usage
   let body
   if (rule?.toolCall && lastRole !== 'tool') {
     if (!tools.includes(rule.toolCall.name)) {
@@ -169,16 +195,12 @@ function answer(req: ChatRequest) {
     })
   } else if (format && format.type !== 'text') {
     record.answeredWith = 'structured'
-    body = completion(req, { content: structuredContent(req, rule?.reply ?? DEFAULT_REPLY) })
+    body = completion(req, { content: structuredContent(req, rule?.reply ?? DEFAULT_REPLY) }, usage)
   } else {
     const reply = rule?.reply ?? DEFAULT_REPLY
     record.answeredWith = 'text'
-    body = completion(req, { content: reply.text ?? reply.message ?? DEFAULT_REPLY.text! })
+    body = completion(req, { content: reply.text ?? reply.message ?? DEFAULT_REPLY.text! }, usage)
   }
-
-  const list = recorded.get(scenarioId) ?? []
-  list.push(record)
-  recorded.set(scenarioId, list.slice(-MAX_RECORDED))
   return body
 }
 
@@ -225,7 +247,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     const body = (await readJson(req)) as ChatRequest
     if (body.stream) throw new HttpError(400, 'the e2e fake LLM does not stream — ChatterMate never asks it to; if it does now, extend services/fake-llm')
     if (!Array.isArray(body.messages)) throw new HttpError(400, 'messages[] is required')
-    return send(res, 200, answer(body))
+    return send(res, 200, await answer(body, req.headers.authorization ?? ''))
   }
 
   if (scenarioPath && req.method === 'PUT' && !scenarioPath[2]) {
@@ -233,6 +255,11 @@ async function route(req: IncomingMessage, res: ServerResponse) {
     if (!Array.isArray(spec.rules)) throw new HttpError(400, 'rules[] is required')
     scenarios.set(scenarioPath[1], spec)
     recorded.delete(scenarioPath[1])
+    while (scenarios.size > MAX_SCENARIOS) {
+      const oldest = scenarios.keys().next().value!
+      scenarios.delete(oldest)
+      recorded.delete(oldest)
+    }
     return send(res, 200, { ok: true })
   }
   if (scenarioPath && req.method === 'GET' && scenarioPath[2]) return send(res, 200, recorded.get(scenarioPath[1]) ?? [])

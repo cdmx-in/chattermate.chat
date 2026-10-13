@@ -21,6 +21,8 @@ from fastapi import FastAPI
 from app.models.user import User
 from app.models.organization import Organization
 from app.models.role import Role
+from app.models.auth_session import AuthSession
+from app.core.security import verify_token
 from app.models.permission import (
     Permission,
     role_permissions,
@@ -227,6 +229,12 @@ def test_create_organization(client, db, monkeypatch):
     assert "access_token" in data
     assert "refresh_token" in data
     assert data["token_type"] == "bearer"
+
+    # Both tokens belong to the admin's first session, so signing out ends them
+    sid = verify_token(data["access_token"])["sid"]
+    assert verify_token(data["refresh_token"])["sid"] == sid
+    session = db.query(AuthSession).filter(AuthSession.id == UUID(sid)).one()
+    assert str(session.user_id) == data["user"]["id"]
     
     # User validation
     assert "user" in data

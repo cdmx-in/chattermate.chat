@@ -30,6 +30,7 @@ import os
 
 from app.models.ai_config import AIModelType
 from app.core.model_catalog import is_known_provider, list_providers, requires_base_url
+from app.core.outbound_policy import OutboundTargetBlocked, check_outbound_target
 
 # Try to import enterprise modules
 try:
@@ -58,6 +59,18 @@ def check_custom_models_feature_access(current_user: User, db: Session):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Custom Models feature is not available in your current plan. Please upgrade to access this feature."
+        )
+
+
+def require_allowed_base_url(base_url: str | None) -> None:
+    """Refuse a base URL the outbound policy forbids, in this endpoint's error
+    shape. The live key test calls it from the server, so this runs first."""
+    try:
+        check_outbound_target(base_url, "Base URL")
+    except OutboundTargetBlocked as e:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "Base URL not allowed", "type": "invalid_base_url", "details": str(e)},
         )
 
 
@@ -137,6 +150,7 @@ async def setup_ai(
             return response
         
         # Regular custom model setup
+        require_allowed_base_url(config_data.base_url)
         # Test API key before creating config
         try:
             # Live-validate the key+model for any BYO-key provider. This is also
@@ -310,6 +324,7 @@ async def update_ai_config(
         else:
             # For custom model, validate API key and/or base_url first if either is
             # changing in this request.
+            require_allowed_base_url(config_data.base_url)
             model_type_upper = config_data.model_type.upper()
             if is_known_provider(model_type_upper):
                 provider_needs_base_url = requires_base_url(model_type_upper)

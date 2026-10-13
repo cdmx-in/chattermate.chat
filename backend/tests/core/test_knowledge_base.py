@@ -90,41 +90,60 @@ def knowledge_manager(mock_db, mock_ai_config, mock_vector_db):
         return manager
 
 @pytest.mark.asyncio
-async def test_add_pdf_urls_success(knowledge_manager, mock_knowledge):
-    """Test successful addition of PDF URLs"""
-    # Setup
-    urls = ["http://example.com/test.pdf"]
-    
-    with patch('app.knowledge.knowledge_base.EnhancedPDFUrlKnowledgeBase') as mock_pdf_kb, \
-         patch.object(knowledge_manager, '_add_knowledge_source', return_value=mock_knowledge) as mock_add_source:
-        # Configure mock
-        mock_pdf_kb_instance = MagicMock()
-        mock_pdf_kb.return_value = mock_pdf_kb_instance
-        
-        # Execute
+async def test_add_pdf_urls_success(knowledge_manager):
+    """A PDF URL is downloaded through the guarded fetcher, then indexed."""
+    urls = ["https://example.com/docs/test.pdf"]
+
+    with patch('app.knowledge.knowledge_base.download_pdf') as mock_download, \
+         patch.object(knowledge_manager, 'add_pdf_files', AsyncMock(return_value=True)) as mock_add_files, \
+         patch('app.knowledge.knowledge_base.delete_file_from_s3', AsyncMock()) as mock_delete:
         result = await knowledge_manager.add_pdf_urls(urls)
-        
-        # Assert
-        assert result is True
-        mock_pdf_kb.assert_called_once()
-        mock_pdf_kb_instance.load.assert_called_once()
-        mock_add_source.assert_called_once()
+
+    assert result is True
+    url, temp_path = mock_download.call_args.args
+    assert url == urls[0]
+    assert os.path.basename(temp_path) == "test.pdf"
+    mock_add_files.assert_awaited_once_with([temp_path], filename="test")
+    mock_delete.assert_not_called()  # not one of our S3 uploads
+    assert not os.path.exists(os.path.dirname(temp_path))  # temp dir cleaned up
 
 @pytest.mark.asyncio
 async def test_add_pdf_urls_failure(knowledge_manager):
-    """Test failure in adding PDF URLs"""
-    # Setup
-    urls = ["http://example.com/test.pdf"]
-    
-    with patch('app.knowledge.knowledge_base.EnhancedPDFUrlKnowledgeBase') as mock_pdf_kb:
-        # Configure mock to raise exception
-        mock_pdf_kb.side_effect = Exception("Failed to load PDF")
-        
-        # Execute
-        result = await knowledge_manager.add_pdf_urls(urls)
-        
-        # Assert
-        assert result is False
+    """A refused or failed download is reported, and nothing is indexed."""
+    from app.knowledge.url_safety import BlockedHostError
+
+    with patch('app.knowledge.knowledge_base.download_pdf',
+               side_effect=BlockedHostError("internal")), \
+         patch.object(knowledge_manager, 'add_pdf_files', AsyncMock()) as mock_add_files:
+        result = await knowledge_manager.add_pdf_urls(["http://169.254.169.254/latest"])
+
+    assert result is False
+    mock_add_files.assert_not_called()
+
+@pytest.mark.parametrize("url, name", [
+    ("https://example.com/a/guide.pdf", "guide"),
+    ("https://example.com/a/My%20Guide.pdf?x=1", "My Guide"),
+    # An encoded traversal decodes to a separator; only the last part survives.
+    ("https://b.s3.amazonaws.com/knowledge/..%2F..%2Fapp%2Fmain.py", "main"),
+    ("https://example.com/", "example.com"),
+])
+def test_pdf_name_from_url_never_carries_a_path(url, name):
+    from app.knowledge.knowledge_base import _pdf_name_from_url
+    assert _pdf_name_from_url(url) == name
+
+@pytest.mark.asyncio
+async def test_only_this_orgs_uploaded_pdf_is_deleted_from_s3(knowledge_manager):
+    from app.knowledge.knowledge_base import settings
+    own = f"https://{settings.S3_BUCKET}.s3.us-east-1.amazonaws.com/knowledge/{knowledge_manager.org_id}/f.pdf?X-Amz-Signature=x"
+    other_org = f"https://{settings.S3_BUCKET}.s3.us-east-1.amazonaws.com/knowledge/{uuid4()}/f.pdf"
+    # Another bucket, laid out so a path-style read lands on our org's key.
+    foreign = f"https://evil.s3.amazonaws.com/x/knowledge/{knowledge_manager.org_id}/f.pdf"
+
+    with patch('app.knowledge.knowledge_base.delete_file_from_s3', AsyncMock(return_value=True)) as mock_delete:
+        for url in (own, other_org, foreign):
+            await knowledge_manager._delete_uploaded_pdf(url)
+
+    mock_delete.assert_awaited_once_with(own)
 
 @pytest.mark.asyncio
 async def test_add_websites_success(knowledge_manager, mock_knowledge):

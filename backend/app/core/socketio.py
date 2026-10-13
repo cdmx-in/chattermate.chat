@@ -54,6 +54,21 @@ socket_app = socketio.ASGIApp(
     socketio_path='socket.io'
 )
 
+def redis_options(redis_url: str) -> dict:
+    """Connection options for the Socket.IO Redis manager. ssl_cert_reqs is a
+    TLS-only option — redis-py refuses it on a plain redis:// connection, and the
+    manager's listener then fails in a loop."""
+    options = {
+        'retry_on_timeout': True,
+        'health_check_interval': 30,
+        'socket_timeout': 5.0,
+        'socket_connect_timeout': 5.0,
+    }
+    if redis_url.startswith("rediss://"):
+        options['ssl_cert_reqs'] = None  # ElastiCache's certificate is not verified
+    return options
+
+
 def configure_socketio(cors_origins=None):
     """Configure Socket.IO with CORS origins and Redis if enabled"""
     if cors_origins:
@@ -73,19 +88,22 @@ def configure_socketio(cors_origins=None):
         logger.info(f"Redis URL: {redis_url}")
         
         try:
-            # Configure Redis manager with appropriate options
-            sio.client_manager = socketio.AsyncRedisManager(
+            # The server routes every emit through sio.manager, which it set
+            # up at construction; assigning client_manager afterwards (as this
+            # once did) changes nothing, so emits from other processes — the
+            # ticket worker's CSAT requests and ticket updates — never left
+            # them. Install the Redis manager where the server looks for it.
+            # Local clients are still served directly; Redis carries the emit
+            # to the other processes.
+            manager = socketio.AsyncRedisManager(
                 redis_url,
                 write_only=False,
                 channel='chattermate',
-                redis_options={
-                    'retry_on_timeout': True,
-                    'health_check_interval': 30,
-                    'socket_timeout': 5.0,
-                    'socket_connect_timeout': 5.0,
-                    'ssl_cert_reqs': None  # Don't verify certificate for ElastiCache
-                }
+                redis_options=redis_options(redis_url),
             )
+            manager.set_server(sio)
+            sio.manager = manager
+            sio.manager_initialized = False
             logger.info("Redis manager configured successfully")
         except Exception as e:
             logger.error(f"Failed to initialize Redis manager: {str(e)}") 

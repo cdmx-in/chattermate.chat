@@ -18,6 +18,7 @@ from app.database import Base
 from .organization import Organization
 from .user import User
 from .fcm_token import FCMToken
+from .auth_session import AuthSession
 from .customer import Customer
 from .role import Role
 from .permission import Permission
@@ -75,6 +76,7 @@ __all__ = [
     "Organization",
     "User",
     "FCMToken",
+    "AuthSession",
     "Customer",
     "Permission",
     "Role",

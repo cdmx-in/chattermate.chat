@@ -22,8 +22,31 @@ from urllib.parse import urlencode
 from app.models.jira import JiraToken
 from app.core.config import settings
 from app.core.exceptions import JiraAuthError
+from app.core.external_urls import external_base
 from app.core.logger import get_logger
 logger = get_logger(__name__)
+
+# Atlassian hosts. Deployments never set these; the e2e suite points them at its
+# recording fake. The authorize URL is browser-facing, the rest are server calls.
+JIRA_AUTH_BASE = external_base("JIRA_AUTH_BASE", "https://auth.atlassian.com")
+JIRA_API_BASE = external_base("JIRA_API_BASE", "https://api.atlassian.com")
+
+
+def jira_authorize_url() -> str:
+    return f"{JIRA_AUTH_BASE}/authorize"
+
+
+def jira_token_url() -> str:
+    return f"{JIRA_AUTH_BASE}/oauth/token"
+
+
+def jira_accessible_resources_url() -> str:
+    return f"{JIRA_API_BASE}/oauth/token/accessible-resources"
+
+
+def jira_rest_url(cloud_id: str, path: str) -> str:
+    """Jira Cloud REST v3 URL, e.g. `jira_rest_url(cloud_id, "issue")`."""
+    return f"{JIRA_API_BASE}/ex/jira/{cloud_id}/rest/api/3/{path}"
 
 
 class JiraService:
@@ -33,8 +56,8 @@ class JiraService:
         self.client_id = settings.JIRA_CLIENT_ID
         self.client_secret = settings.JIRA_CLIENT_SECRET
         self.redirect_uri = settings.JIRA_REDIRECT_URI
-        self.auth_url = "https://auth.atlassian.com/authorize"
-        self.token_url = "https://auth.atlassian.com/oauth/token"
+        self.auth_url = jira_authorize_url()
+        self.token_url = jira_token_url()
         self.scope = "read:jira-work write:jira-work read:jira-user offline_access"
 
     def get_authorization_url(self, state: str) -> str:
@@ -105,7 +128,7 @@ class JiraService:
             "Authorization": f"Bearer {access_token}",
             "Accept": "application/json"
         }
-        response = requests.get("https://api.atlassian.com/oauth/token/accessible-resources", headers=headers)
+        response = requests.get(jira_accessible_resources_url(), headers=headers)
         
         if response.status_code != 200:
             raise JiraAuthError("Failed to get Jira Cloud ID")
@@ -128,7 +151,7 @@ class JiraService:
             "Content-Type": "application/json"
         }
         
-        url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/project"
+        url = jira_rest_url(cloud_id, "project")
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:
@@ -153,7 +176,7 @@ class JiraService:
         }
         
         # First, get the project to find its ID
-        url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/project/{project_key}"
+        url = jira_rest_url(cloud_id, f"project/{project_key}")
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:
@@ -226,7 +249,7 @@ class JiraService:
             "Content-Type": "application/json"
         }
         
-        url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/issue"
+        url = jira_rest_url(cloud_id, "issue")
         
         data = {
             "fields": {
@@ -281,7 +304,7 @@ class JiraService:
             "Content-Type": "application/json"
         }
         
-        url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/priority"
+        url = jira_rest_url(cloud_id, "priority")
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:
@@ -307,7 +330,7 @@ class JiraService:
         }
         
         # Get the create metadata for the project/issue type
-        url = f"https://api.atlassian.com/ex/jira/{cloud_id}/rest/api/3/issue/createmeta?projectKeys={project_key}&issuetypeIds={issue_type_id}&expand=projects.issuetypes.fields"
+        url = jira_rest_url(cloud_id, f"issue/createmeta?projectKeys={project_key}&issuetypeIds={issue_type_id}&expand=projects.issuetypes.fields")
         response = requests.get(url, headers=headers)
         
         if response.status_code != 200:

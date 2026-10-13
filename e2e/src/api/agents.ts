@@ -18,6 +18,8 @@ export interface NewAgent {
   requireTokenAuth?: boolean
   /** Offer the AI's quick replies as tappable buttons on messaging channels. */
   channelQuickReplies?: boolean
+  /** Visitors may attach files (once a person has joined the chat). */
+  allowAttachments?: boolean
 }
 
 export async function createAgent(api: ApiClient, agent: NewAgent): Promise<Agent> {
@@ -30,6 +32,7 @@ export async function createAgent(api: ApiClient, agent: NewAgent): Promise<Agen
       ask_for_rating: agent.askForRating ?? false,
       require_token_auth: agent.requireTokenAuth ?? false,
       channel_quick_replies: agent.channelQuickReplies ?? false,
+      allow_attachments: agent.allowAttachments ?? false,
     },
   })
   if (agent.groupIds?.length) {

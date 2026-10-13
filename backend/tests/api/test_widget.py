@@ -286,3 +286,7 @@ def test_get_widget_data_without_token(client: TestClient, test_widget: Widget):
     # This endpoint may return 200 if no auth is required, or 401 if auth is required
     # The test setup determines what's required
     assert response.status_code in [200, 401] 
+
+def test_widgets_for_malformed_agent_id_is_a_client_error(client: TestClient):
+    """A malformed id is the caller's mistake (422), never a server error."""
+    assert client.get("/api/v1/widgets/agent/0").status_code == 422

@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.models.organization import Organization
 from app.repositories.widget import WidgetRepository
 from app.services.shopify_auth_service import ShopifyAuthService
+from app.services.shopify_urls import shopify_oauth_token_url
 from urllib.parse import quote
 import hmac
 import hashlib
@@ -102,7 +103,7 @@ class ShopifyHelperService:
         import requests
         from fastapi import HTTPException
         
-        token_url = f"https://{shop}/admin/oauth/access_token"
+        token_url = shopify_oauth_token_url(shop)
         payload = {
             "client_id": settings.SHOPIFY_API_KEY,
             "client_secret": settings.SHOPIFY_API_SECRET,

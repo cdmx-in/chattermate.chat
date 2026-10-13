@@ -53,8 +53,9 @@ export interface ThemeTokens {
     accent: string
 }
 
-// Token sets copied verbatim from the design comp (Glass / Aurora / Terminal /
-// Calm Mint / Playful / Sunrise). Each chat_style maps 1:1 to a comp theme.
+// Token sets from the design comp (Glass / Aurora / Terminal / Calm Mint /
+// Playful / Sunrise). Each chat_style maps 1:1 to a comp theme. The light themes'
+// muted values are darkened from the comp to reach WCAG AA (4.5:1) on white.
 const GLASS: ThemeTokens = {
     light: false, mono: false, radius: 22, bubble: 16,
     glow: 'rgba(157,140,255,.26)', border: 'rgba(157,140,255,.32)',
@@ -83,13 +84,13 @@ const PLAYFUL: ThemeTokens = {
     light: true, mono: false, radius: 28, bubble: 20,
     glow: 'rgba(255,138,115,.30)', border: 'rgba(0,0,0,.07)',
     card: '#FFFFFF',
-    text: '#2A2730', muted: '#9A93A3', agentBg: '#F4F1F6', accent: '#FF8A73',
+    text: '#2A2730', muted: '#736C7C', agentBg: '#F4F1F6', accent: '#FF8A73',
 }
 const SUNRISE: ThemeTokens = {
     light: true, mono: false, radius: 24, bubble: 16,
     glow: 'rgba(255,138,115,.22)', border: 'rgba(0,0,0,.08)',
     card: '#FFFFFF',
-    text: '#2A2A33', muted: '#8A8A99', agentBg: '#F3F3F6', accent: '#FF8A73',
+    text: '#2A2A33', muted: '#6E6E7B', agentBg: '#F3F3F6', accent: '#FF8A73',
 }
 
 // chat_style → token-set mapping. CHATBOT (legacy) and ASK_ANYTHING reuse Sunrise.
@@ -165,7 +166,7 @@ export function themeCssVars(chatStyle?: string | null, overrides?: ThemeOverrid
     const text = hasCustomText
         ? customText
         : (hasCustomBg ? (isColorDark(customBg) ? '#FFFFFF' : '#111111') : t.text)
-    const muted = hasCustomBg ? (isColorDark(customBg) ? 'rgba(255,255,255,0.55)' : 'rgba(0,0,0,0.5)') : t.muted
+    const muted = hasCustomBg ? (isColorDark(customBg) ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.62)') : t.muted
     const agentBg = hasCustomBg ? adjustColorBrightness(customBg, 20) : t.agentBg
 
     const accent = overrides?.accent_color || t.accent

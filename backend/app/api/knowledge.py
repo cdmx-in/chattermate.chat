@@ -31,6 +31,7 @@ from app.models.knowledge import Knowledge
 from app.repositories.knowledge import KnowledgeRepository
 from app.knowledge import page_editor
 from app.knowledge.crawl_scope import CRAWL_SCOPES
+from app.knowledge.pdf_download import MAX_PDF_SIZE
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.agent import AgentRepository
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
@@ -63,12 +64,12 @@ logger = get_logger(__name__)
 TEMP_DIR = "temp"
 
 # PDF upload limits (see app/core/file_validation.py)
-MAX_PDF_SIZE = 25 * 1024 * 1024  # 25MB per file
 MAX_PDF_FILES = 20  # per request
 ALLOWED_PDF_TYPES = ("application/pdf",)
 
 # Import processor status from shared module
 from app.core.processor import PROCESSOR_STATUS
+from app.core.params import DbIntId, PageNumber
 
 
 def resolve_plan_max_links(subscription) -> int:
@@ -334,7 +335,7 @@ def _get_crawled_urls_info(crawled_urls):
 
 @router.get("/explore/progress/{queue_id}")
 async def get_explore_progress(
-    queue_id: int,
+    queue_id: DbIntId,
     db: Session = Depends(get_db)
 ):
     """Get progress status for knowledge base processing"""
@@ -762,7 +763,7 @@ def _linked_agents_map(db: Session, knowledge_items) -> dict:
 @router.get("/agent/{agent_id}")
 async def get_knowledge_by_agent(
     agent_id: str,
-    page: int = Query(default=1, ge=1),
+    page: PageNumber = 1,
     page_size: int = Query(default=10, ge=1, le=100),
     current_user: User = Depends(
         require_any_permission("view_knowledge", "manage_knowledge")),
@@ -946,7 +947,7 @@ async def get_organization_queue_items(
 
 @router.delete("/queue/{queue_id}")
 async def delete_queue_item(
-    queue_id: int,
+    queue_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)
 ):
@@ -985,7 +986,7 @@ async def delete_queue_item(
 
 async def get_knowledge_by_organization(
     org_id: str,
-    page: int = Query(default=1, ge=1),
+    page: PageNumber = 1,
     page_size: int = Query(default=10, ge=1, le=100),
     current_user: User = Depends(
         require_any_permission("view_knowledge", "manage_knowledge")),
@@ -1086,7 +1087,7 @@ async def get_knowledge_by_organization(
 
 @router.get("/queue/{queue_id}")
 async def get_queue_status(
-    queue_id: int,
+    queue_id: DbIntId,
     current_user: User = Depends(
         require_any_permission("view_knowledge", "manage_knowledge")),
     db: Session = Depends(get_db)
@@ -1166,7 +1167,7 @@ async def get_processor_status(
 
 @router.delete("/{knowledge_id}")
 async def delete_knowledge(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)
 ):
@@ -1211,7 +1212,7 @@ async def delete_knowledge(
 
 @router.get("/{knowledge_id}/content")
 async def get_knowledge_content(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1319,7 +1320,7 @@ def _require_editable_knowledge(
 
 @router.put("/{knowledge_id}/chunk/{chunk_id:path}")
 async def update_chunk_content(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     chunk_id: str,
     content: str = Body(..., embed=True),
     current_user: User = Depends(require_permissions("manage_knowledge")),
@@ -1377,7 +1378,7 @@ async def update_chunk_content(
 
 @router.delete("/{knowledge_id}/chunk/{chunk_id:path}")
 async def delete_chunk(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     chunk_id: str,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)
@@ -1431,7 +1432,7 @@ async def delete_chunk(
 
 @router.post("/{knowledge_id}/subpage")
 async def add_subpage(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     subpage_name: str = Body(..., embed=True),
     content: str = Body(..., embed=True),
     url: Optional[str] = Body(None, embed=True),
@@ -1549,7 +1550,7 @@ async def add_subpage(
 
 @router.put("/{knowledge_id}/page/{page_id:path}")
 async def update_page_content(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     page_id: str,
     content: str = Body(..., embed=True),
     title: Optional[str] = Body(None, embed=True),
@@ -1590,7 +1591,7 @@ async def update_page_content(
 
 @router.delete("/{knowledge_id}/page/{page_id:path}")
 async def delete_page(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     page_id: str,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)

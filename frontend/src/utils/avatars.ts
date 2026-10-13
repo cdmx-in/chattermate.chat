@@ -45,3 +45,18 @@ export const buildUploadUrl = (stored: string | null | undefined, apiBase: strin
   const origin = apiBase.replace(/\/api\/v1\/?$/, '')
   return `${origin}${stored.startsWith('/') ? '' : '/'}${stored}`
 }
+
+/**
+ * Browser URL for a chat attachment in the dashboard.
+ *
+ * The API hands attachments out signed — an S3 presigned URL, or a
+ * `/api/v1/files/local/...?exp=&sig=` link for local storage — and those
+ * resolve like any other upload. A bare `/uploads/chat_attachments/...` path
+ * is not publicly served, so it goes through the authenticated download
+ * endpoint instead.
+ */
+export const buildAttachmentUrl = (fileUrl: string | null | undefined, apiBase: string): string => {
+  const unsigned = fileUrl?.match(/^\/?uploads\/(.+)$/)
+  if (unsigned) return `${apiBase.replace(/\/+$/, '')}/files/download/${unsigned[1]}`
+  return buildUploadUrl(fileUrl, apiBase)
+}

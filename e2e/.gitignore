@@ -5,3 +5,8 @@ blob-report/
 .auth/
 .cache/
 .stack/
+test-results-quarantine/
+playwright-report-quarantine/
+# Screenshot baselines are made on Linux in CI only.
+specs/**/*-snapshots/*-darwin.png
+specs/**/*-snapshots/*-win32.png

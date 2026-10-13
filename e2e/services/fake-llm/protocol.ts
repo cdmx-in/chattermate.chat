@@ -20,6 +20,19 @@ export interface Reply {
   message?: string
   fields?: Record<string, unknown>
   text?: string
+  /** Token counts to report, for metering. Default 1/1. */
+  usage?: { prompt_tokens: number; completion_tokens: number }
+}
+
+/** How the turn goes wrong instead of (or before) answering. */
+export interface Fault {
+  /** Answer with this HTTP status and an OpenAI-style error instead of a completion. */
+  status?: number
+  message?: string
+  /** Wait this long first — past AGENT_RUN_TIMEOUT to exercise the backend's timeout. */
+  delayMs?: number
+  /** Return content that is not the JSON the request's schema asks for. */
+  malformed?: boolean
 }
 
 export interface ToolCall {
@@ -33,6 +46,7 @@ export interface ScenarioRule {
   /** Ask the backend to run a tool first; `reply` is sent after the tool result comes back. */
   toolCall?: ToolCall
   reply: Reply
+  fault?: Fault
 }
 
 export interface ScenarioSpec {
@@ -54,6 +68,10 @@ export interface RecordedRequest {
   tools: string[]
   /** Contents of the tool-result messages in this request — e.g. what knowledge search returned. */
   toolResults: string[]
-  /** What the fake answered: 'tool_call:<name>' | 'structured' | 'text' */
+  /** What the fake answered: 'tool_call:<name>' | 'structured' | 'text' | 'error:<status>' | 'malformed' */
   answeredWith: string
+  /** The model the backend asked for. */
+  model: string
+  /** The last 6 characters of the API key it sent — which key the org's config used. */
+  keySuffix: string
 }

@@ -138,15 +138,9 @@ async def test_transfer_response_agent_initialization():
         create_model_calls.append((args, kwargs))
         return MagicMock()
     
-    # Mock AgentRepository to avoid database calls
-    mock_agent_repo = MagicMock()
-    mock_agent_repo.get_by_agent_id.return_value = None
-    
     # Test with OpenAI model
-    with patch('app.agents.transfer_agent.AgentRepository', return_value=mock_agent_repo), \
-         patch('app.utils.agno_utils.create_model', side_effect=spy_create_model), \
-         patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent()), \
-         patch('app.agents.transfer_agent.next', return_value=MagicMock()):
+    with patch('app.utils.agno_utils.create_model', side_effect=spy_create_model), \
+         patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent()):
         
         # Reset call history
         create_model_calls.clear()
@@ -168,10 +162,8 @@ async def test_transfer_response_agent_initialization():
         assert isinstance(agent.agent, MockPhiAgent)
     
     # Test with Anthropic model
-    with patch('app.agents.transfer_agent.AgentRepository', return_value=mock_agent_repo), \
-         patch('app.utils.agno_utils.create_model', side_effect=spy_create_model), \
-         patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent()), \
-         patch('app.agents.transfer_agent.next', return_value=MagicMock()):
+    with patch('app.utils.agno_utils.create_model', side_effect=spy_create_model), \
+         patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent()):
         
         # Reset call history
         create_model_calls.clear()
@@ -193,9 +185,7 @@ async def test_transfer_response_agent_initialization():
         assert isinstance(agent.agent, MockPhiAgent)
     
     # Test with unsupported model
-    with patch('app.agents.transfer_agent.AgentRepository', return_value=mock_agent_repo), \
-         patch('app.utils.agno_utils.create_model', side_effect=ValueError("Unsupported model type: UNKNOWN")), \
-         patch('app.agents.transfer_agent.next', return_value=MagicMock()):
+    with patch('app.utils.agno_utils.create_model', side_effect=ValueError("Unsupported model type: UNKNOWN")):
         
         with pytest.raises(ValueError) as excinfo:
             TransferResponseAgent(
@@ -206,16 +196,21 @@ async def test_transfer_response_agent_initialization():
         
         assert "Unsupported model type" in str(excinfo.value)
 
+def test_transfer_agent_speaks_as_the_named_agent():
+    with patch('app.agents.transfer_agent.create_model', return_value=MagicMock()), \
+         patch('app.agents.transfer_agent.Agent') as agent_cls:
+        TransferResponseAgent(api_key="k", model_name="gpt-4", agent_name="Ava")
+        TransferResponseAgent(api_key="k", model_name="gpt-4")
+    named, unnamed = (c.kwargs["instructions"] for c in agent_cls.call_args_list)
+    assert named[0] == "You are Ava, representing our company."
+    assert not any(line.startswith("You are ") for line in unnamed)
+
+
 @pytest.mark.asyncio
 async def test_get_business_context():
     """Test get_business_context method"""
     
-    # Mock AgentRepository to avoid database calls
-    mock_agent_repo = MagicMock()
-    mock_agent_repo.get_by_agent_id.return_value = None
-    
-    with patch('app.agents.transfer_agent.AgentRepository', return_value=mock_agent_repo), \
-         patch('app.utils.agno_utils.create_model', return_value=MagicMock()), \
+    with patch('app.utils.agno_utils.create_model', return_value=MagicMock()), \
          patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent()):
         
         agent = TransferResponseAgent(
@@ -251,12 +246,7 @@ async def test_get_business_context():
 async def test_get_transfer_response():
     """Test get_transfer_response method"""
     
-    # Mock AgentRepository to avoid database calls
-    mock_agent_repo = MagicMock()
-    mock_agent_repo.get_by_agent_id.return_value = None
-    
-    with patch('app.agents.transfer_agent.AgentRepository', return_value=mock_agent_repo), \
-         patch('app.utils.agno_utils.create_model', return_value=MagicMock()), \
+    with patch('app.utils.agno_utils.create_model', return_value=MagicMock()), \
          patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent()):
         
         agent = TransferResponseAgent(
@@ -306,11 +296,7 @@ async def test_get_transfer_response():
 async def test_get_transfer_response_timeout():
     """A stuck transfer run is cancelled and falls back to a plain handoff line,
     keeping the routing decision intact (issue #269)."""
-    mock_agent_repo = MagicMock()
-    mock_agent_repo.get_by_agent_id.return_value = None
-
-    with patch('app.agents.transfer_agent.AgentRepository', return_value=mock_agent_repo), \
-         patch('app.utils.agno_utils.create_model', return_value=MagicMock()), \
+    with patch('app.utils.agno_utils.create_model', return_value=MagicMock()), \
          patch('app.agents.transfer_agent.Agent', return_value=MockPhiAgent()):
 
         agent = TransferResponseAgent(
@@ -374,7 +360,7 @@ async def test_get_agent_availability_response(test_agent, test_user_group, test
     
     with patch('app.agents.transfer_agent.CustomerRepository', return_value=mock_customer_repo), \
          patch('app.agents.transfer_agent.GroupRepository', return_value=mock_group_repo), \
-         patch('app.agents.transfer_agent.TransferResponseAgent', return_value=mock_transfer_agent), \
+         patch('app.agents.transfer_agent.TransferResponseAgent', return_value=mock_transfer_agent) as transfer_cls, \
          patch('app.utils.business_hours.datetime') as mock_datetime:
         
         # Mock current time to be within business hours
@@ -398,6 +384,8 @@ async def test_get_agent_availability_response(test_agent, test_user_group, test
         
         assert response["message"] == "I'll transfer you to a human agent."
         assert response["transfer_to_human"] is True
+        # The agent it was handed names the transfer agent; no second lookup.
+        assert transfer_cls.call_args.kwargs["agent_name"] == "Test Display Name"
         
         # Test with no agent groups
         test_agent.groups = []
@@ -431,7 +419,6 @@ async def test_business_hours_calculation(test_agent, test_organization):
     mock_db = MagicMock()
     mock_customer_repo = MagicMock()
     mock_group_repo = MagicMock()
-    mock_get_db = MagicMock(return_value=iter([mock_db]))
 
     # Create a real TransferResponseAgent mock that will be returned by our patch
     mock_transfer_agent = MagicMock()
@@ -444,7 +431,6 @@ async def test_business_hours_calculation(test_agent, test_organization):
 
     with patch('app.agents.transfer_agent.CustomerRepository', return_value=mock_customer_repo), \
          patch('app.agents.transfer_agent.GroupRepository', return_value=mock_group_repo), \
-         patch('app.agents.transfer_agent.get_db', return_value=mock_get_db), \
          patch('app.agents.transfer_agent.TransferResponseAgent', return_value=mock_transfer_agent):
 
         # Test case: The agent has no groups, so it should return the default message
@@ -514,7 +500,6 @@ async def test_timezone_handling(test_agent):
     mock_db = MagicMock()
     mock_customer_repo = MagicMock()
     mock_group_repo = MagicMock()
-    mock_get_db = MagicMock(return_value=iter([mock_db]))
 
     # Mock TransferResponseAgent
     mock_transfer_agent = MagicMock()
@@ -539,7 +524,6 @@ async def test_timezone_handling(test_agent):
     
     with patch('app.agents.transfer_agent.CustomerRepository', return_value=mock_customer_repo), \
          patch('app.agents.transfer_agent.GroupRepository', return_value=mock_group_repo), \
-         patch('app.agents.transfer_agent.get_db', return_value=mock_get_db), \
          patch('app.agents.transfer_agent.TransferResponseAgent', return_value=mock_transfer_agent), \
          patch('app.utils.business_hours.pytz', autospec=True) as mock_pytz:
         

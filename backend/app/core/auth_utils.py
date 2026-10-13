@@ -15,14 +15,16 @@ limitations under the License.
 """
 
 from typing import Optional, Tuple
+from uuid import UUID
 import http.cookies
-from app.core.security import verify_conversation_token, verify_token, create_access_token
+from app.core.security import verify_conversation_token
 from app.core.logger import get_logger
 from app.database import get_db, SessionLocal
 from app.models.user import User
 from sqlalchemy.orm import Session
 from app.core.socketio import sio
 from app.models.widget import Widget
+from app.services.auth_sessions import ACCESS, REFRESH, issue_tokens, live_payload
 
 logger = get_logger(__name__)
 
@@ -30,8 +32,8 @@ logger = get_logger(__name__)
 async def refresh_access_token(refresh_token: str, db: Session) -> str | None:
     """Refresh access token using refresh token"""
     try:
-        payload = verify_token(refresh_token)
-        if not payload or payload.get("type") != "refresh":
+        payload = live_payload(db, refresh_token, REFRESH)
+        if not payload:
             return None
 
         user_id = payload.get("sub")
@@ -41,13 +43,15 @@ async def refresh_access_token(refresh_token: str, db: Session) -> str | None:
             return None
 
         # Verify user exists and is active
-        user = db.query(User).filter(User.id == user_id).first()
+        user = db.query(User).filter(User.id == UUID(user_id)).first()
         if not user or not user.is_active:
             return None
 
-        # Generate new access token
-        token_data = {"sub": user_id, "org": org_id}
-        return create_access_token(token_data)
+        # Generate new access token for the same session (a legacy token
+        # without one gets a new session)
+        access_token, _ = issue_tokens(db, user_id, org_id, sid=payload.get("sid"))
+        db.commit()
+        return access_token
 
     except Exception as e:
         logger.error(f"Token refresh failed: {str(e)}")
@@ -87,13 +91,18 @@ async def authenticate_socket(sid: str, environ: dict) -> Tuple[Optional[str], O
         if not access_token:
             return None, None, None
 
-        # Verify token and get user info
-        payload = verify_token(access_token)
-        if not payload:
-            return None, None, None
+        # Verify the token is a live access token of a user who can still sign in
+        with SessionLocal() as db:
+            payload = live_payload(db, access_token, ACCESS)
+            if not payload:
+                return None, None, None
 
-        user_id = payload.get('sub')
-        org_id = payload.get('org')
+            user_id = payload.get('sub')
+            org_id = payload.get('org')
+
+            user = db.query(User).filter(User.id == UUID(str(user_id))).first()
+            if not user or not user.is_active:
+                return None, None, None
 
         return access_token, user_id, org_id
 

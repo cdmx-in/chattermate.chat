@@ -2,7 +2,7 @@ import playwright from 'eslint-plugin-playwright'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['node_modules/', 'test-results/', 'playwright-report/', '.cache/', '.stack/', '.auth/'] },
+  { ignores: ['node_modules/', 'test-results/', 'playwright-report/', '.cache/', '.stack/', '.auth/', 'src/api/schema.d.ts'] },
   ...tseslint.configs.recommended,
   {
     files: ['**/*.ts'],
@@ -22,7 +22,8 @@ export default tseslint.config(
       'playwright/prefer-web-first-assertions': 'error',
       // Steps live in page objects and components, which run inside tests.
       'playwright/no-standalone-expect': 'off',
-      'playwright/expect-expect': ['error', { assertFunctionNames: ['expect'] }],
+      // Shared helpers that assert inside count as assertions.
+      'playwright/expect-expect': ['error', { assertFunctionNames: ['expect', 'expectUnchanged', 'expectNoNewA11yViolations'] }],
     },
   },
   {

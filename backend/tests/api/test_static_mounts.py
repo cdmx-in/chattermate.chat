@@ -21,6 +21,7 @@ from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401 — the static mounts are added when main is imported
 from app.core.application import app
+from app.services.file_storage import PUBLIC_UPLOAD_FOLDERS
 
 # Escapes that must never reach a file outside the mounted directory, in the
 # encodings a proxy will happily pass through untouched.
@@ -31,6 +32,8 @@ TRAVERSALS = [
     "/assets/%2e%2e%2frequirements.txt",
     "/assets//etc/passwd",
     "/api/v1/uploads/../requirements.txt",
+    "/api/v1/uploads/agents/../../requirements.txt",
+    "/api/v1/uploads/agents/%2e%2e/chat_attachments",
 ]
 
 
@@ -49,16 +52,35 @@ class TestStaticMounts:
         assert response.status_code == 200
         assert response.content, "widget.js served empty"
 
-    def test_uploaded_file_is_served(self, client, tmp_path):
-        uploaded = Path("uploads") / "static-mount-probe.txt"
+    @pytest.mark.parametrize("folder", PUBLIC_UPLOAD_FOLDERS)
+    def test_public_upload_folders_are_served(self, client, folder):
+        uploaded = Path("uploads") / folder / "static-mount-probe.txt"
+        uploaded.parent.mkdir(parents=True, exist_ok=True)
         uploaded.write_text("probe")
         try:
-            response = client.get("/api/v1/uploads/static-mount-probe.txt")
+            response = client.get(f"/api/v1/uploads/{folder}/static-mount-probe.txt")
         finally:
             uploaded.unlink(missing_ok=True)
 
         assert response.status_code == 200
         assert response.text == "probe"
+
+    @pytest.mark.parametrize("relative", [
+        "chat_attachments/static-mount-probe/attachment.txt",  # served only signed
+        "help_center_imports/import.pdf",              # worker-only
+        "stray-root-file.txt",
+    ])
+    def test_private_uploads_are_not_static_served(self, client, relative):
+        uploaded = Path("uploads") / relative
+        uploaded.parent.mkdir(parents=True, exist_ok=True)
+        uploaded.write_text("secret")
+        try:
+            response = client.get(f"/api/v1/uploads/{relative}")
+        finally:
+            uploaded.unlink(missing_ok=True)
+
+        assert response.status_code == 404
+        assert "secret" not in response.text
 
     def test_missing_file_is_a_404_not_a_route_fallthrough(self, client):
         response = client.get("/assets/does-not-exist.js")

@@ -28,6 +28,8 @@ from app.models.agent import Agent, AgentType
 from uuid import UUID, uuid4
 from datetime import datetime, timedelta
 from app.api import jira as jira_router
+import app.core.oauth_state as oauth_state
+from urllib.parse import parse_qs, urlparse
 from app.core.auth import get_current_user, get_current_organization, require_permissions
 from app.core.exceptions import JiraAuthError
 from tests.conftest import engine, TestingSessionLocal, create_tables, Base
@@ -286,26 +288,29 @@ def test_disconnect_jira_not_connected(client):
     assert response.status_code == 404
     assert response.json() == {"detail": "No Jira connection found"}
 
-@pytest.mark.skip(reason="OAuth redirect tests don't work with test client")
-def test_authorize_jira(client):
-    """Test authorizing Jira"""
-    with patch('app.api.jira.jira_service.get_authorization_url') as mock_auth_url:
-        mock_auth_url.return_value = "https://auth.atlassian.com/authorize?client_id=test"
-        
-        response = client.get("/api/v1/jira/authorize")
-        assert response.status_code == 307  # Temporary redirect
-        assert response.headers["location"] == "https://auth.atlassian.com/authorize?client_id=test"
-        
-        # Check that a state was generated and stored
-        assert len(jira_router.oauth_states) == 1
+@pytest.fixture
+def inprocess_oauth_state(monkeypatch):
+    """The in-process state store, whether or not a Redis is reachable here."""
+    monkeypatch.setattr(oauth_state, "get_redis", lambda: None)
+    oauth_state._fallback.clear()
 
-@pytest.mark.skip(reason="OAuth redirect tests don't work with test client")
-def test_jira_oauth_callback_success(client, db, test_organization):
+
+def test_authorize_jira(client, inprocess_oauth_state):
+    """The redirect carries a state the callback can redeem once."""
+    response = client.get("/api/v1/jira/authorize", follow_redirects=False)
+    assert response.status_code == 307
+    location = response.headers["location"]
+    assert location.startswith("https://auth.atlassian.com/authorize?")
+    state = parse_qs(urlparse(location).query)["state"][0]
+    assert oauth_state.pop_state("jira", state) is not None
+    assert oauth_state.pop_state("jira", state) is None
+
+
+def test_jira_oauth_callback_success(client, db, test_organization, inprocess_oauth_state):
     """Test successful Jira OAuth callback"""
-    # Setup state
     state = "test_state"
-    jira_router.oauth_states[state] = str(test_organization.id)
-    
+    oauth_state.store_state("jira", state, str(test_organization.id))
+
     with patch('app.api.jira.jira_service.exchange_code_for_token', new_callable=AsyncMock) as mock_exchange:
         mock_exchange.return_value = {
             "access_token": "new_access_token",
@@ -313,59 +318,56 @@ def test_jira_oauth_callback_success(client, db, test_organization):
             "token_type": "Bearer",
             "expires_at": datetime.utcnow() + timedelta(hours=1)
         }
-        
+
         with patch('app.api.jira.jira_service.get_cloud_id', new_callable=AsyncMock) as mock_cloud_id:
             mock_cloud_id.return_value = {
                 "cloud_id": "test_cloud_id",
                 "site_url": "https://test.atlassian.net"
             }
-            
-            response = client.get(f"/api/v1/jira/callback?code=test_code&state={state}")
-            assert response.status_code == 307  # Temporary redirect
+
+            response = client.get(f"/api/v1/jira/callback?code=test_code&state={state}", follow_redirects=False)
+            assert response.status_code == 307
             assert response.headers["location"] == f"{settings.FRONTEND_URL}/settings/integrations?status=success"
-            
-            # Check that state was cleaned up
-            assert state not in jira_router.oauth_states
-            
-            # Check that token was stored in database
+
+            # The state is single-use.
+            assert oauth_state.pop_state("jira", state) is None
+
             token = db.query(JiraToken).filter(JiraToken.organization_id == test_organization.id).first()
             assert token is not None
             assert token.access_token == "new_access_token"
             assert token.refresh_token == "new_refresh_token"
 
-@pytest.mark.skip(reason="OAuth redirect tests don't work with test client")
-def test_jira_oauth_callback_error(client):
+
+def test_jira_oauth_callback_error(client, inprocess_oauth_state):
     """Test Jira OAuth callback with error"""
-    response = client.get("/api/v1/jira/callback?error=access_denied&error_description=User%20denied%20access")
-    assert response.status_code == 307  # Temporary redirect
+    response = client.get("/api/v1/jira/callback?error=access_denied&error_description=User%20denied%20access", follow_redirects=False)
+    assert response.status_code == 307
     assert "status=failure" in response.headers["location"]
     assert "reason=access_denied" in response.headers["location"]
 
-@pytest.mark.skip(reason="OAuth redirect tests don't work with test client")
-def test_jira_oauth_callback_invalid_state(client):
+
+def test_jira_oauth_callback_invalid_state(client, inprocess_oauth_state):
     """Test Jira OAuth callback with invalid state"""
-    response = client.get("/api/v1/jira/callback?code=test_code&state=invalid_state")
-    assert response.status_code == 307  # Temporary redirect
+    response = client.get("/api/v1/jira/callback?code=test_code&state=invalid_state", follow_redirects=False)
+    assert response.status_code == 307
     assert "status=failure" in response.headers["location"]
     assert "reason=invalid_state" in response.headers["location"]
 
-@pytest.mark.skip(reason="OAuth redirect tests don't work with test client")
-def test_jira_oauth_callback_exception(client):
+
+def test_jira_oauth_callback_exception(client, test_organization, inprocess_oauth_state):
     """Test Jira OAuth callback with exception"""
-    # Setup state
     state = "test_state"
-    jira_router.oauth_states[state] = "test_org_id"
-    
+    oauth_state.store_state("jira", state, str(test_organization.id))
+
     with patch('app.api.jira.jira_service.exchange_code_for_token', new_callable=AsyncMock) as mock_exchange:
         mock_exchange.side_effect = Exception("Test exception")
-        
-        response = client.get(f"/api/v1/jira/callback?code=test_code&state={state}")
-        assert response.status_code == 307  # Temporary redirect
+
+        response = client.get(f"/api/v1/jira/callback?code=test_code&state={state}", follow_redirects=False)
+        assert response.status_code == 307
         assert "status=failure" in response.headers["location"]
         assert "reason=Test_exception" in response.headers["location"]
-        
-        # Check that state was cleaned up
-        assert state not in jira_router.oauth_states
+
+        assert oauth_state.pop_state("jira", state) is None
 
 def test_refresh_jira_token_success(client, test_jira_token):
     """Test refreshing Jira token successfully"""
