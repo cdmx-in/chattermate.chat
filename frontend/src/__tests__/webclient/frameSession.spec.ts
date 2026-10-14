@@ -83,6 +83,7 @@ describe('frame-session', () => {
 
     expect(await session.startFramedWidget()).toBe(true)
     expect(session.isFramed()).toBe(false)
+    expect(session.hostSharesIdentity()).toBe(true) // as it always has
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -169,8 +170,10 @@ describe('frame-session', () => {
       await started
       session.announceReady()
 
-      expect(sentToHost()).toContainEqual([{ type: 'TOKEN_UPDATE', token: 'tok-new' }, '*'])
+      // Readiness and layout, yes; a token, never - any page could be that parent
       expect(sentToHost()).toContainEqual([{ type: 'WIDGET_READY' }, '*'])
+      expect(sentToHost().some(([m]) => (m as any).type === 'TOKEN_UPDATE')).toBe(false)
+      expect(session.hostSharesIdentity()).toBe(false)
       // @ts-expect-error restore jsdom's own referrer
       delete document.referrer
     })
@@ -215,6 +218,14 @@ describe('frame-session', () => {
       expect(localStorage.getItem('ctid')).toBe('tok-left-by-a-help-center')
     })
 
+    it('shares identity with the loader on an addressable page', async () => {
+      const session = await loadFrame()
+      const started = session.startFramedWidget()
+      hostSays({ type: 'HOST_INIT', token: null, pageUrl: HOST })
+      await started
+      expect(session.hostSharesIdentity()).toBe(true)
+    })
+
     it('announces it is ready once mounted', async () => {
       const session = await loadFrame()
       const started = session.startFramedWidget()
@@ -242,6 +253,12 @@ describe('frame-session', () => {
       expect(hostPost).not.toHaveBeenCalled()
       expect((fetchMock.mock.calls[0][1] as any).headers.Authorization).toBe('Bearer tok-raw')
       expect(session.isHosted()).toBe(false)
+    })
+
+    it('shares no identity with whatever page embedded it', async () => {
+      const session = await loadFrame({ query: '' })
+      await session.startFramedWidget()
+      expect(session.hostSharesIdentity()).toBe(false)
     })
 
     it('keeps its visitor per widget, apart from the shared ctid', async () => {

@@ -28,7 +28,7 @@ import { AI_DISCLAIMER_TEXT, shouldShowAiDisclaimer } from '../utils/aiDisclaime
 import { presenceLine } from '../utils/widgetPresence'
 import { widgetEnv, resolveWidgetUploadUrl } from './widget-env'
 import { postToHost } from './host-bridge'
-import { isHosted, setHostPageUrl, tokenStoreFor } from './frame-session'
+import { hostSharesIdentity, isFramed, setHostPageUrl, tokenStoreFor } from './frame-session'
 import { useWidgetStyles } from '../composables/useWidgetStyles'
 import { useWidgetFiles } from '../composables/useWidgetFiles'
 import { useWidgetSocket } from '../composables/useWidgetSocket'
@@ -319,7 +319,7 @@ const {
     ensureFresh: ensureFreshToken
 } = useConversationToken({
     onTokenChanged: (next) => {
-        postToHost({ type: 'TOKEN_UPDATE', token: next })
+        if (hostSharesIdentity()) postToHost({ type: 'TOKEN_UPDATE', token: next })
         // The open socket authenticated with the previous token and re-checks it on
         // later events; without this a conversation that outlives its token starts
         // failing authentication mid-chat.
@@ -331,7 +331,7 @@ const {
     // A framed widget holds the token only in memory: the host page keeps it, so
     // it must hear when the widget lets it go.
     onTokenCleared: () => {
-        if (isHosted()) postToHost({ type: 'TOKEN_CLEAR' })
+        if (isFramed() && hostSharesIdentity()) postToHost({ type: 'TOKEN_CLEAR' })
     },
     store: tokenStoreFor(widgetId.value || '')
 })
@@ -1295,6 +1295,11 @@ const endChatForHost = async (sessionId: unknown) => {
  * stays exactly where it is.
  */
 const handleIdentityExpired = () => {
+    // A page that can't share identity will never answer: carry on anonymously
+    if (!hostSharesIdentity()) {
+        void continueAnonymously()
+        return
+    }
     postToHost({ type: 'IDENTITY_EXPIRED' })
 }
 
@@ -1369,16 +1374,16 @@ window.addEventListener('message', (event) => {
         // The embedding page navigated (SPA route change): leads record where they came from.
         setHostPageUrl(event.data.url)
     }
-    if (event.data.type === 'END_CHAT') {
+    if (event.data.type === 'END_CHAT' && hostSharesIdentity()) {
         void endChatForHost(event.data.sessionId)
     }
-    if (event.data.type === 'IDENTITY_UNAVAILABLE') {
+    if (event.data.type === 'IDENTITY_UNAVAILABLE' && hostSharesIdentity()) {
         // The host page has no replacement identity for us. Start over as an
         // anonymous visitor rather than leaving the chat stuck: they can still talk
         // to the agent, they are just no longer signed in.
         void continueAnonymously()
     }
-    if (event.data.type === 'TOKEN_REFRESH') {
+    if (event.data.type === 'TOKEN_REFRESH' && hostSharesIdentity()) {
         // The host page issued a replacement token (usually answering
         // IDENTITY_EXPIRED). Adopt it and re-authorize in place: rebuilding the frame
         // would throw away the conversation the visitor is looking at.
@@ -1410,6 +1415,13 @@ window.addEventListener('message', (event) => {
             input?.focus()
         })
     }
+})
+
+// Escape inside the frame never reaches the page's own key handlers, so the loader
+// is told (it closes a drawer on it). The Ask AI palette handles its own.
+window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !isFramed()) return
+    postToHost({ type: 'WIDGET_ESCAPE' })
 })
 
 // Setup event listeners and callbacks

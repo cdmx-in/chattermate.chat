@@ -191,7 +191,15 @@ window.chattermateConfig;
   let triggerClickQueued = false
   // The widget iframe's window, once created — message handlers accept commands
   // only from it, so other embedded frames (ads etc.) can't drive the widget.
-  let widgetFrameWindow = null
+  // The widget's iframe. Its window is read live: moving the container in the DOM
+  // gives the frame a new WindowProxy.
+  let widgetFrame = null
+  function frameWindow() {
+    return widgetFrame ? widgetFrame.contentWindow : null
+  }
+  // Bumped whenever the page changes who the visitor is (identify, logout,
+  // destroy): an answer that arrives later for the old identity is dropped.
+  let identityEpoch = 0
   // The conversation the frame is in, reported by CHAT_CREATED. Kept so logout() and
   // a change of identity can close it server-side before the frame goes away.
   let currentSessionId = null
@@ -200,14 +208,16 @@ window.chattermateConfig;
   // to the frame is addressed to it, so a token never reaches any other document.
   let frameOrigin = null
   function postToFrame(message) {
-    if (widgetFrameWindow && frameOrigin) widgetFrameWindow.postMessage(message, frameOrigin)
+    const target = frameWindow()
+    if (target && frameOrigin) target.postMessage(message, frameOrigin)
   }
   // Only the widget frame may talk to the loader: the right window, and the right
   // origin - which is only known once it says hello, so until then hello is all it
   // may say (hostile sibling frames can reach us, and a frame could be somewhere
   // unexpected before that).
   function isFromWidgetFrame(event) {
-    if (!widgetFrameWindow || event.source !== widgetFrameWindow) return false
+    const target = frameWindow()
+    if (!target || event.source !== target) return false
     if (!frameOrigin) return event.data.type === 'FRAME_READY'
     return event.origin === frameOrigin
   }
@@ -1216,8 +1226,13 @@ window.chattermateConfig;
   // Get stored token - check window.chattermateToken first (set by developer),
   // then fall back to localStorage (persisted from previous sessions)
   function getStoredToken() {
-    return normalizeToken(window.chattermateToken)
-      || normalizeToken(localStorage.getItem(config.tokenKey));
+    let stored = null
+    try {
+      stored = localStorage.getItem(config.tokenKey)
+    } catch (e) {
+      // A sandboxed page has no storage: carry on with what the page set, if anything
+    }
+    return normalizeToken(window.chattermateToken) || normalizeToken(stored);
   }
 
   // The customer a token names, or null. Read-only: the backend still verifies every
@@ -1240,14 +1255,21 @@ window.chattermateConfig;
 
   // Save token
   function saveToken(token) {
-    if (token) {
+    if (!token) return
+    try {
       localStorage.setItem(config.tokenKey, token);
+    } catch (e) {
+      /* no storage: the token lives in memory for this page view */
     }
   }
 
   // Remove token
   function removeToken() {
-    localStorage.removeItem(config.tokenKey);
+    try {
+      localStorage.removeItem(config.tokenKey);
+    } catch (e) {
+      /* nothing stored to remove */
+    }
   }
 
   // Check if device is mobile
@@ -1523,11 +1545,10 @@ window.chattermateConfig;
     // Prefill (don't send) the chat input, e.g. ChatterMate.open({ message: '...' }).
     // Queued until the iframe has loaded so an early open({message}) isn't lost.
     let pendingPrefill = null
-    let iframeReady = false
     function prefillMessage(text) {
       const clean = String(text || '').slice(0, 2000)
       if (!clean) return
-      if (iframeReady) {
+      if (widgetMounted) {
         if (iframe) iframe.focus()
         postToFrame({ type: 'PREFILL_MESSAGE', text: clean })
       } else {
@@ -1545,9 +1566,8 @@ window.chattermateConfig;
       // Clears the iframe and, after a failed load, the error card.
       while (container.firstChild) container.removeChild(container.firstChild)
       iframe = null
-      widgetFrameWindow = null
+      widgetFrame = null
       currentSessionId = null
-      iframeReady = false
       widgetReadyFired = false
       pendingPrefill = null
       pendingIdentity = null
@@ -1609,6 +1629,7 @@ window.chattermateConfig;
       pendingCalls.length = 0
       triggerClickQueued = false
       isDestroyed = true
+      identityEpoch++
     }
 
     // Create error UI for authentication failures using safe DOM methods
@@ -1717,7 +1738,7 @@ window.chattermateConfig;
 
     function frameDidNotStart() {
       const host = window.location.hostname || 'this site'
-      showLoadError('Chat couldn’t load on “' + host + '”. If this widget is limited to certain domains, add this one in its settings.')
+      showLoadError('Chat couldn’t load on “' + host + '”. If the widget is limited to certain domains, add this one in its settings; otherwise check the widget ID.')
     }
 
     // The widget runs on our own origin, in a frame that asks for the visitor's token
@@ -1733,7 +1754,9 @@ window.chattermateConfig;
       // Screen readers announce a frame by its title.
       iframe.title = 'Chat'
       // A srcdoc frame inherited this from the page; a real frame must be granted it.
-      iframe.setAttribute('allow', 'clipboard-write')
+      // '*': the frame may be redirected to the frame host, a different origin from
+      // the URL set here, and a bare feature name only grants that first origin.
+      iframe.setAttribute('allow', 'clipboard-write *')
       iframe.src = config.baseUrl + '/widgets/' + encodeURIComponent(window.chattermateId) + '/frame?host=1'
       iframe.addEventListener('load', function () {
         if (generation !== loadGeneration || frameOrigin) return
@@ -1741,16 +1764,20 @@ window.chattermateConfig;
         frameTimer = setTimeout(frameDidNotStart, FRAME_HELLO_MS)
       })
       container.appendChild(iframe)
-      // contentWindow is a stable WindowProxy from the moment the element is in the
-      // DOM — capture now so FRAME_READY passes the source check.
-      widgetFrameWindow = iframe.contentWindow
+      // From now on its window is the only one that may talk to the loader.
+      widgetFrame = iframe
       frameTimer = setTimeout(frameDidNotStart, FRAME_LOAD_MS)
     }
 
     // The widget is mounted and listening: give it what it needs to render.
     function onWidgetReady() {
       clearFrameTimer()
-      iframeReady = true
+      if (pendingIdentity) {
+        // The page identified the visitor after the frame was handed the old token.
+        // Mid-start the widget can't take a new one safely: start it again with it.
+        reloadWidget()
+        return
+      }
       widgetMounted = true
       button.classList.remove('loading')
       // Developer display overrides, known now. Dashboard defaults merge later; the
@@ -1759,10 +1786,6 @@ window.chattermateConfig;
       // The widget is prefetched while still hidden — say so, or surfaces that focus
       // themselves on open (the Ask AI palette) would grab focus now.
       postToFrame({ type: 'WIDGET_VISIBILITY', open: isOpen })
-      if (pendingIdentity) {
-        postToFrame({ type: 'TOKEN_REFRESH', token: pendingIdentity })
-        pendingIdentity = null
-      }
       if (pendingPrefill) {
         postToFrame({ type: 'PREFILL_MESSAGE', text: pendingPrefill })
         pendingPrefill = null
@@ -1776,8 +1799,8 @@ window.chattermateConfig;
     // The frame could not start for this visitor.
     function onWidgetError(code) {
       clearFrameTimer()
-      if (code === 'identity_expired' && pendingIdentity) {
-        // It started with the token it had when it said hello, and the page has
+      if (pendingIdentity && (code === 'identity_expired' || code === 'token_required')) {
+        // It was refused the token it had when it said hello, and the page has
         // identified the visitor since: start again with that, nothing to recover.
         reloadWidget()
         return
@@ -1787,7 +1810,11 @@ window.chattermateConfig;
         // reopened long after the app identified them. Ask the page for a fresh one
         // and load again as that visitor, rather than starting over as a stranger.
         teardownFrame()
+        const epoch = identityEpoch
         emitEvent('identityExpired')
+        // The page answered by identifying someone (or tearing the widget down)
+        // itself: that already rebuilt the frame, so recovering would undo it.
+        if (epoch !== identityEpoch || isDestroyed) return
         recoverIdentityAndLoad()
         return
       }
@@ -1801,7 +1828,7 @@ window.chattermateConfig;
 
     // Leads record the page they came from; tell the frame when a single-page app moves on.
     function reportPage() {
-      if (iframeReady) postToFrame({ type: 'HOST_PAGE', url: window.location.href })
+      if (widgetMounted) postToFrame({ type: 'HOST_PAGE', url: window.location.href })
     }
 
     // Token + unread-count updates from the widget frame. Registered once for the
@@ -1816,7 +1843,6 @@ window.chattermateConfig;
         if (event.origin === 'null') return
         frameOrigin = event.origin
         // A frame that reloaded itself starts over: not listening until it mounts again
-        iframeReady = false
         widgetMounted = false
         button.classList.add('loading')
         clearFrameTimer()
@@ -1843,6 +1869,13 @@ window.chattermateConfig;
         if (closingUp) return
         removeToken()
         window.chattermateToken = null
+        return
+      }
+      if (event.data.type === 'WIDGET_ESCAPE') {
+        // Escape pressed inside the frame, which the page's own key handlers can't
+        // see. A drawer closes on it, as it would with focus on the page.
+        const drawer = config.displayMode === 'sidebar-left' || config.displayMode === 'sidebar-right'
+        if (drawer && isOpen) toggleChat()
         return
       }
       if (event.data.type === 'END_CHAT_DONE') {
@@ -1880,6 +1913,7 @@ window.chattermateConfig;
         return
       }
       if (event.data.type === 'IDENTITY_EXPIRED') {
+        if (closingUp) return
         // The widget cannot mint a token: that needs the site's API key. Ask the page
         // for one, and tell it either way so it can react on its own terms.
         emitEvent('identityExpired')
@@ -1901,9 +1935,15 @@ window.chattermateConfig;
         return
       }
       identityRecoveryUsed = true
+      const epoch = identityEpoch
+      const generation = loadGeneration
+      // Overtaken: the page identified someone, logged out, reloaded or removed
+      // the widget while the provider was answering
+      const stale = () => epoch !== identityEpoch || generation !== loadGeneration || isDestroyed
       Promise.resolve()
         .then(() => config.tokenProvider())
         .then((token) => {
+          if (stale()) return
           const next = normalizeToken(token)
           if (next) {
             window.chattermateToken = next
@@ -1915,11 +1955,12 @@ window.chattermateConfig;
         })
         .catch((error) => {
           console.error('ChatterMate: tokenProvider failed', error)
+          if (stale()) return
           removeToken()
           window.chattermateToken = null
         })
         .finally(() => {
-          prefetchWidget()
+          if (!stale()) prefetchWidget()
         })
     }
 
@@ -1940,9 +1981,13 @@ window.chattermateConfig;
       }
       tokenRequestInFlight = true
       identityRecoveryUsed = true
+      const epoch = identityEpoch
+      const askedBy = widgetFrame
       Promise.resolve()
         .then(() => config.tokenProvider())
         .then((token) => {
+          // Overtaken by an identify()/logout(), or the frame that asked is gone
+          if (epoch !== identityEpoch || askedBy !== widgetFrame) return
           const next = normalizeToken(token)
           if (!next) {
             postToFrame({ type: 'IDENTITY_UNAVAILABLE' })
@@ -2300,7 +2345,8 @@ window.chattermateConfig;
     currentSessionId = null
     // A switch already waiting on the frame will rebuild with the newest token.
     if (endChatDone) return
-    if (!sessionId || !widgetFrameWindow || !frameOrigin) {
+    // Only a mounted widget listens for END_CHAT
+    if (!sessionId || !widgetFrame || !widgetMounted) {
       reloadWidgetIfRunning()
       return
     }
@@ -2348,6 +2394,8 @@ window.chattermateConfig;
     if (next === current) return
 
     const sameVisitor = current && tokenSubject(next) && tokenSubject(next) === tokenSubject(current)
+    // Any new token supersedes an answer still on its way for the old one
+    identityEpoch++
     window.chattermateToken = next
     saveToken(next)
 
@@ -2356,7 +2404,7 @@ window.chattermateConfig;
     // visitor the chat they are in the middle of.
     // While the previous visitor's frame is closing up, the rebuild it is waiting
     // on picks up this token; the frame itself is no longer theirs to update.
-    if (sameVisitor && widgetFrameWindow && !endChatDone) {
+    if (sameVisitor && widgetFrame && !endChatDone) {
       if (widgetMounted) postToFrame({ type: 'TOKEN_REFRESH', token: next })
       // Not mounted yet: the frame isn't listening. It gets this when it is - or,
       // if it hasn't said hello, in its HOST_INIT.
@@ -2372,6 +2420,7 @@ window.chattermateConfig;
   // load gets a fresh anonymous token from the backend.
   function clearIdentity() {
     const previousSession = currentSessionId
+    identityEpoch++
     window.chattermateToken = null
     removeToken()
     endConversationThenReload(previousSession)

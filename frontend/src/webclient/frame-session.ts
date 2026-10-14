@@ -48,6 +48,7 @@ const boot: FrameBoot | undefined = window.__CM_FRAME__
 const OPAQUE_ORIGIN = 'null'
 
 let hosted = false
+let opaqueHost = false
 let hostPageUrl: string | null = null
 
 /** True when this document is the /frame page (rather than a baked /data page). */
@@ -55,6 +56,14 @@ export const isFramed = (): boolean => !!boot
 
 /** The embed loader is driving this frame: the host page owns the token. */
 export const isHosted = (): boolean => hosted
+
+/**
+ * Whether the parent page may hand the widget a visitor's identity, and be told
+ * about it. Yes for a /data page (as always) and for a frame the loader drives on
+ * an addressable page; never for a frame embedded without the loader or under a
+ * sandboxed page - any page could be its parent, so tokens stay out of messages.
+ */
+export const hostSharesIdentity = (): boolean => !boot || (hosted && !opaqueHost)
 
 /** The embedding page's own URL, as its loader reported it. */
 export const reportedPageUrl = (): string | null => hostPageUrl
@@ -125,8 +134,9 @@ export async function startFramedWidget(): Promise<boolean> {
       setHostOrigin(init.origin)
       hostOrigin = init.origin
     } else {
-      // An opaque host (sandboxed, file:) can only be reached with '*'. It ran
-      // anonymously, so a fresh anonymous token is all that could go astray.
+      // An opaque host (sandboxed, file:) can only be reached with '*': it gets
+      // readiness and layout messages, never a token (hostSharesIdentity).
+      opaqueHost = true
       setHostOrigin('*')
     }
     setHostPageUrl(init.pageUrl)
@@ -164,7 +174,7 @@ export async function startFramedWidget(): Promise<boolean> {
   // A token minted here (a new anonymous visitor) only exists in this frame:
   // the host keeps the visitor's token, so hand it over.
   const issued = sanitizeToken(data.initialToken)
-  if (hosted && issued && issued !== token) postToHost({ type: 'TOKEN_UPDATE', token: issued })
+  if (hostSharesIdentity() && issued && issued !== token) postToHost({ type: 'TOKEN_UPDATE', token: issued })
   return true
 }
 

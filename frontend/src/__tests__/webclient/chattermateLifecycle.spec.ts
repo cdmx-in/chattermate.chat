@@ -50,7 +50,8 @@ describe('ChatterMate frame and lifecycle API', () => {
       await loadLoader()
       expect(frame().getAttribute('src')).toBe(`${BASE_URL}/widgets/${WIDGET_ID}/frame?host=1`)
       expect(frame().title).toBe('Chat')
-      expect(frame().getAttribute('allow')).toBe('clipboard-write')
+      // '*': a bare feature name would only cover the URL's own origin, not the frame host it redirects to
+      expect(frame().getAttribute('allow')).toBe('clipboard-write *')
     })
 
     it('never calls the API from the host page', async () => {
@@ -189,6 +190,44 @@ describe('ChatterMate frame and lifecycle API', () => {
   })
 
   describe('before and after hello', () => {
+    it('keeps talking to the frame after the page moves it', async () => {
+      await loadLoader()
+      const container = document.getElementById('chattermate-container')!
+      const moved = document.createElement('div')
+      document.body.appendChild(moved)
+      moved.appendChild(container)
+
+      expect(handshake()?.targetOrigin).toBe(FRAME_ORIGIN)
+    })
+
+    it('still answers hello on a page whose storage is blocked (sandboxed)', async () => {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('denied', 'SecurityError') })
+      await loadLoader()
+      expect(handshake()?.message.token).toBeNull()
+      vi.restoreAllMocks()
+    })
+
+    it('closes a drawer on Escape pressed inside the frame', async () => {
+      ;(window as any).chattermateConfig = { displayMode: 'sidebar-right' }
+      await loadLoader()
+      bringUp()
+      api().open()
+
+      fromFrame({ type: 'WIDGET_ESCAPE' })
+
+      expect(api().isOpen()).toBe(false)
+    })
+
+    it('leaves a floating chat open on Escape inside the frame', async () => {
+      await loadLoader()
+      bringUp()
+      api().open()
+
+      fromFrame({ type: 'WIDGET_ESCAPE' })
+
+      expect(api().isOpen()).toBe(true)
+    })
+
     it('takes nothing but hello from the frame until it has said hello', async () => {
       await loadLoader()
       const unread = vi.fn()
@@ -244,7 +283,7 @@ describe('ChatterMate frame and lifecycle API', () => {
       await vi.advanceTimersByTimeAsync(3000)
 
       const card = document.querySelector('.chattermate-error-ui')
-      expect(card?.textContent).toContain('If this widget is limited to certain domains, add this one in its settings.')
+      expect(card?.textContent).toContain('If the widget is limited to certain domains, add this one in its settings; otherwise check the widget ID.')
       expect(frames()).toHaveLength(0)
     })
 

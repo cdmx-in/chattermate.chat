@@ -317,18 +317,20 @@ describe('ChatterMate identity continuity', () => {
   })
 
   describe('identity given while the frame is starting', () => {
-    it('reaches the widget once it has mounted', async () => {
+    it('starts the frame again with it once it has mounted, rather than mid-start', async () => {
+      // Handing it over while the widget is still starting raced its own start-up
       ;(window as any).chattermateToken = tokenFor('cust-1', 'a')
       await loadLoader()
       handshake()
-      const post = spyOnFrame()
+      const starting = frame()
       const fresher = tokenFor('cust-1', 'b')
 
       api().identify(fresher)
-      expect(post.mock.calls.some(([m]) => (m as any).type === 'TOKEN_REFRESH')).toBe(false)
+      expect(frame()).toBe(starting)
 
       fromFrame({ type: 'WIDGET_READY' })
-      expect(post).toHaveBeenCalledWith({ type: 'TOKEN_REFRESH', token: fresher }, FRAME_ORIGIN)
+      expect(frame()).not.toBe(starting)
+      expect(handshake()?.message.token).toBe(fresher)
     })
 
     it('goes in the hello answer when the frame has not said hello yet', async () => {
@@ -433,5 +435,122 @@ describe('ChatterMate identity continuity', () => {
     fromFrame({ type: 'TOKEN_CLEAR' })
 
     expect((window as any).chattermateToken).toBeNull()
+  })
+
+  describe('answers that arrive after the page changed its mind', () => {
+    it('keeps a token the page set from inside its identityExpired handler', async () => {
+      ;(window as any).chattermateToken = tokenFor('cust-1', 'old')
+      await loadLoader()
+      handshake()
+      const fresh = tokenFor('cust-1', 'new')
+      api().on('identityExpired', () => api().identify(fresh))
+
+      fromFrame({ type: 'WIDGET_ERROR', code: 'identity_expired' })
+      await flush()
+
+      expect(localStorage.getItem('ctid')).toBe(fresh)
+      expect(handshake()?.message.token).toBe(fresh)
+    })
+
+    it('drops a renewed token that comes back after logout', async () => {
+      let answer: (token: string) => void = () => {}
+      ;(window as any).chattermateConfig = { tokenProvider: () => new Promise((resolve) => { answer = resolve }) }
+      ;(window as any).chattermateToken = tokenFor('cust-1')
+      await loadLoader()
+      bringUp()
+      fromFrame({ type: 'IDENTITY_EXPIRED' })
+
+      api().logout()
+      await flush()
+      const post = spyOnFrame()
+      answer(tokenFor('cust-1', 'renewed'))
+      await flush()
+
+      expect(localStorage.getItem('ctid')).toBeNull()
+      expect(post.mock.calls.some(([m]) => (m as any).type === 'TOKEN_REFRESH')).toBe(false)
+    })
+
+    it('drops a recovered token that comes back after logout, and builds one frame', async () => {
+      let answer: (token: string) => void = () => {}
+      ;(window as any).chattermateConfig = { tokenProvider: () => new Promise((resolve) => { answer = resolve }) }
+      ;(window as any).chattermateToken = tokenFor('cust-1')
+      await loadLoader()
+      handshake()
+      fromFrame({ type: 'WIDGET_ERROR', code: 'identity_expired' })
+      await flush()
+
+      api().logout()
+      await flush()
+      const afterLogout = frame()
+      answer(tokenFor('cust-1', 'recovered'))
+      await flush()
+
+      expect(frames()).toHaveLength(1)
+      expect(frame()).toBe(afterLogout)
+      expect(localStorage.getItem('ctid')).toBeNull()
+    })
+
+    it('builds nothing when the widget was destroyed while recovering', async () => {
+      let answer: (token: string) => void = () => {}
+      ;(window as any).chattermateConfig = { tokenProvider: () => new Promise((resolve) => { answer = resolve }) }
+      ;(window as any).chattermateToken = tokenFor('cust-1')
+      await loadLoader()
+      handshake()
+      fromFrame({ type: 'WIDGET_ERROR', code: 'identity_expired' })
+      await flush()
+
+      api().destroy()
+      answer(tokenFor('cust-1', 'recovered'))
+      await flush()
+
+      expect(frames()).toHaveLength(0)
+    })
+
+    it('ignores the outgoing frame asking for a new identity while it closes up', async () => {
+      const provider = vi.fn().mockResolvedValue(tokenFor('cust-1', 'again'))
+      ;(window as any).chattermateConfig = { tokenProvider: provider }
+      ;(window as any).chattermateToken = tokenFor('cust-1')
+      await loadLoader()
+      bringUp()
+      fromFrame({ type: 'CHAT_SESSION', sessionId: 's-9', authenticated: true, created: true })
+      api().logout()
+      await flush()
+
+      fromFrame({ type: 'IDENTITY_EXPIRED' })
+      await flush()
+
+      expect(provider).not.toHaveBeenCalled()
+      expect(localStorage.getItem('ctid')).toBeNull()
+    })
+
+    it('restarts with a fresher token when a token-only agent refused the old one', async () => {
+      ;(window as any).chattermateToken = tokenFor('cust-1', 'a')
+      await loadLoader()
+      handshake()
+      const fresher = tokenFor('cust-1', 'b')
+      api().identify(fresher)
+
+      fromFrame({ type: 'WIDGET_ERROR', code: 'token_required' })
+      await flush()
+
+      expect(document.querySelector('.chattermate-error-ui')).toBeNull()
+      expect(handshake()?.message.token).toBe(fresher)
+    })
+
+    it('does not send END_CHAT to a frame that reloaded itself and has not mounted again', async () => {
+      ;(window as any).chattermateToken = tokenFor('cust-1')
+      await loadLoader()
+      bringUp()
+      fromFrame({ type: 'CHAT_SESSION', sessionId: 's-9', authenticated: true, created: true })
+      handshake() // reloaded itself
+      const post = spyOnFrame()
+      const before = frame()
+
+      api().logout()
+      await flush()
+
+      expect(post.mock.calls.some(([m]) => (m as any).type === 'END_CHAT')).toBe(false)
+      expect(frame()).not.toBe(before)
+    })
   })
 })
