@@ -18,6 +18,7 @@ import asyncio
 from typing import Optional, Tuple
 from bs4 import BeautifulSoup
 from app.core.logger import get_logger
+from app.knowledge.crawler_identity import CRAWLER_USER_AGENT
 from app.knowledge.url_safety import guard_url
 
 logger = get_logger(__name__)
@@ -95,7 +96,7 @@ class Crawl4AIFallback:
                     
                     context = await browser.new_context(
                         viewport={'width': 1280, 'height': 1024},
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        user_agent=CRAWLER_USER_AGENT,
                         ignore_https_errors=not self.verify_ssl
                     )
                     
@@ -129,7 +130,7 @@ class Crawl4AIFallback:
                 text_mode=False,
                 verbose=False,
                 ignore_https_errors=not self.verify_ssl,
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                user_agent=CRAWLER_USER_AGENT,
                 viewport_width=1280,
                 viewport_height=1024,
                 extra_args=[

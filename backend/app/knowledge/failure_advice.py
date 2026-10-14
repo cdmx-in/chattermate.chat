@@ -59,8 +59,8 @@ FAILURE_ADVICE = {
         "in a few minutes, or add a specific page instead of the whole site."
     ),
     FailureCause.BOT_BLOCKED: (
-        "{url} blocked automated crawling (its bot protection served a "
-        "challenge page). Add the content manually with Upload PDF or Paste text."
+        "{url} refused our crawler. Add the content manually with Upload PDF "
+        "or Paste text."
     ),
     FailureCause.HTTP_ERROR: (
         "{url} returned an error response. Check the URL is correct and "

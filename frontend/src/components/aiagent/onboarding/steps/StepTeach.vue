@@ -15,7 +15,7 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useKnowledgeManagement } from '@/composables/useKnowledgeManagement'
 import { useStagedSourceCap } from '@/composables/useStagedSourceCap'
 import { useCrawlCheck } from '@/composables/useCrawlCheck'
@@ -42,7 +42,6 @@ const {
   uploadProgress,
   uploadError,
   urlFormError,
-  successMessage,
   knowledgeItems,
   orgTotalCount,
   queueItems,
@@ -50,20 +49,42 @@ const {
   handleUrlAdd,
   removeUrl,
   triggerFileInput,
-  handleFileSelect,
   handleUrlUpload,
   handleFileUpload,
   fetchKnowledge,
   withScheme,
 } = useKnowledgeManagement(props.agentId, props.organizationId)
 
+const urlInput = ref<HTMLInputElement | null>(null)
+const pasteButton = ref<HTMLButtonElement | null>(null)
+
 const advancing = ref(false)
-// A website that failed fast (e.g. a domain that doesn't resolve), shown with
-// a way round it instead of moving on with nothing learned
+// Sending a batch with a website in it: the server checks it can be reached.
+const reading = ref(false)
+const textSaving = ref(false)
+// Sending the sources, or waiting to hear whether they could be read: the
+// batch is in flight, so nothing on the step may change it.
+const busy = computed(() => advancing.value || isUploading.value || textSaving.value)
+
+// A website from the last attempt that failed fast (e.g. a domain that doesn't
+// resolve), shown with a way round it instead of moving on with nothing learned
 const crawlFailure = ref<QueueItem | null>(null)
 const showTextFallback = ref(false)
 const { firstFailure, cancel: stopCrawlCheck } = useCrawlCheck(fetchQueueItems, queueItems)
 onBeforeUnmount(stopCrawlCheck)
+
+const setFailure = (failure: QueueItem | null) => {
+  crawlFailure.value = failure
+  showTextFallback.value = false
+}
+
+// Nothing new to send: Continue would move on without the site that failed.
+const nothingStaged = computed(() => !urls.value.length && !files.value.length && !newUrl.value.trim())
+const continueLabel = computed(() => {
+  if (reading.value) return 'Reading your site…'
+  if (advancing.value) return 'Adding…'
+  return crawlFailure.value && nothingStaged.value ? 'Continue without it' : 'Continue'
+})
 
 // Crawls still running count against the cap too (the server counts them).
 const crawling = computed(() =>
@@ -72,17 +93,55 @@ const crawling = computed(() =>
 const inUseCount = computed(() => orgTotalCount.value + crawling.value.length)
 const { fitToCap } = useStagedSourceCap(inUseCount, urls, files)
 
+// A newly staged source makes the last failure history: Continue sends it and
+// checks again. `capError` is set when the plan had no room and nothing stayed.
+const afterStaging = (capError: string | null) => {
+  urlFormError.value = capError
+  if (capError) return
+  uploadError.value = null
+  setFailure(null)
+}
+
 // Stage the typed URL, then keep the batch within the plan's source cap —
 // over the cap the server rejects the whole batch, signup domain included.
 const stageUrl = () => {
   const before = urls.value.length
   handleUrlAdd()
-  if (urls.value.length > before) urlFormError.value = fitToCap('urls')
+  if (urls.value.length > before) afterStaging(fitToCap('urls'))
 }
 
+// Picked PDFs join the list like URLs do, rather than replacing the last pick.
 const stageFiles = (event: Event) => {
-  handleFileSelect(event)
-  if (files.value.length) urlFormError.value = fitToCap('files', files.value.length)
+  const input = event.target as HTMLInputElement
+  const picked = Array.from(input.files ?? [])
+  // Cleared so picking the same file again (after removing it) still registers.
+  input.value = ''
+  if (!picked.length) return
+  const fresh = picked.filter((f) => !files.value.some((s) => s.name === f.name && s.size === f.size))
+  if (!fresh.length) {
+    urlFormError.value = 'That PDF is already in the list.'
+    return
+  }
+  files.value = [...files.value, ...fresh]
+  afterStaging(fitToCap('files', fresh.length))
+}
+
+// Errors about the batch no longer describe it once a source is taken out. The
+// × that had focus is gone with its row, so focus goes back to the address box.
+const afterUnstaging = () => {
+  urlFormError.value = null
+  uploadError.value = null
+  urlInput.value?.focus()
+}
+
+const unstageUrl = (index: number) => {
+  removeUrl(index)
+  afterUnstaging()
+}
+
+const unstageFile = (index: number) => {
+  files.value.splice(index, 1)
+  afterUnstaging()
 }
 
 // The site they gave us at signup is almost always what they want indexed
@@ -97,7 +156,13 @@ const prefillFromOrgDomain = async () => {
     const domainUrl = withScheme(org.domain)
     // Back from a later step, the domain may still be crawling — not indexed
     // yet, so the dedupe below can't see it. Staging it again would re-send it.
-    if (crawling.value.some((q) => q.source === domainUrl)) return
+    // If it already failed, suggesting it again would only fail again. The
+    // queue lists newest first, so this is its latest attempt.
+    const last = queueItems.value.find((q) => q.source === domainUrl)
+    if (last && last.status !== 'completed') return
+    // The server only accepts websites with a full domain (acme.com, not
+    // localhost): don't suggest one it will refuse.
+    if (!new URL(domainUrl).hostname.includes('.')) return
 
     newUrl.value = domainUrl
     stageUrl()
@@ -110,10 +175,20 @@ const prefillFromOrgDomain = async () => {
   }
 }
 
+// Back on this step with nothing learned yet and the last site unreadable
+// (e.g. via "Add your website or some text" on the Test step): pick up where
+// they left off, ways round it included.
+const restoreLastFailure = () => {
+  if (knowledgeItems.value.length || crawling.value.length || urls.value.length) return
+  const [newest] = queueItems.value
+  if (newest?.status === 'failed' && newest.source_type === 'website') setFailure(newest)
+}
+
 onMounted(async () => {
   // Prefill after the fetch so the dedupe check can see what is already indexed.
   await fetchKnowledge()
   await prefillFromOrgDomain()
+  restoreLastFailure()
 })
 
 // Flush any staged URLs/files, then advance — but only when the server took
@@ -127,27 +202,46 @@ const handleContinue = async () => {
   }
 
   advancing.value = true
-  crawlFailure.value = null
+  setFailure(null)
+  let failed: QueueItem | null = null
+  let filesAccepted = true
   try {
     const sentUrls = [...urls.value]
-    const accepted = (await handleUrlUpload()) && (await handleFileUpload())
+    reading.value = sentUrls.length > 0
     // On failure the error is on screen and the batch stays staged to fix.
-    if (!accepted) return
-    crawlFailure.value = sentUrls.length ? await firstFailure(sentUrls) : null
-    if (!crawlFailure.value) emit('next')
+    if (!(await handleUrlUpload())) return
+    filesAccepted = await handleFileUpload()
+    // The websites went in even if a PDF didn't: say now if one already failed.
+    if (sentUrls.length) failed = await firstFailure(sentUrls)
   } finally {
     advancing.value = false
+    reading.value = false
   }
+
+  if (!failed) {
+    if (filesAccepted) emit('next') // else the PDF error is on screen
+    return
+  }
+  setFailure(failed)
+  // Focus was on the button, disabled while it read the site. Trying another
+  // address is the likeliest next move; the ways round it follow in tab order.
+  await nextTick()
+  urlInput.value?.focus()
+}
+
+const openTextFallback = () => {
+  showTextFallback.value = true
+}
+
+const closeTextFallback = async () => {
+  showTextFallback.value = false
+  await nextTick()
+  pasteButton.value?.focus()
 }
 
 const handleTextAdded = () => {
-  crawlFailure.value = null
-  showTextFallback.value = false
+  setFailure(null)
   emit('next')
-}
-
-const removeFile = (index: number) => {
-  files.value.splice(index, 1)
 }
 </script>
 
@@ -160,18 +254,20 @@ const removeFile = (index: number) => {
 
     <div class="source-input">
       <input
+        ref="urlInput"
         v-model="newUrl"
         class="text-input mono"
         type="text"
+        aria-label="Website address"
         placeholder="https://docs.yourcompany.com"
-        :disabled="isUploading"
+        :disabled="busy"
         @keydown.enter.prevent="stageUrl"
       />
       <!-- "Add" acts on the URL beside it, so the object is implicit. The PDF
            button opens a file picker, a different action — it keeps its own
            label rather than reading as a second way to add the same thing. -->
-      <button type="button" class="btn-soft" :disabled="isUploading" @click="stageUrl">Add</button>
-      <button type="button" class="btn-soft" :disabled="isUploading" @click="triggerFileInput">Upload PDF</button>
+      <button type="button" class="btn-soft" :disabled="busy" @click="stageUrl">Add</button>
+      <button type="button" class="btn-soft" :disabled="busy" @click="triggerFileInput">Upload PDF</button>
       <input
         ref="fileInput"
         type="file"
@@ -182,62 +278,78 @@ const removeFile = (index: number) => {
       />
     </div>
 
-    <p v-if="urlFormError" class="step-error">{{ urlFormError }}</p>
+    <p v-if="urlFormError" class="step-error" role="alert">{{ urlFormError }}</p>
 
     <!-- Staged sources (this batch) -->
-    <ul v-if="urls.length || files.length" class="source-list">
-      <li v-for="(url, i) in urls" :key="`u-${i}`" class="source-row">
-        <span class="source-icon" aria-hidden="true">🌐</span>
+    <ul v-if="urls.length || files.length" class="source-list" aria-label="To add">
+      <li v-for="(url, i) in urls" :key="`u-${url}`" class="source-row">
+        <font-awesome-icon icon="fa-solid fa-globe" class="source-icon" aria-hidden="true" />
         <span class="source-name">{{ url }}</span>
-        <button type="button" class="source-remove" :disabled="isUploading" @click="removeUrl(i)" aria-label="Remove">×</button>
+        <button type="button" class="source-remove" :disabled="busy" :aria-label="`Remove ${url}`" @click="unstageUrl(i)">
+          <font-awesome-icon icon="fa-solid fa-xmark" aria-hidden="true" />
+        </button>
       </li>
-      <li v-for="(file, i) in files" :key="`f-${i}`" class="source-row">
-        <span class="source-icon" aria-hidden="true">📄</span>
+      <li v-for="(file, i) in files" :key="`f-${file.name}-${file.size}`" class="source-row">
+        <font-awesome-icon icon="fa-solid fa-file-pdf" class="source-icon" aria-hidden="true" />
         <span class="source-name">{{ file.name }}</span>
-        <button type="button" class="source-remove" :disabled="isUploading" @click="removeFile(i)" aria-label="Remove">×</button>
+        <button type="button" class="source-remove" :disabled="busy" :aria-label="`Remove ${file.name}`" @click="unstageFile(i)">
+          <font-awesome-icon icon="fa-solid fa-xmark" aria-hidden="true" />
+        </button>
       </li>
     </ul>
 
     <!-- Already indexed for this agent -->
-    <ul v-if="knowledgeItems.length" class="source-list indexed">
+    <ul v-if="knowledgeItems.length" class="source-list indexed" aria-label="Already added">
       <li v-for="item in knowledgeItems" :key="item.id" class="source-row">
-        <span class="source-icon" aria-hidden="true">✓</span>
+        <font-awesome-icon icon="fa-solid fa-check" class="source-icon done" aria-hidden="true" />
         <span class="source-name">{{ item.name }}</span>
         <span class="source-tag">indexed</span>
       </li>
     </ul>
 
-    <div v-if="isUploading" class="progress">
+    <div
+      v-if="isUploading"
+      class="progress"
+      role="progressbar"
+      aria-label="Upload progress"
+      aria-valuemin="0"
+      aria-valuemax="100"
+      :aria-valuenow="uploadProgress"
+    >
       <div class="progress-bar" :style="{ width: `${uploadProgress}%` }"></div>
     </div>
 
-    <p v-if="successMessage && !crawlFailure" class="step-hint">{{ successMessage }} Processing in the background — you can continue.</p>
-    <p v-if="uploadError" class="step-error">{{ uploadError }}</p>
+    <p v-if="uploadError" class="step-error" role="alert">{{ uploadError }}</p>
 
-    <div v-if="crawlFailure" class="crawl-failure" role="alert">
-      <p class="step-error">We couldn't read {{ crawlFailure.source }}. {{ crawlFailure.reason }}</p>
-      <div v-if="!showTextFallback" class="failure-actions">
-        <button type="button" class="btn-soft" @click="showTextFallback = true">Paste some text instead</button>
-        <button type="button" class="btn-soft" @click="triggerFileInput">Upload a PDF</button>
-      </div>
+    <div v-if="crawlFailure" class="crawl-failure">
+      <p class="step-error" role="alert">We couldn't read {{ crawlFailure.source }}. {{ crawlFailure.reason }}</p>
       <TeachTextFallback
-        v-else
+        v-if="showTextFallback"
         :agent-id="agentId"
         :organization-id="organizationId"
         @added="handleTextAdded"
+        @cancel="closeTextFallback"
+        @busy="textSaving = $event"
       />
+      <div v-else class="failure-actions">
+        <button ref="pasteButton" type="button" class="btn-soft" :disabled="busy" @click="openTextFallback">
+          Paste some text instead
+        </button>
+        <button type="button" class="btn-soft" :disabled="busy" @click="triggerFileInput">Upload a PDF</button>
+      </div>
     </div>
 
     <div class="step-actions">
-      <button type="button" class="btn-ghost" :disabled="advancing || isUploading" @click="emit('back')">Back</button>
-      <button type="button" class="btn-accent" :disabled="advancing || isUploading" @click="handleContinue">
-        {{ advancing ? 'Reading your site…' : crawlFailure ? 'Continue without it' : 'Continue' }}
-        <span v-if="!advancing" class="arrow">→</span>
+      <button type="button" class="btn-ghost" :disabled="busy" @click="emit('back')">Back</button>
+      <button type="button" class="btn-accent" :disabled="busy" @click="handleContinue">
+        {{ continueLabel }}
+        <span v-if="!advancing" class="arrow" aria-hidden="true">→</span>
       </button>
     </div>
   </div>
 </template>
 
+<style scoped src="./step-controls.css"></style>
 <style scoped>
 .step {
   display: flex;
@@ -270,6 +382,17 @@ const removeFile = (index: number) => {
   gap: 10px;
 }
 
+/* On a phone the address gets its own row rather than a sliver beside the buttons */
+@media (max-width: 520px) {
+  .source-input {
+    flex-wrap: wrap;
+  }
+
+  .source-input .text-input {
+    flex-basis: 100%;
+  }
+}
+
 .text-input {
   flex: 1;
   min-width: 0;
@@ -293,25 +416,6 @@ const removeFile = (index: number) => {
   box-shadow: var(--ring-focus);
 }
 
-.btn-soft {
-  flex-shrink: 0;
-  padding: 14px 18px;
-  background: var(--o06);
-  border: 1px solid var(--o14);
-  border-radius: var(--radius-input);
-  color: var(--text);
-  font-size: 14px;
-  font-weight: 500;
-  font-family: var(--font-sans);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: var(--transition-fast);
-}
-
-.btn-soft:hover:not(:disabled) {
-  background: var(--o10);
-}
-
 .source-list {
   list-style: none;
   margin: 0;
@@ -332,8 +436,14 @@ const removeFile = (index: number) => {
 }
 
 .source-icon {
-  font-size: 14px;
   flex-shrink: 0;
+  width: 14px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.source-icon.done {
+  color: var(--accent-ink);
 }
 
 .source-name {
@@ -356,14 +466,18 @@ const removeFile = (index: number) => {
   background: none;
   border: none;
   color: var(--muted2);
-  font-size: 18px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
-  padding: 0 4px;
+  padding: 2px 4px;
 }
 
 .source-remove:hover:not(:disabled) {
   color: var(--text);
+}
+
+.source-remove:disabled {
+  cursor: not-allowed;
 }
 
 .progress {
@@ -379,17 +493,10 @@ const removeFile = (index: number) => {
   transition: width 0.3s ease;
 }
 
-.step-hint {
-  margin: 0;
-  font-size: 13px;
-  color: var(--muted);
-}
-
 .crawl-failure {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  align-items: flex-start;
   padding: 14px 16px;
   border: 1px solid var(--o12);
   border-radius: var(--radius-input);
@@ -399,12 +506,6 @@ const removeFile = (index: number) => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.step-error {
-  margin: 0;
-  font-size: 13.5px;
-  color: var(--error-color);
 }
 
 .step-actions {
@@ -452,8 +553,7 @@ const removeFile = (index: number) => {
 }
 
 .btn-accent:disabled,
-.btn-ghost:disabled,
-.btn-soft:disabled {
+.btn-ghost:disabled {
   opacity: 0.6;
   cursor: not-allowed;
 }

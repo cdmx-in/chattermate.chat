@@ -203,7 +203,7 @@ class TestEnhancedWebsiteKnowledgeBase:
     @pytest.mark.parametrize("cause,expected", [
         (FailureCause.DNS, "does not resolve"),
         (FailureCause.TIMEOUT, "did not respond in time"),
-        (FailureCause.BOT_BLOCKED, "blocked automated crawling"),
+        (FailureCause.BOT_BLOCKED, "refused our crawler"),
         (FailureCause.EMPTY_RESPONSE, "returned an empty page"),
         (FailureCause.THIN_CONTENT, "JavaScript"),
         (FailureCause.HTTP_ERROR, "error response"),

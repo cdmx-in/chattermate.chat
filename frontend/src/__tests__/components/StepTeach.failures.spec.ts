@@ -34,7 +34,7 @@ const empty = { knowledge: [], pagination: { total_pages: 0 } }
 const mountStep = async () => {
   const wrapper = mount(StepTeach, {
     props: { agentId: 'agent-1', organizationId: 'org-1' },
-    global: { plugins: [createPinia()] }
+    global: { plugins: [createPinia()], stubs: { 'font-awesome-icon': true } }
   })
   await flushPromises()
   return wrapper
@@ -234,5 +234,36 @@ describe('StepTeach - a website that fails fast', () => {
     await clickContinue(wrapper)
     await clickContinue(wrapper)
     expect(wrapper.emitted('next')).toBeTruthy()
+  })
+
+  it('locks the step while the sources are being sent', async () => {
+    getAgentQueueItems.mockResolvedValue({ queue_items: [] })
+    let accept!: (v: unknown) => void
+    addUrls.mockReturnValue(new Promise((resolve) => (accept = resolve)))
+    const wrapper = await mountStep()
+    await clickContinue(wrapper)
+
+    expect(wrapper.find('.btn-accent').text()).toContain('Reading your site')
+    expect(wrapper.find('.btn-accent').attributes('disabled')).toBeDefined()
+    for (const label of ['Add', 'Upload PDF', 'Back']) {
+      expect(wrapper.findAll('button').find((b: any) => b.text() === label)!.attributes('disabled')).toBeDefined()
+    }
+    expect(wrapper.find('input[type="text"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('.source-remove').attributes('disabled')).toBeDefined()
+    expect(wrapper.emitted('next')).toBeFalsy()
+
+    accept({ message: 'URLs queued for processing' })
+    await flushPromises()
+    expect(wrapper.emitted('next')).toBeTruthy()
+  })
+
+  it('a crawl that is still running does not hold the step: Continue moves on at once', async () => {
+    getAgentQueueItems.mockResolvedValueOnce({ queue_items: [] }).mockResolvedValue({
+      queue_items: [{ id: 1, source: 'https://erfanpv.com', source_type: 'website', status: 'pending', created_at: '' }]
+    })
+    const wrapper = await mountStep()
+    await clickContinue(wrapper)
+    expect(wrapper.emitted('next')).toBeTruthy()
+    expect(wrapper.find('.crawl-failure').exists()).toBe(false)
   })
 })

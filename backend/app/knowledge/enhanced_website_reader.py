@@ -24,6 +24,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple, Optional, Callable
 from urllib.parse import urljoin, urlparse, urldefrag, urlunparse
+from app.knowledge.crawler_identity import CRAWLER_USER_AGENT
 from app.knowledge.url_safety import safe_get, BlockedHostError
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -94,9 +95,9 @@ class EnhancedWebsiteReader(WebsiteReader):
     blacklist_tags: List[str] = field(default_factory=lambda: [
         'script', 'style', 'noscript', 'iframe', 'head'
     ])
-    user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    user_agent: str = CRAWLER_USER_AGENT
     headers: Dict[str, str] = field(default_factory=lambda: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': CRAWLER_USER_AGENT,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',
