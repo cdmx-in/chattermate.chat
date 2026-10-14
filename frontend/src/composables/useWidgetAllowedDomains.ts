@@ -25,6 +25,8 @@ import { widgetService } from '@/services/widget'
 export function useWidgetAllowedDomains(widgetId: Ref<string | undefined>) {
   const domains = ref<string[]>([])
   const draft = ref('')
+  // Saving replaces the whole list, so nothing is saved until the real one loaded
+  const loaded = ref(false)
   const loading = ref(false)
   const saving = ref(false)
   const error = ref('')
@@ -37,9 +39,11 @@ export function useWidgetAllowedDomains(widgetId: Ref<string | undefined>) {
   const load = async () => {
     if (!widgetId.value) return
     loading.value = true
+    loaded.value = false
     error.value = ''
     try {
       domains.value = await widgetService.getAllowedDomains(widgetId.value)
+      loaded.value = true
     } catch (err) {
       error.value = messageFrom(err, 'Couldn’t load the allowed domains.')
     } finally {
@@ -48,7 +52,7 @@ export function useWidgetAllowedDomains(widgetId: Ref<string | undefined>) {
   }
 
   const save = async (next: string[]): Promise<boolean> => {
-    if (!widgetId.value) return false
+    if (!widgetId.value || !loaded.value) return false
     saving.value = true
     error.value = ''
     try {
@@ -75,5 +79,5 @@ export function useWidgetAllowedDomains(widgetId: Ref<string | undefined>) {
 
   watch(widgetId, () => void load(), { immediate: true })
 
-  return { domains, draft, loading, saving, error, add, remove }
+  return { domains, draft, loaded, loading, saving, error, add, remove }
 }

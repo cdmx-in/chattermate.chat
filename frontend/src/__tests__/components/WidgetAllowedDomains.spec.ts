@@ -152,12 +152,17 @@ describe('WidgetAllowedDomains', () => {
     expect(wrapper.find('input').attributes('disabled')).toBeUndefined()
   })
 
-  it('says when the list could not be loaded', async () => {
-    getAllowedDomains.mockRejectedValue(new Error('down'))
+  it('says when the list could not be loaded, and saves nothing over it', async () => {
+    getAllowedDomains.mockRejectedValue({ response: { status: 403 } })
     const wrapper = render()
     await flushPromises()
 
     expect(wrapper.find('[role="alert"]').text()).toBe('Couldn’t load the allowed domains.')
+    // Saving replaces the whole list, so an unknown one must not be overwritten
+    expect(wrapper.find('input').attributes('disabled')).toBeDefined()
+    expect(wrapper.text()).not.toContain('Any site can show this widget.')
+    await wrapper.find('form').trigger('submit')
+    expect(setAllowedDomains).not.toHaveBeenCalled()
   })
 
   it('loads nothing until it knows the widget', async () => {

@@ -20,7 +20,7 @@ import { useWidgetAllowedDomains } from '@/composables/useWidgetAllowedDomains'
 
 const props = defineProps<{ widgetId: string | undefined }>()
 
-const { domains, draft, loading, saving, error, add, remove } = useWidgetAllowedDomains(toRef(props, 'widgetId'))
+const { domains, draft, loaded, loading, saving, error, add, remove } = useWidgetAllowedDomains(toRef(props, 'widgetId'))
 </script>
 
 <template>
@@ -37,14 +37,14 @@ const { domains, draft, loading, saving, error, add, remove } = useWidgetAllowed
         type="text"
         placeholder="example.com"
         aria-label="Domain to allow"
-        :disabled="loading || saving"
+        :disabled="!loaded || saving"
       >
-      <button class="allowed-domains-add" type="submit" :disabled="loading || saving || !draft.trim()">
+      <button class="allowed-domains-add" type="submit" :disabled="!loaded || saving || !draft.trim()">
         Add
       </button>
     </form>
     <p class="allowed-domains-hint">
-      example.com also covers www.example.com. Use *.example.com for its subdomains.
+      example.com also covers www.example.com. *.example.com covers its subdomains, not example.com itself.
     </p>
 
     <p v-if="error" class="allowed-domains-error" role="alert">{{ error }}</p>
@@ -63,7 +63,7 @@ const { domains, draft, loading, saving, error, add, remove } = useWidgetAllowed
         </button>
       </li>
     </ul>
-    <p v-else-if="!loading" class="allowed-domains-empty">Any site can show this widget.</p>
+    <p v-else-if="loaded" class="allowed-domains-empty">Any site can show this widget.</p>
   </div>
 </template>
 
