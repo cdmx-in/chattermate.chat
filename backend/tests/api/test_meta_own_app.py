@@ -30,7 +30,7 @@ from fastapi.testclient import TestClient
 import app.main  # noqa: F401 — registers the routers
 from app.api.channels.accounts import to_account_out
 from app.api.channels.meta import _upsert_account
-from app.channels.meta_own_app import APP_ID_SETTING
+from app.services.meta_own_app import APP_ID_SETTING
 from app.core.application import app
 from app.core.auth import get_current_organization, get_current_user
 from app.core.config import settings
@@ -189,6 +189,15 @@ class TestOwnAppWebhook:
         assert (response.status_code, response.json()) == (200, {"status": "ignored"})
         process.assert_not_awaited()
 
+    def test_an_unreadable_secret_is_acked_not_a_500(self, client, db, test_organization):
+        """A 500 would make Meta retry for hours and disable the customer's webhook."""
+        account = _account(db, test_organization.id)
+        account.encrypted_credentials = "not-decryptable"
+        db.commit()
+        response, process, _ = _post(client, account.id, _wa_message())
+        assert (response.status_code, response.json()) == (200, {"status": "ignored"})
+        process.assert_not_awaited()
+
     def test_the_handshake_needs_the_accounts_verify_token(self, client, db, test_organization):
         account = _account(db, test_organization.id)
         ok = client.get(f"{WEBHOOK}/{account.id}", params={
@@ -221,8 +230,8 @@ def _connect_whatsapp(client, app_secret=THEIR_SECRET, app=(True, {"id": THEIR_A
     graph_post = AsyncMock(return_value=(override_ok, {} if override_ok else {"error": {"message": "nope"}}))
     with patch("app.api.channels.meta.graph_get", lookup), \
          patch("app.api.channels.meta.subscribe_app", AsyncMock(return_value=True)), \
-         patch("app.channels.meta_own_app.graph_get", check), \
-         patch("app.channels.meta_own_app.graph_post_json", graph_post):
+         patch("app.services.meta_own_app.graph_get", check), \
+         patch("app.services.meta_own_app.graph_post_json", graph_post):
         response = client.post(f"{BASE}/whatsapp", json={
             "phone_number_id": "PN9", "access_token": token, "waba_id": waba_id, "app_secret": app_secret})
     return response, check, graph_post
@@ -268,8 +277,8 @@ class TestConnect:
             return True, {}
         with patch("app.api.channels.meta.graph_get", AsyncMock(return_value=(True, {"verified_name": "Acme"}))), \
              patch("app.api.channels.meta.subscribe_app", AsyncMock(return_value=True)), \
-             patch("app.channels.meta_own_app.graph_get", AsyncMock(return_value=(True, {"id": THEIR_APP_ID}))), \
-             patch("app.channels.meta_own_app.graph_post_json", override):
+             patch("app.services.meta_own_app.graph_get", AsyncMock(return_value=(True, {"id": THEIR_APP_ID}))), \
+             patch("app.services.meta_own_app.graph_post_json", override):
             client.post(f"{BASE}/whatsapp", json={
                 "phone_number_id": "PN9", "access_token": "EAAG-x", "waba_id": "W", "app_secret": THEIR_SECRET})
         assert seen["status"] == "7"
@@ -366,8 +375,8 @@ class TestConnect:
         with patch("app.api.channels.meta.debug_token", inspect), \
              patch("app.api.channels.meta.graph_get", AsyncMock(return_value=(False, {}))), \
              patch("app.api.channels.meta.subscribe_app", AsyncMock(return_value=True)), \
-             patch("app.channels.meta_own_app.graph_get", AsyncMock(return_value=(True, {"id": THEIR_APP_ID}))), \
-             patch("app.channels.meta_own_app.graph_post_json", graph_post):
+             patch("app.services.meta_own_app.graph_get", AsyncMock(return_value=(True, {"id": THEIR_APP_ID}))), \
+             patch("app.services.meta_own_app.graph_post_json", graph_post):
             response = client.post(f"{BASE}/messenger", json={
                 "page_id": "PAGE9", "page_access_token": "EAAG-p", "app_secret": THEIR_SECRET})
         assert response.status_code == 200
@@ -381,7 +390,7 @@ class TestConnect:
     def test_messenger_with_a_wrong_secret_is_refused(self, client, db):
         with patch("app.api.channels.meta.debug_token", AsyncMock(return_value=(True, {
                     "type": "PAGE", "profile_id": "PAGE9", "is_valid": True}))), \
-             patch("app.channels.meta_own_app.graph_get", AsyncMock(return_value=PROOF_ERROR)):
+             patch("app.services.meta_own_app.graph_get", AsyncMock(return_value=PROOF_ERROR)):
             response = client.post(f"{BASE}/messenger", json={
                 "page_id": "PAGE9", "page_access_token": "EAAG-p", "app_secret": "wrong"})
         assert response.status_code == 400
@@ -396,7 +405,7 @@ class TestConnect:
              patch("app.api.channels.meta.register_phone_number", AsyncMock(return_value=(True, {}))), \
              patch("app.api.channels.meta.graph_get", AsyncMock(return_value=numbers)), \
              patch("app.api.channels.meta.subscribe_app", AsyncMock(return_value=True)), \
-             patch("app.channels.meta_own_app.graph_post_json", graph_post):
+             patch("app.services.meta_own_app.graph_post_json", graph_post):
             response = client.post(f"{BASE}/whatsapp/embedded-signup", json={
                 "code": "AQD", "waba_id": "WABA9", "phone_number_id": "PN9"})
         return response, graph_post
@@ -427,7 +436,7 @@ class TestConnect:
         _connect_whatsapp(client)
         account, _ = _stored(db)
         graph_post = AsyncMock(return_value=(True, {}))
-        with patch("app.channels.meta_own_app.graph_post_json", graph_post):
+        with patch("app.services.meta_own_app.graph_post_json", graph_post):
             assert client.delete(f"{BASE}/{account.id}").status_code == 200
         assert graph_post.await_args.args == ("PN9", "EAAG-x", OVERRIDE_RELEASED)
 
@@ -441,7 +450,7 @@ class TestConnect:
     def test_a_messenger_disconnect_has_no_callback_to_release(self, client, db, test_organization):
         account = _account(db, test_organization.id, "messenger", "PAGE1")
         graph_post = AsyncMock(return_value=(True, {}))
-        with patch("app.channels.meta_own_app.graph_post_json", graph_post):
+        with patch("app.services.meta_own_app.graph_post_json", graph_post):
             assert client.delete(f"{BASE}/{account.id}").status_code == 200
         graph_post.assert_not_awaited()
 

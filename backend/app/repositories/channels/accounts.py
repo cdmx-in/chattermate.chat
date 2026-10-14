@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.models.channels import ChannelAccount, ChannelConversation
 from app.models.session_to_agent import SessionToAgent, SessionStatus
-from app.core.security import encrypt_api_key, decrypt_api_key
+from app.core.security import decrypt_credentials, encrypt_api_key
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -102,7 +102,7 @@ class ChannelAccountRepository:
 
     def get_credentials(self, account: ChannelAccount) -> dict:
         """Decrypt an account's credential blob."""
-        return account_credentials(account)
+        return decrypt_credentials(account.encrypted_credentials)
 
     def update_settings(self, account: ChannelAccount, updates: dict,
                         remove: Iterable[str] = ()) -> ChannelAccount:
@@ -182,8 +182,3 @@ class ChannelAccountRepository:
             logger.error(f"Error deleting channel account: {str(e)}")
             self.db.rollback()
             return False
-
-
-def account_credentials(account: ChannelAccount) -> dict:
-    """Decrypt an account's credential blob (no session needed)."""
-    return json.loads(decrypt_api_key(account.encrypted_credentials))

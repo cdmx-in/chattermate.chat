@@ -27,7 +27,7 @@ from app.core.auth import (
     require_any_permission,
     require_permissions,
 )
-from app.channels.meta_own_app import AUTO_WEBHOOK_SETTING, is_own_app, own_app_webhook_url
+from app.services.meta_own_app import AUTO_WEBHOOK_SETTING, is_own_app, own_app_webhook_url
 from app.core.config import webhooks_base_url
 from app.database import get_db
 from app.models.channels import ChannelType

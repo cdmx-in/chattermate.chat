@@ -24,8 +24,8 @@ import httpx
 
 from app.channels.base import ChannelAdapter, SendResult, WindowStatus
 from app.core.config import settings
+from app.core.security import decrypt_credentials
 from app.models.channels import ChannelAccount, ChannelConversation
-from app.repositories.channels.accounts import account_credentials
 from app.core.logger import get_logger
 from app.core.external_urls import external_base
 
@@ -427,7 +427,7 @@ class MetaBaseAdapter(ChannelAdapter):
     @staticmethod
     def access_token(account: ChannelAccount) -> str:
         """Decrypt the account's Graph access token (page or WABA token)."""
-        return account_credentials(account)["access_token"]
+        return decrypt_credentials(account.encrypted_credentials)["access_token"]
 
     @staticmethod
     def _timestamp(value) -> Optional[datetime]:

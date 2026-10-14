@@ -40,7 +40,8 @@ from app.channels.meta_base import graph_detail, graph_get, graph_post_json
 from app.core.config import settings, webhooks_base_url
 from app.core.logger import get_logger
 from app.models.channels import ChannelAccount, ChannelType
-from app.repositories.channels.accounts import ChannelAccountRepository, account_credentials
+from app.core.security import decrypt_credentials
+from app.repositories.channels.accounts import ChannelAccountRepository
 
 logger = get_logger(__name__)
 
@@ -76,13 +77,13 @@ def is_own_app(account: Optional[ChannelAccount]) -> bool:
 
 
 def own_app_secret(account: ChannelAccount) -> Optional[str]:
-    return account_credentials(account).get(APP_SECRET_KEY) if is_own_app(account) else None
+    return decrypt_credentials(account.encrypted_credentials).get(APP_SECRET_KEY) if is_own_app(account) else None
 
 
 def own_app_token(account: Optional[ChannelAccount]) -> Optional[str]:
     """The customer's token, read before a reconnect replaces it: only it can
     take back a callback override made with it."""
-    return account_credentials(account).get("access_token") if is_own_app(account) else None
+    return decrypt_credentials(account.encrypted_credentials).get("access_token") if is_own_app(account) else None
 
 
 def own_app_webhook_url(account: ChannelAccount) -> str:

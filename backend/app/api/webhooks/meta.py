@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 from app.api.webhooks.common import is_duplicate_message
 from app.channels import get_adapter
 from app.channels.meta_base import signed_by_any, verify_meta_signature, verify_challenge
-from app.channels.meta_own_app import is_own_app, own_app_secret, same_app_accounts
+from app.services.meta_own_app import is_own_app, own_app_secret, same_app_accounts
 from app.core.logger import get_logger
 from app.database import get_db
 from app.models.channels import ChannelAccount, ChannelType
@@ -121,11 +121,12 @@ async def own_app_webhook(
     """
     raw_body = await request.body()
     account = _own_app_account(db, account_id)
-    if account is None:
-        # Disconnected (or never ours): ack, so Meta doesn't disable the
-        # customer's webhook over retries — nothing here is acted on
+    secret = _readable_secret(account)
+    if secret is None:
+        # Disconnected, never ours, or its secret can't be read: ack, so Meta
+        # doesn't disable the customer's webhook over retries — nothing is acted on
         return {"status": "ignored"}
-    if not signed_by_any(raw_body, request.headers.get("x-hub-signature-256", ""), (own_app_secret(account),)):
+    if not signed_by_any(raw_body, request.headers.get("x-hub-signature-256", ""), (secret,)):
         logger.warning(f"Meta webhook for account {account_id} rejected: bad signature ({len(raw_body)} bytes)")
         raise HTTPException(status_code=403, detail="Invalid signature")
 
@@ -141,14 +142,31 @@ def _own_app_account(db: Session, account_id: UUID) -> Optional[ChannelAccount]:
     return account if account is not None and account.is_active and is_own_app(account) else None
 
 
+def _readable_secret(account: Optional[ChannelAccount]) -> Optional[str]:
+    if account is None:
+        return None
+    try:
+        return own_app_secret(account)
+    except Exception:
+        logger.exception(f"Could not read the app secret of Meta account {account.id}")
+        return None
+
+
 def _queue_events(background_tasks: BackgroundTasks, channel_type: str, payload: dict,
                   resolve: Callable[[str], Optional[ChannelAccount]]) -> None:
     """Hand each message and receipt in a webhook to its account's processor;
     `resolve` names the account an external id belongs to, if any."""
     adapter = get_adapter(channel_type)
+    # Meta batches many events per number; resolve each account once
+    accounts = {}
+
+    def account_for(external_id: str) -> Optional[ChannelAccount]:
+        if external_id not in accounts:
+            accounts[external_id] = resolve(external_id)
+        return accounts[external_id]
 
     for inbound in adapter.parse_inbound(payload):
-        account = resolve(inbound.external_account_id)
+        account = account_for(inbound.external_account_id)
         if account is None or not account.is_active:
             logger.info(f"No active {channel_type} account for {inbound.external_account_id}")
             continue
@@ -158,12 +176,8 @@ def _queue_events(background_tasks: BackgroundTasks, channel_type: str, payload:
             continue
         background_tasks.add_task(process_channel_message, account.id, inbound)
 
-    # Meta batches many receipts per number; resolve each account once.
-    accounts = {}
     for event in adapter.parse_status_events(payload):
-        if event.external_account_id not in accounts:
-            accounts[event.external_account_id] = resolve(event.external_account_id)
-        account = accounts[event.external_account_id]
+        account = account_for(event.external_account_id)
         if account is None or not account.is_active:
             continue
         # Meta redelivers receipts; one per message and state is enough.

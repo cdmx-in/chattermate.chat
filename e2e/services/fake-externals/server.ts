@@ -203,7 +203,7 @@ async function overrideCallback(config: Record<string, unknown>): Promise<Answer
   if (!uri) return ok({ success: true }) // back to the app's own callback
   const challenge = `e2e-challenge-${counter}`
   const query = new URLSearchParams({ 'hub.mode': 'subscribe', 'hub.verify_token': String(config.verify_token ?? ''), 'hub.challenge': challenge })
-  const check = await fetch(`${uri}?${query}`).catch(() => null)
+  const check = await fetch(`${uri}?${query}`, { signal: AbortSignal.timeout(5_000) }).catch(() => null)
   if (!check || (await check.text()) !== challenge) {
     return graphError('The callback URL or verify token couldn\'t be validated. Please verify the provided information or try again later.', 2200)
   }

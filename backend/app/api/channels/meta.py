@@ -38,7 +38,7 @@ from app.channels.meta_base import (
     subscribe_instagram_app,
     GRAPH_INSTAGRAM_BASE,
 )
-from app.channels.meta_own_app import (
+from app.services.meta_own_app import (
     APP_SECRET_KEY,
     AppCheckUnavailable,
     AppSecretMismatch,
@@ -349,10 +349,10 @@ async def _own_app(access_token: str, entered_secret: str | None, previous) -> O
         raise HTTPException(status_code=400, detail=(
             "That app secret is not the one for the Meta app this token comes from. "
             "Copy it from your app's App settings → Basic." if entered_secret else
-            "The app secret saved before doesn't match this token. Enter the app secret again."))
+            "The app secret saved before doesn't match this token. Enter the app secret again.")) from None
     except AppCheckUnavailable as e:
         raise ClientSafeHTTPException(
-            status_code=502, detail=f"Could not check the app secret with Meta, try again ({e})")
+            status_code=502, detail=f"Could not check the app secret with Meta, try again ({e})") from e
 
 
 @router.get("/embedded-signup-config", response_model=EmbeddedSignupConfigOut)
