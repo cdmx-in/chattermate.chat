@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { hostOrigin, postToHost, resetHostOrigin } from '@/webclient/host-bridge'
+import { hostOrigin, postToHost, resetHostOrigin, setHostOrigin } from '@/webclient/host-bridge'
 
 /**
  * The widget's messages to the embedding page carry the visitor's conversation token,
@@ -103,5 +103,31 @@ describe('host-bridge', () => {
     postToHost({ type: 'UNREAD_COUNT', count: 1 })
 
     expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('addresses the origin the loader\'s first message came from, whatever else it could read', () => {
+    embeddedIn(null, { ancestors: ['https://ancestor.example'], referrer: 'https://referrer.example/page' })
+
+    setHostOrigin('https://shop.example')
+    postToHost({ type: 'TOKEN_UPDATE', token: 'tok' })
+
+    expect(post).toHaveBeenCalledWith({ type: 'TOKEN_UPDATE', token: 'tok' }, 'https://shop.example')
+  })
+
+  it('overrides an origin it had guessed before the loader spoke', () => {
+    embeddedIn(null, { referrer: 'https://referrer.example/page' })
+    expect(hostOrigin()).toBe('https://referrer.example')
+
+    setHostOrigin('https://shop.example')
+
+    expect(hostOrigin()).toBe('https://shop.example')
+  })
+
+  it('ignores an opaque origin it could never address', () => {
+    embeddedIn(null, { referrer: 'https://referrer.example/page' })
+
+    setHostOrigin('null')
+
+    expect(hostOrigin()).toBe('https://referrer.example')
   })
 })

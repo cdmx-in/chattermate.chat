@@ -195,6 +195,21 @@ window.chattermateConfig;
   // The conversation the frame is in, reported by CHAT_CREATED. Kept so logout() and
   // a change of identity can close it server-side before the frame goes away.
   let currentSessionId = null
+  // The widget frame's origin, taken from its FRAME_READY: the frame may have been
+  // redirected to a dedicated host, so it isn't derived from baseUrl. Everything sent
+  // to the frame is addressed to it, so a token never reaches any other document.
+  let frameOrigin = null
+  function postToFrame(message) {
+    if (widgetFrameWindow && frameOrigin) widgetFrameWindow.postMessage(message, frameOrigin)
+  }
+  // Only the widget frame may talk to the loader: the right window, and once it has
+  // announced itself, the right origin too (hostile sibling frames can reach us).
+  function isFromWidgetFrame(event) {
+    if (!widgetFrameWindow || event.source !== widgetFrameWindow) return false
+    return !frameOrigin || event.origin === frameOrigin
+  }
+  // Set while the frame closes an outgoing visitor's session; called on END_CHAT_DONE.
+  let endChatDone = null
   // Set by destroy(): the site removed the widget on purpose, so nothing may
   // rebuild it or queue work against it until it calls reload().
   let isDestroyed = false
@@ -1433,7 +1448,6 @@ window.chattermateConfig;
 
     let isOpen = false
     let iframe = null
-    let isLoading = false
     let initiationMessageElement = null
 
     function toggleChat() {
@@ -1447,9 +1461,8 @@ window.chattermateConfig;
         config.unreadCount = 0
       }
       // Tell the iframe whether it's visible so it can track unread messages.
-      if (iframe && iframe.contentWindow) {
-        iframe.contentWindow.postMessage({ type: 'WIDGET_VISIBILITY', open: isOpen }, '*')
-      }
+      postToFrame({ type: 'WIDGET_VISIBILITY', open: isOpen })
+      if (isOpen) reportPage()
       updateBadge()
 
       // Hide initiation message when chat is opened
@@ -1482,9 +1495,7 @@ window.chattermateConfig;
         }
       }
 
-      if (isOpen && iframe) {
-        iframe.contentWindow.postMessage({ type: 'SCROLL_TO_BOTTOM' }, '*')
-      }
+      if (isOpen) postToFrame({ type: 'SCROLL_TO_BOTTOM' })
 
       emitEvent(isOpen ? 'open' : 'close')
     }
@@ -1496,17 +1507,16 @@ window.chattermateConfig;
     function prefillMessage(text) {
       const clean = String(text || '').slice(0, 2000)
       if (!clean) return
-      if (iframeReady && iframe && iframe.contentWindow) {
-        iframe.contentWindow.postMessage({ type: 'PREFILL_MESSAGE', text: clean }, '*')
+      if (iframeReady) {
+        postToFrame({ type: 'PREFILL_MESSAGE', text: clean })
       } else {
         pendingPrefill = clean
       }
     }
 
-    // The visitor's identity is baked into the document the backend renders (the
-    // token lands in __INITIAL_DATA__), so it can't be changed in place: switching
-    // users means throwing this frame away and fetching a new one. Everything tied
-    // to the old frame is reset here.
+    // The frame takes the visitor's identity once, in its handshake (HOST_INIT), so a
+    // different visitor means throwing this frame away and starting a new one.
+    // Everything tied to the old frame is reset here.
     let loadGeneration = 0
     function teardownFrame() {
       // Invalidates the callbacks of a load still in flight — see prefetchWidget.
@@ -1519,7 +1529,8 @@ window.chattermateConfig;
       iframeReady = false
       widgetReadyFired = false
       pendingPrefill = null
-      isLoading = false
+      frameOrigin = null
+      clearFrameTimer()
       button.classList.remove('loading')
       paletteContentHeight = 0
       applyPaletteHeight()
@@ -1547,6 +1558,8 @@ window.chattermateConfig;
       teardownFrame()
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('message', handleFrameMessage)
+      window.removeEventListener('popstate', reportPage)
+      window.removeEventListener('hashchange', reportPage)
       // The nudge is appended to <body>, not to our container, and it runs a
       // typewriter interval that would keep ticking on a detached node.
       if (initiationMessageElement) {
@@ -1655,128 +1668,101 @@ window.chattermateConfig;
       return errorDiv;
     }
 
-    // Start prefetching the widget data
-    async function prefetchWidget() {
-      if (isLoading || iframe) return
+    // A frame refused by frame-ancestors (the widget's allowed domains) still fires
+    // `load`, it just never says hello. Give a loaded frame this long to do so.
+    const FRAME_HELLO_MS = 3000
+    // And a frame that never even loads (network, outage) this long.
+    const FRAME_LOAD_MS = 20000
+    let frameTimer = null
+    function clearFrameTimer() {
+      if (frameTimer) {
+        clearTimeout(frameTimer)
+        frameTimer = null
+      }
+    }
 
-      // A reload for a new identity bumps loadGeneration, so a response that was
-      // already on its way for the previous one is dropped instead of rendered.
+    function showLoadError(message) {
+      teardownFrame()
+      container.appendChild(createErrorUI(message))
+      // Reveal (with the default color) so this error is reachable — it'll never get
+      // a real color since the widget never loaded.
+      revealButton()
+    }
+
+    function frameDidNotStart() {
+      const host = window.location.hostname || 'this site'
+      showLoadError('Chat couldn’t load on “' + host + '”. If this widget is limited to certain domains, add this one in its settings.')
+    }
+
+    // The widget runs on our own origin, in a frame that asks for the visitor's token
+    // once it is up (FRAME_READY → HOST_INIT). Created straight away, still hidden, so
+    // the chat opens instantly.
+    function prefetchWidget() {
+      if (iframe) return
+      button.classList.add('loading')
       const generation = loadGeneration
 
-      try {
-        isLoading = true
-        button.classList.add('loading')
+      iframe = document.createElement('iframe')
+      iframe.className = 'chattermate-iframe'
+      // Screen readers announce a frame by its title.
+      iframe.title = 'Chat'
+      // A srcdoc frame inherited this from the page; a real frame must be granted it.
+      iframe.setAttribute('allow', 'clipboard-write')
+      iframe.src = config.baseUrl + '/widgets/' + encodeURIComponent(window.chattermateId) + '/frame?host=1'
+      iframe.addEventListener('load', function () {
+        if (generation !== loadGeneration || frameOrigin) return
+        clearFrameTimer()
+        frameTimer = setTimeout(frameDidNotStart, FRAME_HELLO_MS)
+      })
+      container.appendChild(iframe)
+      // contentWindow is a stable WindowProxy from the moment the element is in the
+      // DOM — capture now so FRAME_READY passes the source check.
+      widgetFrameWindow = iframe.contentWindow
+      frameTimer = setTimeout(frameDidNotStart, FRAME_LOAD_MS)
+    }
 
-        const token = getStoredToken();
-
-        // Fetch widget data with Authorization header if token exists
-        const url = `${config.baseUrl}/widgets/${window.chattermateId}/data?widget_id=${window.chattermateId}`;
-        const options = {
-          method: 'GET',
-          mode: 'cors',
-          headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-        };
-
-        fetch(url, options)
-          .then(async response => {
-            if (generation !== loadGeneration) return null;
-            // Handle 401 Unauthorized - only for token-required widgets
-            if (response.status === 401) {
-              // Try to read error detail to determine if this is token-auth required
-              try {
-                const errorData = await response.json();
-                const detail = errorData.detail;
-                // The stored token belongs to a visitor whose identity has run out —
-                // a page reopened long after the app identified them. Ask the page for
-                // a fresh one and load again as that visitor, rather than showing an
-                // error or silently starting over as a stranger.
-                if (detail && detail.code === 'identity_expired') {
-                  button.classList.remove('loading')
-                  emitEvent('identityExpired')
-                  recoverIdentityAndLoad()
-                  return null;
-                }
-                const errorDetail = typeof detail === 'string' ? detail : '';
-                // Only show auth error for token-required cases (contains generate-token or API key)
-                if (errorDetail.includes('generate-token') || errorDetail.includes('API key') || errorDetail.includes('Token must be obtained')) {
-                  button.classList.remove('loading')
-                  removeToken();
-                  const errorUI = createErrorUI('This chat widget is not currently configured. Please contact the website administrator to enable chat support.');
-                  container.appendChild(errorUI);
-                  // Reveal (with the default color) so this error is reachable —
-                  // it'll never get a real color since the widget never loaded.
-                  revealButton();
-                  return null;
-                }
-              } catch {
-                // If we can't parse the response, fall through to default handling
-              }
-              // For non-token-auth 401s, let the iframe handle it (shouldn't normally happen)
-            }
-            if (!response.ok) {
-              throw new Error('HTTP error! status: ' + response.status);
-            }
-            return response.text();
-          })
-          .then(html => {
-            if (html === null) return; // Error was already handled
-            if (generation !== loadGeneration) return; // superseded by a reload
-
-            iframe = document.createElement('iframe')
-            iframe.className = 'chattermate-iframe'
-            // Screen readers announce a frame by its title.
-            iframe.title = 'Chat'
-            iframe.srcdoc = html;
-            iframe.addEventListener('load', function () {
-              iframeReady = true
-              // Developer display overrides, known at load. Dashboard defaults merge
-              // later; the CUSTOMIZATION_UPDATE reply re-sends the final values.
-              iframe.contentWindow.postMessage(widgetDisplayPayload(), '*')
-              // The widget is prefetched while still hidden — say so, or surfaces that
-              // focus themselves on open (the Ask AI palette) would grab focus now.
-              iframe.contentWindow.postMessage({ type: 'WIDGET_VISIBILITY', open: isOpen }, '*')
-              if (pendingPrefill) {
-                iframe.contentWindow.postMessage({ type: 'PREFILL_MESSAGE', text: pendingPrefill }, '*')
-                pendingPrefill = null
-              }
-              widgetReadyFired = true
-              // A frame that actually loaded clears the recovery budget.
-              identityRecoveryUsed = false
-              emitEvent('ready')
-            })
-            container.appendChild(iframe)
-            // contentWindow is a stable WindowProxy from the moment the element is in
-            // the DOM — capture now so even pre-load messages pass the source check.
-            widgetFrameWindow = iframe.contentWindow
-            button.classList.remove('loading')
-            iframe.style.opacity = '1'
-          })
-          .catch(error => {
-            if (generation !== loadGeneration) return; // superseded by a reload
-            console.error('Failed to load widget:', error)
-            button.classList.remove('loading')
-            // A failed fetch here is almost always the browser blocking the request
-            // because this domain isn't in the organization's allowed domains (CORS).
-            // Point the site owner at the fix instead of a dead-end "try again later".
-            const host = window.location.hostname || 'this domain';
-            const isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[?::1\]?)$/i.test(host) || /\.local$/i.test(host);
-            const message = isLocal
-              ? 'Chat can’t load on “' + host + '”. To test locally, set your organization’s domain to “' + host + '” in the ChatterMate dashboard (Organization settings).'
-              : 'Chat can’t load on “' + host + '”. Add this domain to your organization in the ChatterMate dashboard (Organization settings) to enable chat here.';
-            const errorUI = createErrorUI(message);
-            container.appendChild(errorUI);
-            // Reveal (with the default color) so this error is reachable — it'll
-            // never get a real color since the widget never loaded.
-            revealButton();
-          });
-
-      } catch (error) {
-        console.error('Failed to load widget:', error)
-        button.classList.remove('loading')
-        revealButton()
-      } finally {
-        isLoading = false
+    // The widget is mounted and listening: give it what it needs to render.
+    function onWidgetReady() {
+      iframeReady = true
+      button.classList.remove('loading')
+      // Developer display overrides, known now. Dashboard defaults merge later; the
+      // CUSTOMIZATION_UPDATE reply re-sends the final values.
+      postToFrame(widgetDisplayPayload())
+      // The widget is prefetched while still hidden — say so, or surfaces that focus
+      // themselves on open (the Ask AI palette) would grab focus now.
+      postToFrame({ type: 'WIDGET_VISIBILITY', open: isOpen })
+      if (pendingPrefill) {
+        postToFrame({ type: 'PREFILL_MESSAGE', text: pendingPrefill })
+        pendingPrefill = null
       }
+      widgetReadyFired = true
+      // A frame that actually loaded clears the recovery budget.
+      identityRecoveryUsed = false
+      emitEvent('ready')
+    }
+
+    // The frame could not start for this visitor.
+    function onWidgetError(code) {
+      if (code === 'identity_expired') {
+        // The stored token belongs to a visitor whose identity has run out — a page
+        // reopened long after the app identified them. Ask the page for a fresh one
+        // and load again as that visitor, rather than starting over as a stranger.
+        teardownFrame()
+        emitEvent('identityExpired')
+        recoverIdentityAndLoad()
+        return
+      }
+      if (code === 'token_required') {
+        removeToken()
+        showLoadError('This chat widget is not currently configured. Please contact the website administrator to enable chat support.')
+        return
+      }
+      showLoadError('Chat is unavailable right now. Please try again later.')
+    }
+
+    // Leads record the page they came from; tell the frame when a single-page app moves on.
+    function reportPage() {
+      if (iframeReady) postToFrame({ type: 'HOST_PAGE', url: window.location.href })
     }
 
     // Token + unread-count updates from the widget frame. Registered once for the
@@ -1784,9 +1770,33 @@ window.chattermateConfig;
     // registering per load would stack a duplicate handler each time.
     function handleFrameMessage(event) {
       if (!event.data || typeof event.data.type !== 'string') return
-      // Only the widget iframe may talk to the loader. Both frames can be
-      // null-origin (srcdoc), so identity of the source window is the check.
-      if (!widgetFrameWindow || event.source !== widgetFrameWindow) return
+      if (!isFromWidgetFrame(event)) return
+      if (event.data.type === 'FRAME_READY') {
+        // The frame is up (again, if it reloaded itself): hand it the visitor. Its
+        // origin, now known, addresses everything sent to it from here on.
+        if (event.origin === 'null') return
+        frameOrigin = event.origin
+        clearFrameTimer()
+        postToFrame({ type: 'HOST_INIT', token: getStoredToken(), pageUrl: window.location.href })
+        return
+      }
+      if (event.data.type === 'WIDGET_READY') {
+        onWidgetReady()
+        return
+      }
+      if (event.data.type === 'WIDGET_ERROR') {
+        onWidgetError(String(event.data.code || ''))
+        return
+      }
+      if (event.data.type === 'TOKEN_CLEAR') {
+        // The widget dropped the visitor's identity (e.g. it was refused): forget it here too.
+        removeToken()
+        return
+      }
+      if (event.data.type === 'END_CHAT_DONE') {
+        if (endChatDone) endChatDone()
+        return
+      }
       if (event.data.type === 'UNREAD_COUNT') {
         config.unreadCount = Math.max(0, parseInt(event.data.count, 10) || 0)
         updateBadge()
@@ -1799,8 +1809,6 @@ window.chattermateConfig;
         const updated = normalizeToken(event.data.token)
         if (!updated) return
         saveToken(updated)
-        // Confirm token storage to iframe
-        event.source.postMessage({ type: 'TOKEN_RECEIVED', token: updated }, '*')
         return
       }
       if (event.data.type === 'CHAT_SESSION') {
@@ -1900,9 +1908,11 @@ window.chattermateConfig;
     }
 
     function tellFrame(message) {
-      if (widgetFrameWindow) widgetFrameWindow.postMessage(message, '*')
+      postToFrame(message)
     }
     window.addEventListener('message', handleFrameMessage)
+    window.addEventListener('popstate', reportPage)
+    window.addEventListener('hashchange', reportPage)
 
     // Start prefetching immediately
     prefetchWidget()
@@ -2045,9 +2055,8 @@ window.chattermateConfig;
   // Add message listener for customization updates
   window.addEventListener('message', function (event) {
     if (!event.data || typeof event.data.type !== 'string') return
-    // Only the widget iframe may drive the loader (hide/restyle/close). Origin
-    // strings are useless here (srcdoc frames are null-origin) — check identity.
-    if (!widgetFrameWindow || event.source !== widgetFrameWindow) return
+    // Only the widget iframe may drive the loader (hide/restyle/close).
+    if (!isFromWidgetFrame(event)) return
     // The Ask AI palette reports how tall its content is, so the box hugs a short
     // answer instead of standing at full height with dead space underneath. Only the
     // palette does this; every other mode keeps its configured geometry.
@@ -2121,9 +2130,7 @@ window.chattermateConfig;
       // Tell the widget the final display geometry (developer overrides merged with
       // dashboard defaults) so its interior sizing can adapt. Replied to the sending
       // frame — this handler sits outside initialize() and has no iframe reference.
-      if (event.source && typeof event.source.postMessage === 'function') {
-        event.source.postMessage(widgetDisplayPayload(), '*')
-      }
+      postToFrame(widgetDisplayPayload())
     }
   })
 
@@ -2234,26 +2241,26 @@ window.chattermateConfig;
   // Close the conversation the widget is leaving behind, then rebuild the frame.
   // Dropping the frame alone only takes the conversation off THIS page: the session
   // stays open on the server, so identifying that visitor again would hand them back
-  // a transcript logout() told them was gone. Closed from here rather than from the
-  // frame, which is about to be destroyed and may not get its request out; keepalive
-  // lets it finish even if the page is being torn down at the same time.
-  function endConversationThenReload(token, sessionId) {
-    if (token && sessionId) {
-      const url = `${config.baseUrl}/widgets/${window.chattermateId}/end-chat`
-        + `?session_id=${encodeURIComponent(sessionId)}&reason=CUSTOMER_REQUEST`
-      try {
-        fetch(url, {
-          method: 'POST',
-          mode: 'cors',
-          keepalive: true,
-          headers: { 'Authorization': `Bearer ${token}` },
-        }).catch(() => { /* the widget is being rebuilt either way */ })
-      } catch (e) {
-        /* the widget is being rebuilt either way */
-      }
-    }
+  // a transcript logout() told them was gone. The frame closes it - it holds the
+  // outgoing visitor's token - with a keepalive request, and says when it's done.
+  // Bounded, so a frame that never answers can't hold up the switch.
+  const END_CHAT_WAIT_MS = 1000
+  function endConversationThenReload(sessionId) {
     currentSessionId = null
-    reloadWidgetIfRunning()
+    // A switch already waiting on the frame will rebuild with the newest token.
+    if (endChatDone) return
+    if (!sessionId || !widgetFrameWindow || !frameOrigin) {
+      reloadWidgetIfRunning()
+      return
+    }
+    let timer = null
+    endChatDone = function () {
+      clearTimeout(timer)
+      endChatDone = null
+      reloadWidgetIfRunning()
+    }
+    timer = setTimeout(endChatDone, END_CHAT_WAIT_MS)
+    postToFrame({ type: 'END_CHAT', sessionId: sessionId })
   }
 
   // ChatterMate.reload(): rebuild the widget, and build it again after destroy().
@@ -2299,22 +2306,21 @@ window.chattermateConfig;
     // running frame instead of rebuilding, so re-authenticating never costs the
     // visitor the chat they are in the middle of.
     if (sameVisitor && widgetFrameWindow) {
-      widgetFrameWindow.postMessage({ type: 'TOKEN_REFRESH', token: next }, '*')
+      postToFrame({ type: 'TOKEN_REFRESH', token: next })
       return
     }
     // A different visitor: the previous one's conversation must not be left open on
     // the server, or re-identifying them later would replay it.
-    endConversationThenReload(current, currentSessionId)
+    endConversationThenReload(currentSessionId)
   }
 
   // Drop the current identity and its conversation, back to anonymous. The next
   // load gets a fresh anonymous token from the backend.
   function clearIdentity() {
-    const previous = getStoredToken()
     const previousSession = currentSessionId
     window.chattermateToken = null
     removeToken()
-    endConversationThenReload(previous, previousSession)
+    endConversationThenReload(previousSession)
   }
 
   function setLauncherVisible(visible) {

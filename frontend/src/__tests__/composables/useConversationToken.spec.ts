@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useConversationToken } from '@/composables/useConversationToken'
+import { localTokenStore, memoryTokenStore, useConversationToken } from '@/composables/useConversationToken'
 
 /**
  * The widget's conversation token has to outlive the page it loads on. A visitor who
@@ -176,5 +176,60 @@ describe('useConversationToken', () => {
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
 
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  describe('where the token is kept', () => {
+    it('can keep it under another key', () => {
+      const initial = makeToken(3600)
+      const { start, stop } = useConversationToken({ store: localTokenStore('ctid:w-1') })
+
+      start(WIDGET_ID, initial)
+
+      expect(localStorage.getItem('ctid:w-1')).toBe(initial)
+      expect(localStorage.getItem('ctid')).toBeNull()
+      stop()
+    })
+
+    it('can keep it in memory only, never touching shared storage', () => {
+      localStorage.setItem('ctid', 'tok-someone-else')
+      const changed = vi.fn()
+      const { token, start, setToken, stop } = useConversationToken({ store: memoryTokenStore(), onTokenChanged: changed })
+
+      start(WIDGET_ID)
+      expect(token.value).toBeNull()
+
+      const next = makeToken(3600)
+      setToken(next)
+      expect(token.value).toBe(next)
+      expect(changed).toHaveBeenCalledWith(next)
+      expect(localStorage.getItem('ctid')).toBe('tok-someone-else')
+      stop()
+    })
+
+    it('says when it lets a token go, and only then', () => {
+      const cleared = vi.fn()
+      const { start, setToken, stop } = useConversationToken({ store: memoryTokenStore(), onTokenCleared: cleared })
+
+      setToken(null)
+      expect(cleared).not.toHaveBeenCalled()
+
+      start(WIDGET_ID, makeToken(3600))
+      setToken(null)
+      expect(cleared).toHaveBeenCalledTimes(1)
+
+      setToken(null)
+      expect(cleared).toHaveBeenCalledTimes(1)
+      stop()
+    })
+
+    it('clears the stored copy too', () => {
+      const { start, setToken, stop } = useConversationToken()
+      start(WIDGET_ID, makeToken(3600))
+
+      setToken(null)
+
+      expect(localStorage.getItem('ctid')).toBeNull()
+      stop()
+    })
   })
 })
