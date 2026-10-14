@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { flushPromises, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { ref } from 'vue'
 
 /**
@@ -79,6 +79,11 @@ const connected = async () => {
 const authorized = (token: string) => ({
     ok: true, status: 200, json: async () => ({ agent: { name: 'Ada' }, token })
 })
+
+// Each test mounts the whole widget: unmount it afterwards (even when the test
+// fails), or its timers and DOM observer fire after the environment is torn
+// down and the run fails with "document is not defined".
+enableAutoUnmount(afterEach)
 
 describe('a widget whose socket is refused at startup', () => {
     let fetchMock: ReturnType<typeof vi.fn>
