@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api import widget as widget_router
+from app.api import widget_common
 from app.api import widget_frame as frame_router
 from app.core.auth import get_current_user
 from app.core.config import settings
@@ -103,10 +104,11 @@ class TestFramePage:
         assert "initialToken" not in response.text
         assert "__INITIAL_DATA__" not in response.text
 
-    def test_loads_the_bundle_from_its_own_origin(self, client, test_widget):
+    def test_loads_the_bundle_from_its_own_api_base(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
         response = client.get(frame_url(test_widget))
-        assert 'src="/assets/widget.js' in response.text
-        assert 'href="/assets/widget.css' in response.text
+        assert 'src="https://api.example.com/assets/widget.js' in response.text
+        assert 'href="https://api.example.com/assets/widget.css' in response.text
 
     def test_inline_config_runs_only_with_the_csp_nonce(self, client, test_widget):
         response = client.get(frame_url(test_widget))
@@ -135,6 +137,38 @@ class TestFramePage:
     def test_unknown_widget(self, client):
         assert client.get(f"/api/v1/widgets/{uuid.uuid4()}/frame").status_code == 404
 
+    @pytest.mark.parametrize("bad", [["a.com:\uff18\uff10"], ["a.com:\u0668\u0660"], [123], [None], ["x; script-src *"]])
+    def test_a_hand_edited_bad_row_never_takes_the_widget_down(self, client, db, test_widget, bad):
+        test_widget.allowed_domains = bad + ["acme.com"]
+        db.commit()
+
+        for path in ("frame", "data"):
+            response = client.get(f"/api/v1/widgets/{test_widget.id}/{path}")
+            assert response.status_code == 200
+            assert " https://acme.com" in response.headers["content-security-policy"]
+
+    def test_reports_a_site_its_allowed_domains_refuse(self, client, restricted, monkeypatch):
+        seen = []
+        monkeypatch.setattr(frame_router, "note_install", lambda db, widget, origin, request, bg, load: seen.append((origin, load)))
+
+        client.get(frame_url(restricted), headers={"Sec-Fetch-Dest": "iframe", "Referer": "https://elsewhere.io/"})
+        client.get(frame_url(restricted), headers={"Sec-Fetch-Dest": "iframe", "Referer": "https://www.acme.com/page"})
+        client.get(frame_url(restricted), headers={"Sec-Fetch-Dest": "document", "Referer": "https://elsewhere.io/"})
+        client.get(frame_url(restricted), headers={"Sec-Fetch-Dest": "iframe"})
+
+        assert seen == [("https://elsewhere.io", "refused")]
+
+    def test_an_open_widget_reports_no_refusals(self, client, test_widget, monkeypatch):
+        seen = []
+        monkeypatch.setattr(frame_router, "note_install", lambda *a: seen.append(a))
+        client.get(frame_url(test_widget), headers={"Sec-Fetch-Dest": "iframe", "Referer": "https://elsewhere.io/"})
+        assert seen == []
+
+    def test_json_in_the_shell_cannot_close_its_script(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://x.example/</script><script>alert(1)//")
+        response = client.get(frame_url(test_widget), headers={"Host": "x.example"})
+        assert "</script><script>alert(1)" not in response.text
+
     def test_talks_to_the_frame_host_when_one_is_configured(self, client, test_widget, monkeypatch):
         monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
         response = client.get(frame_url(test_widget), headers={"Host": "widget.example.com"})
@@ -154,14 +188,28 @@ class TestFramePage:
         )
 
         assert response.status_code == 302
-        assert response.headers["location"] == f"https://widget.example.com/api/v1/widgets/{test_widget.id}/frame?host=1"
+        assert response.headers["location"] == (
+            f"https://widget.example.com/api/v1/widgets/{test_widget.id}/frame?host=1&cm_hop=1"
+        )
 
-    def test_a_proxy_forwarding_an_internal_host_is_served_not_bounced(self, client, test_widget, monkeypatch):
-        # Redirecting "anything but the frame host" would loop forever here
+    def test_any_other_cookie_carrying_host_is_sent_over_too(self, client, test_widget, monkeypatch):
+        # e.g. a dashboard host that proxies /api/: its cookies must not reach the frame
         monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
-        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
-        response = client.get(frame_url(test_widget), headers={"Host": "backend:8000"}, follow_redirects=False)
+        response = client.get(frame_url(test_widget), headers={"Host": "app.example.com"}, follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"].startswith("https://widget.example.com/")
+
+    def test_a_proxy_forwarding_an_internal_host_is_served_after_one_hop(self, client, test_widget, monkeypatch):
+        # The frame host's proxy rewrote Host: bouncing again would loop forever
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        response = client.get(f"{frame_url(test_widget)}?host=1&cm_hop=1", headers={"Host": "backend:8000"},
+                              follow_redirects=False)
         assert response.status_code == 200
+
+    def test_loads_the_bundle_under_the_api_base_behind_a_path_prefix(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://example.com/chat")
+        response = client.get(frame_url(test_widget), headers={"Host": "example.com"})
+        assert 'src="https://example.com/chat/assets/widget.js' in response.text
 
     def test_without_a_frame_host_it_serves_wherever_it_is_asked(self, client, test_widget, monkeypatch):
         monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "")
@@ -269,7 +317,8 @@ class TestBootstrap:
 
     def test_the_host_origin_is_what_install_tracking_sees(self, client, test_widget, monkeypatch):
         seen = []
-        monkeypatch.setattr(frame_router, "note_install", lambda db, widget, origin, *rest: seen.append(origin))
+        monkeypatch.setattr(frame_router, "note_install", lambda db, widget, origin, request, bg, load: seen.append(origin) or loads.append(load))
+        loads = []
 
         bootstrap(client, test_widget, host_origin="https://shop.acme.com")
         bootstrap(client, test_widget, host_origin="https://shop.acme.com/pricing")
@@ -278,20 +327,28 @@ class TestBootstrap:
         bootstrap(client, test_widget)
 
         assert seen == ["https://shop.acme.com", "https://shop.acme.com", None, None, None]
+        assert set(loads) == {"framed"}
 
 
 class TestRateLimit:
-    def test_loopback_is_never_limited(self, monkeypatch):
-        monkeypatch.setattr(widget_router, "allow_request", lambda *a: False)
-        request = type("R", (), {"headers": {}, "client": type("C", (), {"host": "127.0.0.1"})()})()
-        assert widget_router.allow_widget_open(request) is True
+    @staticmethod
+    def request(peer, forwarded=None):
+        headers = {"x-forwarded-for": forwarded} if forwarded else {}
+        return type("R", (), {"headers": headers, "client": type("C", (), {"host": peer})() if peer else None})()
+
+    def test_a_loopback_peer_is_never_limited(self, monkeypatch):
+        monkeypatch.setattr(widget_common, "allow_request", lambda *a: False)
+        assert widget_common.allow_widget_open(self.request("127.0.0.1")) is True
+
+    def test_a_forged_loopback_header_earns_no_exemption(self, monkeypatch):
+        monkeypatch.setattr(widget_common, "allow_request", lambda *a: False)
+        assert widget_common.allow_widget_open(self.request("203.0.113.9", forwarded="127.0.0.1")) is False
 
     def test_other_clients_are_limited_per_ip(self, monkeypatch):
         keys = []
-        monkeypatch.setattr(widget_router, "allow_request", lambda key, limit, window: keys.append(key) or False)
-        request = type("R", (), {"headers": {"x-forwarded-for": "203.0.113.9"}, "client": None})()
+        monkeypatch.setattr(widget_common, "allow_request", lambda key, limit, window: keys.append(key) or False)
 
-        assert widget_router.allow_widget_open(request) is False
+        assert widget_common.allow_widget_open(self.request("10.0.0.2", forwarded="203.0.113.9")) is False
         assert keys == ["widget_open:203.0.113.9"]
 
 
@@ -323,6 +380,10 @@ class TestEmbedSettings:
         assert "isn't a valid domain" in response.json()["detail"]
         db.refresh(restricted)
         assert restricted.allowed_domains == ["acme.com"]
+
+    @pytest.mark.parametrize("entries", [["a.com:\u00b2"], ["a.com:\uff18\uff10"], ["*.com"], ["a" * 400 + ".com"]])
+    def test_entries_that_could_break_the_header_are_refused_not_crashed_on(self, client, test_widget, entries):
+        assert client.put(self.url(test_widget), json={"allowed_domains": entries}).status_code == 422
 
     def test_too_many_domains_are_refused(self, client, test_widget):
         response = client.put(self.url(test_widget), json={"allowed_domains": [f"s{i}.com" for i in range(21)]})

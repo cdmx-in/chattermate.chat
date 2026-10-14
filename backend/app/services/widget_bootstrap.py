@@ -39,6 +39,7 @@ from app.utils.business_hours import is_within_business_hours
 logger = get_logger(__name__)
 
 TOKEN_REQUIRED_CODE = "token_required"
+IDENTITY_EXPIRED_MESSAGE = "Conversation token expired. Issue a new one with /generate-token."
 
 
 class WidgetAccessDenied(Exception):

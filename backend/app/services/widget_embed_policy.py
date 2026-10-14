@@ -34,8 +34,9 @@ from app.repositories.help_center import HelpCenterRepository
 
 MAX_ALLOWED_DOMAINS = 20
 
-# Embedded admin (the dashboard runs inside Shopify admin), which also covers
-# the theme editor's storefront preview.
+# The dashboard runs embedded in Shopify admin. frame-ancestors checks every
+# ancestor, so a storefront previewed in the theme editor still needs the shop's
+# own domain in the list.
 SHOPIFY_ADMIN_ORIGIN = "https://admin.shopify.com"
 
 _LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1"})
@@ -43,6 +44,8 @@ _LABEL = r"(?!-)[a-z0-9-]{1,63}(?<!-)"
 _HOST_RE = re.compile(rf"^(?:\*\.)?{_LABEL}(?:\.{_LABEL})*$")
 # Anything that could end a CSP source list or start a new directive
 _UNSAFE_IN_HEADER = re.compile(r"[\s;,'\"]")
+_PORT_RE = re.compile(r"^[0-9]{1,5}$")  # ASCII only: str.isdigit() also takes "８０" and "²"
+_MAX_DOMAIN_LENGTH = 253
 
 
 class InvalidAllowedDomain(ValueError):
@@ -58,9 +61,11 @@ def _to_ascii(host: str) -> str:
         raise InvalidAllowedDomain(f"{host} isn't a valid domain") from exc
 
 
-def normalize_allowed_domain(entry: str) -> str:
+def normalize_allowed_domain(entry: object) -> str:
     """`host[:port]` for one entry, accepting a pasted URL (scheme and path dropped)."""
-    raw = (entry or "").strip().lower()
+    if not isinstance(entry, str) or len(entry) > _MAX_DOMAIN_LENGTH + 64:
+        raise InvalidAllowedDomain(f"{str(entry)[:80]!r} isn't a valid domain")
+    raw = entry.strip().lower()
     if "://" in raw:
         raw = raw.split("://", 1)[1]
     raw = re.split(r"[/?#]", raw, 1)[0]
@@ -69,22 +74,26 @@ def normalize_allowed_domain(entry: str) -> str:
 
     host, _, port = raw.partition(":")
     host = _to_ascii(host)
-    if not _HOST_RE.match(host):
+    if len(host) > _MAX_DOMAIN_LENGTH or not _HOST_RE.match(host):
         raise InvalidAllowedDomain(f"{entry!r} isn't a valid domain")
     if "." not in host and host not in _LOCAL_HOSTS:
         raise InvalidAllowedDomain(f"{entry!r} needs a full domain, like example.com")
-    if host.startswith("*.") and host[2:] in _LOCAL_HOSTS:
-        raise InvalidAllowedDomain(f"{entry!r} can't use a wildcard")
-    if port and not (port.isdigit() and 0 < int(port) < 65536):
+    if host.startswith("*.") and (host[2:] in _LOCAL_HOSTS or "." not in host[2:]):
+        # *.com would allow every site, which is what an empty list is for
+        raise InvalidAllowedDomain(f"{entry!r} is too broad for a wildcard")
+    if port and not (_PORT_RE.match(port) and 0 < int(port) < 65536):
         raise InvalidAllowedDomain(f"{entry!r} has an invalid port")
 
     return f"{host}:{port}" if port else host
 
 
-def normalize_allowed_domains(entries: Iterable[str]) -> List[str]:
+def normalize_allowed_domains(entries: Iterable[object]) -> List[str]:
     """Validated, de-duplicated list, in the order given."""
+    entries = list(entries or [])
+    if len(entries) > MAX_ALLOWED_DOMAINS:
+        raise InvalidAllowedDomain(f"At most {MAX_ALLOWED_DOMAINS} domains")
     seen: List[str] = []
-    for entry in entries or []:
+    for entry in entries:
         domain = normalize_allowed_domain(entry)
         if domain not in seen:
             seen.append(domain)
@@ -154,12 +163,50 @@ def frame_ancestors(db: Session, allowed_domains: Optional[List[str]], organizat
         return None
     sources = _always_allowed(db, organization_id)
     for entry in allowed_domains:
-        # Re-checked on the way out: a row edited by hand must not reach the header
+        # Re-checked on the way out: a row edited by hand must neither reach
+        # the header nor take the widget down for every embed
         try:
             sources += _entry_sources(normalize_allowed_domain(entry))
-        except InvalidAllowedDomain:
+        except Exception:
             continue
     return "frame-ancestors " + " ".join(dict.fromkeys(sources))
+
+
+def _source_matches(source: str, scheme: str, host: str, port: Optional[int]) -> bool:
+    """Whether a `scheme://host[:port]` source (as built above) covers an origin."""
+    src_scheme, _, rest = source.partition("://")
+    src_host, _, src_port = rest.partition(":")
+    if src_scheme != scheme:
+        return False
+    if src_host.startswith("*."):
+        if not host.endswith(src_host[1:]):
+            return False
+    elif src_host != host:
+        return False
+    if src_port == "*":
+        return True
+    default = 443 if scheme == "https" else 80
+    return (int(src_port) if src_port else default) == (port or default)
+
+
+def allows_embedder(db: Session, allowed_domains: Optional[List[str]], organization_id: Optional[UUID],
+                    embedder_origin: str) -> bool:
+    """Whether the browser would let `embedder_origin` frame the widget.
+
+    For telling the org where its widget was refused; the header itself is the
+    enforcement. Mirrors frame_ancestors(), leaving out 'self' (never a customer
+    site).
+    """
+    directive = frame_ancestors(db, allowed_domains, organization_id)
+    if directive is None:
+        return True
+    try:
+        parsed = urlparse(embedder_origin)
+        scheme, host, port = parsed.scheme, (parsed.hostname or "").lower(), parsed.port
+    except ValueError:
+        return False
+    sources = directive.split()[1:]
+    return any(_source_matches(s, scheme, host, port) for s in sources if "://" in s)
 
 
 def frame_document_csp(nonce: str, connect_origins: Iterable[str], ancestors: Optional[str]) -> str:

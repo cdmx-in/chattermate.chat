@@ -20,9 +20,6 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
-from pathlib import Path
-import json
-from urllib.parse import urlparse
 
 from app.models.widget import Widget
 from app.models.user import User
@@ -33,26 +30,27 @@ from app.repositories.widget import WidgetRepository
 from app.repositories.agent import AgentRepository
 from app.core.security import create_conversation_token, verify_conversation_token
 from app.services import conversation_token
-from app.utils.client_ip import forwarded_client_ip
-from app.services.public_rate_limit import allow_request
 from app.repositories.customer import CustomerRepository
 from app.models.schemas.widget import WidgetCreate, WidgetResponse
 from app.core.logger import get_logger
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.models.session_to_agent import SessionStatus
 from app.core.config import settings
-from app.services import widget_bootstrap, widget_embed_policy
+from app.services import widget_bootstrap
+from app.api.widget_common import (
+    FONT_LINKS,
+    PAGE_LOAD,
+    allow_widget_open,
+    asset_version,
+    bearer_token,
+    frame_ancestors,
+    note_install,
+    script_json,
+    widget_runtime_config,
+)
 
 router = APIRouter()
 logger = get_logger(__name__)
-
-# The enterprise module can record where each widget is live; without it,
-# nothing is recorded.
-try:
-    from app.enterprise.services import widget_install
-except ImportError:
-    widget_install = None
-
 
 def _identity_expired() -> HTTPException:
     """401 telling the widget its visitor's identity lapsed, not that it never had one.
@@ -65,30 +63,9 @@ def _identity_expired() -> HTTPException:
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail={
             "code": conversation_token.IDENTITY_EXPIRED_CODE,
-            "message": "Conversation token expired. Issue a new one with /generate-token.",
+            "message": widget_bootstrap.IDENTITY_EXPIRED_MESSAGE,
         },
     )
-
-
-_ASSETS_DIR = Path(settings.WIDGET_ASSETS_DIR)
-
-
-def asset_version() -> str:
-    """Cache-buster for the widget bundle URLs.
-
-    /assets/widget.js is served without a Cache-Control header and its URL never
-    changes, so browsers fall back to heuristic caching and can keep serving an old
-    bundle for hours after a release — the widget silently runs last week's code.
-    Stamping the build's mtime+size onto the URL makes a new build a new URL.
-    Recomputed per request (a stat is microseconds) so a rebuild takes effect
-    without restarting the backend.
-    """
-    try:
-        stat = (_ASSETS_DIR / "widget.js").stat()
-        return f"{int(stat.st_mtime)}-{stat.st_size}"
-    except OSError:
-        # Assets served from somewhere else (CDN, dev server) — nothing to stamp.
-        return ""
 
 
 def _widget_html_response(html: str) -> HTMLResponse:
@@ -98,89 +75,6 @@ def _widget_html_response(html: str) -> HTMLResponse:
     build after a release."""
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
-
-# BACKEND_URL defaults to http://localhost:8000 and neither compose file sets
-# it, so a self-hosted install that never overrode it used to serve every visitor
-# a widget whose socket dialled the visitor's own machine (#315). Loopback can
-# never be right for a browser on someone else's computer, so we fall back to the
-# origin the widget HTML was actually fetched over.
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"})
-
-_warned_about_loopback_backend_url = False
-
-
-def _is_loopback(url: str) -> bool:
-    host = urlparse(url).hostname
-    return host is not None and host.lower() in _LOOPBACK_HOSTS
-
-
-def _public_origin(request: Optional[Request]) -> Optional[str]:
-    """Scheme and host this request reached us on, as the browser sees them.
-
-    Reads the forwarding headers our nginx sets rather than ``request.url``, which
-    only reflects them when the ASGI server is started with proxy headers enabled.
-    """
-    if request is None:
-        return None
-
-    # Several proxies in a chain append to these, and the browser's own value is
-    # the first entry.
-    forwarded_host = request.headers.get("x-forwarded-host")
-    host = (forwarded_host or request.headers.get("host") or "").split(",")[0].strip()
-    if not host:
-        return None
-
-    forwarded_proto = request.headers.get("x-forwarded-proto")
-    if forwarded_proto:
-        scheme = forwarded_proto.split(",")[0].strip()
-    elif forwarded_host:
-        # A proxy that rewrites the host but not the protocol (Traefik and some
-        # Caddy setups, unlike our nginx) leaves request.url.scheme reading "http"
-        # for the proxy's own hop. Trusting that would hand an https page a ws://
-        # socket the browser refuses as mixed content, so assume the hop was TLS.
-        scheme = "https"
-    else:
-        scheme = request.url.scheme or "https"
-
-    return f"{scheme}://{host}"
-
-
-def widget_runtime_config(request: Optional[Request] = None) -> dict:
-    """Runtime API/WS URLs to hand the widget iframe as ``window.APP_CONFIG``.
-
-    Derived from ``BACKEND_URL`` so a self-hosted widget talks to the configured
-    backend instead of the vendor cloud. On the hosted deployment BACKEND_URL is
-    ``https://api.chattermate.chat``, which yields exactly the widget's baked-in
-    defaults, so injecting this is a no-op there.
-    """
-    global _warned_about_loopback_backend_url
-
-    api_base = settings.BACKEND_URL.rstrip("/")
-    if _is_loopback(api_base):
-        derived = _public_origin(request)
-        if derived and not _is_loopback(derived):
-            if not _warned_about_loopback_backend_url:
-                _warned_about_loopback_backend_url = True
-                logger.warning(
-                    "BACKEND_URL is %s, which no visitor's browser can reach. "
-                    "Serving widgets against %s instead, taken from the request. "
-                    "Set BACKEND_URL to this install's public API URL.",
-                    api_base, derived,
-                )
-            api_base = derived
-
-    return runtime_config_for(api_base)
-
-
-def runtime_config_for(api_base: str) -> dict:
-    """`window.APP_CONFIG` for a widget talking to the backend at `api_base`."""
-    if api_base.startswith("https://"):
-        ws_url = "wss://" + api_base[len("https://"):]
-    elif api_base.startswith("http://"):
-        ws_url = "ws://" + api_base[len("http://"):]
-    else:
-        ws_url = api_base
-    return {"API_URL": f"{api_base}/api/v1", "WS_URL": ws_url}
 
 @router.post("", response_model=WidgetResponse)
 def create_new_widget(
@@ -193,20 +87,6 @@ def create_new_widget(
     return widget_repo.create_widget(widget, current_user.organization_id)
 
 
-def note_install(db: Session, widget: Widget, origin: Optional[str], request: Request,
-                 background_tasks: BackgroundTasks) -> None:
-    """Note the site `origin` the widget was opened on, after the response is
-    sent. Never lets a tracking error break the widget itself."""
-    if widget_install is None:
-        return
-    try:
-        sighting = widget_install.claim_write(db, widget, origin, forwarded_client_ip(request))
-        if sighting:
-            background_tasks.add_task(widget_install.record, widget.id, sighting)
-    except Exception:
-        logger.exception(f"Install tracking failed for widget {widget.id}")
-
-
 def _token_required() -> HTTPException:
     """401 for an agent that only talks to identified visitors. The embed loader
     matches this wording, so it stays as it was."""
@@ -214,30 +94,6 @@ def _token_required() -> HTTPException:
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Authentication required. Token must be obtained from /api/v1/generate-token endpoint with valid API key."
     )
-
-
-# Opening a widget mints a conversation token, so cap opens per client.
-# Generous: a busy office behind one NAT loads a customer's pages a lot.
-WIDGET_OPENS_PER_MINUTE = 300
-
-
-def allow_widget_open(request: Request) -> bool:
-    ip = forwarded_client_ip(request)
-    if ip in _LOOPBACK_HOSTS:
-        return True
-    return allow_request(f"widget_open:{ip}", WIDGET_OPENS_PER_MINUTE, 60)
-
-
-def bearer_token(authorization: Optional[str]) -> Optional[str]:
-    if authorization and authorization.startswith('Bearer '):
-        return authorization.split(' ')[1]
-    return None
-
-
-def embed_headers(db: Session, widget: Widget) -> dict:
-    """frame-ancestors for a widget document, when its embedding is restricted."""
-    directive = widget_embed_policy.frame_ancestors(db, widget.allowed_domains, widget.organization_id)
-    return {"Content-Security-Policy": directive} if directive else {}
 
 
 @router.get("/{widget_id}/data", response_class=HTMLResponse)
@@ -260,7 +116,7 @@ async def get_widget_ui(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests. Try again shortly.")
 
     widget = widget_bootstrap.find_widget(db, widget_id)
-    note_install(db, widget, request.headers.get("origin"), request, background_tasks)
+    note_install(db, widget, request.headers.get("origin"), request, background_tasks, PAGE_LOAD)
 
     try:
         session = widget_bootstrap.open_session(db, widget, bearer_token(authorization), source)
@@ -269,7 +125,9 @@ async def get_widget_ui(
 
     html_page = get_widget_html(await widget_bootstrap.initial_data(session), request)
     response = _widget_html_response(html_page)
-    response.headers.update(embed_headers(db, widget))
+    ancestors = frame_ancestors(db, widget)
+    if ancestors:
+        response.headers["Content-Security-Policy"] = ancestors
     return response
 
 
@@ -291,14 +149,12 @@ def get_widget_html(data: dict, request: Optional[Request] = None) -> str:
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Chat Widget</title>
-            <link rel="preconnect" href="https://fonts.googleapis.com">
-            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-            <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+            {FONT_LINKS}
             <script>
                 // Runtime backend config so the widget connects to THIS install's
                 // backend instead of falling back to the baked cloud default.
                 // Declared before the widget module loads.
-                window.APP_CONFIG = {json.dumps(widget_runtime_config(request))};
+                window.APP_CONFIG = {script_json(widget_runtime_config(request))};
             </script>
             <script type="module" crossorigin src="{widget_url}/assets/widget.js{asset_query}"></script>
             <link rel="stylesheet" crossorigin href="{widget_url}/assets/widget.css{asset_query}">
@@ -306,13 +162,13 @@ def get_widget_html(data: dict, request: Optional[Request] = None) -> str:
                 window.__INITIAL_DATA__ = {{
                     widgetId: "{html.escape(data['widgetId'])}",
                     agentName: "{html.escape(data['agentName'])}",
-                    customization: {json.dumps(data['customization'])},
+                    customization: {script_json(data['customization'])},
                     customerId: "{html.escape(data['customerId'])}",
                     initialToken: "{html.escape(data['initialToken'])}",
                     customer: {{}},
                     workflow: {str(data['workflow']).lower()},
                     allowAttachments: {str(data['allowAttachments']).lower()},
-                    presence: {json.dumps(data['presence'])}
+                    presence: {script_json(data['presence'])}
                 }};
             </script>
         </head>

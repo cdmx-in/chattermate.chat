@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from pydantic import BaseModel, field_serializer
-from typing import List, Optional
+from pydantic import BaseModel, Field, StringConstraints, field_serializer
+from typing import Annotated, List, Optional
 from uuid import UUID
 
 from app.core.s3 import sign_s3_url
@@ -97,5 +97,7 @@ class WidgetResponse(BaseModel):
 
 class WidgetEmbedSettings(BaseModel):
     """Where a widget may be embedded. Org-only: never part of the public
-    WidgetResponse, which any visitor's widget can read."""
-    allowed_domains: List[str] = []
+    WidgetResponse, which any visitor's widget can read. Entries are checked
+    and normalised by app.services.widget_embed_policy; these bounds only keep
+    an oversized request from being processed at all."""
+    allowed_domains: List[Annotated[str, StringConstraints(max_length=320)]] = Field(default_factory=list, max_length=20)

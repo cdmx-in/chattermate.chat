@@ -43,10 +43,15 @@ def _netloc(url: str) -> str:
 class SocketOriginPolicy:
     """Which origins may open a Socket.IO connection.
 
-    The CORS list, plus our own host: the framed widget is served by this
-    backend, so its socket is same-origin. engineio given a plain list doesn't
-    allow same-origin by itself. Only the host is compared - uvicorn runs
-    without proxy headers, so behind TLS the request's scheme reads http.
+    The CORS list, plus the host the request itself arrived on: the framed
+    widget is served by this backend, so its socket is same-origin. engineio
+    given a plain list doesn't allow same-origin by itself. Only the host is
+    compared - uvicorn runs without proxy headers, so behind TLS the request's
+    scheme reads http.
+
+    Deliberately not "any of our hosts": a socket from the cookieless widget
+    host to the API host would carry the dashboard's cookies, which is exactly
+    what serving the frame elsewhere keeps out of the widget's reach.
     Installed once on the server; refreshes swap the list, never the policy.
     """
 
@@ -59,15 +64,11 @@ class SocketOriginPolicy:
     def __call__(self, origin, environ=None) -> bool:
         if not origin:
             return False
-        if origin in self.origins:
+        # engineio's own list handling treats "*" as any origin; keep that
+        if "*" in self.origins or origin in self.origins:
             return True
         host = _netloc(origin)
-        own_hosts = {
-            (environ or {}).get("HTTP_HOST", "").lower(),
-            _netloc(settings.BACKEND_URL),
-            _netloc(settings.WIDGET_FRAME_URL),
-        }
-        return bool(host) and host in own_hosts
+        return bool(host) and host == (environ or {}).get("HTTP_HOST", "").lower()
 
 
 socket_origins = SocketOriginPolicy(get_cors_origins())

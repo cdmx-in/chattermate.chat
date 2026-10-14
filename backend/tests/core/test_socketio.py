@@ -140,9 +140,14 @@ class TestSocketOriginPolicy:
         assert policy("https://chat.selfhost.example", {"HTTP_HOST": "chat.selfhost.example"})
         assert policy("http://chat.selfhost.example", {"HTTP_HOST": "chat.selfhost.example"})
 
-    def test_the_backend_and_frame_hosts_are_allowed(self, policy):
-        assert policy("https://api.example.com", {"HTTP_HOST": "internal:8000"})
-        assert policy("https://widget.example.com", {"HTTP_HOST": "internal:8000"})
+    def test_the_frame_host_cannot_open_a_socket_on_the_api_host(self, policy):
+        # It would carry the dashboard's cookies, which the cookieless frame host exists to keep out
+        assert not policy("https://widget.example.com", {"HTTP_HOST": "api.example.com"})
+        assert policy("https://widget.example.com", {"HTTP_HOST": "widget.example.com"})
+
+    def test_a_wildcard_list_still_allows_every_origin(self):
+        from app.core.socketio import SocketOriginPolicy
+        assert SocketOriginPolicy(["*"])("https://anyone.example", {"HTTP_HOST": "api.example.com"})
 
     def test_another_site_is_refused(self, policy):
         assert not policy("https://evil.example", {"HTTP_HOST": "api.example.com"})
@@ -160,6 +165,7 @@ class TestSocketOriginPolicy:
     def test_works_when_engineio_calls_without_environ(self, policy):
         assert policy("https://listed.example")
         assert not policy("https://evil.example")
+        assert not policy("https://api.example.com")
 
     def test_engineio_uses_it_for_the_handshake(self, monkeypatch):
         environ = {"HTTP_ORIGIN": "https://evil.example", "HTTP_HOST": "api.example.com"}

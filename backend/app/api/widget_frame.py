@@ -22,27 +22,32 @@ else. Running on our origin means a customer's site never has to be in CORS,
 and `frame-ancestors` (the widget's allowed domains) decides where it may load.
 """
 
-import json
+import html
 import secrets
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.api.widget import (
+from app.api.widget_common import (
+    FONT_LINKS,
+    FRAMED,
+    REFUSED,
     allow_widget_open,
     asset_version,
     bearer_token,
-    embed_headers,
+    frame_ancestors,
     note_install,
     runtime_config_for,
+    script_json,
     widget_runtime_config,
 )
 from app.core.auth import require_permissions
 from app.core.config import settings
+from app.core.logger import get_logger
 from app.database import get_db
 from app.models.schemas.widget import WidgetEmbedSettings
 from app.models.user import User
@@ -50,8 +55,14 @@ from app.repositories.widget import WidgetRepository
 from app.services import conversation_token, widget_bootstrap, widget_embed_policy
 
 router = APIRouter()
+logger = get_logger(__name__)
 
 _NO_STORE = {"Cache-Control": "no-store"}
+# Set on the redirect to the frame host: a request that still doesn't arrive
+# there (a proxy forwarding an internal Host) is served rather than bounced again.
+_HOP_PARAM = "cm_hop"
+
+_warned_about_shared_origin = False
 
 
 class BootstrapRequest(BaseModel):
@@ -68,46 +79,75 @@ def _frame_config(request: Request) -> dict:
 
 
 def _frame_host_redirect(request: Request) -> Optional[RedirectResponse]:
-    """Send a frame request that reached the API host (which carries dashboard
-    cookies) over to the cookieless frame host.
+    """Send a frame request that arrived anywhere but the frame host over to it.
 
-    Only the API host is redirected, never "anything but the frame host": a proxy
-    that forwards an internal Host for the frame vhost would otherwise bounce the
-    frame to itself forever.
+    Every other host can carry the dashboard's cookies (the API host, a dashboard
+    host proxying /api/), which a page running in the frame must never get.
     """
     frame_host = urlparse(settings.WIDGET_FRAME_URL).netloc if settings.WIDGET_FRAME_URL else ""
-    api_host = urlparse(settings.BACKEND_URL).netloc
-    request_host = request.headers.get("host", "")
-    if not frame_host or request_host != api_host or request_host == frame_host:
+    if not frame_host or request.headers.get("host", "") == frame_host:
         return None
-    query = f"?{request.url.query}" if request.url.query else ""
-    return RedirectResponse(f"{settings.WIDGET_FRAME_URL}{request.url.path}{query}", status_code=status.HTTP_302_FOUND)
+    if request.query_params.get(_HOP_PARAM):
+        logger.warning(
+            "Widget frame redirected to %s but arrived on Host %s; serving it here. "
+            "The frame host's proxy must pass the Host header through.",
+            frame_host, request.headers.get("host", ""),
+        )
+        return None
+    query = urlencode([*request.query_params.multi_items(), (_HOP_PARAM, "1")])
+    return RedirectResponse(f"{settings.WIDGET_FRAME_URL}{request.url.path}?{query}", status_code=status.HTTP_302_FOUND)
 
 
-def _ws_origin(api_url: str) -> str:
-    parsed = urlparse(api_url)
+def _warn_if_frame_shares_the_api_origin() -> None:
+    global _warned_about_shared_origin
+    if settings.WIDGET_FRAME_URL or _warned_about_shared_origin:
+        return
+    _warned_about_shared_origin = True
+    logger.warning(
+        "WIDGET_FRAME_URL is not set, so the chat widget is framed on the API's own "
+        "origin, where dashboard sign-in cookies live. Point a separate host at this "
+        "backend and set WIDGET_FRAME_URL to it."
+    )
+
+
+def _origin(url: str) -> str:
+    parsed = urlparse(url)
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
+def _note_refused_embedder(db: Session, widget, request: Request, background_tasks: BackgroundTasks) -> None:
+    """A site the widget's allowed domains refuse framing it: the browser only
+    shows a blank frame, so tell the org where it was tried."""
+    if not widget.allowed_domains or request.headers.get("sec-fetch-dest") != "iframe":
+        return
+    embedder = widget_embed_policy.origin_of(request.headers.get("referer") or "")
+    if embedder and not widget_embed_policy.allows_embedder(db, widget.allowed_domains, widget.organization_id, embedder):
+        note_install(db, widget, embedder, request, background_tasks, REFUSED)
+
+
 @router.get("/{widget_id}/frame", response_class=HTMLResponse)
-async def get_widget_frame(widget_id: str, request: Request, db: Session = Depends(get_db)):
+async def get_widget_frame(widget_id: str, request: Request, background_tasks: BackgroundTasks,
+                           db: Session = Depends(get_db)):
     redirect = _frame_host_redirect(request)
     if redirect:
         return redirect
+    _warn_if_frame_shares_the_api_origin()
 
     widget = widget_bootstrap.find_widget(db, widget_id)
+    _note_refused_embedder(db, widget, request, background_tasks)
+
     config = _frame_config(request)
+    # The bundle sits beside the API, under the same base (a path prefix included)
+    assets_base = html.escape(config["API_URL"].rsplit(settings.API_V1_STR, 1)[0], quote=True)
     nonce = secrets.token_urlsafe(16)
     version = asset_version()
     asset_query = f"?v={version}" if version else ""
 
-    ancestors = embed_headers(db, widget).get("Content-Security-Policy")
     csp = widget_embed_policy.frame_document_csp(
         nonce,
-        [_ws_origin(config["API_URL"]), _ws_origin(config["WS_URL"])],
-        ancestors,
+        [_origin(config["API_URL"]), _origin(config["WS_URL"])],
+        frame_ancestors(db, widget),
     )
-    boot = {"widgetId": widget.id}
 
     page = f"""<!DOCTYPE html>
 <html>
@@ -115,15 +155,13 @@ async def get_widget_frame(widget_id: str, request: Request, db: Session = Depen
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chat Widget</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    {FONT_LINKS}
     <script nonce="{nonce}">
-        window.APP_CONFIG = {json.dumps(config)};
-        window.__CM_FRAME__ = {json.dumps(boot)};
+        window.APP_CONFIG = {script_json(config)};
+        window.__CM_FRAME__ = {script_json({"widgetId": widget.id})};
     </script>
-    <script type="module" src="/assets/widget.js{asset_query}"></script>
-    <link rel="stylesheet" href="/assets/widget.css{asset_query}">
+    <script type="module" src="{assets_base}/assets/widget.js{asset_query}"></script>
+    <link rel="stylesheet" href="{assets_base}/assets/widget.css{asset_query}">
 </head>
 <body>
     <div id="app"></div>
@@ -154,13 +192,13 @@ async def bootstrap_widget(
 
     widget = widget_bootstrap.find_widget(db, widget_id)
     host_origin = widget_embed_policy.origin_of(body.host_origin or "")
-    note_install(db, widget, host_origin, request, background_tasks)
+    note_install(db, widget, host_origin, request, background_tasks, FRAMED)
 
     try:
         session = widget_bootstrap.open_session(db, widget, bearer_token(authorization), body.source)
     except widget_bootstrap.WidgetAccessDenied as denied:
         message = (
-            "Conversation token expired. Issue a new one with /generate-token."
+            widget_bootstrap.IDENTITY_EXPIRED_MESSAGE
             if denied.code == conversation_token.IDENTITY_EXPIRED_CODE
             else "This widget only talks to identified visitors."
         )

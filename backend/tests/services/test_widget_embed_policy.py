@@ -64,6 +64,10 @@ class TestNormalize:
         "a" * 64 + ".com",
         "*",
         "*.*.acme.com",
+        "*.com",
+        "acme.com:\uff18\uff10",
+        "acme.com:\u00b2",
+        "a" * 300 + ".com",
     ])
     def test_refuses(self, typed):
         with pytest.raises(InvalidAllowedDomain):
@@ -71,6 +75,11 @@ class TestNormalize:
 
     def test_list_is_deduplicated_in_order(self):
         assert policy.normalize_allowed_domains(["B.com", "a.com", "https://b.com/"]) == ["b.com", "a.com"]
+
+    @pytest.mark.parametrize("not_text", [123, None, ["acme.com"]])
+    def test_refuses_anything_but_text(self, not_text):
+        with pytest.raises(InvalidAllowedDomain):
+            policy.normalize_allowed_domain(not_text)
 
     def test_list_is_capped(self):
         too_many = [f"site{i}.com" for i in range(policy.MAX_ALLOWED_DOMAINS + 1)]
@@ -160,6 +169,28 @@ class TestFrameAncestors:
     def test_no_duplicate_sources(self, db, own_origins):
         sources = policy.frame_ancestors(db, ["acme.com", "www.acme.com"], None).split()
         assert len(sources) == len(set(sources))
+
+
+class TestAllowsEmbedder:
+    def test_an_open_widget_allows_anyone(self, db):
+        assert policy.allows_embedder(db, [], None, "https://anywhere.example")
+
+    @pytest.mark.parametrize("origin, allowed", [
+        ("https://acme.com", True),
+        ("http://www.acme.com", True),
+        ("https://shop.acme.com", True),          # *.acme.com
+        ("https://acme.com.evil.io", False),
+        ("https://other.io", False),
+        ("http://localhost:3000", True),
+        ("http://localhost:3001", False),         # only the port listed
+        ("https://staging.example:8443", True),
+        ("https://staging.example", False),
+        ("https://admin.shopify.com", True),      # always allowed
+        ("not a url", False),
+    ])
+    def test_mirrors_the_header(self, db, own_origins, origin, allowed):
+        domains = ["acme.com", "*.acme.com", "localhost:3000", "staging.example:8443"]
+        assert policy.allows_embedder(db, domains, None, origin) is allowed
 
 
 class TestFrameDocumentCsp:
