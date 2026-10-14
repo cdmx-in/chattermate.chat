@@ -56,7 +56,7 @@ router = APIRouter()
 logger = get_logger(__name__)
 
 # Define the scopes needed for your app
-SCOPES = "read_products,read_themes,write_themes,write_script_tags,read_script_tags,read_orders,read_customers"
+SCOPES = "read_products,read_themes,write_themes,write_script_tags,read_script_tags,read_orders,read_all_orders,read_customers"
 
 
 def _require_shopify_agent_in_org(db, agent_id, org_id) -> None:
