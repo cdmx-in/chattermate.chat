@@ -82,6 +82,7 @@ const {
     cleanup,
     humanAgent,
     onTakeover,
+    refusal,
     submitRating: socketSubmitRating,
     submitForm,
     currentForm,
@@ -527,7 +528,7 @@ const handleKeyPress = (event: KeyboardEvent) => {
 }
 
 // Update the checkAuthorization function
-const checkAuthorization = async () => {
+const checkAuthorization = async ({ afterRefusal = false } = {}): Promise<boolean> => {
     try {
         if (!widgetId.value) {
             console.error('Widget ID is not available')
@@ -554,8 +555,11 @@ const checkAuthorization = async () => {
             headers['Authorization'] = `Bearer ${token.value}`
         }
 
+        // Never a stored copy: this call is what binds the visitor to a customer,
+        // and a cached answer left the socket holding the page's anonymous token.
         const response = await fetch(url, {
-            headers
+            headers,
+            cache: 'no-store'
         })
 
         if (response.status === 401) {
@@ -625,6 +629,11 @@ const checkAuthorization = async () => {
         // banner, so replacing the whole widget with an error overlay would take
         // away the chat the visitor is about to get back.
         const connected = await connect()
+        // The socket was refused because this token isn't bound to a customer yet
+        // (an anonymous token reached it): authorizing again binds one. Once.
+        if (!connected && refusal.value === 'customer_required' && !afterRefusal) {
+            return await checkAuthorization({ afterRefusal: true })
+        }
         if (!connected) {
             console.error('Chat service not reachable yet; retrying in the background')
         }
@@ -723,7 +732,7 @@ watch(() => messages.value, (newMessages) => {
 // Add reconnect handler
 const handleReconnect = async () => {
     const connected = await reconnect()
-    if (connected) {
+    if (connected || refusal.value === 'customer_required') {
         await checkAuthorization()
     }
 }

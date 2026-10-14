@@ -34,6 +34,7 @@ from app.models.workflow_node import WorkflowNode, NodeType
 from app.models.workflow_connection import WorkflowConnection
 from app.models.rating import Rating
 import datetime
+from socketio.exceptions import ConnectionRefusedError as SocketRefused
 
 @pytest.fixture
 def test_ai_config(db, test_organization) -> AIConfig:
@@ -775,15 +776,38 @@ class TestWidgetConnectionErrors:
         mock_ai_config_repo.get_active_config.return_value = None
         monkeypatch.setattr(widget_chat, "AIConfigRepository", lambda db: mock_ai_config_repo)
         
-        result = await widget_chat.widget_connect("test_sid", {}, {})
-        
-        assert result is False
-        mock_sio.emit.assert_called_with(
-            'error',
-            {'error': 'AI configuration required', 'type': 'ai_config_missing'},
-            to="test_sid",
-            namespace='/widget'
+        # The reason travels in the refusal: browsers drop events emitted to a
+        # connection that is then refused.
+        with pytest.raises(SocketRefused) as refused:
+            await widget_chat.widget_connect("test_sid", {}, {})
+
+        assert refused.value.error_args['data'] == {
+            'error': 'AI configuration required', 'type': 'ai_config_missing'}
+        mock_sio.emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("customer_id", [None, "None"])
+    async def test_widget_connect_without_customer_is_refused(self, db, test_widget, test_ai_config, mock_sio, monkeypatch, customer_id):
+        """The widget page's anonymous token (no `sub`) is refused before any
+        session insert - it used to hit the NOT NULL customer_id constraint."""
+        from app.api import widget_chat
+
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        monkeypatch.setattr(
+            widget_chat,
+            "authenticate_socket_conversation_token",
+            AsyncMock(return_value=(str(test_widget.id), str(test_widget.organization_id), customer_id, "anon_token"))
         )
+        sessions_before = db.query(SessionToAgent).count()
+
+        with pytest.raises(SocketRefused) as refused:
+            await widget_chat.widget_connect("test_sid", {}, {})
+
+        assert refused.value.error_args['data'] == {
+            'error': 'Visitor not authorized yet', 'type': 'customer_required'}
+        assert db.query(SessionToAgent).count() == sessions_before
+        mock_sio.save_session.assert_not_called()
     
     @pytest.mark.asyncio
     async def test_widget_connect_invalid_widget(self, db, mock_sio, monkeypatch):

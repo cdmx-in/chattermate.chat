@@ -26,4 +26,16 @@ test.describe('widget chat', () => {
     await expect(widget.customerMessages.last()).toHaveText('Where is my order?')
     await expect(widget.lastAgentMessage()).toHaveText('Your order ships tomorrow.', AI_REPLY)
   })
+
+  test('a visitor whose first authorization went missing can still chat @widget', async ({ agent, widget, llm }) => {
+    await llm.script(agent, (s) => s.otherwise().reply('Happy to help!'))
+
+    // The socket refuses the anonymous token; the widget authorizes again and connects.
+    await widget.loseFirstAuthorization()
+    await widget.embed()
+    await widget.open()
+    await widget.send('Hello?')
+
+    await expect(widget.lastAgentMessage()).toHaveText('Happy to help!', AI_REPLY)
+  })
 })

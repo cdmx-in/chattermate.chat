@@ -83,12 +83,15 @@ export function useWidgetSocket() {
     const MANUAL_RETRY_MAX_MS = 15000
     let manualRetryTimer: ReturnType<typeof setTimeout> | null = null
 
-    // Errors that say the server will refuse this widget until someone changes
-    // something, so retrying is just load. Anything else — including the generic
-    // connection_error the connect handler raises on a transient failure — is
-    // worth another attempt.
-    const UNRECOVERABLE_ERRORS = new Set(['ai_config_missing'])
+    // Refusals that retrying the same connection can't change, so retrying is just
+    // load: the org has no AI config, or the token isn't bound to a customer yet
+    // (authorizing again binds one - the caller of connect() does that, see
+    // `refusal`). Anything else, including a transient failure inside the connect
+    // handler, is worth another attempt.
+    const FINAL_REFUSALS = new Set<SocketError['type']>(['ai_config_missing', 'customer_required'])
     let refusedForGood = false
+    // Why the last attempt was refused for good, for the caller of connect().
+    const refusal = ref<SocketError['type'] | null>(null)
 
     const clearManualRetry = () => {
         if (manualRetryTimer) {
@@ -203,7 +206,20 @@ export function useWidgetSocket() {
             }
         })
 
-        socket.on('connect_error', () => {
+        // A refusal carries its reason in `data`: events the server emits before
+        // refusing never reach the client.
+        socket.on('connect_error', (err?: Error & { data?: SocketError }) => {
+            const reason = err?.data?.type
+            if (reason && FINAL_REFUSALS.has(reason)) {
+                refusedForGood = true
+                refusal.value = reason
+                clearManualRetry()
+                connectionStatus.value = 'failed'
+                // A missing customer is ours to fix, not the visitor's to read.
+                if (reason !== 'customer_required') handleError(err!.data)
+                return
+            }
+
             retryCount.value++
             console.error('Socket connection failed, attempt:', retryCount.value)
 
@@ -377,6 +393,7 @@ export function useWidgetSocket() {
             stopBotTyping()
             clearManualRetry()
             refusedForGood = false
+            refusal.value = null
             if (socket) {
                 socket.removeAllListeners()
                 socket.disconnect()
@@ -390,8 +407,11 @@ export function useWidgetSocket() {
                     resolve(true)
                 })
 
+                // Registered after initializeSocket's handler, so a refusal is
+                // already recorded when this runs. A refused connect has to settle:
+                // the widget's startup awaits it.
                 socket?.on('connect_error', () => {
-                    if (retryCount.value >= MAX_RETRIES) {
+                    if (refusedForGood || retryCount.value >= MAX_RETRIES) {
                         resolve(false)
                     }
                 })
@@ -438,11 +458,6 @@ export function useWidgetSocket() {
         stopBotTyping()
         errorMessage.value = getErrorMessage(error as SocketError)
         showError.value = true
-
-        if (UNRECOVERABLE_ERRORS.has((error as SocketError)?.type)) {
-            refusedForGood = true
-            clearManualRetry()
-        }
 
         // Hide error after 5 seconds
         setTimeout(() => {
@@ -781,6 +796,7 @@ export function useWidgetSocket() {
         humanAgent,
         onTakeover,
         onSessionState,
+        refusal,
         submitRating,
         currentForm,
         submitForm,

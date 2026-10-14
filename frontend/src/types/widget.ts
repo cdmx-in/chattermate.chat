@@ -58,7 +58,7 @@ export interface AgentCustomization {
 
 
 export interface SocketError {
-    type: 'connection_error' | 'auth_error' | 'chat_error' | 'ai_config_missing';
+    type: 'connection_error' | 'auth_error' | 'chat_error' | 'ai_config_missing' | 'customer_required';
     error?: string;
 }
 
