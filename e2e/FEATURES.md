@@ -17,6 +17,7 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Widget chat | Customer gets the AI answer | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | History survives a reload | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | First authorization answer lost (socket gets the anonymous token) → widget authorizes again and chats | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
+| Widget chat | Email-first agent (gate → chat, person recorded), Ask anything panel, lead capture with no email asked — each also with the first authorization lost | `specs/widget/chat-styles.spec.ts` | P1 | ✅ |
 | Widget chat | Agent wraps up → customer rates the chat → rating stored against the agent | `specs/widget/rating.spec.ts` | P1 | ✅ |
 | Widget chat | Provider error, provider timeout and malformed reply each end in an apology; the next message works | `specs/widget/ai-failures.spec.ts` | P1 | ✅ |
 | Human handover | AI hands over → contact form → agent takes over → two-way messages → the AI stays silent | `specs/handover/handover.spec.ts` | P1 | ✅ |

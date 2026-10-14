@@ -38,19 +38,21 @@ export class ChatWidget {
   }
 
   /**
-   * The visitor's first authorization answer arrives without the token that binds
-   * them to a customer (a browser served an earlier stored answer, as one did in
-   * production), so the widget dials the socket with the page's anonymous token.
-   * Call before embed().
+   * The first authorization answer that would bind the visitor to a customer
+   * arrives without its token (a browser served an earlier stored answer, as one
+   * did in production), so the widget dials the socket with the page's anonymous
+   * token. Call before embed().
    */
   async loseFirstAuthorization(): Promise<void> {
     let lost = false
     await this.page.route(new RegExp(`/api/v1/widgets/${this.widgetId}(\\?|$)`), async (route) => {
       if (lost || route.request().method() !== 'GET') return route.fallback()
-      lost = true
       const response = await route.fetch()
       const answer = await response.json()
-      delete answer.token
+      if (answer.token) {
+        lost = true
+        delete answer.token
+      }
       await route.fulfill({ response, json: answer })
     })
   }
@@ -70,6 +72,38 @@ export class ChatWidget {
     await step('Customer opens the chat', async () => {
       await this.launcher.click()
       await this.expectReady()
+    })
+  }
+
+  /** Opens the chat of an agent that asks for an email before the conversation. */
+  async openToEmailGate(): Promise<void> {
+    await step('Customer opens the chat and is asked for an email', async () => {
+      await this.launcher.click()
+      await expect(this.emailGate).toBeVisible()
+    })
+  }
+
+  /** Answers the email gate with this visitor's email; the chat is then ready. */
+  async giveEmail(): Promise<void> {
+    await step(`Customer gives ${this.customer.email}`, async () => {
+      await this.emailGate.fill(this.customer.email)
+      await this.frame.getByRole('button', { name: 'Continue to chat' }).click()
+      await this.expectReady()
+    })
+  }
+
+  /** Opens an "Ask anything" agent: its answer panel, not the chat window. */
+  async openAskAnything(): Promise<void> {
+    await step('Customer opens the Ask anything panel', async () => {
+      await this.launcher.click()
+      await expect(this.askBox).toBeEditable()
+    })
+  }
+
+  async ask(text: string): Promise<void> {
+    await step(`Customer asks "${text}"`, async () => {
+      await this.askBox.fill(text)
+      await this.askBox.press('Enter')
     })
   }
 
@@ -144,6 +178,21 @@ export class ChatWidget {
   /** Shown by the loader instead of a chat when the widget refuses to load (e.g. no token). */
   get unavailableNotice(): Locator {
     return this.page.getByText('Chat Unavailable')
+  }
+
+  /** The email field an email-first agent shows before the chat. */
+  get emailGate(): Locator {
+    return this.frame.getByPlaceholder('you@example.com', { exact: true })
+  }
+
+  /** The "Ask anything" panel's question box ("Connecting..." until the socket is up). */
+  get askBox(): Locator {
+    return this.frame.getByPlaceholder('Ask me anything...', { exact: true })
+  }
+
+  /** Answers in the "Ask anything" panel. CSS: the answers have no role or name. */
+  lastAnswer(): Locator {
+    return this.frame.locator('.askai__answer').last()
   }
 
   get messageInput(): Locator {
