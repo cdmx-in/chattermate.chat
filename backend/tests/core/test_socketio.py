@@ -18,26 +18,21 @@ import pytest
 from unittest.mock import patch, MagicMock
 import socketio
 
-from app.core.socketio import configure_socketio, sio, socket_app
+from app.core.socketio import configure_socketio, sio, socket_app, socket_origins
 
 
 def test_configure_socketio_with_cors():
-    """Test configuring socketio with CORS origins"""
-    # Test with a string
-    with patch.object(sio.eio, 'cors_allowed_origins', None):
+    """Configuring updates the origin policy's list, whatever shape it's given in"""
+    with patch.object(socket_origins, 'origins', frozenset()):
         configure_socketio(cors_origins="https://example.com")
-        assert sio.eio.cors_allowed_origins == ["https://example.com"]
-    
-    # Test with a list
-    with patch.object(sio.eio, 'cors_allowed_origins', None):
+        assert socket_origins.origins == {"https://example.com"}
+        assert sio.eio.cors_allowed_origins is socket_origins
+
         configure_socketio(cors_origins=["https://example1.com", "https://example2.com"])
-        assert sio.eio.cors_allowed_origins == ["https://example1.com", "https://example2.com"]
-    
-    # Test with a set
-    with patch.object(sio.eio, 'cors_allowed_origins', None):
-        configure_socketio(cors_origins={"https://example1.com", "https://example2.com"})
-        assert isinstance(sio.eio.cors_allowed_origins, list)
-        assert set(sio.eio.cors_allowed_origins) == {"https://example1.com", "https://example2.com"}
+        assert socket_origins.origins == {"https://example1.com", "https://example2.com"}
+
+        configure_socketio(cors_origins={"https://example3.com"})
+        assert socket_origins.origins == {"https://example3.com"}
 
 
 REDIS_OPTIONS = {
@@ -125,3 +120,62 @@ def test_plain_redis_gets_no_tls_options():
     from app.core.socketio import redis_options
     assert 'ssl_cert_reqs' not in redis_options("redis://redis:6379/0")
     assert redis_options("rediss://cache.amazonaws.com:6379")['ssl_cert_reqs'] is None
+
+
+class TestSocketOriginPolicy:
+    """The framed widget's socket is same-origin; everything else needs the CORS list."""
+
+    @pytest.fixture
+    def policy(self, monkeypatch):
+        from app.core.socketio import SocketOriginPolicy, settings
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        return SocketOriginPolicy(["https://listed.example"])
+
+    def test_a_listed_origin_is_allowed(self, policy):
+        assert policy("https://listed.example", {"HTTP_HOST": "api.example.com"})
+
+    def test_the_requests_own_host_is_allowed_whatever_the_scheme(self, policy):
+        # behind TLS the ASGI scheme reads http, so only the host is compared
+        assert policy("https://chat.selfhost.example", {"HTTP_HOST": "chat.selfhost.example"})
+        assert policy("http://chat.selfhost.example", {"HTTP_HOST": "chat.selfhost.example"})
+
+    def test_the_backend_and_frame_hosts_are_allowed(self, policy):
+        assert policy("https://api.example.com", {"HTTP_HOST": "internal:8000"})
+        assert policy("https://widget.example.com", {"HTTP_HOST": "internal:8000"})
+
+    def test_another_site_is_refused(self, policy):
+        assert not policy("https://evil.example", {"HTTP_HOST": "api.example.com"})
+
+    def test_a_forwarded_host_is_not_trusted(self, policy):
+        assert not policy("https://evil.example", {"HTTP_HOST": "api.example.com", "HTTP_X_FORWARDED_HOST": "evil.example"})
+
+    def test_a_port_must_match_too(self, policy):
+        assert not policy("https://api.example.com:4443", {"HTTP_HOST": "other"})
+
+    def test_no_origin_is_refused(self, policy):
+        assert not policy(None, {})
+        assert not policy("", {"HTTP_HOST": ""})
+
+    def test_works_when_engineio_calls_without_environ(self, policy):
+        assert policy("https://listed.example")
+        assert not policy("https://evil.example")
+
+    def test_engineio_uses_it_for_the_handshake(self, monkeypatch):
+        environ = {"HTTP_ORIGIN": "https://evil.example", "HTTP_HOST": "api.example.com"}
+        assert sio.eio._cors_allowed_origins(environ) == []
+
+        environ = {"HTTP_ORIGIN": "https://api.example.com", "HTTP_HOST": "api.example.com"}
+        assert sio.eio._cors_allowed_origins(environ) == ["https://api.example.com"]
+
+    def test_own_host_still_allowed_after_a_cors_refresh(self, monkeypatch):
+        from fastapi import FastAPI
+        from app.core import cors
+        monkeypatch.setattr(socket_origins, "origins", socket_origins.origins)
+
+        cors.update_local_cors(FastAPI(), ["https://only.example"])
+
+        assert sio.eio.cors_allowed_origins is socket_origins
+        environ = {"HTTP_ORIGIN": "https://api.example.com", "HTTP_HOST": "api.example.com"}
+        assert sio.eio._cors_allowed_origins(environ) == ["https://api.example.com"]
+        assert sio.eio._cors_allowed_origins({"HTTP_ORIGIN": "https://only.example", "HTTP_HOST": "x"}) == ["https://only.example"]

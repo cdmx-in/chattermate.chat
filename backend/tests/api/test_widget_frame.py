@@ -1,0 +1,355 @@
+"""
+Copyright 2024-2026 ChatterMate
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+The widget framed on our own origin: the frame page, its bootstrap call, and
+the allowed-domains settings behind its frame-ancestors.
+"""
+
+import re
+import uuid
+
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from app.api import widget as widget_router
+from app.api import widget_frame as frame_router
+from app.core.auth import get_current_user
+from app.core.config import settings
+from app.database import get_db
+from app.models.agent import Agent
+from app.models.customer import Customer
+from app.models.organization import Organization
+from app.models.widget import Widget
+from app.services import conversation_token
+
+
+@pytest.fixture
+def app(db, test_user):
+    app = FastAPI()
+    app.include_router(widget_router.router, prefix="/api/v1/widgets")
+    app.include_router(frame_router.router, prefix="/api/v1/widgets")
+
+    def override_get_db():
+        yield db
+
+    async def override_user():
+        return test_user
+
+    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = override_user
+    return app
+
+
+@pytest.fixture
+def client(app) -> TestClient:
+    return TestClient(app)
+
+
+@pytest.fixture
+def identified_token(db, test_widget, test_organization) -> str:
+    customer = Customer(organization_id=test_organization.id, email="signed.in@example.com", is_authenticated=True)
+    db.add(customer)
+    db.commit()
+    token, _, _ = conversation_token.mint(
+        {
+            "sub": str(customer.id),
+            "customer_id": str(customer.id),
+            "widget_id": str(test_widget.id),
+            "customer_email": customer.email,
+        },
+        ttl_seconds=600,
+    )
+    return token
+
+
+@pytest.fixture
+def restricted(db, test_widget):
+    test_widget.allowed_domains = ["acme.com"]
+    db.commit()
+    return test_widget
+
+
+def frame_url(widget) -> str:
+    return f"/api/v1/widgets/{widget.id}/frame"
+
+
+def bootstrap(client, widget, token=None, **body):
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return client.post(f"/api/v1/widgets/{widget.id}/bootstrap", json=body, headers=headers)
+
+
+class TestFramePage:
+    def test_serves_the_widget_shell_without_a_token(self, client, test_widget):
+        response = client.get(frame_url(test_widget))
+
+        assert response.status_code == 200
+        assert "text/html" in response.headers["content-type"]
+        assert response.headers["cache-control"] == "no-store"
+        assert "__CM_FRAME__" in response.text
+        assert f'"widgetId": "{test_widget.id}"' in response.text
+        assert "initialToken" not in response.text
+        assert "__INITIAL_DATA__" not in response.text
+
+    def test_loads_the_bundle_from_its_own_origin(self, client, test_widget):
+        response = client.get(frame_url(test_widget))
+        assert 'src="/assets/widget.js' in response.text
+        assert 'href="/assets/widget.css' in response.text
+
+    def test_inline_config_runs_only_with_the_csp_nonce(self, client, test_widget):
+        response = client.get(frame_url(test_widget))
+        csp = response.headers["content-security-policy"]
+        nonce = re.search(r"'nonce-([^']+)'", csp).group(1)
+
+        assert f'<script nonce="{nonce}">' in response.text
+        assert "object-src 'none'" in csp
+        assert "base-uri 'none'" in csp
+
+    def test_a_new_nonce_every_time(self, client, test_widget):
+        first = client.get(frame_url(test_widget)).headers["content-security-policy"]
+        second = client.get(frame_url(test_widget)).headers["content-security-policy"]
+        assert first != second
+
+    def test_embeddable_anywhere_by_default(self, client, test_widget):
+        csp = client.get(frame_url(test_widget)).headers["content-security-policy"]
+        assert "frame-ancestors" not in csp
+        assert "x-frame-options" not in client.get(frame_url(test_widget)).headers
+
+    def test_allowed_domains_become_frame_ancestors(self, client, restricted):
+        csp = client.get(frame_url(restricted)).headers["content-security-policy"]
+        assert "frame-ancestors 'self'" in csp
+        assert " https://acme.com" in csp
+
+    def test_unknown_widget(self, client):
+        assert client.get(f"/api/v1/widgets/{uuid.uuid4()}/frame").status_code == 404
+
+    def test_talks_to_the_frame_host_when_one_is_configured(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        response = client.get(frame_url(test_widget), headers={"Host": "widget.example.com"})
+
+        assert response.status_code == 200
+        assert '"API_URL": "https://widget.example.com/api/v1"' in response.text
+        assert '"WS_URL": "wss://widget.example.com"' in response.text
+        assert "connect-src 'self' https://widget.example.com wss://widget.example.com" in response.headers["content-security-policy"]
+
+    def test_sends_a_request_on_the_api_host_to_the_frame_host(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+        response = client.get(
+            f"{frame_url(test_widget)}?host=1",
+            headers={"Host": "api.example.com"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 302
+        assert response.headers["location"] == f"https://widget.example.com/api/v1/widgets/{test_widget.id}/frame?host=1"
+
+    def test_a_proxy_forwarding_an_internal_host_is_served_not_bounced(self, client, test_widget, monkeypatch):
+        # Redirecting "anything but the frame host" would loop forever here
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+        response = client.get(frame_url(test_widget), headers={"Host": "backend:8000"}, follow_redirects=False)
+        assert response.status_code == 200
+
+    def test_without_a_frame_host_it_serves_wherever_it_is_asked(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "")
+        response = client.get(frame_url(test_widget), headers={"Host": "api.example.com"}, follow_redirects=False)
+        assert response.status_code == 200
+
+
+class TestDataPageEmbedding:
+    """A raw <iframe src=.../data> must not dodge the allowed domains."""
+
+    def test_unrestricted_widget_sends_no_frame_ancestors(self, client, test_widget):
+        assert "content-security-policy" not in client.get(f"/api/v1/widgets/{test_widget.id}/data").headers
+
+    def test_restricted_widget_sends_its_frame_ancestors(self, client, restricted):
+        csp = client.get(f"/api/v1/widgets/{restricted.id}/data").headers["content-security-policy"]
+        assert csp.startswith("frame-ancestors 'self'")
+        assert " https://acme.com" in csp
+
+
+class TestBootstrap:
+    def test_a_new_visitor_gets_an_anonymous_token_and_the_widget_data(self, client, test_widget, test_agent):
+        response = bootstrap(client, test_widget)
+
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        data = response.json()
+        assert set(data) == {
+            "widgetId", "agentName", "customization", "customerId", "initialToken",
+            "customer", "workflow", "allowAttachments", "presence",
+        }
+        assert data["widgetId"] == test_widget.id
+        assert data["agentName"] == (test_agent.display_name or test_agent.name)
+        assert data["customerId"] == ""
+        assert conversation_token.inspect(data["initialToken"], test_widget.id).is_live
+        assert data["presence"] == {"mode": "ai", "available": True}
+
+    def test_matches_what_the_html_page_bakes_in(self, client, test_widget):
+        data = bootstrap(client, test_widget).json()
+        page = client.get(f"/api/v1/widgets/{test_widget.id}/data").text
+
+        assert f'agentName: "{data["agentName"]}"' in page
+        assert f'workflow: {str(data["workflow"]).lower()}' in page
+        assert f'allowAttachments: {str(data["allowAttachments"]).lower()}' in page
+
+    def test_an_identified_visitor_keeps_their_identity(self, client, test_widget, identified_token):
+        data = bootstrap(client, test_widget, identified_token).json()
+
+        assert data["initialToken"] == identified_token
+        assert data["customerId"] == conversation_token.inspect(identified_token, test_widget.id).payload["sub"]
+
+    def test_a_lapsed_identity_is_reported_not_replaced(self, client, test_widget, identified_token, monkeypatch):
+        monkeypatch.setattr(conversation_token, "_is_token_in_redis", lambda jti: False)
+        response = bootstrap(client, test_widget, identified_token)
+
+        assert response.status_code == 401
+        assert response.json()["detail"]["code"] == conversation_token.IDENTITY_EXPIRED_CODE
+
+    def test_a_token_only_agent_refuses_an_anonymous_visitor(self, client, db, test_widget, test_agent):
+        test_agent.require_token_auth = True
+        db.commit()
+        response = bootstrap(client, test_widget)
+
+        assert response.status_code == 401
+        assert response.json()["detail"]["code"] == "token_required"
+
+    def test_a_token_only_agent_accepts_an_identified_visitor(self, client, db, test_widget, test_agent, identified_token):
+        test_agent.require_token_auth = True
+        db.commit()
+        assert bootstrap(client, test_widget, identified_token).status_code == 200
+
+    def test_a_garbage_token_starts_a_fresh_anonymous_visitor(self, client, test_widget):
+        data = bootstrap(client, test_widget, "not-a-token").json()
+        assert data["initialToken"] != "not-a-token"
+        assert data["customerId"] == ""
+
+    def test_a_token_for_another_widget_is_not_reused(self, client, db, test_widget, test_organization, test_agent):
+        other = Widget(name="Other", organization_id=test_organization.id, agent_id=test_agent.id)
+        db.add(other)
+        db.commit()
+        foreign = bootstrap(client, other).json()["initialToken"]
+
+        assert bootstrap(client, test_widget, foreign).json()["initialToken"] != foreign
+
+    def test_the_explore_source_rides_in_the_token(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "EXPLORE_WIDGET_ID", test_widget.id)
+        token = bootstrap(client, test_widget, source="https://visitor-site.example").json()["initialToken"]
+        assert conversation_token.inspect(token, test_widget.id).payload.get("source") == "https://visitor-site.example"
+
+    def test_source_is_ignored_for_other_widgets(self, client, test_widget):
+        token = bootstrap(client, test_widget, source="https://visitor-site.example").json()["initialToken"]
+        assert "source" not in conversation_token.inspect(token, test_widget.id).payload
+
+    def test_unknown_widget(self, client):
+        response = client.post(f"/api/v1/widgets/{uuid.uuid4()}/bootstrap", json={})
+        assert response.status_code == 404
+
+    def test_too_many_opens_are_refused(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(widget_router, "allow_widget_open", lambda request: False)
+        monkeypatch.setattr(frame_router, "allow_widget_open", lambda request: False)
+
+        response = bootstrap(client, test_widget)
+        assert response.status_code == 429
+        assert response.json()["detail"]["code"] == "rate_limited"
+        assert client.get(f"/api/v1/widgets/{test_widget.id}/data").status_code == 429
+
+    def test_the_host_origin_is_what_install_tracking_sees(self, client, test_widget, monkeypatch):
+        seen = []
+        monkeypatch.setattr(frame_router, "note_install", lambda db, widget, origin, *rest: seen.append(origin))
+
+        bootstrap(client, test_widget, host_origin="https://shop.acme.com")
+        bootstrap(client, test_widget, host_origin="https://shop.acme.com/pricing")
+        bootstrap(client, test_widget, host_origin="https://shop.acme.com;evil")
+        bootstrap(client, test_widget, host_origin="javascript:alert(1)")
+        bootstrap(client, test_widget)
+
+        assert seen == ["https://shop.acme.com", "https://shop.acme.com", None, None, None]
+
+
+class TestRateLimit:
+    def test_loopback_is_never_limited(self, monkeypatch):
+        monkeypatch.setattr(widget_router, "allow_request", lambda *a: False)
+        request = type("R", (), {"headers": {}, "client": type("C", (), {"host": "127.0.0.1"})()})()
+        assert widget_router.allow_widget_open(request) is True
+
+    def test_other_clients_are_limited_per_ip(self, monkeypatch):
+        keys = []
+        monkeypatch.setattr(widget_router, "allow_request", lambda key, limit, window: keys.append(key) or False)
+        request = type("R", (), {"headers": {"x-forwarded-for": "203.0.113.9"}, "client": None})()
+
+        assert widget_router.allow_widget_open(request) is False
+        assert keys == ["widget_open:203.0.113.9"]
+
+
+class TestEmbedSettings:
+    def url(self, widget) -> str:
+        return f"/api/v1/widgets/{widget.id}/embed-settings"
+
+    def test_a_new_widget_allows_any_site(self, client, test_widget):
+        assert client.get(self.url(test_widget)).json() == {"allowed_domains": []}
+
+    def test_saved_domains_are_normalised(self, client, db, test_widget):
+        response = client.put(self.url(test_widget), json={"allowed_domains": ["https://ACME.com/", "localhost:3000", "acme.com"]})
+
+        assert response.status_code == 200
+        assert response.json() == {"allowed_domains": ["acme.com", "localhost:3000"]}
+        db.refresh(test_widget)
+        assert test_widget.allowed_domains == ["acme.com", "localhost:3000"]
+
+    def test_an_empty_list_lifts_the_restriction(self, client, db, restricted):
+        assert client.put(self.url(restricted), json={"allowed_domains": []}).json() == {"allowed_domains": []}
+        db.refresh(restricted)
+        assert restricted.allowed_domains is None
+        assert "frame-ancestors" not in client.get(frame_url(restricted)).headers["content-security-policy"]
+
+    def test_an_invalid_domain_is_refused_and_nothing_changes(self, client, db, restricted):
+        response = client.put(self.url(restricted), json={"allowed_domains": ["good.com", "bad domain;"]})
+
+        assert response.status_code == 422
+        assert "isn't a valid domain" in response.json()["detail"]
+        db.refresh(restricted)
+        assert restricted.allowed_domains == ["acme.com"]
+
+    def test_too_many_domains_are_refused(self, client, test_widget):
+        response = client.put(self.url(test_widget), json={"allowed_domains": [f"s{i}.com" for i in range(21)]})
+        assert response.status_code == 422
+
+    def test_another_orgs_widget_is_not_found(self, client, db, test_agent):
+        other_org = Organization(name="Other", domain="other.example", timezone="UTC")
+        db.add(other_org)
+        db.commit()
+        theirs = Widget(name="Theirs", organization_id=other_org.id, agent_id=test_agent.id)
+        db.add(theirs)
+        db.commit()
+
+        assert client.get(self.url(theirs)).status_code == 404
+        assert client.put(self.url(theirs), json={"allowed_domains": ["evil.com"]}).status_code == 404
+        db.refresh(theirs)
+        assert theirs.allowed_domains is None
+
+    def test_needs_permission_to_manage_agents(self, app, db, test_user, test_widget):
+        test_user.role.permissions = [p for p in test_user.role.permissions if p.name != "manage_agents"]
+        db.commit()
+        client = TestClient(app)
+
+        assert client.get(self.url(test_widget)).status_code == 403
+        assert client.put(self.url(test_widget), json={"allowed_domains": []}).status_code == 403
+
+    def test_never_exposed_on_the_public_widget_response(self, client, restricted):
+        token = bootstrap(client, restricted).json()["initialToken"]
+        public = client.get(f"/api/v1/widgets/{restricted.id}", headers={"Authorization": f"Bearer {token}"}).json()
+        assert "allowed_domains" not in str(public)

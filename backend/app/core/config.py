@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     # committed production build in backend/assets is never rebuilt locally.
     WIDGET_ASSETS_DIR: str = os.getenv("WIDGET_ASSETS_DIR", str(BACKEND_DIR / "assets"))
     VITE_WIDGET_URL: str = os.getenv("VITE_WIDGET_URL", "http://localhost:5173")
+    # Public origin the embedded chat frame (/widgets/{id}/frame) is served from.
+    # Set it to a host that carries no dashboard cookies (an alias of this
+    # backend, e.g. https://widget.example.com) so a page running inside the
+    # frame can never act as a signed-in dashboard user. Empty: the backend's own
+    # public origin.
+    WIDGET_FRAME_URL: str = os.getenv("WIDGET_FRAME_URL", "").rstrip("/")
 
     # app.core.encryption owns the actual key loading (reads the env var directly and
     # refuses to start without it outside development). This mirror exists only so

@@ -93,3 +93,9 @@ class WidgetResponse(BaseModel):
     token: Optional[str] = None
     class Config:
         from_attributes = True
+
+
+class WidgetEmbedSettings(BaseModel):
+    """Where a widget may be embedded. Org-only: never part of the public
+    WidgetResponse, which any visitor's widget can read."""
+    allowed_domains: List[str] = []

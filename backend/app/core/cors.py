@@ -160,8 +160,9 @@ def update_local_cors(app: FastAPI, new_origins: List[str]) -> bool:
     
     # Update Socket.IO CORS settings
     try:
-        from app.core.socketio import sio
-        sio.eio.cors_allowed_origins = new_origins
+        from app.core.socketio import sio, socket_origins
+        socket_origins.update(new_origins)
+        sio.eio.cors_allowed_origins = socket_origins
         logger.info(f"Updated Socket.IO CORS origins: {new_origins}")
     except Exception as e:
         logger.error(f"Failed to update Socket.IO CORS origins: {str(e)}")

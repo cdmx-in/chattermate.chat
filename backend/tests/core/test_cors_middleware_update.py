@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.testclient import TestClient
 
 from app.core import cors
-from app.core.socketio import sio
+from app.core.socketio import sio, socket_origins
 
 KEPT = "https://kept.example.com"
 REMOVED = "https://removed.example.com"
@@ -32,8 +32,8 @@ REMOVED = "https://removed.example.com"
 
 @pytest.fixture(autouse=True)
 def restore_socketio_origins(monkeypatch):
-    # update_local_cors also rewrites the shared Socket.IO server's list
-    monkeypatch.setattr(sio.eio, "cors_allowed_origins", list(sio.eio.cors_allowed_origins or []))
+    # update_local_cors also refreshes the shared Socket.IO origin list
+    monkeypatch.setattr(socket_origins, "origins", socket_origins.origins)
 
 
 @pytest.fixture
@@ -143,7 +143,8 @@ def test_unchanged_origins_skip_the_rebuild(app):
 def test_socketio_origins_follow_the_refresh(app):
     cors.update_local_cors(app, [KEPT])
 
-    assert sio.eio.cors_allowed_origins == [KEPT]
+    assert socket_origins.origins == {KEPT}
+    assert sio.eio.cors_allowed_origins is socket_origins
 
 
 def test_app_without_cors_middleware_gets_one():
