@@ -20,6 +20,14 @@
 //                                              accounts). Graph refuses such a token a
 //                                              node another token owns, and debug_token
 //                                              reports its first id as the page
+//   Meta tokens `…:app=<id>.<secret>:…`          were issued by the customer's own Meta
+//                                              app: GET /app answers that id and checks
+//                                              appsecret_proof against that secret (any
+//                                              other token is ChatterMate's app)
+//   Meta POST /<number> {webhook_configuration}  verifies the override callback the way
+//                                              Meta does — a GET with hub.verify_token
+//                                              that must echo hub.challenge — before
+//                                              accepting it
 //   Meta GET /<node>       id = <node>
 //   LINE GET /info         userId derived from the channel access token
 //   Slack oauth.v2.access  team id and bot token derived from the OAuth code
@@ -46,7 +54,7 @@
 //
 // Run: node services/fake-externals/server.ts --port 14020
 
-import { createHash } from 'node:crypto'
+import { createHash, createHmac } from 'node:crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { rejection } from './limits.ts'
 
@@ -180,7 +188,38 @@ function graphError(message: string, code = 100): Answer {
   return { status: 400, body: { error: { message, type: 'OAuthException', code, fbtrace_id: 'e2e' } } }
 }
 
-function graph({ action, method, url, headers, body }: Call): Answer {
+/** ChatterMate's own Meta app; its secret mirrors META_APP_SECRET in .env.e2e. */
+const CHATTERMATE_APP = { id: 'e2e-chattermate-app', secret: 'e2e-meta-app-secret' }
+
+/** The Meta app that issued a token. */
+function appOf(token: string): { id: string; secret: string } {
+  const match = /:app=([^.:]+)\.([^:]+)/.exec(token)
+  return match ? { id: match[1], secret: match[2] } : CHATTERMATE_APP
+}
+
+/** Meta checks an override callback before taking it: the GET must echo the challenge. */
+async function overrideCallback(config: Record<string, unknown>): Promise<Answer> {
+  const uri = String(config.override_callback_uri ?? '')
+  if (!uri) return ok({ success: true }) // back to the app's own callback
+  const challenge = `e2e-challenge-${counter}`
+  const query = new URLSearchParams({ 'hub.mode': 'subscribe', 'hub.verify_token': String(config.verify_token ?? ''), 'hub.challenge': challenge })
+  const check = await fetch(`${uri}?${query}`).catch(() => null)
+  if (!check || (await check.text()) !== challenge) {
+    return graphError('The callback URL or verify token couldn\'t be validated. Please verify the provided information or try again later.', 2200)
+  }
+  return ok({ success: true })
+}
+
+async function graph({ action, method, url, headers, body }: Call): Promise<Answer> {
+  if (action === 'app' && method === 'GET') {
+    const token = bearer(headers)
+    const app = appOf(token)
+    const proof = url.searchParams.get('appsecret_proof')
+    if (proof !== null && proof !== createHmac('sha256', app.secret).update(token).digest('hex')) {
+      return graphError('Invalid appsecret_proof provided in the API argument')
+    }
+    return ok({ id: app.id, name: `E2E app ${app.id}` })
+  }
   if (action === 'debug_token') {
     const inspected = ownedNodes(url.searchParams.get('input_token') ?? '')
     return ok({ data: { is_valid: Boolean(inspected), type: 'PAGE', profile_id: inspected?.[0] ?? '' } })
@@ -192,13 +231,17 @@ function graph({ action, method, url, headers, body }: Call): Answer {
   if (owned && claimed.has(node) && !owned.includes(node)) {
     return graphError(`Unsupported request - object with ID '${node}' does not exist, cannot be loaded due to missing permissions, or does not support this operation`)
   }
+  const webhookConfiguration = body?.webhook_configuration
+  if (method === 'POST' && webhookConfiguration && typeof webhookConfiguration === 'object') {
+    return overrideCallback(webhookConfiguration as Record<string, unknown>)
+  }
   if (method !== 'GET') {
     return ok({ messages: [{ id: `wamid.e2e.${counter}` }], message_id: `m_e2e_${counter}`, recipient_id: body?.recipient ?? null, success: true })
   }
   return ok({ id: action, name: `E2E ${action}`, username: `e2e_${action}`, data: [] })
 }
 
-function answer(call: Call): Answer {
+function answer(call: Call): Answer | Promise<Answer> {
   const { provider, action, headers, body } = call
   switch (provider) {
     case 'graph':
@@ -478,7 +521,7 @@ async function route(req: IncomingMessage, res: ServerResponse) {
   if (fault) result = { status: fault.status, body: fault.body ?? {} }
   else if (rejected) result = providerRejection(provider, rejected)
   else if (provider === 'telegram') result = telegram(action, token, body)
-  else result = answer({ provider, origin: `http://${headers.host ?? '127.0.0.1'}`, action, method, url, headers, body })
+  else result = await answer({ provider, origin: `http://${headers.host ?? '127.0.0.1'}`, action, method, url, headers, body })
 
   calls.push({
     at: new Date().toISOString(),

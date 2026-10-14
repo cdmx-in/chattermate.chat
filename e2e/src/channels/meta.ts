@@ -9,21 +9,75 @@ import { ChatWithButtons, digits, hmac, phoneNumber, postWebhook, samePhone, sen
 
 // WhatsApp, Messenger and Instagram share one webhook (/webhooks/meta), signed
 // with the Meta app secret; `object` in the body says which product sent it.
+// A number or Page from the customer's OWN Meta app is signed with that app's
+// secret instead, and reaches its account's own address (/webhooks/meta/<id>).
+
+/** Where Meta posts a webhook, and the app secret it signs it with. */
+export interface MetaWebhook {
+  path: string
+  secret: string
+}
+
+const SHARED_META_WEBHOOK: MetaWebhook = { path: '/webhooks/meta', secret: env.channelSecrets.meta }
 
 /** The X-Hub-Signature-256 header Meta puts on `json`. */
-export function metaSignature(json: string): Record<string, string> {
-  return { 'x-hub-signature-256': `sha256=${hmac('sha256', env.channelSecrets.meta, json).toString('hex')}` }
+export function metaSignature(json: string, secret: string = env.channelSecrets.meta): Record<string, string> {
+  return { 'x-hub-signature-256': `sha256=${hmac('sha256', secret, json).toString('hex')}` }
 }
 
 /** A Meta webhook POST, signed like Meta signs it. */
-export async function deliverMeta(request: APIRequestContext, payload: Record<string, unknown>): Promise<void> {
+export async function deliverMeta(request: APIRequestContext, payload: Record<string, unknown>, to = SHARED_META_WEBHOOK): Promise<void> {
   const json = JSON.stringify(payload)
-  await postWebhook(request, '/webhooks/meta', { json }, metaSignature(json))
+  await postWebhook(request, to.path, { json }, metaSignature(json, to.secret))
 }
 
 /** A Meta access token that owns `nodes` in the fake Graph (see fake-externals). */
 export function metaToken(...nodes: string[]): string {
   return `owns:${nodes.join(',')}:${unique('token')}`
+}
+
+/** A customer's own Meta app (e.g. the one holding Meta's free test number):
+ *  its tokens name it in the fake Graph, and Meta signs its webhooks with its secret. */
+export interface OwnMetaApp {
+  id: string
+  secret: string
+  token(...nodes: string[]): string
+}
+
+export function ownMetaApp(): OwnMetaApp {
+  const id = digits(15)
+  const secret = unique('appsecret')
+  return { id, secret, token: (...nodes) => `owns:${nodes.join(',')}:app=${id}.${secret}:${unique('token')}` }
+}
+
+/** The backend path of an absolute webhook URL it handed out. */
+function webhookPath(url: string): string {
+  return new URL(url).pathname.replace(/^\/api\/v1/, '')
+}
+
+/** Where Meta sends a WhatsApp number's webhooks: the per-number callback the
+ *  backend set (and the fake accepted), else the app's own callback — which
+ *  is the customer's server, so here the shared address, refusing the app's secret. */
+export async function whereMetaSends(externals: FakeExternals, phoneNumberId: string, app: OwnMetaApp): Promise<MetaWebhook> {
+  const overrides = (await externals.calls('graph', phoneNumberId))
+    .filter((c) => c.method === 'POST' && c.status === 200)
+    .map((c) => (c.body as { webhook_configuration?: { override_callback_uri?: string } }).webhook_configuration)
+    .filter((config) => config !== undefined)
+  const url = overrides.at(-1)?.override_callback_uri
+  return { path: url ? webhookPath(url) : SHARED_META_WEBHOOK.path, secret: app.secret }
+}
+
+/** What Meta does when the customer pastes a callback URL and verify token into
+ *  their app and saves: a GET that must echo the challenge. */
+export async function metaVerifiesCallback(request: APIRequestContext, url: string, verifyToken: string): Promise<boolean> {
+  const challenge = unique('challenge')
+  const response = await request.get(url, { params: { 'hub.mode': 'subscribe', 'hub.verify_token': verifyToken, 'hub.challenge': challenge } })
+  return response.ok() && (await response.text()) === challenge
+}
+
+/** A pasted callback URL as the webhook Meta posts to, signed with the app's secret. */
+export function pastedCallback(url: string, app: OwnMetaApp): MetaWebhook {
+  return { path: webhookPath(url), secret: app.secret }
 }
 
 // ---------- WhatsApp ----------
@@ -46,9 +100,11 @@ export interface WhatsAppNumber {
   token: string
 }
 
-/** Connects a WhatsApp Cloud API number by hand (phone number id + system-user token). */
-export async function connectWhatsAppNumber(api: ApiClient, phoneNumberId = digits(15), token = metaToken(phoneNumberId)): Promise<WhatsAppNumber> {
-  const account = await connectWhatsApp(api, phoneNumberId, token)
+/** Connects a WhatsApp Cloud API number by hand (phone number id + system-user token),
+ *  from the customer's own Meta app when `app` is given (its token, with its secret). */
+export async function connectWhatsAppNumber(api: ApiClient, phoneNumberId = digits(15), app?: OwnMetaApp): Promise<WhatsAppNumber> {
+  const token = app ? app.token(phoneNumberId) : metaToken(phoneNumberId)
+  const account = await connectWhatsApp(api, phoneNumberId, token, app?.secret)
   return { account, phoneNumberId, token }
 }
 
@@ -70,9 +126,12 @@ export class WhatsAppChat extends ChatWithButtons<WhatsAppChoice> {
   readonly waId: string
   readonly number: WhatsAppNumber
 
-  constructor(request: APIRequestContext, externals: FakeExternals, number: WhatsAppNumber, customerName: string) {
+  /** `to` says where Meta sends this number's webhooks (the shared address by default). */
+  constructor(request: APIRequestContext, externals: FakeExternals, number: WhatsAppNumber, customerName: string,
+    to: () => Promise<MetaWebhook> = async () => SHARED_META_WEBHOOK) {
     const waId = phoneNumber().slice(1) // WhatsApp ids are the number without the +
-    const inbound = (message: Record<string, unknown>) => deliverMeta(request, whatsappPayload(number.phoneNumberId, waId, customerName, message))
+    const inbound = async (message: Record<string, unknown>) =>
+      deliverMeta(request, whatsappPayload(number.phoneNumberId, waId, customerName, message), await to())
     // Only what this number sent: its path, its token. The same endpoint carries
     // read receipts and typing indicators, which have no `type`.
     const sends = async () => (await externals.calls('graph', 'messages', { contains: waId }))
@@ -112,7 +171,7 @@ interface PageSend {
   message?: { text?: string; quick_replies?: Array<{ title: string; payload: string }> }
 }
 
-function pageChat(
+export function pageChat(
   label: string,
   request: APIRequestContext,
   externals: FakeExternals,
@@ -120,6 +179,7 @@ function pageChat(
   pageId: string,
   token: string,
   customerName: string,
+  to = SHARED_META_WEBHOOK,
 ): ChatWithButtons {
   const senderId = digits(16)
   const provider = object === 'page' ? 'graph' : 'graph-instagram'
@@ -131,7 +191,7 @@ function pageChat(
       timestamp: Date.now(),
       message: { mid: `m_${unique('in')}`, ...message },
     }] }],
-  })
+  }, to)
   // `/me/messages` names no page: the token is the only proof of which page sent it.
   const sends = async () => (await externals.calls(provider, 'messages', { contains: senderId }))
     .filter((c: RecordedCall) => c.status === 200 && sentWith(c, token))
