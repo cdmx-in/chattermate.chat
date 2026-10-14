@@ -37,26 +37,33 @@ export function useWidgetAllowedDomains(widgetId: Ref<string | undefined>) {
   }
 
   const load = async () => {
-    if (!widgetId.value) return
-    loading.value = true
+    const id = widgetId.value
+    domains.value = []
     loaded.value = false
+    if (!id) return
+    loading.value = true
     error.value = ''
     try {
-      domains.value = await widgetService.getAllowedDomains(widgetId.value)
+      const list = await widgetService.getAllowedDomains(id)
+      if (id !== widgetId.value) return // switched widgets meanwhile: not this list
+      domains.value = list
       loaded.value = true
     } catch (err) {
-      error.value = messageFrom(err, 'Couldn’t load the allowed domains.')
+      if (id === widgetId.value) error.value = messageFrom(err, 'Couldn’t load the allowed domains.')
     } finally {
-      loading.value = false
+      if (id === widgetId.value) loading.value = false
     }
   }
 
   const save = async (next: string[]): Promise<boolean> => {
-    if (!widgetId.value || !loaded.value) return false
+    const id = widgetId.value
+    if (!id || !loaded.value) return false
     saving.value = true
     error.value = ''
     try {
-      domains.value = await widgetService.setAllowedDomains(widgetId.value, next)
+      const saved = await widgetService.setAllowedDomains(id, next)
+      if (id !== widgetId.value) return false
+      domains.value = saved
       return true
     } catch (err) {
       error.value = messageFrom(err, 'Couldn’t save the allowed domains.')

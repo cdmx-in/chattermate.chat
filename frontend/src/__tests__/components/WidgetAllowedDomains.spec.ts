@@ -170,4 +170,19 @@ describe('WidgetAllowedDomains', () => {
     await flushPromises()
     expect(getAllowedDomains).not.toHaveBeenCalled()
   })
+
+  it('never shows one widget\'s list under another after a quick switch', async () => {
+    let answerA: (list: string[]) => void = () => {}
+    getAllowedDomains
+      .mockImplementationOnce(() => new Promise((resolve) => { answerA = resolve }))
+      .mockResolvedValueOnce(['b.example.com'])
+    const wrapper = render('w-a')
+    await wrapper.setProps({ widgetId: 'w-b' })
+    await flushPromises()
+
+    answerA(['a.example.com'])
+    await flushPromises()
+
+    expect(chips(wrapper)).toEqual(['b.example.com'])
+  })
 })
