@@ -202,14 +202,29 @@ window.chattermateConfig;
   function postToFrame(message) {
     if (widgetFrameWindow && frameOrigin) widgetFrameWindow.postMessage(message, frameOrigin)
   }
-  // Only the widget frame may talk to the loader: the right window, and once it has
-  // announced itself, the right origin too (hostile sibling frames can reach us).
+  // Only the widget frame may talk to the loader: the right window, and the right
+  // origin - which is only known once it says hello, so until then hello is all it
+  // may say (hostile sibling frames can reach us, and a frame could be somewhere
+  // unexpected before that).
   function isFromWidgetFrame(event) {
     if (!widgetFrameWindow || event.source !== widgetFrameWindow) return false
-    return !frameOrigin || event.origin === frameOrigin
+    if (!frameOrigin) return event.data.type === 'FRAME_READY'
+    return event.origin === frameOrigin
   }
+  // Whether the widget in the current frame has mounted (WIDGET_READY): only then is
+  // it listening for anything but the handshake.
+  let widgetMounted = false
+  // A fresher token for the same visitor, given while the frame was still starting:
+  // handed over as soon as the widget mounts.
+  let pendingIdentity = null
   // Set while the frame closes an outgoing visitor's session; called on END_CHAT_DONE.
   let endChatDone = null
+  let endChatTimer = null
+  function cancelEndChat() {
+    clearTimeout(endChatTimer)
+    endChatTimer = null
+    endChatDone = null
+  }
   // Set by destroy(): the site removed the widget on purpose, so nothing may
   // rebuild it or queue work against it until it calls reload().
   let isDestroyed = false
@@ -1462,7 +1477,12 @@ window.chattermateConfig;
       }
       // Tell the iframe whether it's visible so it can track unread messages.
       postToFrame({ type: 'WIDGET_VISIBILITY', open: isOpen })
-      if (isOpen) reportPage()
+      if (isOpen) {
+        reportPage()
+        // A cross-origin frame can't take focus on its own; the click that opened
+        // the chat lets the page hand it over, so the input (or Ask AI box) gets it.
+        if (iframe && widgetMounted) iframe.focus()
+      }
       updateBadge()
 
       // Hide initiation message when chat is opened
@@ -1508,6 +1528,7 @@ window.chattermateConfig;
       const clean = String(text || '').slice(0, 2000)
       if (!clean) return
       if (iframeReady) {
+        if (iframe) iframe.focus()
         postToFrame({ type: 'PREFILL_MESSAGE', text: clean })
       } else {
         pendingPrefill = clean
@@ -1529,8 +1550,12 @@ window.chattermateConfig;
       iframeReady = false
       widgetReadyFired = false
       pendingPrefill = null
+      pendingIdentity = null
+      widgetMounted = false
       frameOrigin = null
       clearFrameTimer()
+      // A rebuild already under way supersedes the one a pending END_CHAT would do
+      cancelEndChat()
       button.classList.remove('loading')
       paletteContentHeight = 0
       applyPaletteHeight()
@@ -1671,7 +1696,8 @@ window.chattermateConfig;
     // A frame refused by frame-ancestors (the widget's allowed domains) still fires
     // `load`, it just never says hello. Give a loaded frame this long to do so.
     const FRAME_HELLO_MS = 3000
-    // And a frame that never even loads (network, outage) this long.
+    // And a frame that never even loads (network, outage) this long - or that said
+    // hello but never got as far as mounting (a stalled bootstrap).
     const FRAME_LOAD_MS = 20000
     let frameTimer = null
     function clearFrameTimer() {
@@ -1723,7 +1749,9 @@ window.chattermateConfig;
 
     // The widget is mounted and listening: give it what it needs to render.
     function onWidgetReady() {
+      clearFrameTimer()
       iframeReady = true
+      widgetMounted = true
       button.classList.remove('loading')
       // Developer display overrides, known now. Dashboard defaults merge later; the
       // CUSTOMIZATION_UPDATE reply re-sends the final values.
@@ -1731,6 +1759,10 @@ window.chattermateConfig;
       // The widget is prefetched while still hidden — say so, or surfaces that focus
       // themselves on open (the Ask AI palette) would grab focus now.
       postToFrame({ type: 'WIDGET_VISIBILITY', open: isOpen })
+      if (pendingIdentity) {
+        postToFrame({ type: 'TOKEN_REFRESH', token: pendingIdentity })
+        pendingIdentity = null
+      }
       if (pendingPrefill) {
         postToFrame({ type: 'PREFILL_MESSAGE', text: pendingPrefill })
         pendingPrefill = null
@@ -1743,6 +1775,13 @@ window.chattermateConfig;
 
     // The frame could not start for this visitor.
     function onWidgetError(code) {
+      clearFrameTimer()
+      if (code === 'identity_expired' && pendingIdentity) {
+        // It started with the token it had when it said hello, and the page has
+        // identified the visitor since: start again with that, nothing to recover.
+        reloadWidget()
+        return
+      }
       if (code === 'identity_expired') {
         // The stored token belongs to a visitor whose identity has run out — a page
         // reopened long after the app identified them. Ask the page for a fresh one
@@ -1776,8 +1815,16 @@ window.chattermateConfig;
         // origin, now known, addresses everything sent to it from here on.
         if (event.origin === 'null') return
         frameOrigin = event.origin
+        // A frame that reloaded itself starts over: not listening until it mounts again
+        iframeReady = false
+        widgetMounted = false
+        button.classList.add('loading')
         clearFrameTimer()
+        frameTimer = setTimeout(function () {
+          showLoadError('Chat is unavailable right now. Please try again later.')
+        }, FRAME_LOAD_MS)
         postToFrame({ type: 'HOST_INIT', token: getStoredToken(), pageUrl: window.location.href })
+        pendingIdentity = null // HOST_INIT carried the newest token
         return
       }
       if (event.data.type === 'WIDGET_READY') {
@@ -1788,9 +1835,14 @@ window.chattermateConfig;
         onWidgetError(String(event.data.code || ''))
         return
       }
+      // The outgoing visitor's frame, closing up before a switch: nothing it says
+      // about tokens or sessions may land on the visitor replacing it.
+      const closingUp = !!endChatDone
       if (event.data.type === 'TOKEN_CLEAR') {
         // The widget dropped the visitor's identity (e.g. it was refused): forget it here too.
+        if (closingUp) return
         removeToken()
+        window.chattermateToken = null
         return
       }
       if (event.data.type === 'END_CHAT_DONE') {
@@ -1806,12 +1858,14 @@ window.chattermateConfig;
         return
       }
       if (event.data.type === 'TOKEN_UPDATE') {
+        if (closingUp) return
         const updated = normalizeToken(event.data.token)
         if (!updated) return
         saveToken(updated)
         return
       }
       if (event.data.type === 'CHAT_SESSION') {
+        if (closingUp) return
         currentSessionId = String(event.data.sessionId || '') || null
         // Only a conversation the server actually created is news: reconnecting into
         // the one already in progress is not a new chat. `authenticated` says whether
@@ -1881,7 +1935,7 @@ window.chattermateConfig;
       if (identityRecoveryUsed || typeof config.tokenProvider !== 'function') {
         // Nothing is coming: let the frame stop waiting and carry on anonymously,
         // rather than leaving the visitor at a chat that can't authenticate.
-        tellFrame({ type: 'IDENTITY_UNAVAILABLE' })
+        postToFrame({ type: 'IDENTITY_UNAVAILABLE' })
         return
       }
       tokenRequestInFlight = true
@@ -1891,25 +1945,22 @@ window.chattermateConfig;
         .then((token) => {
           const next = normalizeToken(token)
           if (!next) {
-            tellFrame({ type: 'IDENTITY_UNAVAILABLE' })
+            postToFrame({ type: 'IDENTITY_UNAVAILABLE' })
             return
           }
           window.chattermateToken = next
           saveToken(next)
-          tellFrame({ type: 'TOKEN_REFRESH', token: next })
+          postToFrame({ type: 'TOKEN_REFRESH', token: next })
         })
         .catch((error) => {
           console.error('ChatterMate: tokenProvider failed', error)
-          tellFrame({ type: 'IDENTITY_UNAVAILABLE' })
+          postToFrame({ type: 'IDENTITY_UNAVAILABLE' })
         })
         .finally(() => {
           tokenRequestInFlight = false
         })
     }
 
-    function tellFrame(message) {
-      postToFrame(message)
-    }
     window.addEventListener('message', handleFrameMessage)
     window.addEventListener('popstate', reportPage)
     window.addEventListener('hashchange', reportPage)
@@ -2253,13 +2304,11 @@ window.chattermateConfig;
       reloadWidgetIfRunning()
       return
     }
-    let timer = null
     endChatDone = function () {
-      clearTimeout(timer)
-      endChatDone = null
+      cancelEndChat()
       reloadWidgetIfRunning()
     }
-    timer = setTimeout(endChatDone, END_CHAT_WAIT_MS)
+    endChatTimer = setTimeout(endChatDone, END_CHAT_WAIT_MS)
     postToFrame({ type: 'END_CHAT', sessionId: sessionId })
   }
 
@@ -2305,8 +2354,13 @@ window.chattermateConfig;
     // A fresher token for the SAME visitor is not a new identity: hand it to the
     // running frame instead of rebuilding, so re-authenticating never costs the
     // visitor the chat they are in the middle of.
-    if (sameVisitor && widgetFrameWindow) {
-      postToFrame({ type: 'TOKEN_REFRESH', token: next })
+    // While the previous visitor's frame is closing up, the rebuild it is waiting
+    // on picks up this token; the frame itself is no longer theirs to update.
+    if (sameVisitor && widgetFrameWindow && !endChatDone) {
+      if (widgetMounted) postToFrame({ type: 'TOKEN_REFRESH', token: next })
+      // Not mounted yet: the frame isn't listening. It gets this when it is - or,
+      // if it hasn't said hello, in its HOST_INIT.
+      else pendingIdentity = next
       return
     }
     // A different visitor: the previous one's conversation must not be left open on

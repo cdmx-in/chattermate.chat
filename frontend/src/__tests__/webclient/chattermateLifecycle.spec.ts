@@ -188,6 +188,53 @@ describe('ChatterMate frame and lifecycle API', () => {
     })
   })
 
+  describe('before and after hello', () => {
+    it('takes nothing but hello from the frame until it has said hello', async () => {
+      await loadLoader()
+      const unread = vi.fn()
+      api().on('unread', unread)
+
+      fromFrame({ type: 'TOKEN_UPDATE', token: 'tok-early' })
+      fromFrame({ type: 'UNREAD_COUNT', count: 2 })
+
+      expect(localStorage.getItem('ctid')).toBeNull()
+      expect(unread).not.toHaveBeenCalled()
+    })
+
+    it('holds a prefill again while a reloaded frame mounts', async () => {
+      await loadLoader()
+      bringUp()
+      handshake() // the frame reloaded itself
+      const post = spyOnFrame()
+
+      api().open({ message: 'Where is my order?' })
+      expect(post.mock.calls.some(([m]) => (m as any).type === 'PREFILL_MESSAGE')).toBe(false)
+
+      fromFrame({ type: 'WIDGET_READY' })
+      expect(post).toHaveBeenCalledWith({ type: 'PREFILL_MESSAGE', text: 'Where is my order?' }, FRAME_ORIGIN)
+    })
+
+    it('hands focus to the frame when the chat opens, once it is mounted', async () => {
+      await loadLoader()
+      const focus = vi.spyOn(frame(), 'focus')
+      api().open()
+      api().close()
+      expect(focus).not.toHaveBeenCalled()
+
+      bringUp()
+      api().open()
+      expect(focus).toHaveBeenCalled()
+    })
+
+    it('hands focus to the frame with a prefill', async () => {
+      await loadLoader()
+      bringUp()
+      const focus = vi.spyOn(frame(), 'focus')
+      api().open({ message: 'hi' })
+      expect(focus).toHaveBeenCalled()
+    })
+  })
+
   describe('a frame that cannot start', () => {
     it('shows where it was blocked when the frame loads but never says hello', async () => {
       vi.useFakeTimers()
@@ -201,10 +248,10 @@ describe('ChatterMate frame and lifecycle API', () => {
       expect(frames()).toHaveLength(0)
     })
 
-    it('waits for a frame that loaded and said hello', async () => {
+    it('waits as long as it takes for a frame that loaded and mounted', async () => {
       vi.useFakeTimers()
       await loadLoader({ fakeTimers: true })
-      handshake()
+      bringUp()
       frame().dispatchEvent(new Event('load'))
 
       await vi.advanceTimersByTimeAsync(60000)
@@ -221,6 +268,18 @@ describe('ChatterMate frame and lifecycle API', () => {
 
       await vi.advanceTimersByTimeAsync(1000)
       expect(document.querySelector('.chattermate-error-ui')).not.toBeNull()
+    })
+
+    it('gives up on a frame that said hello but never mounted', async () => {
+      vi.useFakeTimers()
+      await loadLoader({ fakeTimers: true })
+      handshake()
+
+      await vi.advanceTimersByTimeAsync(19000)
+      expect(document.querySelector('.chattermate-error-ui')).toBeNull()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(document.querySelector('.chattermate-error-ui')?.textContent).toContain('Chat is unavailable right now')
     })
 
     it('reveals the launcher so the card can be reached', async () => {

@@ -161,6 +161,20 @@ describe('frame-session', () => {
       expect(JSON.parse(init.body).host_origin).toBeNull()
     })
 
+    it('answers an opaque host with *, the only address it has', async () => {
+      Object.defineProperty(document, 'referrer', { value: 'https://real-site.example/page', configurable: true })
+      const session = await loadFrame()
+      const started = session.startFramedWidget()
+      hostSays({ type: 'HOST_INIT', token: null, pageUrl: 'about:srcdoc' }, { origin: 'null' })
+      await started
+      session.announceReady()
+
+      expect(sentToHost()).toContainEqual([{ type: 'TOKEN_UPDATE', token: 'tok-new' }, '*'])
+      expect(sentToHost()).toContainEqual([{ type: 'WIDGET_READY' }, '*'])
+      // @ts-expect-error restore jsdom's own referrer
+      delete document.referrer
+    })
+
     it.each([
       [refused(401, { detail: { code: 'identity_expired' } }), 'identity_expired'],
       [refused(401, { detail: { code: 'token_required' } }), 'token_required'],

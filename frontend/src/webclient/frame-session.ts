@@ -124,6 +124,10 @@ export async function startFramedWidget(): Promise<boolean> {
     if (init.origin !== OPAQUE_ORIGIN) {
       setHostOrigin(init.origin)
       hostOrigin = init.origin
+    } else {
+      // An opaque host (sandboxed, file:) can only be reached with '*'. It ran
+      // anonymously, so a fresh anonymous token is all that could go astray.
+      setHostOrigin('*')
     }
     setHostPageUrl(init.pageUrl)
     token = init.token

@@ -315,4 +315,123 @@ describe('ChatterMate identity continuity', () => {
       expect(frame()).not.toBe(before)
     })
   })
+
+  describe('identity given while the frame is starting', () => {
+    it('reaches the widget once it has mounted', async () => {
+      ;(window as any).chattermateToken = tokenFor('cust-1', 'a')
+      await loadLoader()
+      handshake()
+      const post = spyOnFrame()
+      const fresher = tokenFor('cust-1', 'b')
+
+      api().identify(fresher)
+      expect(post.mock.calls.some(([m]) => (m as any).type === 'TOKEN_REFRESH')).toBe(false)
+
+      fromFrame({ type: 'WIDGET_READY' })
+      expect(post).toHaveBeenCalledWith({ type: 'TOKEN_REFRESH', token: fresher }, FRAME_ORIGIN)
+    })
+
+    it('goes in the hello answer when the frame has not said hello yet', async () => {
+      ;(window as any).chattermateToken = tokenFor('cust-1', 'a')
+      await loadLoader()
+      const fresher = tokenFor('cust-1', 'b')
+
+      api().identify(fresher)
+      expect(handshake()?.message.token).toBe(fresher)
+
+      const post = spyOnFrame()
+      fromFrame({ type: 'WIDGET_READY' })
+      expect(post.mock.calls.some(([m]) => (m as any).type === 'TOKEN_REFRESH')).toBe(false)
+    })
+
+    it('starts over with it when the token the frame began with had lapsed', async () => {
+      // Without a tokenProvider, recovering would throw the fresh token away
+      ;(window as any).chattermateToken = tokenFor('cust-1', 'yesterday')
+      await loadLoader()
+      handshake()
+      const fresh = tokenFor('cust-1', 'today')
+      api().identify(fresh)
+      const first = frame()
+
+      fromFrame({ type: 'WIDGET_ERROR', code: 'identity_expired' })
+      await flush()
+
+      expect(frame()).not.toBe(first)
+      expect(handshake()?.message.token).toBe(fresh)
+      expect(localStorage.getItem('ctid')).toBe(fresh)
+    })
+  })
+
+  describe('while the outgoing visitor\'s frame closes up', () => {
+    async function closingUp() {
+      ;(window as any).chattermateToken = tokenFor('cust-1')
+      await loadLoader()
+      bringUp()
+      fromFrame({ type: 'CHAT_SESSION', sessionId: 's-9', authenticated: true, created: true })
+      const outgoing = frame()
+      api().logout()
+      await flush()
+      return outgoing
+    }
+
+    it('keeps its token news from bringing the logged-out visitor back', async () => {
+      const outgoing = await closingUp()
+
+      fromFrame({ type: 'TOKEN_UPDATE', token: tokenFor('cust-1', 'rotated') })
+      fromFrame({ type: 'END_CHAT_DONE' })
+
+      expect(frame()).not.toBe(outgoing)
+      expect(localStorage.getItem('ctid')).toBeNull()
+      expect(handshake()?.message.token).toBeNull()
+    })
+
+    it('ignores a session it reports late', async () => {
+      await closingUp()
+      const created = vi.fn()
+      api().on('chatCreated', created)
+      fromFrame({ type: 'CHAT_SESSION', sessionId: 's-10', authenticated: true, created: true })
+      expect(created).not.toHaveBeenCalled()
+    })
+
+    it('sends a same-visitor token to the rebuilt frame, not the outgoing one', async () => {
+      ;(window as any).chattermateToken = tokenFor('cust-1', 'a')
+      await loadLoader()
+      bringUp()
+      fromFrame({ type: 'CHAT_SESSION', sessionId: 's-9', authenticated: true, created: true })
+      api().identify(tokenFor('cust-2'))
+      await flush()
+      const post = spyOnFrame()
+
+      const later = tokenFor('cust-2', 'b')
+      api().identify(later)
+      expect(post.mock.calls.some(([m]) => (m as any).type === 'TOKEN_REFRESH')).toBe(false)
+
+      fromFrame({ type: 'END_CHAT_DONE' })
+      expect(handshake()?.message.token).toBe(later)
+    })
+
+    it('rebuilds once when reload() lands in the middle', async () => {
+      vi.useFakeTimers()
+      ;(window as any).chattermateToken = tokenFor('cust-1')
+      await loadLoader({ fakeTimers: true })
+      bringUp()
+      fromFrame({ type: 'CHAT_SESSION', sessionId: 's-9', authenticated: true, created: true })
+      api().logout()
+      api().reload()
+      const rebuilt = frame()
+
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(frame()).toBe(rebuilt)
+    })
+  })
+
+  it('forgets a token the frame dropped, wherever the page kept it', async () => {
+    ;(window as any).chattermateToken = tokenFor('cust-1')
+    await loadLoader()
+    bringUp()
+
+    fromFrame({ type: 'TOKEN_CLEAR' })
+
+    expect((window as any).chattermateToken).toBeNull()
+  })
 })
