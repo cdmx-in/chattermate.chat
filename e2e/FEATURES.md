@@ -38,6 +38,7 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Team | Groups management UI | — | P1 | ⬜ |
 | Widget JS API | open/close/isOpen; hidden launcher + page's own trigger button | `specs/widget/js-api.spec.ts` | P1 | ✅ |
 | Widget placement | Left side; sidebar mode; dashboard display settings with no code, site config wins; welcome message and colour | `specs/widget/placement.spec.ts` | P1 | ✅ |
+| Widget allowed domains | No list: works on any site incl. localhost (no CORS for the site); a list blocks other sites with a notice and allows its own; clearing it reopens | `specs/widget/allowed-domains.spec.ts` | P1 | ✅ |
 | Widget placement | `open({message})`, events | — | P1 | ⬜ |
 | Token-auth widget | Server-issued token → chat works; no, tampered, other-widget or expired token is refused | `specs/widget/token-auth.spec.ts` | P1 | ✅ |
 | Reply buttons | Telegram, WhatsApp, Messenger, Instagram: AI offers buttons, a tap gets the next answer | `specs/channels/reply-buttons.spec.ts` | P2 | ✅ |

@@ -10,6 +10,8 @@ export interface EmbedOptions {
   token?: string
   /** Put a `[data-chattermate-open]` button on the page. */
   withTriggerButton?: boolean
+  /** Open the site under its second origin (env.customerSiteOtherUrl). */
+  onOtherOrigin?: boolean
 }
 
 type JsApiMethod = 'open' | 'close' | 'toggle' | 'isOpen' | 'showLauncher' | 'hideLauncher'
@@ -64,7 +66,8 @@ export class ChatWidget {
       if (options.config) params.set('config', JSON.stringify(options.config))
       if (options.token) params.set('token', options.token)
       if (options.withTriggerButton) params.set('trigger', '1')
-      await this.page.goto(`${env.customerSiteUrl}/?${params}`)
+      const site = options.onOtherOrigin ? env.customerSiteOtherUrl : env.customerSiteUrl
+      await this.page.goto(`${site}/?${params}`)
     })
   }
 

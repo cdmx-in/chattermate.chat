@@ -21,3 +21,9 @@ export async function loadWidgetFrom(api: ApiClient, widgetId: string, origin: s
   })
   if (!response.ok()) throw new Error(`widget load from ${origin} → ${response.status()}`)
 }
+
+/** Limit where the widget may be embedded; an empty list allows any site. */
+export async function setAllowedDomains(api: ApiClient, widgetId: string, domains: string[]): Promise<string[]> {
+  const saved = await api.put<{ allowed_domains: string[] }>(`/widgets/${widgetId}/embed-settings`, { data: { allowed_domains: domains } })
+  return saved.allowed_domains
+}
