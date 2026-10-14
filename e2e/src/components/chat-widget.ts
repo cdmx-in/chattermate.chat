@@ -37,6 +37,24 @@ export class ChatWidget {
     this.frame = page.frameLocator('iframe.chattermate-iframe')
   }
 
+  /**
+   * The visitor's first authorization answer arrives without the token that binds
+   * them to a customer (a browser served an earlier stored answer, as one did in
+   * production), so the widget dials the socket with the page's anonymous token.
+   * Call before embed().
+   */
+  async loseFirstAuthorization(): Promise<void> {
+    let lost = false
+    await this.page.route(new RegExp(`/api/v1/widgets/${this.widgetId}(\\?|$)`), async (route) => {
+      if (lost || route.request().method() !== 'GET') return route.fallback()
+      lost = true
+      const response = await route.fetch()
+      const answer = await response.json()
+      delete answer.token
+      await route.fulfill({ response, json: answer })
+    })
+  }
+
   /** Opens the pretend customer site (services/customer-site) with this widget embedded. */
   async embed(options: EmbedOptions = {}): Promise<void> {
     await step('Customer opens a site with the widget', async () => {

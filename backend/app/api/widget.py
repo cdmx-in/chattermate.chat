@@ -420,6 +420,9 @@ async def get_widget_data(
 ):
     """Get widget data including agent customization"""
     logger.info(f"Getting widget data for widget_id {widget_id}, email {email}, has_token {bool(authorization)}")
+    # Binds this visitor to a customer: a stored copy would skip that and leave
+    # the widget holding the page's anonymous token.
+    response.headers["Cache-Control"] = "no-store"
 
     widget = db.query(Widget).filter(Widget.id == widget_id).first()
     if not widget:

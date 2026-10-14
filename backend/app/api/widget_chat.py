@@ -21,6 +21,7 @@ import os
 import re
 from types import SimpleNamespace
 from fastapi import APIRouter
+from socketio.exceptions import ConnectionRefusedError as SocketRefused
 from app.channels.constants import MessageSource
 from app.core.socketio import sio
 from app.core.logger import get_logger
@@ -197,6 +198,13 @@ def validate_form_data(form_fields: list, form_data: dict) -> list:
     
     return errors
 
+def _refuse_connection(error: str, error_type: str):
+    """Reject the connect with a reason the widget can act on. It has to travel
+    in the refusal itself: socket.io clients drop events emitted to a connection
+    that is then refused, so an 'error' emit never reached a browser."""
+    raise SocketRefused(error, {'error': error, 'type': error_type})
+
+
 @sio.on('connect', namespace='/widget')
 async def widget_connect(sid, environ, auth):
     db = None
@@ -209,6 +217,13 @@ async def widget_connect(sid, environ, auth):
         if not widget_id or not org_id:
             raise ValueError("Widget authentication failed")
 
+        # The widget page hands out an anonymous token; GET /widgets/{id} binds it
+        # to a customer. A conversation can't be stored without one, so say so
+        # instead of failing on the insert: the widget re-authorizes and retries.
+        # (Legacy tokens carry the string "None", as GET /widgets/{id} also allows.)
+        if not customer_id or customer_id == "None":
+            _refuse_connection('Visitor not authorized yet', 'customer_required')
+
         # Get widget and verify it exists
         db = next(get_db())
         widget_repo = WidgetRepository(db)
@@ -220,11 +235,7 @@ async def widget_connect(sid, environ, auth):
         ai_config_repo = AIConfigRepository(db)
         ai_config = ai_config_repo.get_active_config(org_id)
         if not ai_config:
-            await sio.emit('error', {
-                'error': 'AI configuration required',
-                'type': 'ai_config_missing'
-            }, to=sid, namespace='/widget')
-            return False
+            _refuse_connection('AI configuration required', 'ai_config_missing')
         
         message_limit_reached = False
         # Check message limits if enterprise module is available
@@ -347,6 +358,8 @@ async def widget_connect(sid, environ, auth):
 
         return True
 
+    except SocketRefused:
+        raise
     except Exception as e:
         logger.error(f"Widget connection error for sid {sid}: {str(e)}")
         logger.error(traceback.format_exc())
