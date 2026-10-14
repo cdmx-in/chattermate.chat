@@ -31,7 +31,10 @@ export { connectLine, connectMessenger, connectSms, connectTelegram, routeToAgen
 export { channels, channelsWithButtons, type ButtonChat, type EmailChat, type ChannelChat, type ChannelConnector, type ConnectedChannel } from './channels'
 export { TelegramBot, TelegramChat } from './channels/telegram'
 export { hmac, phoneNumber, digits, sendWebhook, type WebhookPayload } from './channels/chat'
-export { connectWhatsAppNumber, deliverMeta, metaSignature, metaToken, whatsappPayload } from './channels/meta'
+export {
+  connectWhatsAppNumber, deliverMeta, metaSignature, metaToken, metaVerifiesCallback, ownMetaApp, pageChat, pastedCallback,
+  whatsappPayload, whereMetaSends, WhatsAppChat, type MetaWebhook, type OwnMetaApp, type WhatsAppNumber,
+} from './channels/meta'
 export { installSlackWorkspace, slackSignature } from './channels/slack'
 export { login, signedInClient } from './api/auth'
 export { prepareOrg, type PreparedOrg } from './org-setup'

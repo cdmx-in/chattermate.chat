@@ -20,6 +20,7 @@ import { toast } from 'vue-sonner'
 import channelsService, { type ChannelAccount, type SmsProviderInfo } from '@/services/channels'
 import { agentService } from '@/services/agent'
 import type { Agent } from '@/types/agent'
+import CopyField from './CopyField.vue'
 
 const props = defineProps<{
   channel: 'email' | 'sms' | 'line' | 'slack'
@@ -157,12 +158,6 @@ const connect = async () => {
   }
 }
 
-const copyWebhookUrl = async () => {
-  if (!account.value?.webhook_url) return
-  await navigator.clipboard.writeText(account.value.webhook_url)
-  toast.success('Webhook URL copied')
-}
-
 const saveAgent = async () => {
   if (!account.value || !selectedAgentId.value) return
   try {
@@ -225,13 +220,9 @@ const saveAgent = async () => {
         <p class="cc-intro">
           <strong>{{ account.display_name }}</strong> is connected.
         </p>
-        <div v-if="account.webhook_url" class="cc-field">
-          <label class="cc-label">Webhook URL — set this on your provider</label>
-          <div class="cc-webhook-row">
-            <input class="cc-input" :value="account.webhook_url" readonly />
-            <button class="cc-btn cc-btn-secondary" @click="copyWebhookUrl">Copy</button>
-          </div>
-        </div>
+        <CopyField v-if="account.webhook_url" class="cc-field" field-id="cc-webhook-url"
+                   label="Webhook URL — set this on your provider" name="Webhook URL"
+                   :value="account.webhook_url" />
         <label class="cc-label" for="cc-agent">AI agent that answers this channel</label>
         <select id="cc-agent" v-model="selectedAgentId" class="cc-input">
           <option v-for="agent in agents" :key="String(agent.id)" :value="String(agent.id)">
@@ -317,11 +308,6 @@ const saveAgent = async () => {
   background: var(--background-soft);
   color: inherit;
   font-size: 14px;
-}
-
-.cc-webhook-row {
-  display: flex;
-  gap: 8px;
 }
 
 .cc-actions {

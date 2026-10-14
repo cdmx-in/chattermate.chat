@@ -16,14 +16,14 @@ limitations under the License.
 
 import json
 import secrets
-from typing import Optional, List
+from typing import Iterable, Optional, List
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.models.channels import ChannelAccount, ChannelConversation
 from app.models.session_to_agent import SessionToAgent, SessionStatus
-from app.core.security import encrypt_api_key, decrypt_api_key
+from app.core.security import decrypt_credentials, encrypt_api_key
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -102,7 +102,23 @@ class ChannelAccountRepository:
 
     def get_credentials(self, account: ChannelAccount) -> dict:
         """Decrypt an account's credential blob."""
-        return json.loads(decrypt_api_key(account.encrypted_credentials))
+        return decrypt_credentials(account.encrypted_credentials)
+
+    def update_settings(self, account: ChannelAccount, updates: dict,
+                        remove: Iterable[str] = ()) -> ChannelAccount:
+        """Merge non-secret settings into the account (and drop `remove`)."""
+        merged = {**(account.settings or {}), **updates}
+        for key in remove:
+            merged.pop(key, None)
+        try:
+            account.settings = merged
+            self.db.commit()
+            self.db.refresh(account)
+            return account
+        except Exception as e:
+            logger.error(f"Error updating channel account settings: {str(e)}")
+            self.db.rollback()
+            raise
 
     def update_credentials(self, account: ChannelAccount, credentials: dict) -> ChannelAccount:
         try:
