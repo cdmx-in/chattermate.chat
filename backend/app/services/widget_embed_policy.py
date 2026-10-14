@@ -27,12 +27,16 @@ from typing import Iterable, List, Optional
 from urllib.parse import urlparse
 from uuid import UUID
 
+import idna
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.repositories.help_center import HelpCenterRepository
 
 MAX_ALLOWED_DOMAINS = 20
+# Each entry becomes up to four sources; this keeps the whole header well inside
+# a proxy's default response-header buffer
+MAX_ALLOWED_DOMAINS_LENGTH = 800
 
 # The dashboard runs embedded in Shopify admin. frame-ancestors checks every
 # ancestor, so a storefront previewed in the theme editor still needs the shop's
@@ -53,11 +57,14 @@ class InvalidAllowedDomain(ValueError):
 
 
 def _to_ascii(host: str) -> str:
-    """Punycode an internationalised name; leave a leading `*.` alone."""
+    """Punycode an internationalised name the way browsers do (UTS #46, so
+    `ß` stays `ß` rather than becoming `ss`); leave a leading `*.` alone."""
     prefix, name = ("*.", host[2:]) if host.startswith("*.") else ("", host)
+    if name.isascii():
+        return prefix + name
     try:
-        return prefix + name.encode("idna").decode("ascii")
-    except UnicodeError as exc:
+        return prefix + idna.encode(name, uts46=True, transitional=False).decode("ascii")
+    except idna.IDNAError as exc:
         raise InvalidAllowedDomain(f"{host} isn't a valid domain") from exc
 
 
@@ -99,6 +106,8 @@ def normalize_allowed_domains(entries: Iterable[object]) -> List[str]:
             seen.append(domain)
     if len(seen) > MAX_ALLOWED_DOMAINS:
         raise InvalidAllowedDomain(f"At most {MAX_ALLOWED_DOMAINS} domains")
+    if sum(len(d) for d in seen) > MAX_ALLOWED_DOMAINS_LENGTH:
+        raise InvalidAllowedDomain("That's too many long domains; try a wildcard like *.example.com")
     return seen
 
 
@@ -120,19 +129,29 @@ def _entry_sources(entry: str) -> List[str]:
 
 
 def origin_of(url: str) -> Optional[str]:
-    """`scheme://host[:port]` of a configured URL, or None if it can't go in a header."""
+    """`scheme://host[:port]` of a URL, or None unless it's an http(s) origin
+    with a real host name (it may end up in a header, or an email)."""
     parsed = urlparse((url or "").strip())
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    if parsed.scheme not in ("http", "https") or not parsed.netloc or "@" in parsed.netloc:
         return None
-    origin = f"{parsed.scheme}://{parsed.netloc}"
+    try:
+        host = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return None
+    if not _HOST_RE.match(host):
+        return None
+    origin = f"{parsed.scheme}://{host}" + (f":{port}" if port else "")
     return None if _UNSAFE_IN_HEADER.search(origin) else origin
 
 
 def _always_allowed(db: Session, organization_id: Optional[UUID]) -> List[str]:
     """Our own surfaces that embed the widget, whatever the org's list says."""
     # CORS_ORIGINS is deliberately not here: self-hosters list customer sites
-    # there too, and those must still obey a widget's own list.
-    sources = ["'self'", SHOPIFY_ADMIN_ORIGIN]
+    # there too, and those must still obey a widget's own list. Nor is 'self':
+    # the frame host serves other orgs' widget pages, which must not frame this
+    # one (path-mode help centres live on BACKEND_URL, listed below).
+    sources = [SHOPIFY_ADMIN_ORIGIN]
     for url in [settings.FRONTEND_URL, settings.BACKEND_URL]:
         origin = origin_of(url)
         if origin:
@@ -194,8 +213,7 @@ def allows_embedder(db: Session, allowed_domains: Optional[List[str]], organizat
     """Whether the browser would let `embedder_origin` frame the widget.
 
     For telling the org where its widget was refused; the header itself is the
-    enforcement. Mirrors frame_ancestors(), leaving out 'self' (never a customer
-    site).
+    enforcement. Mirrors frame_ancestors().
     """
     directive = frame_ancestors(db, allowed_domains, organization_id)
     if directive is None:

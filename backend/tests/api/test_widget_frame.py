@@ -131,7 +131,8 @@ class TestFramePage:
 
     def test_allowed_domains_become_frame_ancestors(self, client, restricted):
         csp = client.get(frame_url(restricted)).headers["content-security-policy"]
-        assert "frame-ancestors 'self'" in csp
+        assert "frame-ancestors https://admin.shopify.com" in csp
+        assert "'self'" not in csp.split("frame-ancestors", 1)[1]
         assert " https://acme.com" in csp
 
     def test_unknown_widget(self, client):
@@ -206,6 +207,15 @@ class TestFramePage:
                               follow_redirects=False)
         assert response.status_code == 200
 
+    @pytest.mark.parametrize("host", ["api.example.com", "app.example.com"])
+    def test_a_hop_never_lands_the_frame_on_a_cookie_host(self, client, test_widget, monkeypatch, host):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+        monkeypatch.setattr(settings, "FRONTEND_URL", "https://app.example.com")
+        response = client.get(f"{frame_url(test_widget)}?cm_hop=1", headers={"Host": host}, follow_redirects=False)
+        assert response.status_code == 421
+        assert "__CM_FRAME__" not in response.text
+
     def test_loads_the_bundle_under_the_api_base_behind_a_path_prefix(self, client, test_widget, monkeypatch):
         monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://example.com/chat")
         response = client.get(frame_url(test_widget), headers={"Host": "example.com"})
@@ -220,12 +230,24 @@ class TestFramePage:
 class TestDataPageEmbedding:
     """A raw <iframe src=.../data> must not dodge the allowed domains."""
 
+    def test_a_raw_iframe_of_the_data_page_is_sent_to_the_frame(self, client, test_widget):
+        response = client.get(f"/api/v1/widgets/{test_widget.id}/data?widget_id=x",
+                              headers={"Sec-Fetch-Dest": "iframe"}, follow_redirects=False)
+        assert response.status_code == 302
+        assert response.headers["location"] == f"/api/v1/widgets/{test_widget.id}/frame"
+
+    def test_an_old_loaders_fetch_still_gets_the_page(self, client, test_widget):
+        response = client.get(f"/api/v1/widgets/{test_widget.id}/data", headers={"Sec-Fetch-Dest": "empty"})
+        assert response.status_code == 200
+        assert "__INITIAL_DATA__" in response.text
+
     def test_unrestricted_widget_sends_no_frame_ancestors(self, client, test_widget):
         assert "content-security-policy" not in client.get(f"/api/v1/widgets/{test_widget.id}/data").headers
 
     def test_restricted_widget_sends_its_frame_ancestors(self, client, restricted):
         csp = client.get(f"/api/v1/widgets/{restricted.id}/data").headers["content-security-policy"]
-        assert csp.startswith("frame-ancestors 'self'")
+        assert csp.startswith("frame-ancestors ")
+        assert "'self'" not in csp
         assert " https://acme.com" in csp
 
 
@@ -307,8 +329,8 @@ class TestBootstrap:
         assert response.status_code == 404
 
     def test_too_many_opens_are_refused(self, client, test_widget, monkeypatch):
-        monkeypatch.setattr(widget_router, "allow_widget_open", lambda request: False)
-        monkeypatch.setattr(frame_router, "allow_widget_open", lambda request: False)
+        monkeypatch.setattr(widget_router, "allow_widget_open", lambda request, widget_id: False)
+        monkeypatch.setattr(frame_router, "allow_widget_open", lambda request, widget_id: False)
 
         response = bootstrap(client, test_widget)
         assert response.status_code == 429
@@ -326,8 +348,18 @@ class TestBootstrap:
         bootstrap(client, test_widget, host_origin="javascript:alert(1)")
         bootstrap(client, test_widget)
 
-        assert seen == ["https://shop.acme.com", "https://shop.acme.com", None, None, None]
+        # Only a real origin is recorded; garbage and absent ones are not
+        assert seen == ["https://shop.acme.com", "https://shop.acme.com"]
         assert set(loads) == {"framed"}
+
+    def test_a_self_reported_site_outside_the_list_is_not_recorded(self, client, restricted, monkeypatch):
+        seen = []
+        monkeypatch.setattr(frame_router, "note_install", lambda db, widget, origin, request, bg, load: seen.append(origin))
+
+        bootstrap(client, restricted, host_origin="https://verify-billing.example")
+        bootstrap(client, restricted, host_origin="https://www.acme.com")
+
+        assert seen == ["https://www.acme.com"]
 
 
 class TestRateLimit:
@@ -336,20 +368,44 @@ class TestRateLimit:
         headers = {"x-forwarded-for": forwarded} if forwarded else {}
         return type("R", (), {"headers": headers, "client": type("C", (), {"host": peer})() if peer else None})()
 
-    def test_a_loopback_peer_is_never_limited(self, monkeypatch):
+    def test_a_direct_loopback_peer_is_never_limited(self, monkeypatch):
         monkeypatch.setattr(widget_common, "allow_request", lambda *a: False)
-        assert widget_common.allow_widget_open(self.request("127.0.0.1")) is True
+        assert widget_common.allow_widget_open(self.request("127.0.0.1"), "w-1") is True
 
     def test_a_forged_loopback_header_earns_no_exemption(self, monkeypatch):
         monkeypatch.setattr(widget_common, "allow_request", lambda *a: False)
-        assert widget_common.allow_widget_open(self.request("203.0.113.9", forwarded="127.0.0.1")) is False
+        assert widget_common.allow_widget_open(self.request("203.0.113.9", forwarded="127.0.0.1"), "w-1") is False
 
-    def test_other_clients_are_limited_per_ip(self, monkeypatch):
+    def test_a_proxy_on_the_same_machine_is_still_limited(self, monkeypatch):
+        # host nginx/Caddy to 127.0.0.1:8000: loopback peer, but it forwarded a visitor
+        monkeypatch.setattr(widget_common, "allow_request", lambda *a: False)
+        assert widget_common.allow_widget_open(self.request("127.0.0.1", forwarded="203.0.113.9"), "w-1") is False
+
+    def test_limited_per_visitor_and_widget(self, monkeypatch):
         keys = []
         monkeypatch.setattr(widget_common, "allow_request", lambda key, limit, window: keys.append(key) or False)
 
-        assert widget_common.allow_widget_open(self.request("10.0.0.2", forwarded="203.0.113.9")) is False
-        assert keys == ["widget_open:203.0.113.9"]
+        assert widget_common.allow_widget_open(self.request("10.0.0.2", forwarded="203.0.113.9"), "w-1") is False
+        assert keys == ["widget_open:203.0.113.9:w-1"]
+
+
+class TestOlderEnterpriseModule:
+    """Install tracking must not break (or spam the log) when the enterprise
+    module predates load kinds."""
+
+    def test_page_loads_are_reported_the_old_way(self, monkeypatch):
+        calls = []
+        old = type("Old", (), {"claim_write": staticmethod(lambda db, widget, origin, ip: calls.append(origin)),
+                               "record": staticmethod(lambda *a: None)})
+        monkeypatch.setattr(widget_common, "widget_install", old)
+        monkeypatch.setattr(widget_common, "_claim_with_load", False)
+        request = TestRateLimit.request("10.0.0.2", forwarded="203.0.113.9")
+        widget = type("W", (), {"id": "w-1"})()
+
+        widget_common.note_install(None, widget, "https://acme.com", request, None, widget_common.PAGE_LOAD)
+        widget_common.note_install(None, widget, "https://acme.com", request, None, widget_common.FRAMED)
+
+        assert calls == ["https://acme.com"]
 
 
 class TestEmbedSettings:

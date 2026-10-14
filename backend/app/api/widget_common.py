@@ -168,13 +168,17 @@ def bearer_token(authorization: Optional[str]) -> Optional[str]:
 WIDGET_OPENS_PER_MINUTE = 300
 
 
-def allow_widget_open(request: Request) -> bool:
-    # Exempt by the connecting peer, never by a header a client can write:
-    # local development and the e2e stack talk to the backend directly.
+def allow_widget_open(request: Request, widget_id: str) -> bool:
+    """Per visitor and widget, so one busy office can't exhaust every widget.
+
+    Local development and the e2e stack talk to the backend directly, so a
+    loopback peer is exempt - but only when nothing forwarded the request: a
+    proxy on the same machine (host nginx/Caddy) also connects from loopback.
+    """
     peer = request.client.host if request.client else ""
-    if peer in _LOOPBACK_HOSTS:
+    if peer in _LOOPBACK_HOSTS and not request.headers.get("x-forwarded-for"):
         return True
-    return allow_request(f"widget_open:{forwarded_client_ip(request)}", WIDGET_OPENS_PER_MINUTE, 60)
+    return allow_request(f"widget_open:{forwarded_client_ip(request)}:{widget_id}", WIDGET_OPENS_PER_MINUTE, 60)
 
 
 
@@ -182,6 +186,19 @@ def frame_ancestors(db: Session, widget: Widget) -> Optional[str]:
     """The widget's frame-ancestors directive, or None when it may be embedded anywhere."""
     return widget_embed_policy.frame_ancestors(db, widget.allowed_domains, widget.organization_id)
 
+
+def _claim_takes_load_kind() -> bool:
+    """Whether the installed enterprise module knows load kinds (it was added
+    with the framed widget). An older one is called the old way rather than
+    failing on every widget open."""
+    import inspect
+    try:
+        return "load" in inspect.signature(widget_install.claim_write).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+_claim_with_load = widget_install is not None and _claim_takes_load_kind()
 
 # How a load reached us, for install tracking (the enterprise module's LoadKind)
 PAGE_LOAD = "page_load"  # an older loader's cross-origin fetch of /data
@@ -196,7 +213,13 @@ def note_install(db: Session, widget: Widget, origin: Optional[str], request: Re
     if widget_install is None:
         return
     try:
-        sighting = widget_install.claim_write(db, widget, origin, forwarded_client_ip(request), load)
+        client_ip = forwarded_client_ip(request)
+        if _claim_with_load:
+            sighting = widget_install.claim_write(db, widget, origin, client_ip, load)
+        elif load == PAGE_LOAD:
+            sighting = widget_install.claim_write(db, widget, origin, client_ip)
+        else:
+            return  # an older module would misread a framed load as a page load
         if sighting:
             background_tasks.add_task(widget_install.record, widget.id, sighting)
     except Exception:

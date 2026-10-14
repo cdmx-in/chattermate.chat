@@ -15,7 +15,7 @@ limitations under the License.
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, Header, Query, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -112,7 +112,12 @@ async def get_widget_ui(
     frame-ancestors as /frame: a CSP on a fetch() response is never applied, so
     old loaders are unaffected, while a raw iframe can't dodge the list.
     """
-    if not allow_widget_open(request):
+    if request.headers.get("sec-fetch-dest") == "iframe":
+        # A raw <iframe src=".../data"> embed: send it to the framed page, which
+        # carries no token in its HTML and moves to the cookieless frame host
+        return RedirectResponse(request.url.path.rsplit("/data", 1)[0] + "/frame", status_code=status.HTTP_302_FOUND)
+
+    if not allow_widget_open(request, widget_id):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests. Try again shortly.")
 
     widget = widget_bootstrap.find_widget(db, widget_id)

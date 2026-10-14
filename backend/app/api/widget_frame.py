@@ -88,10 +88,15 @@ def _frame_host_redirect(request: Request) -> Optional[RedirectResponse]:
     if not frame_host or request.headers.get("host", "") == frame_host:
         return None
     if request.query_params.get(_HOP_PARAM):
+        host = request.headers.get("host", "")
+        cookie_hosts = {urlparse(settings.BACKEND_URL).netloc, urlparse(settings.FRONTEND_URL).netloc}
+        if host in cookie_hosts:
+            # Never serve it where the dashboard's cookies live, hop or not
+            return HTMLResponse("This chat can't load here.", status_code=status.HTTP_421_MISDIRECTED_REQUEST)
         logger.warning(
             "Widget frame redirected to %s but arrived on Host %s; serving it here. "
             "The frame host's proxy must pass the Host header through.",
-            frame_host, request.headers.get("host", ""),
+            frame_host, host,
         )
         return None
     query = urlencode([*request.query_params.multi_items(), (_HOP_PARAM, "1")])
@@ -186,13 +191,15 @@ async def bootstrap_widget(
     re-identifies and retries). 401 `token_required`: the agent only talks to
     identified visitors.
     """
-    if not allow_widget_open(request):
+    if not allow_widget_open(request, widget_id):
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                             detail={"code": "rate_limited", "message": "Too many requests. Try again shortly."})
 
     widget = widget_bootstrap.find_widget(db, widget_id)
     host_origin = widget_embed_policy.origin_of(body.host_origin or "")
-    note_install(db, widget, host_origin, request, background_tasks, FRAMED)
+    # Self-reported, so only a site the widget's list lets through counts as live
+    if host_origin and widget_embed_policy.allows_embedder(db, widget.allowed_domains, widget.organization_id, host_origin):
+        note_install(db, widget, host_origin, request, background_tasks, FRAMED)
 
     try:
         session = widget_bootstrap.open_session(db, widget, bearer_token(authorization), body.source)

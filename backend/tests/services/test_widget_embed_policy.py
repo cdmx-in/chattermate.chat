@@ -42,6 +42,7 @@ class TestNormalize:
         ("http://localhost:3000/", "localhost:3000"),
         ("127.0.0.1:5173", "127.0.0.1:5173"),
         ("bücher.de", "xn--bcher-kva.de"),
+        ("faße.de", "xn--fae-6ka.de"),  # UTS #46, as browsers encode it (not fasse.de)
     ])
     def test_accepts(self, typed, stored):
         assert policy.normalize_allowed_domain(typed) == stored
@@ -86,6 +87,19 @@ class TestNormalize:
         with pytest.raises(InvalidAllowedDomain):
             policy.normalize_allowed_domains(too_many)
 
+    def test_the_whole_list_has_a_size_budget(self):
+        long_ones = [f"{'a' * 60}{i}.example.com" for i in range(15)]
+        with pytest.raises(InvalidAllowedDomain):
+            policy.normalize_allowed_domains(long_ones)
+
+    def test_the_largest_list_allowed_fits_a_proxy_header_buffer(self, db, own_origins):
+        domains, i = [], 0
+        while sum(len(d) for d in domains) < policy.MAX_ALLOWED_DOMAINS_LENGTH - 60 and len(domains) < policy.MAX_ALLOWED_DOMAINS:
+            domains.append(f"{'a' * 30}{i}.example.com")
+            i += 1
+        policy.normalize_allowed_domains(domains)
+        assert len(policy.frame_ancestors(db, domains, None)) < 4096
+
     def test_one_bad_entry_refuses_the_list(self):
         with pytest.raises(InvalidAllowedDomain):
             policy.normalize_allowed_domains(["good.com", "bad domain"])
@@ -122,7 +136,9 @@ class TestFrameAncestors:
 
     def test_our_own_surfaces_are_always_allowed(self, db, own_origins):
         directive = policy.frame_ancestors(db, ["acme.com"], None)
-        assert directive.startswith("frame-ancestors 'self' ")
+        assert directive.startswith("frame-ancestors ")
+        # not 'self': the frame host serves other orgs' widget pages
+        assert "'self'" not in directive
         for source in (
             "https://admin.shopify.com",
             "https://app.example.com",
@@ -169,6 +185,21 @@ class TestFrameAncestors:
     def test_no_duplicate_sources(self, db, own_origins):
         sources = policy.frame_ancestors(db, ["acme.com", "www.acme.com"], None).split()
         assert len(sources) == len(set(sources))
+
+
+class TestOriginOf:
+    @pytest.mark.parametrize("url, origin", [
+        ("https://Shop.Example.com/page?x=1", "https://shop.example.com"),
+        ("http://localhost:3000/", "http://localhost:3000"),
+        ("https://<svg>.example", None),
+        ("https://a<b>c.com", None),
+        ("https://user@evil.example", None),
+        ("javascript:alert(1)", None),
+        ("https://", None),
+        ("", None),
+    ])
+    def test_only_real_origins(self, url, origin):
+        assert policy.origin_of(url) == origin
 
 
 class TestAllowsEmbedder:
