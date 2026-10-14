@@ -5,6 +5,7 @@ blob-report/
 .auth/
 .cache/
 .stack/
+.schemathesis/
 test-results-quarantine/
 playwright-report-quarantine/
 # Screenshot baselines are made on Linux in CI only.

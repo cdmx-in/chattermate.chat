@@ -4,7 +4,7 @@
 # bodies, must answer without a server error. Runs against a stack already up
 # (scripts/stack.sh up) whose org the setup project has created.
 #
-#   scripts/api-fuzz.sh            needs `st` on PATH (pip install schemathesis==3.39.16)
+#   scripts/api-fuzz.sh            needs `st` on PATH (pip install schemathesis==4.31.0)
 set -euo pipefail
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -18,10 +18,10 @@ TOKEN="$(curl -fsS -X POST "$API/api/v1/users/login" --data-urlencode "username=
 mkdir -p "$E2E_DIR/test-results"
 # Reads only for now: writes would also need cleanup between examples. Signing out
 # would revoke the token mid-run.
-exec st run "$API/openapi.json" --experimental=openapi-3.1 \
+exec st run "$API/openapi.json" \
   -H "Authorization: Bearer $TOKEN" \
   --checks not_a_server_error \
   --include-method GET \
   --exclude-path-regex '/users/(logout|me)$' \
-  --hypothesis-max-examples 5 --hypothesis-deadline=None \
-  --junit-xml "$E2E_DIR/test-results/api-fuzz.xml"
+  -n 5 \
+  --report junit --report-junit-path "$E2E_DIR/test-results/api-fuzz.xml"

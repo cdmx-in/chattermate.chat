@@ -246,6 +246,25 @@ def test_get_recent_chats_with_view_all(
     assert chats[0]["session_id"] == str(test_chat_session.session_id)
     assert chats[0]["agent"]["id"] == str(test_chat_session.agent_id)
 
+
+@pytest.mark.parametrize("status", ["null", "open,bogus", "OPEN"])
+def test_get_recent_chats_refuses_an_unknown_status(client, test_user, status):
+    """Compared with the status column, an unknown value was a database error (500)."""
+    response = client.get("/api/chats/recent", params={"status": status})
+    assert response.status_code == 422
+    assert response.json()["detail"].startswith("Unknown status")
+
+
+def test_get_recent_chats_refuses_an_offset_past_the_database_range(client, test_user):
+    """Past a 64-bit OFFSET the query itself failed (500)."""
+    assert client.get("/api/chats/recent", params={"skip": 15412059487694436352}).status_code == 422
+
+
+@pytest.mark.parametrize("status", ["open", "open, transferred", "all"])
+def test_get_recent_chats_accepts_known_statuses(client, test_user, test_chat_session, status):
+    assert client.get("/api/chats/recent", params={"status": status}).status_code == 200
+
+
 def test_get_recent_chats_includes_human_handler(
     client,
     db,
