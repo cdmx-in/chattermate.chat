@@ -27,3 +27,23 @@ export async function setAllowedDomains(api: ApiClient, widgetId: string, domain
   const saved = await api.put<{ allowed_domains: string[] }>(`/widgets/${widgetId}/embed-settings`, { data: { allowed_domains: domains } })
   return saved.allowed_domains
 }
+
+/**
+ * The framed widget starting on a visitor's page at `origin`: what it sends to
+ * /bootstrap once the host page has handed it over. `api` should be anonymous.
+ */
+export async function openFramedWidgetFrom(api: ApiClient, widgetId: string, origin: string, visitorIp: string): Promise<void> {
+  const response = await api.raw('POST', `/widgets/${widgetId}/bootstrap`, {
+    data: { host_origin: origin },
+    headers: { 'X-Forwarded-For': visitorIp },
+  })
+  if (!response.ok()) throw new Error(`widget bootstrap from ${origin} → ${response.status()}`)
+}
+
+/** A page at `origin` framing the widget, as the browser requests it. Only the status matters. */
+export async function requestFrameFrom(api: ApiClient, widgetId: string, origin: string): Promise<void> {
+  const response = await api.raw('GET', `/widgets/${widgetId}/frame`, {
+    headers: { 'Sec-Fetch-Dest': 'iframe', Referer: `${origin}/` },
+  })
+  if (!response.ok()) throw new Error(`widget frame for ${origin} → ${response.status()}`)
+}
