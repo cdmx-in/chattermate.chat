@@ -180,7 +180,8 @@ def test_update_workflow_node_not_found(client, db, test_user, test_organization
         json=update_data
     )
     
-    assert response.status_code == 500  # Will be 500 due to workflow not found
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Workflow not found"
 
 
 def test_get_workflow_node_not_found(client, db, test_user, test_organization, test_agent):
@@ -193,7 +194,8 @@ def test_get_workflow_node_not_found(client, db, test_user, test_organization, t
         f"/api/workflow-nodes/{workflow_id}/nodes/{node_id}"
     )
     
-    assert response.status_code == 500  # Will be 500 due to workflow not found
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Workflow not found"
 
 
 def test_update_workflow_node_unauthorized(client, db):

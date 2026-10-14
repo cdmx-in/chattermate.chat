@@ -203,6 +203,9 @@ async def update_workflow_node(
         
         return updated_node
         
+    except ValueError as e:
+        # An unknown or another organization's workflow or node, as the routes above
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         # Let intended HTTP errors (e.g. 403 plan feature-gate, 400, 404) propagate
         # instead of being masked as a generic 500.
@@ -236,6 +239,9 @@ async def get_workflow_node(
         
         return node
         
+    except ValueError as e:
+        # An unknown or another organization's workflow or node, as the routes above
+        raise HTTPException(status_code=400, detail=str(e))
     except HTTPException:
         # Let intended HTTP errors (e.g. 403 plan feature-gate, 400, 404) propagate
         # instead of being masked as a generic 500.
