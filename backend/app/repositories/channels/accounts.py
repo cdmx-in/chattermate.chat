@@ -130,7 +130,9 @@ class ChannelAccountRepository:
         try:
             account.encrypted_credentials = encrypt_api_key(json.dumps(credentials))
             # New credentials are a fresh chance; the next send proves them
-            account.settings = _without_auth_failure(account.settings)
+            # A new dict, not an in-place pop: the JSON column only notices reassignment
+            account.settings = {k: v for k, v in (account.settings or {}).items()
+                                if k != AUTH_FAILURE_SETTING}
             self.db.commit()
             self.db.refresh(account)
             return account
@@ -144,8 +146,9 @@ class ChannelAccountRepository:
         platform just said about its credentials."""
         if result.auth_failed:
             self.record_auth_failure(account, result.error)
-        elif result.ok:
-            self.clear_auth_failure(account)
+        elif result.ok and needs_reconnect(account):
+            # The credentials work again
+            self._update_auth_failure(account, {}, remove=(AUTH_FAILURE_SETTING,))
 
     def record_auth_failure(self, account: ChannelAccount, error: Optional[str]) -> None:
         """Mark the account as needing reconnection after the platform refused
@@ -156,11 +159,6 @@ class ChannelAccountRepository:
         logger.warning(f"{account.channel_type} account {account.id} needs reconnecting: {error}")
         self._update_auth_failure(account, {AUTH_FAILURE_SETTING: {
             "error": error, "at": datetime.now(timezone.utc).isoformat()}})
-
-    def clear_auth_failure(self, account: ChannelAccount) -> None:
-        """A send went through, so the credentials work again."""
-        if needs_reconnect(account):
-            self._update_auth_failure(account, {}, remove=(AUTH_FAILURE_SETTING,))
 
     def _update_auth_failure(self, account: ChannelAccount, updates: dict,
                              remove: Iterable[str] = ()) -> None:
@@ -225,8 +223,3 @@ class ChannelAccountRepository:
 
 def needs_reconnect(account: ChannelAccount) -> bool:
     return bool((account.settings or {}).get(AUTH_FAILURE_SETTING))
-
-
-def _without_auth_failure(settings: Optional[dict]) -> dict:
-    # A new dict, not an in-place pop: the JSON column only notices reassignment
-    return {k: v for k, v in (settings or {}).items() if k != AUTH_FAILURE_SETTING}
