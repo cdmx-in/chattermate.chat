@@ -26,6 +26,7 @@ from app.channels.interactive import from_options
 from app.channels.interactive_limits import INSTAGRAM_LIMITS, WHATSAPP_LIMITS
 from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, decode_sent_choices
 from app.repositories.channels import ChannelAccountRepository, ChannelConversationRepository
+from app.repositories.channels.accounts import needs_reconnect
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services import message_delivery
@@ -139,6 +140,46 @@ async def test_send_failure_reported(db, test_agent, test_customer, test_organiz
 
     assert result.ok is False
     assert result.reason == 'chat not found'
+
+
+@pytest.mark.asyncio
+async def test_a_refused_token_marks_the_account_for_reconnection(db, test_agent, test_customer, test_organization, mock_sio, monkeypatch):
+    session, account = make_channel_session(db, test_agent, test_customer, test_organization)
+    adapter = _channel_adapter(False)
+    adapter.send_text = AsyncMock(return_value=SendResult(
+        ok=False, error='Authentication Error', auth_failed=True))
+    monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
+
+    result = await deliver_to_customer(db, session, {'message': 'hello'}, source=MessageSource.AI)
+    assert result.ok is False
+    db.refresh(account)
+    assert needs_reconnect(account) is True
+
+    # Once a send goes through again, the account is healthy
+    adapter.send_text = AsyncMock(return_value=SendResult(ok=True, external_message_id='wamid.OK'))
+    result = await deliver_to_customer(db, session, {'message': 'hello'}, source=MessageSource.AI)
+    assert result.ok is True
+    db.refresh(account)
+    assert needs_reconnect(account) is False
+
+
+@pytest.mark.asyncio
+async def test_an_interactive_auth_failure_still_marks_the_account(db, test_agent, test_customer, test_organization, mock_sio, monkeypatch):
+    """The interactive attempt and the text fallback both fail; the result
+    that decides is the fallback's."""
+    session, account = make_channel_session(db, test_agent, test_customer, test_organization)
+    refused = SendResult(ok=False, error='Authentication Error', auth_failed=True)
+    adapter = _channel_adapter(True)
+    adapter.send_interactive = AsyncMock(return_value=refused)
+    adapter.send_text = AsyncMock(return_value=refused)
+    monkeypatch.setattr(message_delivery, "get_adapter", lambda c: adapter)
+
+    await deliver_to_customer(db, session, {'message': 'Pick one'},
+                              interactive=from_options('Pick one', ['A', 'B']),
+                              source=MessageSource.AI)
+
+    db.refresh(account)
+    assert needs_reconnect(account) is True
 
 
 def _channel_adapter(supports_interactive: bool):

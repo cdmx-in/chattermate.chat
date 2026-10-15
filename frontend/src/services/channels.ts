@@ -113,6 +113,8 @@ export interface ChannelAccount {
   /** For email/SMS/LINE and Meta accounts from the customer's own app: the
    *  webhook URL to configure on the provider */
   webhook_url?: string
+  /** The platform refused this account's credentials; replies fail until it is reconnected */
+  needs_reconnect?: boolean
   /** Meta accounts from the customer's own app: the verify token Meta asks for */
   webhook_verify_token?: string
   /** WhatsApp from the customer's own app: whether Meta took our callback */

@@ -35,6 +35,7 @@ from app.channels.meta_base import (
     exchange_instagram_long_lived,
     graph_get,
     graph_list_all,
+    graph_post,
     graph_post_json,
     instagram_token_payload,
     GRAPH_BASE,
@@ -728,3 +729,41 @@ class TestWhatsAppReadReceipts:
         await adapter.send_typing(MagicMock(), conversation)
 
         assert graph_client.calls[0]["json"]["typing_indicator"] == {"type": "text"}
+
+
+class TestGraphPostAuthFailure:
+    """A refused token is flagged so the account can be marked for
+    reconnection; a refused message is not."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status,body", [
+        (401, {"error": {"message": "Authentication Error", "code": 0}}),
+        (400, {"error": {"message": "Authentication Error", "code": 0}}),
+        (400, {"error": {"message": "Session has expired", "code": 190, "error_subcode": 463}}),
+        (400, {"error": {"message": "Error validating access token", "code": 102}}),
+        (401, {}),
+    ])
+    async def test_token_refusals_are_auth_failures(self, graph_client, status, body):
+        graph_client.response = _FakeResponse(status, body)
+        result = await graph_post("PN1/messages", "tok", {})
+        assert result.ok is False
+        assert result.auth_failed is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("body", [
+        {"error": {"message": "Re-engagement message", "code": 131047}},
+        {"error": {"message": "Invalid parameter", "code": 100}},
+        {"error": "not a dict"},
+    ])
+    async def test_message_refusals_are_not(self, graph_client, body):
+        graph_client.response = _FakeResponse(400, body)
+        result = await graph_post("PN1/messages", "tok", {})
+        assert result.ok is False
+        assert result.auth_failed is False
+
+    @pytest.mark.asyncio
+    async def test_success_is_not(self, graph_client):
+        graph_client.response = _FakeResponse(200, {"messages": [{"id": "wamid.1"}]})
+        result = await graph_post("PN1/messages", "tok", {})
+        assert result.ok is True
+        assert result.auth_failed is False
