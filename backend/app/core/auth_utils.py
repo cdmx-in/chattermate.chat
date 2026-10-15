@@ -23,6 +23,7 @@ from app.database import get_db, SessionLocal
 from app.models.user import User
 from sqlalchemy.orm import Session
 from app.core.socketio import sio
+from app.core.cors import is_first_party_origin
 from app.models.widget import Widget
 from app.services.auth_sessions import ACCESS, REFRESH, issue_tokens, live_payload
 
@@ -63,6 +64,15 @@ async def authenticate_socket(sid: str, environ: dict) -> Tuple[Optional[str], O
     Authenticate socket connection using cookies
     Returns: (access_token, user_id, org_id)
     """
+    # WebSockets carry cookies without any CORS check, so a page on another
+    # site (an org's signup domain is unverified) could otherwise open this
+    # socket as whoever is signed in - and be sent a refreshed token. Browsers
+    # always send Origin on the handshake; only our own may use the cookies.
+    origin = environ.get('HTTP_ORIGIN')
+    if origin and not is_first_party_origin(origin):
+        logger.warning(f"Refused cookie socket auth for sid {sid} from origin {origin}")
+        return None, None, None
+
     try:
         # Extract cookies from environ
         cookie_str = environ.get('HTTP_COOKIE', environ.get('headers', {}).get('Cookie', ''))

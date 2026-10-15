@@ -21,10 +21,12 @@ import asyncio
 import traceback
 import re
 from urllib.parse import urlparse
-from typing import Set, List
+from typing import Iterable, List, Optional, Set
 from functools import lru_cache
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.datastructures import Headers, MutableHeaders
+from starlette.types import Message, Send
 
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -34,6 +36,70 @@ logger = get_logger(__name__)
 
 # Base CORS origins that are always allowed
 BASE_CORS_ORIGINS: list = settings.CORS_ORIGINS
+
+_CREDENTIALS_HEADER = "access-control-allow-credentials"
+
+
+def _origin_of(url: str) -> Optional[str]:
+    parsed = urlparse((url or "").strip())
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}".lower()
+
+
+def first_party_origins() -> Set[str]:
+    """Origins that may use the dashboard's sign-in cookies: the dashboard
+    (FRONTEND_URL) and what the operator listed in CORS_ORIGINS.
+
+    Never an org's domain or a help centre. An org domain is whatever someone
+    typed at signup, unverified, so trusting it with credentials would let a
+    page on any signed-up domain read a signed-in user's account.
+    """
+    configured = BASE_CORS_ORIGINS if isinstance(BASE_CORS_ORIGINS, list) else [BASE_CORS_ORIGINS]
+    origins = {_origin_of(url) for url in [settings.FRONTEND_URL, *configured]}
+    return {o for o in origins if o}
+
+
+def is_first_party_origin(origin: Optional[str]) -> bool:
+    return bool(origin) and origin.lower().rstrip("/") in first_party_origins()
+
+
+class FirstPartyCredentialsCORSMiddleware(CORSMiddleware):
+    """CORS for every allowed origin, credentials only for first-party ones.
+
+    Org domains and help centres still call the API cross-origin (older
+    widget loaders fetch /data from customers' sites), but without cookies:
+    Access-Control-Allow-Credentials is only sent to `credentialed_origins`,
+    so a browser never lets another site read a cookie-authenticated response.
+    """
+
+    def __init__(self, app, credentialed_origins: Iterable[str] = (), **kwargs) -> None:
+        kwargs["allow_credentials"] = True
+        super().__init__(app, **kwargs)
+        self.credentialed_origins = frozenset(o.lower() for o in credentialed_origins)
+
+    def _credentialed(self, origin: str) -> bool:
+        return origin.lower() in self.credentialed_origins
+
+    def preflight_response(self, request_headers: Headers):
+        response = super().preflight_response(request_headers)
+        if not self._credentialed(request_headers["origin"]) and _CREDENTIALS_HEADER in response.headers:
+            del response.headers[_CREDENTIALS_HEADER]
+        return response
+
+    async def send(self, message: Message, send: Send, request_headers: Headers) -> None:
+        if self._credentialed(request_headers["Origin"]):
+            await super().send(message, send, request_headers)
+            return
+
+        async def without_credentials(outgoing: Message) -> None:
+            if outgoing["type"] == "http.response.start":
+                headers = MutableHeaders(scope=outgoing)
+                if _CREDENTIALS_HEADER in headers:
+                    del headers[_CREDENTIALS_HEADER]
+            await send(outgoing)
+
+        await super().send(message, without_credentials, request_headers)
 
 @lru_cache(maxsize=1)
 def get_cors_origins() -> Set[str]:
@@ -125,7 +191,7 @@ def update_local_cors(app: FastAPI, new_origins: List[str]) -> bool:
     # the class plus its kwargs, so match on the class itself; adding another
     # layer instead would leave the old ones answering for removed origins.
     for middleware in getattr(app, 'user_middleware', []):
-        if middleware.cls is CORSMiddleware:
+        if isinstance(middleware.cls, type) and issubclass(middleware.cls, CORSMiddleware):
             # The publishing worker also hears its own Redis broadcast, and
             # startup re-applies the cached list; skip the rebuild when nothing changed
             if middleware.kwargs.get('allow_origins') != new_origins:
@@ -146,10 +212,10 @@ def update_local_cors(app: FastAPI, new_origins: List[str]) -> bool:
             # subdomain regex here too, or a rebuild would silently drop the
             # *.{base_domain} wildcard that the embedded widget relies on.
             app.add_middleware(
-                CORSMiddleware,
+                FirstPartyCredentialsCORSMiddleware,
+                credentialed_origins=first_party_origins(),
                 allow_origins=new_origins,
                 allow_origin_regex=get_cors_origin_regex(),
-                allow_credentials=True,
                 allow_methods=["*"],
                 allow_headers=["*"],
             )

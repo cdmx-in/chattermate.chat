@@ -34,3 +34,23 @@ test.describe('organization website and API access', () => {
     expect(await allowedOrigin(anonymous, NEW_SITE)).toBeUndefined()
   })
 })
+
+test.describe('organization website and sign-in cookies', () => {
+  test.afterEach(async ({ adminApi, org }) => { await setOrgDomain(adminApi, org.orgId, seedOrg.domain) })
+
+  test('an org\'s website can call the API but never with a signed-in user\'s cookies @security', async ({ adminApi, org, request }) => {
+    // Any signed-up domain lands in the CORS list, unverified: it must not be
+    // able to read the dashboard's cookie-authenticated responses
+    await setOrgDomain(adminApi, org.orgId, new URL(NEW_SITE).host)
+    const anonymous = new ApiClient(request)
+
+    const simple = await anonymous.raw('GET', '/users/me', { headers: { Origin: NEW_SITE, Cookie: 'access_token=x' } })
+    expect(simple.headers()['access-control-allow-origin']).toBe(NEW_SITE)
+    expect(simple.headers()['access-control-allow-credentials']).toBeUndefined()
+
+    const preflight = await anonymous.raw('OPTIONS', '/users/me', {
+      headers: { Origin: NEW_SITE, 'Access-Control-Request-Method': 'GET' },
+    })
+    expect(preflight.headers()['access-control-allow-credentials']).toBeUndefined()
+  })
+})

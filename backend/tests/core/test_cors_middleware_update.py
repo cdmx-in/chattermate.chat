@@ -56,7 +56,7 @@ def app():
 
 
 def cors_layers(app):
-    return [m for m in app.user_middleware if m.cls is CORSMiddleware]
+    return [m for m in app.user_middleware if isinstance(m.cls, type) and issubclass(m.cls, CORSMiddleware)]
 
 
 def get_from(client, origin):
