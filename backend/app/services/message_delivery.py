@@ -131,6 +131,7 @@ async def _deliver_to_channel(db: Session, session_record: SessionToAgent,
         return DeliveryResult(ok=True)
 
     sent = await _send_reply(adapter, account, conversation, text, interactive)
+    ChannelAccountRepository(db).track_send_result(account, sent.result)
     if not sent.result.ok:
         logger.error(f"Failed delivering to {channel} session {session_id}: {sent.result.error}")
         return DeliveryResult(ok=False, reason=sent.result.error or 'send_failed',

@@ -31,7 +31,7 @@ from sqlalchemy.orm import Session
 
 from app.api.channels.accounts import get_org_account_or_404
 from app.channels import get_adapter
-from app.channels.meta_base import fetch_message_templates, graph_detail, graph_get
+from app.channels.meta_base import fetch_message_templates, graph_auth_refused, graph_detail, graph_get
 from app.channels.constants import MessageSource
 from app.core.error_handlers import ClientSafeHTTPException
 from app.core.auth import (
@@ -79,11 +79,15 @@ def _whatsapp_account_or_404(db: Session, account_id: UUID, organization: Organi
     return account
 
 
-async def _fetch_all_templates(waba_id: str, access_token: str) -> list[TemplateOut]:
-    """Every template on the WABA (transport lives in meta_base; this wrapper
-    owns the HTTP error surface)."""
+async def _fetch_all_templates(db: Session, account) -> list[TemplateOut]:
+    """Every template on the account's WABA (transport lives in meta_base; this
+    wrapper owns the HTTP error surface)."""
+    waba_id, access_token = _waba_credentials(db, account)
     ok, data = await fetch_message_templates(waba_id, access_token)
     if not ok:
+        if graph_auth_refused(data):
+            ChannelAccountRepository(db).record_auth_failure(
+                account, graph_detail(data, "Authentication Error"))
         raise ClientSafeHTTPException(status_code=502,
                                      detail=graph_detail(data, "Could not list templates"))
     return [TemplateOut(**template) for template in data]
@@ -158,6 +162,7 @@ async def send_whatsapp_template(
         language=request.language,
         components=request.components,
     )
+    ChannelAccountRepository(db).track_send_result(account, result)
     if not result.ok:
         raise ClientSafeHTTPException(status_code=502, detail=result.error or "Template send failed")
     return {"status": "sent", "external_message_id": result.external_message_id}
@@ -176,8 +181,7 @@ async def list_whatsapp_templates(
 ):
     """List the message templates on this number's WhatsApp Business Account."""
     account = _whatsapp_account_or_404(db, account_id, organization)
-    waba_id, access_token = _waba_credentials(db, account)
-    return await _fetch_all_templates(waba_id, access_token)
+    return await _fetch_all_templates(db, account)
 
 
 @router.get("/whatsapp/{account_id}/template-library", response_model=TemplateLibraryOut)

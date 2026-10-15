@@ -35,6 +35,9 @@ class ChannelAccountOut(BaseModel):
     # For channels the customer must point at us (email inbound-parse, SMS):
     # the exact webhook URL to configure on their provider.
     webhook_url: Optional[str] = None
+    # The platform refused the account's credentials; replies fail until the
+    # account is reconnected
+    needs_reconnect: bool = False
 
     class Config:
         from_attributes = True

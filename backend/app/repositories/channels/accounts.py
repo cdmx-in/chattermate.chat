@@ -16,17 +16,23 @@ limitations under the License.
 
 import json
 import secrets
+from datetime import datetime, timezone
 from typing import Optional, List
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.channels.base import SendResult
 from app.models.channels import ChannelAccount, ChannelConversation
 from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.core.security import encrypt_api_key, decrypt_api_key
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
+
+# settings key set while the platform rejects the account's credentials:
+# {"error": <platform message>, "at": <ISO time>}. Absent means healthy.
+AUTH_FAILURE_SETTING = "auth_failure"
 
 
 class ChannelAccountRepository:
@@ -107,6 +113,8 @@ class ChannelAccountRepository:
     def update_credentials(self, account: ChannelAccount, credentials: dict) -> ChannelAccount:
         try:
             account.encrypted_credentials = encrypt_api_key(json.dumps(credentials))
+            # New credentials are a fresh chance; the next send proves them
+            account.settings = _without_auth_failure(account.settings)
             self.db.commit()
             self.db.refresh(account)
             return account
@@ -114,6 +122,37 @@ class ChannelAccountRepository:
             logger.error(f"Error updating channel account credentials: {str(e)}")
             self.db.rollback()
             raise
+
+    def track_send_result(self, account: ChannelAccount, result: SendResult) -> None:
+        """Keep the account's needs-reconnect flag in step with what the
+        platform just said about its credentials."""
+        if result.auth_failed:
+            self.record_auth_failure(account, result.error)
+        elif result.ok:
+            self.clear_auth_failure(account)
+
+    def record_auth_failure(self, account: ChannelAccount, error: Optional[str]) -> None:
+        """Mark the account as needing reconnection after the platform refused
+        its credentials. Keeps the first failure's time so the UI can say since
+        when."""
+        if needs_reconnect(account):
+            return
+        logger.warning(f"{account.channel_type} account {account.id} needs reconnecting: {error}")
+        self._set_auth_failure(account, {"error": error, "at": datetime.now(timezone.utc).isoformat()})
+
+    def clear_auth_failure(self, account: ChannelAccount) -> None:
+        """A send went through, so the credentials work again."""
+        if needs_reconnect(account):
+            self._set_auth_failure(account, None)
+
+    def _set_auth_failure(self, account: ChannelAccount, failure: Optional[dict]) -> None:
+        try:
+            settings = _without_auth_failure(account.settings)
+            account.settings = {**settings, AUTH_FAILURE_SETTING: failure} if failure else settings
+            self.db.commit()
+        except Exception as e:
+            logger.error(f"Error updating channel account auth failure: {str(e)}")
+            self.db.rollback()
 
     def set_active(self, account: ChannelAccount, is_active: bool) -> ChannelAccount:
         try:
@@ -166,3 +205,12 @@ class ChannelAccountRepository:
             logger.error(f"Error deleting channel account: {str(e)}")
             self.db.rollback()
             return False
+
+
+def needs_reconnect(account: ChannelAccount) -> bool:
+    return bool((account.settings or {}).get(AUTH_FAILURE_SETTING))
+
+
+def _without_auth_failure(settings: Optional[dict]) -> dict:
+    # A new dict, not an in-place pop: the JSON column only notices reassignment
+    return {k: v for k, v in (settings or {}).items() if k != AUTH_FAILURE_SETTING}

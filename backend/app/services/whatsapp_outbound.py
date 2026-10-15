@@ -29,7 +29,7 @@ from app.services.channel_chat import placeholder_name
 from app.services.business_message import remember_business_message
 from app.services.channel_status import record_sent
 from app.services.chat_notifications import team_not_yet_notified
-from app.channels.meta_base import fetch_message_templates
+from app.channels.meta_base import fetch_message_templates, graph_auth_refused, graph_detail
 from app.core.logger import get_logger
 from app.models.channels import ChannelAccount
 from app.repositories.channels import (
@@ -108,7 +108,8 @@ async def _approved_outbound_template(db: Session, account: ChannelAccount,
     which is why Meta accepts Marketing there — and why the inbox picker has
     never been category-gated.
     """
-    credentials = ChannelAccountRepository(db).get_credentials(account)
+    repo = ChannelAccountRepository(db)
+    credentials = repo.get_credentials(account)
     waba_id = credentials.get("waba_id")
     if not waba_id:
         raise OutboundError(400, "Reconnect this number with its WhatsApp "
@@ -116,6 +117,8 @@ async def _approved_outbound_template(db: Session, account: ChannelAccount,
 
     ok, data = await fetch_message_templates(waba_id, credentials["access_token"])
     if not ok:
+        if graph_auth_refused(data):
+            repo.record_auth_failure(account, graph_detail(data, "Authentication Error"))
         raise OutboundError(502, "Could not read the account's templates from Meta")
 
     template = next(
@@ -261,6 +264,7 @@ async def start_outbound_conversation(
     adapter = get_adapter("whatsapp")
     result = await adapter.send_template(account, conversation, template_name,
                                          language, components)
+    ChannelAccountRepository(db).track_send_result(account, result)
     if not result.ok:
         if existing is None:
             # A failed send must not leave an empty thread in the inbox: drop

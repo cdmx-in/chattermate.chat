@@ -112,6 +112,8 @@ export interface ChannelAccount {
   created_at?: string
   /** For email/SMS/LINE: the webhook URL to configure on the provider */
   webhook_url?: string
+  /** The platform refused this account's credentials; replies fail until it is reconnected */
+  needs_reconnect?: boolean
 }
 
 const channelsService = {
