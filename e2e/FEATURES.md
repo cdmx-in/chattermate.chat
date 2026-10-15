@@ -52,6 +52,7 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Channels | Forged webhooks refused on every channel; echoes, receipts and bot messages never reach the model | `specs/channels/forged-webhooks.spec.ts` | P2 | ✅ |
 | Channels | A refused send is marked Not delivered; list and long-title buttons stay within WhatsApp's limits | `specs/channels/delivery.spec.ts` | P2 | ✅ |
 | Channels | A provider's retry gets one answer (`@redis`) | `specs/channels/retries.spec.ts` | P2 | ✅ |
+| Channels | A WhatsApp number or Messenger Page from the customer's own Meta app (manual credentials + app secret) receives messages at its own webhook address; a wrong secret is refused; the address never takes another app's number | `specs/channels/own-meta-app.spec.ts` | P2 | ✅ |
 | Channels | Media messages; disconnect | — | P2 | ⬜ |
 | Analytics | A conversation counts for its agent; the dashboard renders | `specs/analytics/analytics.spec.ts` | P2 | ✅ |
 | CRM | HubSpot install, manual sync and automatic push (worker) with the lead's details | `specs/crm/hubspot.org.spec.ts` | P2 | ✅ |

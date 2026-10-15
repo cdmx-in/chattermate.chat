@@ -110,10 +110,15 @@ export interface ChannelAccount {
   is_active: boolean
   agent_id?: string
   created_at?: string
-  /** For email/SMS/LINE: the webhook URL to configure on the provider */
+  /** For email/SMS/LINE and Meta accounts from the customer's own app: the
+   *  webhook URL to configure on the provider */
   webhook_url?: string
   /** The platform refused this account's credentials; replies fail until it is reconnected */
   needs_reconnect?: boolean
+  /** Meta accounts from the customer's own app: the verify token Meta asks for */
+  webhook_verify_token?: string
+  /** WhatsApp from the customer's own app: whether Meta took our callback */
+  webhook_auto_configured?: boolean
 }
 
 const channelsService = {
@@ -157,6 +162,7 @@ const channelsService = {
     phone_number_id: string
     access_token: string
     waba_id?: string
+    app_secret?: string
   }): Promise<ChannelAccount> {
     const response = await api.post('/channels/meta/whatsapp', payload)
     return response.data
@@ -179,7 +185,11 @@ const channelsService = {
   },
 
   /** Connect a Facebook Page for Messenger (manual page token) */
-  async connectMessenger(payload: { page_id: string; page_access_token: string }): Promise<ChannelAccount> {
+  async connectMessenger(payload: {
+    page_id: string
+    page_access_token: string
+    app_secret?: string
+  }): Promise<ChannelAccount> {
     const response = await api.post('/channels/meta/messenger', payload)
     return response.data
   },

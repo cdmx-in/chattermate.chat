@@ -18,7 +18,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.channels.constants import DEFAULT_TEMPLATE_LANGUAGE
 
@@ -32,12 +32,17 @@ class ChannelAccountOut(BaseModel):
     is_active: bool
     agent_id: Optional[UUID] = None   # agent currently routed to this account
     created_at: Optional[datetime] = None
-    # For channels the customer must point at us (email inbound-parse, SMS):
-    # the exact webhook URL to configure on their provider.
+    # For channels the customer must point at us (email inbound-parse, SMS,
+    # Meta accounts from the customer's own app): the exact webhook URL to
+    # configure on their provider, and the verify token Meta asks for.
     webhook_url: Optional[str] = None
     # The platform refused the account's credentials; replies fail until the
     # account is reconnected
     needs_reconnect: bool = False
+    webhook_verify_token: Optional[str] = None
+    # WhatsApp from the customer's own app: whether Meta took our per-number
+    # callback (else the customer sets the URL and token by hand)
+    webhook_auto_configured: Optional[bool] = None
 
     class Config:
         from_attributes = True
@@ -47,15 +52,26 @@ class TelegramConnectRequest(BaseModel):
     bot_token: str
 
 
-class WhatsAppConnectRequest(BaseModel):
-    """Manual WhatsApp Cloud API credentials (self-hosters with their own Meta app)."""
+class OwnMetaAppSecret(BaseModel):
+    """The secret of the customer's own Meta app, for manual credentials:
+    Meta signs that app's webhooks with it. Blank means not given."""
+    app_secret: Optional[str] = None
+
+    @field_validator("app_secret")
+    @classmethod
+    def _blank_is_none(cls, value: Optional[str]) -> Optional[str]:
+        return (value or "").strip() or None
+
+
+class WhatsAppConnectRequest(OwnMetaAppSecret):
+    """Manual WhatsApp Cloud API credentials, from the customer's own Meta app."""
     phone_number_id: str
     access_token: str
     waba_id: Optional[str] = None
     display_name: Optional[str] = None
 
 
-class MessengerConnectRequest(BaseModel):
+class MessengerConnectRequest(OwnMetaAppSecret):
     page_id: str
     page_access_token: str
     display_name: Optional[str] = None

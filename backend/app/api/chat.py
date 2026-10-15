@@ -24,6 +24,8 @@ from app.services.shopify_session import require_shopify_or_jwt_auth
 from app.models.user import User
 from app.database import get_db
 from app.repositories.chat import ChatRepository
+from app.models.session_to_agent import SessionStatus
+from app.core.params import MAX_DB_INT
 from app.core.logger import get_logger
 from uuid import UUID
 
@@ -41,10 +43,24 @@ async def get_chat_history():
     return {"message": "Chat history endpoint"}
 
 
+_STATUS_FILTERS = {s.value for s in SessionStatus}
+
+
+def _checked_status_filter(value: Optional[str]) -> Optional[str]:
+    """'all', one status or a comma-separated list of them. Anything else is
+    refused here: compared with the status column it is a database error."""
+    if not value or value == "all":
+        return value
+    unknown = [part for part in (v.strip() for v in value.split(",")) if part not in _STATUS_FILTERS]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown status: {', '.join(unknown)}")
+    return value
+
+
 @router.get("/recent/shopify", response_model=List[ChatOverviewResponse])
 @router.get("/recent", response_model=List[ChatOverviewResponse])
 async def get_recent_chats(
-    skip: int = Query(0, ge=0),
+    skip: int = Query(0, ge=0, le=MAX_DB_INT),
     limit: int = Query(20, ge=1, le=100),
     agent_id: Optional[str] = None,
     status: Optional[str] = Query(None, description="Filter by status: 'open', 'closed', or 'transferred'"),
@@ -57,6 +73,7 @@ async def get_recent_chats(
     db: Session = Depends(get_db)
 ):
     """Get recent chats - supports both JWT and Shopify session token auth"""
+    status = _checked_status_filter(status)
     try:
         chat_repo = ChatRepository(db)
         organization_id = auth_info['organization_id']

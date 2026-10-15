@@ -1358,6 +1358,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/webhooks/meta/{account_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Own App Webhook Verify
+         * @description Verification handshake for an account connected from the customer's
+         *     own Meta app: its verify token is the account's webhook secret.
+         */
+        get: operations["own_app_webhook_verify_api_v1_webhooks_meta__account_id__get"];
+        put?: never;
+        /**
+         * Own App Webhook
+         * @description A webhook for an account connected from the customer's own Meta app.
+         *
+         *     Checked with that app's secret only, and only taken for this
+         *     organization's accounts from the same app: the secret is one the customer
+         *     chose, so it must never vouch for anyone else's.
+         */
+        post: operations["own_app_webhook_api_v1_webhooks_meta__account_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/organizations": {
         parameters: {
             query?: never;
@@ -5506,6 +5535,10 @@ export interface components {
             created_at?: string | null;
             /** Webhook Url */
             webhook_url?: string | null;
+            /** Webhook Verify Token */
+            webhook_verify_token?: string | null;
+            /** Webhook Auto Configured */
+            webhook_auto_configured?: boolean | null;
         };
         /** ChatDetailResponse */
         ChatDetailResponse: {
@@ -7104,6 +7137,8 @@ export interface components {
         };
         /** MessengerConnectRequest */
         MessengerConnectRequest: {
+            /** App Secret */
+            app_secret?: string | null;
             /** Page Id */
             page_id: string;
             /** Page Access Token */
@@ -8807,9 +8842,11 @@ export interface components {
         };
         /**
          * WhatsAppConnectRequest
-         * @description Manual WhatsApp Cloud API credentials (self-hosters with their own Meta app).
+         * @description Manual WhatsApp Cloud API credentials, from the customer's own Meta app.
          */
         WhatsAppConnectRequest: {
+            /** App Secret */
+            app_secret?: string | null;
             /** Phone Number Id */
             phone_number_id: string;
             /** Access Token */
@@ -11762,6 +11799,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    own_app_webhook_verify_api_v1_webhooks_meta__account_id__get: {
+        parameters: {
+            query?: {
+                "hub.mode"?: string;
+                "hub.verify_token"?: string;
+                "hub.challenge"?: string;
+            };
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    own_app_webhook_api_v1_webhooks_meta__account_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                account_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

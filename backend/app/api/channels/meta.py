@@ -38,12 +38,23 @@ from app.channels.meta_base import (
     subscribe_instagram_app,
     GRAPH_INSTAGRAM_BASE,
 )
+from app.services.meta_own_app import (
+    APP_SECRET_KEY,
+    AppCheckUnavailable,
+    AppSecretMismatch,
+    OwnApp,
+    leave_own_app,
+    own_app_token,
+    resolve_own_app,
+    sync_own_app,
+)
 from app.core.security import decrypt_api_key, encrypt_api_key
 from app.core.auth import (
     get_current_organization,
     require_permissions,
 )
 from app.core.config import settings
+from app.core.error_handlers import ClientSafeHTTPException
 from app.database import get_db
 from app.models.channels import ChannelType
 from app.models.organization import Organization
@@ -287,8 +298,11 @@ async def _signup_user_token(request: MessengerSignupRequest) -> str:
 
 
 def _upsert_account(db: Session, organization: Organization, channel_type: str,
-                    external_account_id: str, credentials: dict, display_name: str):
-    """Create the account or refresh credentials on reconnect (same org only)."""
+                    external_account_id: str, credentials: dict, display_name: str,
+                    forget: tuple = ()):
+    """Create the account or refresh credentials on reconnect (same org only).
+    `forget` names stored credentials that no longer apply (an app secret,
+    once the account is connected through ChatterMate's own app)."""
     repo = ChannelAccountRepository(db)
     existing = repo.get_by_external_id(channel_type, external_account_id)
     if existing is not None:
@@ -301,6 +315,8 @@ def _upsert_account(db: Session, organization: Organization, channel_type: str,
         # signup PIN cannot be read back from Meta at all.
         merged = {**repo.get_credentials(existing),
                   **{k: v for k, v in credentials.items() if v is not None}}
+        for key in forget:
+            merged.pop(key, None)
         repo.update_credentials(existing, merged)
         return repo.set_active(existing, True)
     return repo.create_account(
@@ -310,6 +326,33 @@ def _upsert_account(db: Session, organization: Organization, channel_type: str,
         credentials=credentials,
         display_name=display_name,
     )
+
+
+def _previous_account(db: Session, organization: Organization, channel_type: str, external_account_id: str):
+    """This organization's earlier connection of the account, if any (another
+    organization's is a 409, before anything is asked of Meta)."""
+    previous = ChannelAccountRepository(db).get_by_external_id(channel_type, external_account_id)
+    if previous is not None and previous.organization_id != organization.id:
+        raise HTTPException(status_code=409, detail="This account is already connected to another organization")
+    return previous
+
+
+def _own_app_credentials(own: OwnApp | None) -> dict:
+    return {APP_SECRET_KEY: own.secret} if own else {}
+
+
+async def _own_app(access_token: str, entered_secret: str | None, previous) -> OwnApp | None:
+    """resolve_own_app, with its failures as answers the form can show."""
+    try:
+        return await resolve_own_app(access_token, entered_secret, previous)
+    except AppSecretMismatch:
+        raise HTTPException(status_code=400, detail=(
+            "That app secret is not the one for the Meta app this token comes from. "
+            "Copy it from your app's App settings → Basic." if entered_secret else
+            "The app secret saved before doesn't match this token. Enter the app secret again.")) from None
+    except AppCheckUnavailable as e:
+        raise ClientSafeHTTPException(
+            status_code=502, detail=f"Could not check the app secret with Meta, try again ({e})") from e
 
 
 @router.get("/embedded-signup-config", response_model=EmbeddedSignupConfigOut)
@@ -352,17 +395,24 @@ async def connect_whatsapp(
         raise HTTPException(status_code=400,
                             detail=f"Could not verify WhatsApp credentials: {data.get('error', {}).get('message', 'invalid token or phone_number_id')}")
 
+    previous = _previous_account(db, organization, ChannelType.WHATSAPP.value, request.phone_number_id)
+    own = await _own_app(request.access_token, request.app_secret, previous)
+    previous_token = own_app_token(previous)
+
     display = request.display_name or _whatsapp_display_name(data, request.phone_number_id)
     account = _upsert_account(
         db, organization, ChannelType.WHATSAPP.value,
         external_account_id=request.phone_number_id,
-        credentials={"access_token": request.access_token, "waba_id": request.waba_id},
+        credentials={"access_token": request.access_token, "waba_id": request.waba_id,
+                     **_own_app_credentials(own)},
         display_name=display,
+        forget=() if own else (APP_SECRET_KEY,),
     )
     # Route WABA events to our webhook (best-effort; needs the WABA id)
     if request.waba_id:
         if not await subscribe_app(request.waba_id, request.access_token):
             logger.warning(f"WABA subscribe failed for {request.waba_id}; webhook may need manual subscription")
+    await sync_own_app(db, account, own, request.access_token, previous_token)
     return to_account_out(db, account)
 
 
@@ -411,15 +461,21 @@ async def connect_whatsapp_embedded_signup(
     if registered:
         credentials["verification_pin"] = pin
 
+    # Connected from the customer's own app before: its token is the one that
+    # can hand the number's webhooks back
+    previous_token = own_app_token(_previous_account(
+        db, organization, ChannelType.WHATSAPP.value, request.phone_number_id))
     account = _upsert_account(
         db, organization, ChannelType.WHATSAPP.value,
         external_account_id=request.phone_number_id,
         credentials=credentials,
         display_name=request.display_name or _whatsapp_display_name(
             profile, request.phone_number_id),
+        forget=(APP_SECRET_KEY,),
     )
     if not await subscribe_app(request.waba_id, access_token):
         logger.warning(f"WABA subscribe failed for {request.waba_id} after Embedded Signup")
+    await sync_own_app(db, account, None, access_token, previous_token)
     return to_account_out(db, account)
 
 
@@ -448,17 +504,23 @@ async def connect_messenger(
             f"That token is for Page {info.get('profile_id')}, not the Page ID you "
             f"entered. Webhooks are routed by Page ID, so the two must match."))
 
+    previous = _previous_account(db, organization, ChannelType.MESSENGER.value, request.page_id)
+    own = await _own_app(request.page_access_token, request.app_secret, previous)
+    previous_token = own_app_token(previous)
+
     display_name = request.display_name or await _page_name(
         request.page_id, request.page_access_token)
     account = _upsert_account(
         db, organization, ChannelType.MESSENGER.value,
         external_account_id=request.page_id,
-        credentials={"access_token": request.page_access_token},
+        credentials={"access_token": request.page_access_token, **_own_app_credentials(own)},
         display_name=display_name,
+        forget=() if own else (APP_SECRET_KEY,),
     )
     if not await subscribe_app(request.page_id, request.page_access_token,
                                subscribed_fields=MESSENGER_SUBSCRIBED_FIELDS):
         logger.warning(f"Page subscribe failed for {request.page_id}; webhook may need manual subscription")
+    await sync_own_app(db, account, own, request.page_access_token, previous_token)
     return to_account_out(db, account)
 
 
@@ -511,15 +573,18 @@ async def connect_messenger_signup(
     if page is None or not page.get("access_token"):
         raise HTTPException(status_code=400, detail="That Page was not part of this signup")
 
+    previous_token = own_app_token(_previous_account(db, organization, ChannelType.MESSENGER.value, page["id"]))
     account = _upsert_account(
         db, organization, ChannelType.MESSENGER.value,
         external_account_id=page["id"],
         credentials={"access_token": page["access_token"]},
         display_name=request.display_name or page.get("name") or page["id"],
+        forget=(APP_SECRET_KEY,),
     )
     if not await subscribe_app(page["id"], page["access_token"],
                                subscribed_fields=MESSENGER_SUBSCRIBED_FIELDS):
         logger.warning(f"Page subscribe failed for {page['id']} after signup")
+    await sync_own_app(db, account, None, page["access_token"], previous_token)
     return to_account_out(db, account)
 
 
@@ -620,5 +685,6 @@ async def disconnect_meta_account(
                                     ChannelType.MESSENGER.value,
                                     ChannelType.INSTAGRAM.value):
         raise HTTPException(status_code=404, detail="Channel account not found")
+    await leave_own_app(account)
     ChannelAccountRepository(db).delete(account)
     return {"status": "disconnected"}

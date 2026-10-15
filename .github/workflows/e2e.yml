@@ -195,7 +195,7 @@ jobs:
         if: matrix.variant == 'api-fuzz'
         working-directory: e2e
         run: |
-          pip install schemathesis==3.39.16
+          pip install schemathesis==4.31.0
           ./scripts/stack.sh up
           npx playwright test --project=setup
           ./scripts/api-fuzz.sh
