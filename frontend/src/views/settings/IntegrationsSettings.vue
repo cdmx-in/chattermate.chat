@@ -22,7 +22,7 @@ import DashboardLayout from '@/layouts/DashboardLayout.vue'
 import { checkJiraConnection, getJiraAuthUrl, disconnectJira } from '@/services/jira'
 import { checkShopifyConnection, getShopifyShops } from '@/services/shopify'
 import channelsService, { type ChannelAccount } from '@/services/channels'
-import { reconnectWarning } from '@/utils/channelAccounts'
+import { accountToManage, reconnectWarning } from '@/utils/channelAccounts'
 import crmService, { type CrmConnection, type CrmProvider } from '@/services/crm'
 import TelegramConnectModal from '@/components/integrations/TelegramConnectModal.vue'
 import MetaChannelConnect from '@/components/integrations/MetaChannelConnect.vue'
@@ -151,7 +151,7 @@ const crmCardWarning = (connection: CrmConnection | null): string | undefined =>
 // "Manage" on a connected card: open the right modal for the connected account
 const manageIntegration = (integration: IntegrationCard) => {
   const id = integration.id
-  const acc = accountsFor(id)[0] ?? null
+  const acc = accountToManage(accountsFor(id))
   if (CREDENTIAL_CHANNELS.includes(id)) {
     credentialModalAccount.value = acc
     credentialModalChannel.value = id as 'email' | 'sms' | 'line'

@@ -12,6 +12,8 @@ import {
 // this test's number by name, never for the absence of any warning at all.
 
 const TOKEN_REFUSED = { error: { message: 'Error validating access token: Session has expired', type: 'OAuthException', code: 190, fbtrace_id: 'e2e' } }
+// Each read lists every account in the shared org; once a second is plenty
+const FLAG_POLL = { ...AI_REPLY, intervals: [1_000] }
 const WINDOW_CLOSED = { error: { message: 'Re-engagement message', type: 'OAuthException', code: 131047, fbtrace_id: 'e2e' } }
 
 async function needsReconnect(api: ApiClient, accountId: string): Promise<boolean> {
@@ -29,13 +31,16 @@ test.describe('a WhatsApp number whose token Meta refuses', () => {
 
     const restore = await externals.fail({ provider: 'graph', action: 'messages', contains: chat.waId, status: 401, body: TOKEN_REFUSED })
     await chat.send('Hello?')
-    await expect.poll(() => needsReconnect(adminApi, number.account.id), AI_REPLY).toBe(true)
+    await expect.poll(() => needsReconnect(adminApi, number.account.id), FLAG_POLL).toBe(true)
     expect(await chat.replies()).toEqual([])
 
     const integrations = new IntegrationsPage(page)
     const warning = integrations.expiredAccessFor(number.account.display_name ?? '')
     await integrations.goto()
     await expect(integrations.card('WhatsApp')).toContainText(warning)
+    // Other numbers are connected too; Manage still leads to the fix, not the first number
+    await integrations.manage('WhatsApp')
+    await expect(integrations.reconnectPrompt()).toBeVisible()
 
     // The customer swaps in a working token: same number, connected again
     await restore()
@@ -61,7 +66,7 @@ test.describe('a WhatsApp number whose token Meta refuses', () => {
     // Meta refuses the token once, then accepts it (it was refreshed on Meta's side)
     await externals.fail({ provider: 'graph', action: 'messages', contains: chat.waId, status: 401, body: TOKEN_REFUSED, times: 1 })
     await chat.send('Hello?')
-    await expect.poll(() => needsReconnect(adminApi, number.account.id), AI_REPLY).toBe(true)
+    await expect.poll(() => needsReconnect(adminApi, number.account.id), FLAG_POLL).toBe(true)
 
     await chat.send('Hello again?')
     await expect.poll(() => chat.replies(), AI_REPLY).toEqual(['Happy to help!'])

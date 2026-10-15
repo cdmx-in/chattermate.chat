@@ -28,6 +28,18 @@ export class IntegrationsPage {
     return new RegExp(`Access expired for [^—]*${name}[^—]*— reconnect to resume replies\\.`)
   }
 
+  /** Opens the card's Manage dialog. */
+  async manage(name: string): Promise<void> {
+    await step(`Manage ${name}`, async () => {
+      await this.card(name).getByRole('button', { name: 'Manage' }).click()
+    })
+  }
+
+  /** The Manage dialog's prompt to reconnect an account Meta stopped accepting. */
+  reconnectPrompt(): Locator {
+    return this.page.getByText('Meta stopped accepting this account\'s access. Reconnect to resume replies.')
+  }
+
   /** Starts the integration's OAuth flow; the provider's consent screen sends the browser back here. */
   async connect(name: string): Promise<void> {
     await step(`Connect ${name}`, async () => {

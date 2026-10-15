@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 import { describe, it, expect } from 'vitest'
-import { reconnectWarning } from '@/utils/channelAccounts'
+import { accountToManage, reconnectWarning } from '@/utils/channelAccounts'
 import type { ChannelAccount } from '@/services/channels'
 
 const account = (overrides: Partial<ChannelAccount> = {}): ChannelAccount => ({
@@ -46,5 +46,27 @@ describe('reconnectWarning', () => {
   it('falls back to the platform id when the account has no name', () => {
     expect(reconnectWarning([account({ display_name: undefined, needs_reconnect: true })]))
       .toContain('Access expired for PN1')
+  })
+})
+
+describe('accountToManage', () => {
+  it('opens the account that needs reconnecting, even when it is not first', () => {
+    const healthy = account({ id: 'a1' })
+    const expired = account({ id: 'a2', needs_reconnect: true })
+    expect(accountToManage([healthy, expired])).toBe(expired)
+  })
+
+  it('opens the first expired one when several need reconnecting', () => {
+    const first = account({ id: 'a2', needs_reconnect: true })
+    expect(accountToManage([account({ id: 'a1' }), first, account({ id: 'a3', needs_reconnect: true })])).toBe(first)
+  })
+
+  it('opens the first account when every one is healthy', () => {
+    const first = account({ id: 'a1' })
+    expect(accountToManage([first, account({ id: 'a2' })])).toBe(first)
+  })
+
+  it('opens nothing when no account is connected', () => {
+    expect(accountToManage([])).toBeNull()
   })
 })

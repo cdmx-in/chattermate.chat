@@ -24,3 +24,8 @@ export const reconnectWarning = (accounts: ChannelAccount[]): string | undefined
   const names = expired.map(a => a.display_name || a.external_account_id).join(', ')
   return `Access expired for ${names} — reconnect to resume replies.`
 }
+
+/** The account a card's Manage opens: one that needs reconnecting first, so
+ *  the card's warning leads to its fix, else the first connected. */
+export const accountToManage = (accounts: ChannelAccount[]): ChannelAccount | null =>
+  accounts.find(a => a.needs_reconnect) ?? accounts[0] ?? null
