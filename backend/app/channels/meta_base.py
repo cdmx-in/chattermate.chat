@@ -39,6 +39,9 @@ GRAPH_INSTAGRAM_BASE = external_base("META_GRAPH_INSTAGRAM_BASE", "https://graph
 INSTAGRAM_OAUTH_BASE = "https://api.instagram.com"
 REQUEST_TIMEOUT_SECONDS = 15.0
 SEND_RETRIES = 2
+# Graph error codes meaning the access token is unusable: 190 expired or
+# invalidated token, 102 expired session, 0 WhatsApp's "Authentication Error"
+GRAPH_AUTH_ERROR_CODES = frozenset({0, 102, 190})
 # Meta customer-service window: free-form replies allowed for 24h after the
 # customer's last inbound message (applies to WhatsApp, Messenger and Instagram).
 WINDOW_HOURS = 24
@@ -121,7 +124,8 @@ async def graph_post(path: str, access_token: str, payload: dict,
                 return SendResult(ok=True, external_message_id=message_id)
             # 4xx are our fault (bad token, closed window) — don't retry
             if response.status_code < 500:
-                return SendResult(ok=False, error=_graph_error(response))
+                return SendResult(ok=False, error=_graph_error(response),
+                                  auth_failed=_is_auth_error(response))
             last_error = _graph_error(response)
         except Exception as e:
             last_error = str(e)
@@ -393,6 +397,22 @@ def _extract_message_id(data: dict) -> Optional[str]:
     if isinstance(data.get("messages"), list) and data["messages"]:
         return str(data["messages"][0].get("id", "")) or None
     return data.get("message_id")
+
+
+def graph_auth_refused(body) -> bool:
+    """Whether a Graph error body says the access token itself is unusable
+    (expired, revoked, or never valid), as opposed to refusing this one call."""
+    error = body.get("error") if isinstance(body, dict) else None
+    return isinstance(error, dict) and error.get("code") in GRAPH_AUTH_ERROR_CODES
+
+
+def _is_auth_error(response: httpx.Response) -> bool:
+    if response.status_code == 401:
+        return True
+    try:
+        return graph_auth_refused(response.json())
+    except Exception:
+        return False
 
 
 def _graph_error(response: httpx.Response) -> str:

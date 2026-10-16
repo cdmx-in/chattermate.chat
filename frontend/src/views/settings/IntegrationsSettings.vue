@@ -22,6 +22,7 @@ import DashboardLayout from '@/layouts/DashboardLayout.vue'
 import { checkJiraConnection, getJiraAuthUrl, disconnectJira } from '@/services/jira'
 import { checkShopifyConnection, getShopifyShops } from '@/services/shopify'
 import channelsService, { type ChannelAccount } from '@/services/channels'
+import { accountToManage, reconnectWarning } from '@/utils/channelAccounts'
 import crmService, { type CrmConnection, type CrmProvider } from '@/services/crm'
 import TelegramConnectModal from '@/components/integrations/TelegramConnectModal.vue'
 import MetaChannelConnect from '@/components/integrations/MetaChannelConnect.vue'
@@ -150,7 +151,7 @@ const crmCardWarning = (connection: CrmConnection | null): string | undefined =>
 // "Manage" on a connected card: open the right modal for the connected account
 const manageIntegration = (integration: IntegrationCard) => {
   const id = integration.id
-  const acc = accountsFor(id)[0] ?? null
+  const acc = accountToManage(accountsFor(id))
   if (CREDENTIAL_CHANNELS.includes(id)) {
     credentialModalAccount.value = acc
     credentialModalChannel.value = id as 'email' | 'sms' | 'line'
@@ -430,6 +431,7 @@ const availableIntegrations = computed<IntegrationCard[]>(() => [
     color: 'accent',
     connected: accountsFor('slack').length > 0,
     teamName: accountsFor('slack').map(a => a.display_name).filter(Boolean).join(', '),
+    warning: reconnectWarning(accountsFor('slack')),
     isLoading: channelsLoading.value,
     connectAction: connectSlack,
     disconnectAction: handleDisconnectSlack
@@ -443,6 +445,7 @@ const availableIntegrations = computed<IntegrationCard[]>(() => [
     color: 'accent',
     connected: telegramAccounts.value.length > 0,
     teamName: telegramAccounts.value.map(a => a.display_name).filter(Boolean).join(', '),
+    warning: reconnectWarning(telegramAccounts.value),
     isLoading: channelsLoading.value,
     connectAction: () => { showTelegramModal.value = true },
     disconnectAction: handleDisconnectTelegram
@@ -469,6 +472,7 @@ const availableIntegrations = computed<IntegrationCard[]>(() => [
       color: meta.color,
       connected: accounts.length > 0,
       teamName: accounts.map(a => a.display_name).filter(Boolean).join(', '),
+      warning: reconnectWarning(accounts),
       isLoading: channelsLoading.value,
       connectAction: () => { metaModalChannel.value = channel },
       disconnectAction: meta.disconnect,
@@ -500,6 +504,7 @@ const availableIntegrations = computed<IntegrationCard[]>(() => [
       color: meta.color,
       connected: accounts.length > 0,
       teamName: accounts.map(a => a.display_name).filter(Boolean).join(', '),
+      warning: reconnectWarning(accounts),
       isLoading: channelsLoading.value,
       connectAction: () => { credentialModalChannel.value = channel },
       disconnectAction: meta.disconnect
@@ -947,7 +952,7 @@ onMounted(async () => {
     v-if="metaModalChannel"
     :channel="metaModalChannel"
     :existing-account="metaModalAccount"
-    @close="metaModalChannel = null; metaModalAccount = null"
+    @close="metaModalChannel = null; metaModalAccount = null; fetchChannelAccounts()"
     @connected="onChannelConnected"
   />
 

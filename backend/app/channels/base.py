@@ -141,6 +141,9 @@ class SendResult:
     # True when the failure is a closed messaging window that an approved
     # template message could reopen (WhatsApp)
     can_template: bool = False
+    # True when the platform rejected the account's credentials (expired or
+    # revoked token): nothing will send until the account is reconnected
+    auth_failed: bool = False
 
 
 @dataclass

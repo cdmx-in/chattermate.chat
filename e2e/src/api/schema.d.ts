@@ -5535,6 +5535,11 @@ export interface components {
             created_at?: string | null;
             /** Webhook Url */
             webhook_url?: string | null;
+            /**
+             * Needs Reconnect
+             * @default false
+             */
+            needs_reconnect: boolean;
             /** Webhook Verify Token */
             webhook_verify_token?: string | null;
             /** Webhook Auto Configured */
