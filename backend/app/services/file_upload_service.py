@@ -19,7 +19,8 @@ import os
 import uuid
 from typing import Dict, Optional, List, Set
 from app.core.config import settings
-from app.core.s3 import upload_file_to_s3, get_s3_signed_url
+from app.core.s3 import upload_file_to_s3
+from app.services.file_storage import resolve_public_url
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -351,8 +352,6 @@ class FileUploadService:
                     filename=unique_filename,
                     content_type=content_type
                 )
-                # Generate signed URL for S3 object  
-                signed_url = await get_s3_signed_url(file_url)
             else:
                 # Save locally
                 upload_dir = os.path.join("uploads", folder)
@@ -363,8 +362,9 @@ class FileUploadService:
                     f.write(file_content)
                 
                 file_url = f"/uploads/{folder}/{unique_filename}"
-                signed_url = file_url
-            
+
+            signed_url = await resolve_public_url(file_url)
+
             logger.info(f"Successfully uploaded file: {filename} -> {file_url}")
             
             return {

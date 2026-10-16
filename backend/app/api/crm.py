@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from app.core.auth import get_current_organization, require_permissions
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.core.redis import get_redis
+from app.core.oauth_state import pop_state, store_state
 from app.crm.base import CrmAuthError, CrmTransientError, basic_auth_header
 from app.crm.registry import get_adapter
 from app.database import get_db
@@ -45,21 +45,9 @@ from app.services.feature_gate import check_feature_access
 router = APIRouter()
 logger = get_logger(__name__)
 
-STATE_TTL_SECONDS = 60 * 10
 UPGRADE_MESSAGE = "CRM sync is not available in your current plan."
 # HubSpot signs webhooks with a timestamp; reject anything older than this.
 WEBHOOK_TIMESTAMP_MAX_AGE_SECONDS = 300
-
-# In-process fallback when Redis is disabled (single-worker dev setups).
-# Maps state -> (value, expires_at) so abandoned installs don't leak forever.
-_state_fallback: dict = {}
-
-
-def _prune_state_fallback() -> None:
-    now = time.time()
-    for key in [k for k, (_, exp) in _state_fallback.items() if exp < now]:
-        _state_fallback.pop(key, None)
-
 
 def _provider_credentials(provider: str) -> tuple:
     return {
@@ -74,25 +62,11 @@ def _require_provider(provider: str) -> None:
 
 
 def _store_state(state: str, org_id: str, provider: str) -> None:
-    redis_client = get_redis()
-    value = f"{org_id}:{provider}"
-    if redis_client is not None:
-        redis_client.set(f"crm_oauth_state:{state}", value, ex=STATE_TTL_SECONDS)
-    else:
-        _prune_state_fallback()
-        _state_fallback[state] = (value, time.time() + STATE_TTL_SECONDS)
+    store_state("crm", state, f"{org_id}:{provider}")
 
 
 def _pop_state(state: str) -> tuple:
-    redis_client = get_redis()
-    if redis_client is not None:
-        key = f"crm_oauth_state:{state}"
-        value = redis_client.get(key)
-        if value:
-            redis_client.delete(key)
-    else:
-        entry = _state_fallback.pop(state, None)
-        value = entry[0] if entry and entry[1] >= time.time() else None
+    value = pop_state("crm", state)
     if not value or ":" not in value:
         return None, None
     org_id, provider = value.split(":", 1)

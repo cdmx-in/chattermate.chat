@@ -31,6 +31,7 @@ from app.models.organization import Organization
 from app.models.user import User
 from app.core.logger import get_logger
 from app.core.config import settings
+from app.core.oauth_state import pop_state, store_state
 from pydantic import BaseModel
 from typing import Optional, List
 from app.core.exceptions import JiraAuthError
@@ -52,11 +53,6 @@ def _require_jira_agent_in_org(db, agent_id, org_id) -> None:
         raise HTTPException(status_code=404, detail="Agent not found")
     if not AgentRepository(db).get_agent_in_org(agent_uuid, org_id):
         raise HTTPException(status_code=404, detail="Agent not found")
-
-# Create a temporary in-memory store for OAuth states
-# This is a simple solution that doesn't require database changes
-# In production, you might want to use Redis or a database table
-oauth_states = {}
 
 class JiraProject(BaseModel):
     id: str
@@ -180,9 +176,7 @@ async def authorize_jira(
     # Generate a random state for CSRF protection
     state = secrets.token_urlsafe(32)
     
-    # Store state in memory with organization ID
-    oauth_states[state] = str(organization.id)
-    logger.info(f"Stored OAuth state in memory: {state}")
+    store_state("jira", state, str(organization.id))
     
     # Get authorization URL
     auth_url = jira_service.get_authorization_url(state)
@@ -205,15 +199,12 @@ async def jira_oauth_callback(
     # Handle cancellation or error from Jira
     if error or not code or not state:
         logger.warning(f"Jira OAuth flow cancelled or error: {error} - {error_description}")
-        # Clean up the state if it exists
-        if state and state in oauth_states:
-            del oauth_states[state]
+        pop_state("jira", state or "")
         # Redirect to failure page
         redirect_url = f"{settings.FRONTEND_URL}/settings/integrations?status=failure&reason={error or 'cancelled'}"
         return RedirectResponse(url=redirect_url)
     
-    # Get organization ID from state
-    org_id = oauth_states.get(state)
+    org_id = pop_state("jira", state)
     
     if not org_id:
         logger.error(f"Invalid or expired state parameter: {state}")
@@ -221,6 +212,7 @@ async def jira_oauth_callback(
         return RedirectResponse(url=redirect_url)
     
     try:
+        org_id = uuid.UUID(org_id)
         # Exchange code for token
         token_data = await jira_service.exchange_code_for_token(code)
         
@@ -254,10 +246,6 @@ async def jira_oauth_callback(
         
         db.commit()
         
-        # Clean up the state
-        if state in oauth_states:
-            del oauth_states[state]
-        
         # Redirect to success page using FRONTEND_URL from settings
         redirect_url = f"{settings.FRONTEND_URL}/settings/integrations?status=success"
         return RedirectResponse(url=redirect_url)
@@ -265,9 +253,6 @@ async def jira_oauth_callback(
     except Exception as e:
         logger.error(f"Error during Jira OAuth callback: {e}")
         traceback.print_exc()
-        # Clean up the state in case of error
-        if state in oauth_states:
-            del oauth_states[state]
         # Redirect to failure page with error message
         error_message = str(e).replace(" ", "_")[:100]  # Limit length and replace spaces
         redirect_url = f"{settings.FRONTEND_URL}/settings/integrations?status=failure&reason={error_message}"

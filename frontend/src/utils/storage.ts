@@ -248,7 +248,9 @@ export const subscriptionStorage = {
     }
 
     return {
-      maxAgents: subscription.plan.max_agents ?? 0,
+      // null means unlimited (as on the backend) — `?? 0` locked agent creation
+      // for every unlimited plan.
+      maxAgents: subscription.plan.max_agents ?? null,
       maxKnowledgeSources: subscription.plan.max_knowledge_sources ?? 0,
       maxSubPages: subscription.plan.max_sub_pages ?? 0,
       dataRetentionDays: subscription.plan.data_retention_days ?? 0

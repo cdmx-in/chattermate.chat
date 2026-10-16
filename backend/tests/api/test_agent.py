@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 import pytest
+from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 from app.models.user import User, UserGroup
@@ -235,6 +236,20 @@ def test_update_agent(
     updated_agent = response.json()
     assert updated_agent["display_name"] == update_data["display_name"]
     assert updated_agent["instructions"] == update_data["instructions"]
+
+def test_reply_buttons_are_off_by_default_and_turning_them_on_reregisters_telegram(
+    client, db, test_user, test_agent
+):
+    assert client.get(f"/api/agents/{test_agent.id}").json()["channel_quick_replies"] is False
+    with patch("app.api.agent.telegram_webhooks.reregister_for_agent", AsyncMock()) as reregister:
+        response = client.put(f"/api/agents/{test_agent.id}", json={"channel_quick_replies": True})
+        assert response.status_code == 200 and response.json()["channel_quick_replies"] is True
+        reregister.assert_awaited_once()
+        # Already on: nothing to re-register
+        client.put(f"/api/agents/{test_agent.id}", json={"channel_quick_replies": True})
+        client.put(f"/api/agents/{test_agent.id}", json={"display_name": "Other"})
+        assert reregister.await_count == 1
+
 
 def test_update_agent_guardrail_round_trips(
     client,
@@ -690,7 +705,7 @@ def test_customization_response_signs_photo_url_without_persisting_it(
     instance, which SQLAlchemy then flushed, so stored URLs carried a signature
     that eventually expired.
     """
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import AsyncMock, patch, MagicMock
 
     stored_url = "https://bucket.s3.us-east-1.amazonaws.com/agents/photo.png"
     signed_url = f"{stored_url}?AWSAccessKeyId=A&Signature=S&Expires=1"

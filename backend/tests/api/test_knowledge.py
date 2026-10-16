@@ -220,6 +220,32 @@ def test_upload_pdf(client: TestClient, test_organization):
         assert "queue_items" in response.json()
         assert len(response.json()["queue_items"]) == 1
 
+@pytest.fixture(autouse=True)
+def dns(monkeypatch):
+    """No real lookups from tests: DNS "can't tell" unless a test says so."""
+    answers = {}
+
+    async def resolves(host):
+        return answers.get(host)
+    monkeypatch.setattr(knowledge_router, "domain_resolves", resolves)
+    return answers
+
+
+def test_add_urls_fails_a_domain_that_does_not_exist_at_once(client: TestClient, test_organization, dns, db):
+    dns["teeckbox.com"] = False
+    dns["example.com"] = True
+    response = client.post("/api/v1/knowledge/add/urls", json={
+        "org_id": str(test_organization.id),
+        "websites": ["https://teeckbox.com", "https://example.com"],
+    })
+
+    assert response.status_code == 200
+    assert [item["status"] for item in response.json()["queue_items"]] == ["failed", "pending"]
+    failed = db.query(KnowledgeQueue).filter(KnowledgeQueue.source == "https://teeckbox.com").one()
+    # The same words the crawler would have stored, so the reason reads the same
+    assert knowledge_router._serialize_queue_item(failed)["reason"].startswith("This site could not be found")
+
+
 def test_add_urls(client: TestClient, test_organization):
     """Test adding URLs for processing"""
     urls_data = {
@@ -565,6 +591,18 @@ def test_get_organization_queue_items(client: TestClient, test_organization, tes
     assert response.status_code == 200
     sources = [item["source"] for item in response.json()["queue_items"]]
     assert test_knowledge_queue.source in sources
+
+
+def test_failed_queue_items_carry_a_plain_reason(client: TestClient, db: Session, test_organization, test_user):
+    """Raw errors stay in `error`; people get one sentence in `reason`."""
+    db.add(KnowledgeQueue(organization_id=test_organization.id, user_id=test_user.id, source_type="website",
+                          source="https://nope.invalid", status=QueueStatus.FAILED,
+                          error="Traceback: KeyError 'x'", created_at=datetime.now(timezone.utc)))
+    db.commit()
+    response = client.get(f"/api/v1/knowledge/queue/organization/{test_organization.id}")
+    (item,) = [i for i in response.json()["queue_items"] if i["source"] == "https://nope.invalid"]
+    assert item["reason"].startswith("We couldn't read any pages there")
+    assert "Traceback" not in item["reason"]
 
 
 def test_get_organization_queue_items_wrong_org(client: TestClient):
@@ -993,6 +1031,32 @@ def test_add_urls_rejects_zero_max_links(client: TestClient, test_organization):
         "max_links": 0,
     })
     assert response.status_code == 422
+
+
+def test_create_text_source_creates_the_vector_table_before_writing(monkeypatch):
+    """An org whose first knowledge source is pasted text has no vector table yet
+    (only URL/PDF ingestion used to create it), so the write must create it first."""
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+    from app.knowledge import page_editor
+
+    calls = []
+    fake_manager = MagicMock()
+    fake_manager.vector_db.table_name = "d_test"
+    fake_manager.vector_db.schema = "ai"
+    fake_manager.vector_db.create.side_effect = lambda: calls.append("create")
+    fake_manager.vector_db.upsert.side_effect = lambda *a, **kw: calls.append("upsert")
+    monkeypatch.setattr(page_editor, "KnowledgeManager", lambda **kw: fake_manager)
+    monkeypatch.setattr(page_editor, "embed_page", lambda *a, **kw: [SimpleNamespace(id="t", embedding=[0.1])])
+
+    repo = MagicMock()
+    repo.get_by_sources.return_value = []
+    repo.create.side_effect = lambda knowledge: knowledge
+    monkeypatch.setattr(page_editor, "KnowledgeRepository", lambda db: repo)
+
+    page_editor.create_text_source(MagicMock(), uuid4(), "Returns", "Returns within 45 days.")
+
+    assert calls == ["create", "upsert"]
 
 
 # Test cases for add/text endpoint

@@ -62,6 +62,8 @@ export interface QueueItem {
   source_type: string
   status: 'pending' | 'processing' | 'failed' | 'completed'
   error?: string
+  /** For a failed item: one plain sentence about what went wrong */
+  reason?: string | null
   created_at: string
   updated_at?: string
   processing_stage?: string

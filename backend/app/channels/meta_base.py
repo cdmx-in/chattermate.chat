@@ -17,28 +17,31 @@ limitations under the License.
 import asyncio
 import hashlib
 import hmac
-import json
 from datetime import datetime, timezone
-from typing import ClassVar, Optional
+from typing import ClassVar, Iterable, Optional
 
 import httpx
 
 from app.channels.base import ChannelAdapter, SendResult, WindowStatus
 from app.core.config import settings
-from app.core.security import decrypt_api_key
+from app.core.security import decrypt_credentials
 from app.models.channels import ChannelAccount, ChannelConversation
 from app.core.logger import get_logger
+from app.core.external_urls import external_base
 
 logger = get_logger(__name__)
 
-GRAPH_BASE = "https://graph.facebook.com"
+GRAPH_BASE = external_base("META_GRAPH_BASE", "https://graph.facebook.com")
 # Instagram API with Instagram Login speaks to its own host with an Instagram
 # user token; the Facebook graph rejects those. Page-based channels keep using
 # GRAPH_BASE, so every helper below takes the base rather than assuming one.
-GRAPH_INSTAGRAM_BASE = "https://graph.instagram.com"
+GRAPH_INSTAGRAM_BASE = external_base("META_GRAPH_INSTAGRAM_BASE", "https://graph.instagram.com")
 INSTAGRAM_OAUTH_BASE = "https://api.instagram.com"
 REQUEST_TIMEOUT_SECONDS = 15.0
 SEND_RETRIES = 2
+# Graph error codes meaning the access token is unusable: 190 expired or
+# invalidated token, 102 expired session, 0 WhatsApp's "Authentication Error"
+GRAPH_AUTH_ERROR_CODES = frozenset({0, 102, 190})
 # Meta customer-service window: free-form replies allowed for 24h after the
 # customer's last inbound message (applies to WhatsApp, Messenger and Instagram).
 WINDOW_HOURS = 24
@@ -71,10 +74,17 @@ def verify_meta_signature(raw_body: bytes, signature_header: str) -> bool:
     we own instead of trusting unverified content to choose one; an attacker
     still has to forge one of them.
     """
+    return signed_by_any(raw_body, signature_header,
+                         (settings.META_APP_SECRET, settings.INSTAGRAM_APP_SECRET))
+
+
+def signed_by_any(raw_body: bytes, signature_header: str, app_secrets: Iterable[Optional[str]]) -> bool:
+    """Whether X-Hub-Signature-256 was made with one of these app secrets
+    (constant-time; empty secrets are skipped)."""
     if not signature_header or not signature_header.startswith("sha256="):
         return False
     provided = signature_header[len("sha256="):]
-    for app_secret in (settings.META_APP_SECRET, settings.INSTAGRAM_APP_SECRET):
+    for app_secret in app_secrets:
         if not app_secret:
             continue
         expected = hmac.new(app_secret.encode(), raw_body, hashlib.sha256).hexdigest()
@@ -114,7 +124,8 @@ async def graph_post(path: str, access_token: str, payload: dict,
                 return SendResult(ok=True, external_message_id=message_id)
             # 4xx are our fault (bad token, closed window) — don't retry
             if response.status_code < 500:
-                return SendResult(ok=False, error=_graph_error(response))
+                return SendResult(ok=False, error=_graph_error(response),
+                                  auth_failed=_is_auth_error(response))
             last_error = _graph_error(response)
         except Exception as e:
             last_error = str(e)
@@ -388,6 +399,22 @@ def _extract_message_id(data: dict) -> Optional[str]:
     return data.get("message_id")
 
 
+def graph_auth_refused(body) -> bool:
+    """Whether a Graph error body says the access token itself is unusable
+    (expired, revoked, or never valid), as opposed to refusing this one call."""
+    error = body.get("error") if isinstance(body, dict) else None
+    return isinstance(error, dict) and error.get("code") in GRAPH_AUTH_ERROR_CODES
+
+
+def _is_auth_error(response: httpx.Response) -> bool:
+    if response.status_code == 401:
+        return True
+    try:
+        return graph_auth_refused(response.json())
+    except Exception:
+        return False
+
+
 def _graph_error(response: httpx.Response) -> str:
     try:
         body = response.json()
@@ -420,7 +447,7 @@ class MetaBaseAdapter(ChannelAdapter):
     @staticmethod
     def access_token(account: ChannelAccount) -> str:
         """Decrypt the account's Graph access token (page or WABA token)."""
-        return json.loads(decrypt_api_key(account.encrypted_credentials))["access_token"]
+        return decrypt_credentials(account.encrypted_credentials)["access_token"]
 
     @staticmethod
     def _timestamp(value) -> Optional[datetime]:

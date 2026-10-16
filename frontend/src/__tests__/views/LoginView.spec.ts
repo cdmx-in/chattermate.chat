@@ -179,6 +179,16 @@ describe('LoginView', () => {
     expect(router.currentRoute.value.path).toBe('/ai-agents')
   })
 
+  it('shows the backend message authService.login rethrows', async () => {
+    // What the real service throws: a plain Error carrying the API's detail.
+    ;(authService.login as any).mockRejectedValue(new Error('Incorrect email or password'))
+    await wrapper.find('input[type="email"]').setValue('someone@example.com')
+    await wrapper.find('input[type="password"]').setValue('wrong')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('.auth-error').text()).toBe('Incorrect email or password')
+  })
+
   it('handles login error', async () => {
     const errorMessage = 'Invalid credentials'
     ;(authService.login as any).mockRejectedValue({

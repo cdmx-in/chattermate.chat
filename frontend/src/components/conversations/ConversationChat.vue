@@ -31,7 +31,7 @@ import ChannelBadge from '@/components/common/ChannelBadge.vue'
 import WhatsAppTemplatePicker from '@/components/conversations/WhatsAppTemplatePicker.vue'
 import MessageStatusTicks from '@/components/conversations/MessageStatusTicks.vue'
 import QuickReplyChips from '@/components/conversations/QuickReplyChips.vue'
-import ButtonReplyTag from '@/components/conversations/ButtonReplyTag.vue'
+import MessageTag from '@/components/conversations/MessageTag.vue'
 import { marked } from 'marked'
 import { sanitizeHtml } from '@/utils/sanitize'
 import type { Renderer } from 'marked'
@@ -349,7 +349,16 @@ watch(() => currentChat.value?.session_id, () => refreshLinkedTicket())
               </template>
               <!-- Regular message with markdown -->
               <template v-else>
-                <ButtonReplyTag v-if="message.attributes?.interactive_reply" />
+                <MessageTag
+                  v-if="message.attributes?.interactive_reply"
+                  icon="fa-solid fa-hand-pointer"
+                  label="Button reply"
+                />
+                <MessageTag
+                  v-if="message.attributes?.source === 'app'"
+                  icon="fa-solid fa-plug"
+                  :label="`Sent by ${message.attributes?.app_name || 'an app'}`"
+                />
                 <div v-html="renderMarkdown(message.message || '')"></div>
                 <QuickReplyChips :sent="message.attributes?.interactive_sent" />
                 

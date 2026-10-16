@@ -16,17 +16,20 @@ limitations under the License.
 
 import re
 import uuid
+from dataclasses import dataclass
 from typing import Optional
 from uuid import UUID
 
 from sqlalchemy.orm import Session
 
 from app.channels import get_adapter
-from app.channels.constants import DEFAULT_TEMPLATE_LANGUAGE
+from app.channels.app_hooks import OutboundRecord, emit_channel_event, outbound_event
+from app.channels.constants import DEFAULT_TEMPLATE_LANGUAGE, MessageSource
 from app.services.channel_chat import placeholder_name
+from app.services.business_message import remember_business_message
 from app.services.channel_status import record_sent
-from app.services.chat_notifications import notify_new_chat
-from app.channels.meta_base import fetch_message_templates
+from app.services.chat_notifications import team_not_yet_notified
+from app.channels.meta_base import fetch_message_templates, graph_auth_refused, graph_detail
 from app.core.logger import get_logger
 from app.models.channels import ChannelAccount
 from app.repositories.channels import (
@@ -48,6 +51,14 @@ logger = get_logger(__name__)
 OUTBOUND_CATEGORIES = {"UTILITY", "AUTHENTICATION"}
 
 _PLACEHOLDER = re.compile(r"\{\{(\d+)\}\}")
+
+
+@dataclass
+class OutboundSent:
+    """A started (or rejoined) conversation and the template that opened it."""
+    session_id: UUID
+    message_id: int
+    external_message_id: Optional[str]
 
 
 class OutboundError(Exception):
@@ -97,7 +108,8 @@ async def _approved_outbound_template(db: Session, account: ChannelAccount,
     which is why Meta accepts Marketing there — and why the inbox picker has
     never been category-gated.
     """
-    credentials = ChannelAccountRepository(db).get_credentials(account)
+    repo = ChannelAccountRepository(db)
+    credentials = repo.get_credentials(account)
     waba_id = credentials.get("waba_id")
     if not waba_id:
         raise OutboundError(400, "Reconnect this number with its WhatsApp "
@@ -105,6 +117,8 @@ async def _approved_outbound_template(db: Session, account: ChannelAccount,
 
     ok, data = await fetch_message_templates(waba_id, credentials["access_token"])
     if not ok:
+        if graph_auth_refused(data):
+            repo.record_auth_failure(account, graph_detail(data, "Authentication Error"))
         raise OutboundError(502, "Could not read the account's templates from Meta")
 
     template = next(
@@ -184,12 +198,17 @@ async def start_outbound_conversation(
     components: Optional[list] = None,
     customer_id: Optional[UUID] = None,
     customer_name: Optional[str] = None,
-) -> UUID:
+    source: MessageSource,
+) -> OutboundSent:
     """Start (or rejoin) a WhatsApp conversation by phone number.
 
-    Returns the session_id; everything downstream — the inbox thread, template
-    resends, the AI answering the reply — already keys off a session, which is
-    why this returns one instead of growing a parallel outbound code path.
+    Returns the session — everything downstream (the inbox thread, template
+    resends, the AI answering the reply) already keys off one, which is why
+    this hands one back instead of growing a parallel outbound code path —
+    and the stored template message. `source` is who sent it (an inbox user,
+    or an external app). The team is told about the thread only once the
+    customer's reply needs them (notify_new_channel_chat_once), so a bulk
+    send doesn't page anyone.
 
     The conversation is created with last_inbound_at=None: no customer message
     means no 24-hour window, and pretending otherwise would let the AI send
@@ -222,14 +241,13 @@ async def start_outbound_conversation(
     else:
         customer = _resolve_customer(db, account, phone, customer_id, customer_name)
         session_id = uuid.uuid4()
-        new_session = SessionToAgentRepository(db).create_session(
+        SessionToAgentRepository(db).create_session(
             session_id=session_id,
             agent_id=str(agent_id),
             customer_id=str(customer.id),
             organization_id=str(account.organization_id),
             channel=account.channel_type,
         )
-        await notify_new_chat(db, new_session)
         conversation = conv_repo.create(
             channel_account_id=account.id,
             channel_type=account.channel_type,
@@ -240,11 +258,13 @@ async def start_outbound_conversation(
             agent_id=agent_id,
             customer_id=customer.id,
             last_inbound_at=None,
+            extra=team_not_yet_notified(),
         )
 
     adapter = get_adapter("whatsapp")
     result = await adapter.send_template(account, conversation, template_name,
                                          language, components)
+    ChannelAccountRepository(db).track_send_result(account, result)
     if not result.ok:
         if existing is None:
             # A failed send must not leave an empty thread in the inbox: drop
@@ -280,14 +300,20 @@ async def start_outbound_conversation(
             "channel": account.channel_type,
             "external_message_id": result.external_message_id,
             "outbound_template": template_name,
+            "source": source.value,
         },
     })
     if result.external_message_id:
         await record_sent(db, stored.id, account.id, result.external_message_id)
     # The AI reads this when the customer replies: a bare "yes" is meaningless
-    # without knowing what we asked (see _run_chat_agent).
-    conv_repo.set_extra(conversation, {
-        **(conversation.extra or {}),
-        "outbound_template": rendered,
-    })
-    return session_id
+    # without knowing what we asked.
+    remember_business_message(db, conversation, rendered, result.external_message_id)
+    await emit_channel_event(outbound_event(
+        organization_id=account.organization_id, channel_account_id=account.id,
+        session_id=str(session_id),
+        customer_id=str(conversation.customer_id) if conversation.customer_id else None,
+        record=OutboundRecord(message_id=stored.id, external_message_id=result.external_message_id,
+                              source=source, text=rendered),
+    ))
+    return OutboundSent(session_id=session_id, message_id=stored.id,
+                        external_message_id=result.external_message_id)

@@ -25,6 +25,7 @@ from time import monotonic
 from uuid import uuid4
 
 from app.models.mcp_tool import MCPTransportType
+from app.tools.mcp_connection import CONNECTION_FAILED, HeldConnection
 from app.tools.mcp_manager import (
     CHAT_CONNECT_BUDGET_SECONDS,
     CONNECTOR_GUIDANCE_TEMPLATE,
@@ -34,8 +35,8 @@ from app.tools.mcp_manager import (
     HANDSHAKE_REQUESTS,
     MCPToolsManager,
     TEST_CONNECT_BUDGET_SECONDS,
+    _connect_error_message,
     _connect_timeout,
-    _pending_teardowns,
     _session_timeout,
     cleanup_mcp_tools,
     initialize_mcp_tools,
@@ -123,15 +124,15 @@ async def test_initialize_mcp_tools_stdio_missing_dirs_skips():
 
 
 @pytest.mark.asyncio
-async def test_cleanup_mcp_tools_calls_disconnects():
+async def test_cleanup_mcp_tools_closes_every_connected_tool():
     manager = MCPToolsManager()
-    tool1 = AsyncMock()
-    tool2 = AsyncMock()
-    manager.mcp_tools = [tool1, tool2]
+    tool1 = _connected_instance({"a": MagicMock()})
+    tool2 = _connected_instance({"b": MagicMock()})
 
+    with patch("app.tools.mcp_manager.MCPTools", side_effect=[tool1, tool2]):
+        await manager._initialize_from_configs([_stdio_config(name="One"), _stdio_config(name="Two")])
     await manager.cleanup_mcp_tools()
 
-    # Attempted to cleanup via __aexit__ first
     tool1.__aexit__.assert_awaited()
     tool2.__aexit__.assert_awaited()
     assert manager.mcp_tools == []
@@ -485,38 +486,6 @@ async def test_cleanup_mcp_tools_empty():
 
 
 @pytest.mark.asyncio
-async def test_cleanup_mcp_tools_with_disconnect():
-    """Test cleanup using disconnect method"""
-    manager = MCPToolsManager()
-
-    mock_tool = MagicMock(spec=['disconnect'])  # Only has disconnect
-    mock_tool.disconnect = AsyncMock()
-
-    manager.mcp_tools = [mock_tool]
-
-    await manager.cleanup_mcp_tools()
-
-    mock_tool.disconnect.assert_awaited()
-    assert manager.mcp_tools == []
-
-
-@pytest.mark.asyncio
-async def test_cleanup_mcp_tools_with_stop():
-    """Test cleanup using stop method"""
-    manager = MCPToolsManager()
-
-    mock_tool = MagicMock(spec=['stop'])  # Only has stop
-    mock_tool.stop = AsyncMock()
-
-    manager.mcp_tools = [mock_tool]
-
-    await manager.cleanup_mcp_tools()
-
-    mock_tool.stop.assert_awaited()
-    assert manager.mcp_tools == []
-
-
-@pytest.mark.asyncio
 async def test_cleanup_mcp_tools_timeout():
     """Test cleanup with timeout"""
     manager = MCPToolsManager()
@@ -836,11 +805,10 @@ def test_chat_turn_gets_a_tighter_budget_than_the_test_button():
 
 
 @pytest.mark.asyncio
-async def test_abort_does_not_block_on_a_hanging_teardown():
-    """A STDIO server that never answered leaves __aexit__ unwinding anyio
-    scopes that can't take a further cancellation. Awaiting that would hold
-    the caller long past its connect budget, so the teardown runs detached."""
-    tool = MagicMock()
+async def test_close_does_not_block_on_a_hanging_teardown():
+    """A STDIO server that never answered can leave __aexit__ unwinding for as
+    long as the child process lives. Closing gives up after its timeout."""
+    tool = _connected_instance({"search": MagicMock()})
     started = asyncio.Event()
 
     async def never_finishes(*args):
@@ -848,14 +816,64 @@ async def test_abort_does_not_block_on_a_hanging_teardown():
         await asyncio.sleep(3600)
 
     tool.__aexit__ = never_finishes
+    connection = HeldConnection(tool)
+    await connection.open(1.0)
 
-    # Returns promptly even though the teardown itself never will...
-    await asyncio.wait_for(MCPToolsManager._abort_tool(tool), timeout=1.0)
-    # ...and the teardown really was started, not skipped.
-    await asyncio.wait_for(started.wait(), timeout=1.0)
+    await asyncio.wait_for(connection.close(timeout=0.05), timeout=1.0)
+    assert started.is_set()
 
-    for task in list(_pending_teardowns):
-        task.cancel()
+
+@pytest.mark.asyncio
+async def test_a_transport_that_cancels_itself_is_a_failed_connect_not_a_cancelled_request():
+    """mcp's streamable-HTTP transport cancels its own scope when the server
+    refuses the connection. That must not reach the caller as a CancelledError,
+    or leave its task flagged so the next connector is cancelled too."""
+    manager = MCPToolsManager()
+    refused = MagicMock()
+
+    async def cancel_own_task():
+        asyncio.current_task().cancel()
+        await asyncio.sleep(0)
+
+    refused.__aenter__ = MagicMock(side_effect=cancel_own_task)
+    refused.__aexit__ = AsyncMock()
+    good = _connected_instance({"search": MagicMock()})
+
+    with patch("app.tools.mcp_manager.MCPTools", side_effect=[refused, good]):
+        tools = await manager._initialize_from_configs([_stdio_config(name="Down"), _stdio_config(name="Up")])
+
+    assert asyncio.current_task().cancelling() == 0
+    assert manager.connected_tool_names == ["Up"]
+    assert manager.failed_tools == [{"name": "Down", "error": CONNECTION_FAILED}]
+    assert tools == [good]
+    await manager.cleanup_mcp_tools()
+
+
+@pytest.mark.asyncio
+async def test_a_tool_is_closed_by_the_task_that_opened_it():
+    """anyio cancel scopes must be exited in the task that entered them."""
+    tool = _connected_instance({"search": MagicMock()})
+    tasks = []
+    tool.__aenter__ = AsyncMock(side_effect=lambda: tasks.append(asyncio.current_task()))
+    tool.__aexit__ = AsyncMock(side_effect=lambda *args: tasks.append(asyncio.current_task()))
+    manager = MCPToolsManager()
+
+    with patch("app.tools.mcp_manager.MCPTools", return_value=tool):
+        await manager._initialize_from_configs([_stdio_config()])
+    await manager.cleanup_mcp_tools()
+
+    opened_in, closed_in = tasks
+    assert opened_in is closed_in
+    assert opened_in is not asyncio.current_task()
+
+
+@pytest.mark.parametrize("error, message", [
+    (ExceptionGroup("unhandled errors in a TaskGroup", [ConnectionRefusedError("All connection attempts failed")]),
+     "All connection attempts failed"),
+    (ValueError("bad url"), "bad url"),
+])
+def test_connect_errors_name_the_real_cause(error, message):
+    assert _connect_error_message(error) == message
 
 
 def test_no_connect_budget_leaves_the_tool_timeout_intact():

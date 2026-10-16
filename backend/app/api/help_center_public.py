@@ -29,6 +29,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.utils.client_ip import forwarded_client_ip
 from app.api.help_center_images import router as help_center_images_router
 from app.core.config import settings
 from app.core.error_handlers import ClientSafeHTTPException, install_error_handlers
@@ -118,17 +119,6 @@ class AskRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     helpful: bool
-
-
-def _client_ip(request: Request) -> str:
-    """Rate-limit key. Our nginx APPENDS the real client IP to any
-    X-Forwarded-For the client sent, so only the RIGHTMOST entry is
-    trustworthy — keying on the first entry would let attackers rotate fake
-    IPs and bypass the limit."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[-1].strip()
-    return request.client.host if request.client else "unknown"
 
 
 def _resolve_or_404(request: Request, db: Session):
@@ -337,7 +327,7 @@ async def ask(payload: AskRequest, request: Request, db: Session = Depends(get_d
     row = _resolve_or_404(request, db)
     if not ask_available(row):
         raise HTTPException(status_code=404, detail="AI answers are not enabled")
-    ip = _client_ip(request)
+    ip = forwarded_client_ip(request)
     if not allow_request(f"ask:{ip}:1m", ASK_LIMIT_PER_MINUTE, 60) or not allow_request(
         f"ask:{ip}:1d", ASK_LIMIT_PER_DAY, 86400
     ):
@@ -360,7 +350,7 @@ async def article_feedback(
     faq = get_published_article(db, row, slug)
     if not faq:
         raise HTTPException(status_code=404, detail="Article not found")
-    ip = _client_ip(request)
+    ip = forwarded_client_ip(request)
     if allow_request(f"faqfb:{faq.id}:{ip}", 1, 86400):
         FAQRepository(db).record_feedback(faq.id, payload.helpful)
     return {"ok": True}

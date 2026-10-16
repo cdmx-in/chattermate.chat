@@ -17,7 +17,7 @@ limitations under the License.
 import os
 import json
 from pydantic_settings import BaseSettings
-from typing import List, NamedTuple, Optional
+from typing import List, Literal, NamedTuple, Optional
 from dotenv import load_dotenv
 from pathlib import Path
 from pydantic import field_validator
@@ -26,8 +26,11 @@ from app.core.logger import get_logger
 # Get the absolute path to the backend directory (parent of app directory)
 BACKEND_DIR = Path(__file__).resolve().parent.parent.parent
 
-# Load the .env file
-load_dotenv(BACKEND_DIR / ".env")
+# ENV_FILE points the backend at a different env file. The e2e suite sets it to
+# e2e/.env.e2e so nothing from a developer's backend/.env (dev DB, dev Redis,
+# real provider keys) leaks into a test run.
+ENV_FILE = Path(os.getenv("ENV_FILE") or BACKEND_DIR / ".env")
+load_dotenv(ENV_FILE)
 
 DEFAULT_CORS = ["https://chattermate.chat", "http://localhost:5173", "http://localhost:8000"]
 
@@ -60,6 +63,10 @@ class Settings(BaseSettings):
     
     FRONTEND_URL: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     BACKEND_URL: str = os.getenv("BACKEND_URL", "http://localhost:8000")
+    # Where the widget bundle (widget.js / widget.css) is served from at /assets.
+    # The e2e suite points this at a bundle built from the current source, so the
+    # committed production build in backend/assets is never rebuilt locally.
+    WIDGET_ASSETS_DIR: str = os.getenv("WIDGET_ASSETS_DIR", str(BACKEND_DIR / "assets"))
     VITE_WIDGET_URL: str = os.getenv("VITE_WIDGET_URL", "http://localhost:5173")
 
     # app.core.encryption owns the actual key loading (reads the env var directly and
@@ -131,6 +138,15 @@ class Settings(BaseSettings):
     SIGNUP_ALLOWED_EMAILS: str = os.getenv("SIGNUP_ALLOWED_EMAILS", "")
 
     VERIFY_SSL_CERTIFICATES: bool = os.getenv("VERIFY_SSL_CERTIFICATES", "true").lower() == "true"
+    # Which addresses the AI base URL, MCP server URLs and ticket databases may
+    # point at (see app/core/outbound_policy.py). "any" suits a self-hosted
+    # install reaching its own network; "public_only" refuses private,
+    # loopback, link-local and reserved targets on a shared deployment.
+    OUTBOUND_URL_POLICY: Literal["any", "public_only"] = os.getenv("OUTBOUND_URL_POLICY", "any")
+    # STDIO MCP connectors start a process on this server from a command an org
+    # admin types. Fine on your own install; on a shared deployment it hands
+    # every customer a shell, so turn it off there.
+    MCP_STDIO_ENABLED: bool = os.getenv("MCP_STDIO_ENABLED", "true").lower() == "true"
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     TRIAL_DAYS: int = 7  # 7-day trial period
 
@@ -314,11 +330,16 @@ class Settings(BaseSettings):
 
     model_config = {
         "case_sensitive": True,
-        "env_file": ".env",
+        "env_file": ENV_FILE,
         "extra": "allow",  # This allows extra fields from .env
     }
 
 settings = Settings()
+
+
+def webhooks_base_url() -> str:
+    """Where platforms reach this backend's inbound webhooks."""
+    return f"{settings.BACKEND_URL.rstrip('/')}{settings.API_V1_STR}/webhooks"
 
 logger = get_logger(__name__)
 

@@ -18,10 +18,8 @@ from app.channels.base import (
     InteractiveButton, InteractiveKind, InteractiveMessage, InteractiveRow,
     InteractiveSection,
 )
-from app.channels.interactive import (
-    BUTTON_TITLE_MAX, MAX_BUTTONS, MAX_LIST_ROWS, ROW_TITLE_MAX,
-    from_options, to_text_fallback, truncate, validate_interactive,
-)
+from app.channels.interactive import from_options, to_text_fallback, truncate, validate_interactive
+from app.channels.interactive_limits import WHATSAPP_LIMITS
 from app.channels.sent_choices import decode_sent_choices, encode_sent_choices, sent_choice_text
 
 
@@ -33,7 +31,7 @@ class TestFromOptions:
         assert validate_interactive(message) == []
 
     def test_more_than_three_options_become_a_list(self):
-        options = [f"Option {i}" for i in range(MAX_BUTTONS + 1)]
+        options = [f"Option {i}" for i in range(WHATSAPP_LIMITS.max_buttons + 1)]
         message = from_options("Pick one", options)
         assert message.kind == InteractiveKind.LIST
         assert [r.title for r in message.sections[0].rows] == options
@@ -44,20 +42,20 @@ class TestFromOptions:
         message = from_options("What now?", ["Cancel", long_option])
         assert message.kind == InteractiveKind.LIST
         row = message.sections[0].rows[1]
-        assert len(row.title) <= ROW_TITLE_MAX and row.title.endswith("…")
+        assert len(row.title) <= WHATSAPP_LIMITS.row_title_max and row.title.endswith("…")
         assert row.description == long_option
         assert validate_interactive(message) == []
 
     def test_options_beyond_the_list_cap_are_dropped(self):
-        message = from_options("Pick", [str(i) for i in range(MAX_LIST_ROWS + 5)])
-        assert len(message.sections[0].rows) == MAX_LIST_ROWS
+        message = from_options("Pick", [str(i) for i in range(WHATSAPP_LIMITS.max_list_rows + 5)])
+        assert len(message.sections[0].rows) == WHATSAPP_LIMITS.max_list_rows
 
 
 class TestValidation:
     def test_buttons_limits(self):
         message = InteractiveMessage(
             kind=InteractiveKind.BUTTONS, body="x",
-            buttons=[InteractiveButton(id="a", title="t" * (BUTTON_TITLE_MAX + 1)),
+            buttons=[InteractiveButton(id="a", title="t" * (WHATSAPP_LIMITS.button_title_max + 1)),
                      InteractiveButton(id="a", title="ok")] * 2)
         errors = validate_interactive(message)
         assert any("1-3 buttons" in e for e in errors)
@@ -79,7 +77,7 @@ class TestValidation:
         assert any("section titles are required" in e for e in errors)
 
     def test_list_row_cap_counts_across_sections(self):
-        rows = [InteractiveRow(id=str(i), title=str(i)) for i in range(MAX_LIST_ROWS)]
+        rows = [InteractiveRow(id=str(i), title=str(i)) for i in range(WHATSAPP_LIMITS.max_list_rows)]
         message = InteractiveMessage(
             kind=InteractiveKind.LIST, body="x", list_button_label="Pick",
             sections=[InteractiveSection(title="A", rows=rows),

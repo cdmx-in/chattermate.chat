@@ -12,7 +12,8 @@ export default [
 
   {
     name: 'app/files-to-ignore',
-    ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**'],
+    // The enterprise Playwright suite has its own lint config (e2e/eslint.config.js rules).
+    ignores: ['**/dist/**', '**/dist-ssr/**', '**/coverage/**', 'src/modules/enterprise/e2e/**'],
   },
 
   ...pluginVue.configs['flat/essential'],

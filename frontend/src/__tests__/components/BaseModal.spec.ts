@@ -29,10 +29,10 @@ const withVisibleElements = () =>
     get() { return this.parentNode },
   })
 
-const mountModal = () => {
+const mountModal = (props: Record<string, unknown> = {}) => {
   withVisibleElements()
   return mount(BaseModal, {
-    props: { title: 'Send a template' },
+    props: { title: 'Send a template', ...props },
     slots: {
       default: '<input class="first" /><input class="middle" />',
       actions: '<button class="last">Send</button>',
@@ -61,6 +61,17 @@ describe('BaseModal', () => {
 
     await wrapper.find('[role="dialog"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(2)
+    wrapper.unmount()
+  })
+
+  it('when not dismissible, only its own buttons close it', async () => {
+    const wrapper = mountModal({ dismissible: false })
+
+    await wrapper.find('[role="dialog"]').trigger('keydown', { key: 'Escape' })
+    await wrapper.find('[role="dialog"]').trigger('click')
+
+    expect(wrapper.emitted('close')).toBeUndefined()
+    expect(wrapper.find('.bm-close').exists()).toBe(false)
     wrapper.unmount()
   })
 

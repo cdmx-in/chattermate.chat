@@ -14,7 +14,7 @@ build that fails part-way leaves an INVALID index that IF NOT EXISTS would then
 skip: if that happens, DROP INDEX ix_session_to_agents_customer_id and restart.
 
 Revision ID: session_conversation_key_001
-Revises: chat_channel_status_001
+Revises: auth_sessions_001
 Create Date: 2026-10-12
 """
 from typing import Sequence, Union
@@ -26,7 +26,7 @@ from alembic import op
 # Keep revision ids under 32 characters: alembic_version.version_num is
 # varchar(32).
 revision: str = 'session_conversation_key_001'
-down_revision: Union[str, None] = 'chat_channel_status_001'
+down_revision: Union[str, None] = 'auth_sessions_001'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

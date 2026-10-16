@@ -254,6 +254,16 @@ const allRoutes = hasEnterpriseModule
         },
       },
       {
+        path: '/settings/app-integrations',
+        name: 'app-integrations',
+        component: loadEnterpriseComponent(moduleImports.appIntegrationsView),
+        meta: {
+          requiresAuth: true,
+          layout: 'dashboard',
+          title: 'App Integrations',
+        },
+      },
+      {
         path: '/settings/subscription/setup/:planId',
         name: 'billing-setup',
         component: loadEnterpriseComponent(moduleImports.billingSetupView),

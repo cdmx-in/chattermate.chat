@@ -17,6 +17,8 @@ limitations under the License.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+// The snippet's exact text, pinned so other code that builds it can match it.
+import golden from '../fixtures/widget-snippet.txt?raw'
 
 /**
  * The embed snippet runs on the CUSTOMER's own site, where window.APP_CONFIG is
@@ -56,5 +58,13 @@ describe('buildWidgetEmbed', () => {
   it('never hardcodes the vendor cloud when self-host config is present', () => {
     const code = buildWidgetEmbed('w-123')
     expect(code).not.toContain('api.chattermate.chat')
+  })
+
+  it('matches the pinned snippet', () => {
+    const expected = golden
+      .replace('{widget_id}', 'w-123')
+      .replace('{api_url}', API_URL)
+      .replace('{loader_origin}', ORIGIN)
+    expect(buildWidgetEmbed('w-123')).toBe(expected)
   })
 })

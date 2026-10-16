@@ -317,10 +317,16 @@ class TestPreClaimedAddress:
         assert swapped.meta_data[CONTACT_EMAIL_META_KEY] == "new.user@example.com"
 
     @pytest.mark.asyncio
-    async def test_the_old_token_cannot_connect(self, socket, pre_claim):
+    async def test_the_old_token_is_sent_back_to_authorize(self, socket, pre_claim):
+        """Refused the way an unbound token is, so the widget authorizes again
+        and GET /widgets/{id} hands it a customer of its own."""
+        from socketio.exceptions import ConnectionRefusedError
         attacker_token, _, _ = pre_claim
 
-        assert await socket(attacker_token, "attacker") is None
+        with pytest.raises(ConnectionRefusedError) as refused:
+            await socket(attacker_token, "attacker")
+
+        assert refused.value.error_args["data"]["type"] == "customer_required"
 
     def test_typing_the_address_again_gets_an_anonymous_customer(self, db, client, test_widget, pre_claim):
         _, signed_in, _ = pre_claim

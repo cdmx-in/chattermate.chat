@@ -24,6 +24,7 @@ from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple, Optional, Callable
 from urllib.parse import urljoin, urlparse, urldefrag, urlunparse
+from app.knowledge.crawler_identity import CRAWLER_USER_AGENT
 from app.knowledge.url_safety import safe_get, BlockedHostError
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -44,6 +45,7 @@ from app.knowledge.crawl_scope import (
     url_scheme,
 )
 from app.knowledge.domains import registrable_domain
+from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause
 from app.knowledge.main_content import select_main_node
 
 # Initialize logger for this module
@@ -83,67 +85,6 @@ def _is_name_resolution_error(error: Exception) -> bool:
     return 'nodename' in text or 'name or service not known' in text or 'name resolution' in text
 
 
-class FailureCause:
-    """Why a page could not be read.
-
-    The old message offered the user three guesses at once ("empty, require
-    JavaScript, or be unreachable"). _process_url always knew which one it hit;
-    it just threw the answer away. These are the classes it can tell apart, and
-    each one gets its own advice in FAILURE_ADVICE below.
-    """
-
-    DNS = "dns"
-    CONNECTION = "connection"
-    TIMEOUT = "timeout"
-    BOT_BLOCKED = "bot_blocked"
-    HTTP_ERROR = "http_error"
-    EMPTY_RESPONSE = "empty_response"
-    THIN_CONTENT = "thin_content"
-    BLOCKED_HOST = "blocked_host"
-    # Something that is not a transport failure at all — most likely a bug of
-    # ours. Deliberately has no entry in FAILURE_ADVICE: we fall back to the
-    # generic message rather than blame the customer's site for our crash.
-    UNKNOWN = "unknown"
-
-
-# What to tell the user for each cause. Phrased as "what happened, what to do".
-FAILURE_ADVICE = {
-    FailureCause.DNS: (
-        "{url} could not be found — the domain does not resolve. Check the "
-        "address for typos, and that the site is published."
-    ),
-    FailureCause.CONNECTION: (
-        "{url} refused the connection. Check the site is online and reachable "
-        "from the public internet."
-    ),
-    FailureCause.TIMEOUT: (
-        "{url} did not respond in time. If the site is usually slow, try again "
-        "in a few minutes, or add a specific page instead of the whole site."
-    ),
-    FailureCause.BOT_BLOCKED: (
-        "{url} blocked automated crawling (its bot protection served a "
-        "challenge page). Add the content manually with Upload PDF or Paste text."
-    ),
-    FailureCause.HTTP_ERROR: (
-        "{url} returned an error response. Check the URL is correct and "
-        "publicly accessible, then try again."
-    ),
-    FailureCause.EMPTY_RESPONSE: (
-        "{url} returned an empty page. Check the site is published and serving "
-        "content at that address."
-    ),
-    FailureCause.THIN_CONTENT: (
-        "{url} loaded but had almost no readable text — it may render its "
-        "content with JavaScript we could not run. Add the content manually "
-        "with Upload PDF or Paste text."
-    ),
-    FailureCause.BLOCKED_HOST: (
-        "{url} redirected to an address we are not allowed to fetch. Use the "
-        "site's public URL."
-    ),
-}
-
-
 @dataclass
 class EnhancedWebsiteReader(WebsiteReader):
     """Enhanced Reader for Websites with more robust content extraction"""
@@ -154,9 +95,9 @@ class EnhancedWebsiteReader(WebsiteReader):
     blacklist_tags: List[str] = field(default_factory=lambda: [
         'script', 'style', 'noscript', 'iframe', 'head'
     ])
-    user_agent: str = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    user_agent: str = CRAWLER_USER_AGENT
     headers: Dict[str, str] = field(default_factory=lambda: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'User-Agent': CRAWLER_USER_AGENT,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
         'Accept-Encoding': 'gzip, deflate, br',

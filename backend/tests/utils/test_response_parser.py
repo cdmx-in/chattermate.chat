@@ -17,6 +17,7 @@ limitations under the License.
 import pytest
 from unittest.mock import MagicMock
 from app.utils.response_parser import (
+    GENERIC_ERROR_MESSAGE,
     parse_response_content,
     extract_json_from_text,
     clean_malformed_output,
@@ -226,3 +227,19 @@ class TestCreateBasicChatResponse:
         assert result.message == message
         assert result.transfer_to_human is True
         assert result.end_chat is False 
+
+class TestBrokenStructuredReply:
+    """A reply that started as the JSON we asked for and broke must never reach
+    the customer as raw JSON."""
+
+    def test_cut_off_message_becomes_the_generic_error(self):
+        result = extract_json_from_text('{"message": "this reply is cut off')
+        assert result.message == GENERIC_ERROR_MESSAGE
+
+    def test_complete_message_in_broken_json_is_kept(self):
+        result = extract_json_from_text('{"message": "Your order ships \\"tomorrow\\".", "transfer_to_human": tru')
+        assert result.message == 'Your order ships "tomorrow".'
+
+    def test_plain_text_is_still_shown_as_is(self):
+        result = extract_json_from_text('Your order ships tomorrow.')
+        assert result.message == 'Your order ships tomorrow.'

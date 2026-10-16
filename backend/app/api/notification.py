@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from typing import List
 from app.database import get_db
@@ -29,6 +29,7 @@ from app.models.schemas.notification import (
 from app.repositories.notification_settings import UserNotificationSettingsRepository
 from app.core.logger import get_logger
 from app.services.user import send_fcm_notification
+from app.core.params import MAX_DB_INT, DbIntId
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -36,8 +37,8 @@ logger = get_logger(__name__)
 
 @router.get("", response_model=List[NotificationResponse])
 async def list_notifications(
-    skip: int = 0,
-    limit: int = 50,
+    skip: int = Query(0, ge=0, le=MAX_DB_INT),
+    limit: int = Query(50, ge=1, le=500),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -61,7 +62,7 @@ async def list_notifications(
 
 @router.patch("/{notification_id}/read")
 async def mark_as_read(
-    notification_id: int,
+    notification_id: DbIntId,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -125,7 +126,7 @@ async def mark_all_as_read(
 
 @router.delete("/{notification_id}")
 async def delete_notification(
-    notification_id: int,
+    notification_id: DbIntId,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

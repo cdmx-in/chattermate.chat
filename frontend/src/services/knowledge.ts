@@ -15,6 +15,7 @@ limitations under the License.
 */
 
 import api from './api'
+import { apiErrorMessage } from '@/utils/apiError'
 import type { KnowledgeUploadResponse, PaginatedKnowledgeResponse } from '@/types/knowledge'
 
 export const knowledgeService = {
@@ -47,9 +48,7 @@ export const knowledgeService = {
       return response.data
     } catch (error: any) {
       // Extract error message from response if available
-      const errorMessage = error.response?.data?.detail || 
-                         error.response?.data?.message || 
-                         'Failed to upload PDFs'
+      const errorMessage = apiErrorMessage(error, 'Failed to upload PDFs')
       throw new Error(errorMessage)
     }
   },
@@ -85,9 +84,7 @@ export const knowledgeService = {
       return response.data
     } catch (error: any) {
       // Extract error message from response if available
-      const errorMessage = error.response?.data?.detail || 
-                         error.response?.data?.message || 
-                         'Failed to add URLs'
+      const errorMessage = apiErrorMessage(error, 'Failed to add URLs')
       throw new Error(errorMessage)
     }
   },
@@ -180,7 +177,7 @@ export const knowledgeService = {
       // Surface the backend's specific reason (wrong domain, subpage limit
       // reached, duplicate name…) instead of a generic axios message.
       throw new Error(
-        error.response?.data?.detail || error.response?.data?.message || 'Failed to add sub-page',
+        apiErrorMessage(error, 'Failed to add sub-page'),
       )
     }
   },
@@ -214,7 +211,7 @@ export const knowledgeService = {
       return response.data
     } catch (error: any) {
       const errorMessage =
-        error.response?.data?.detail || error.response?.data?.message || 'Failed to add sitemap'
+        apiErrorMessage(error, 'Failed to add sitemap')
       throw new Error(errorMessage)
     }
   },
@@ -231,7 +228,7 @@ export const knowledgeService = {
       return response.data
     } catch (error: any) {
       const errorMessage =
-        error.response?.data?.detail || error.response?.data?.message || 'Failed to add text source'
+        apiErrorMessage(error, 'Failed to add text source')
       throw new Error(errorMessage)
     }
   },

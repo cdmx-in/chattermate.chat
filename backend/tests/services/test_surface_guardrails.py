@@ -115,11 +115,7 @@ class TestTransferAgent:
     async def test_history_is_fenced_and_clause_present(self):
         from app.agents.transfer_agent import TransferResponseAgent
 
-        mock_agent_repo = MagicMock()
-        mock_agent_repo.get_by_agent_id.return_value = None
-        with patch("app.agents.transfer_agent.AgentRepository", return_value=mock_agent_repo), \
-             patch("app.utils.agno_utils.create_model", return_value=MagicMock()), \
-             patch("app.agents.transfer_agent.get_db", return_value=iter([MagicMock()])):
+        with patch("app.utils.agno_utils.create_model", return_value=MagicMock()):
             agent = TransferResponseAgent(
                 api_key="test_key", model_name="gpt-4", model_type="OPENAI"
             )

@@ -36,9 +36,21 @@ from app.models.schemas.mcp_tool import (
     AgentMCPToolsResponse, MCPToolTestResponse, MCPToolReferencesResponse,
     MCPTransportTypeEnum, unmask_secret_values
 )
-from app.tools.mcp_manager import TEST_CONNECT_BUDGET_SECONDS, MCPToolsManager
+from app.core.outbound_policy import require_public_target
+from app.core.params import DbIntId
+from app.tools.mcp_manager import MCP_URL_LABEL, TEST_CONNECT_BUDGET_SECONDS, MCPToolsManager
+from app.core.config import settings
 from sqlalchemy.orm import Session
 from uuid import UUID
+
+def require_stdio_enabled() -> None:
+    """Refuse a STDIO connector where running admin-typed commands is off."""
+    if not settings.MCP_STDIO_ENABLED:
+        raise HTTPException(
+            status_code=400,
+            detail="Local (STDIO) MCP servers are not available here. Connect a remote server over HTTP or SSE.",
+        )
+
 
 router = APIRouter()
 logger = get_logger(__name__)
@@ -72,7 +84,11 @@ async def create_mcp_tool(
     try:
         # Check MCP tools feature access
         check_mcp_feature_access(current_user, db)
-        
+        if mcp_tool_data.transport_type == MCPTransportTypeEnum.STDIO:
+            require_stdio_enabled()
+        else:
+            require_public_target(mcp_tool_data.url, MCP_URL_LABEL)
+
         mcp_tool_repo = MCPToolRepository(db)
         
         # Set organization_id from current user
@@ -125,7 +141,7 @@ async def get_organization_mcp_tools(
 
 @router.get("/{mcp_tool_id}", response_model=MCPToolResponse)
 async def get_mcp_tool(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     current_user: User = Depends(require_permissions("view_all", "manage_agents")),
     db: Session = Depends(get_db)
 ):
@@ -160,7 +176,7 @@ async def get_mcp_tool(
 
 @router.post("/{mcp_tool_id}/test", response_model=MCPToolTestResponse)
 async def test_mcp_tool(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
 ):
@@ -200,7 +216,7 @@ async def test_mcp_tool(
 
 @router.get("/{mcp_tool_id}/references", response_model=MCPToolReferencesResponse)
 async def get_mcp_tool_references(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
 ):
@@ -239,7 +255,7 @@ async def get_mcp_tool_references(
 
 @router.put("/{mcp_tool_id}", response_model=MCPToolResponse)
 async def update_mcp_tool(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     update_data: MCPToolUpdate,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
@@ -285,6 +301,7 @@ async def update_mcp_tool(
         transport = update_dict.get('transport_type', mcp_tool.transport_type)
         transport = getattr(transport, 'value', transport)
         if transport == MCPTransportTypeEnum.STDIO.value:
+            require_stdio_enabled()
             if not update_dict.get('command', mcp_tool.command):
                 raise HTTPException(
                     status_code=400,
@@ -295,6 +312,8 @@ async def update_mcp_tool(
                 status_code=400,
                 detail="URL is required for SSE/HTTP transport"
             )
+        else:
+            require_public_target(update_dict.get('url', mcp_tool.url), MCP_URL_LABEL)
 
         # Check for name conflicts if name is being updated
         if 'name' in update_dict:
@@ -320,7 +339,7 @@ async def update_mcp_tool(
 
 @router.delete("/{mcp_tool_id}")
 async def delete_mcp_tool(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)
 ):
@@ -423,7 +442,7 @@ async def add_mcp_tool_to_agent(
 
 @router.delete("/agent-association/{mcp_tool_id}/{agent_id}")
 async def remove_mcp_tool_from_agent(
-    mcp_tool_id: int,
+    mcp_tool_id: DbIntId,
     agent_id: UUID,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db)

@@ -26,6 +26,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
+from app.core.outbound_policy import require_public_target
 from app.core.security import encrypt_api_key
 from app.database import get_db
 from app.models.schemas.ticket_db_connector import (
@@ -38,7 +39,7 @@ from app.models.schemas.ticket_db_connector import (
 from app.models.ticket_db_connector import TicketDBConnector
 from app.models.user import User
 from app.api.tickets import require_any_permission
-from app.services.db_connector_service import DBConnectorConfig, test_connection
+from app.services.db_connector_service import DBConnectorConfig, first_hop, test_connection
 from app.services.ticket_access import check_ticketing_access
 
 logger = get_logger(__name__)
@@ -122,6 +123,7 @@ async def discover_tables(
     """Pre-save connection test: connect with the given credentials and
     return the discoverable tables/columns for the allowlist picker."""
     check_ticketing_access(db, current_user.organization_id)
+    require_public_target(*first_hop(payload.ssh_enabled, payload.ssh_host, payload.host))
     return await _discover(_config_from_discover(payload, current_user.organization_id))
 
 
@@ -132,6 +134,7 @@ async def create_connector(
     db: Session = Depends(get_db),
 ):
     check_ticketing_access(db, current_user.organization_id)
+    require_public_target(*first_hop(payload.ssh_enabled, payload.ssh_host, payload.host))
     connector = TicketDBConnector(
         organization_id=current_user.organization_id,
         name=payload.name,
@@ -173,6 +176,11 @@ async def update_connector(
     check_ticketing_access(db, current_user.organization_id)
     connector = _get_connector_or_404(db, connector_id, current_user)
     data = payload.model_dump(exclude_unset=True)
+    require_public_target(*first_hop(
+        data.get("ssh_enabled", connector.ssh_enabled),
+        data.get("ssh_host", connector.ssh_host),
+        data.get("host", connector.host),
+    ))
     password = data.pop("password", None)
     if password:
         connector.encrypted_password = encrypt_api_key(password)

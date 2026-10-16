@@ -18,6 +18,7 @@ from typing import Optional, Dict, Any, List
 from agno.tools import Toolkit
 from app.core.logger import get_logger
 from app.services.shopify import ShopifyService
+from app.services.shopify_urls import shopify_admin_url
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.database import SessionLocal
 from app.models.organization import Organization
@@ -454,7 +455,7 @@ class ShopifyTools(Toolkit):
             }
             
             # Execute the GraphQL query
-            url = f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json"
+            url = shopify_admin_url(shop.shop_domain, "graphql.json")
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -646,7 +647,7 @@ class ShopifyTools(Toolkit):
         fuzzy, so every result is re-checked for an exact email and number match."""
         limit = max(1, min(int(limit or MAX_ORDER_RESULTS), MAX_ORDER_RESULTS))
         response = requests.post(
-            f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json",
+            shopify_admin_url(shop.shop_domain, "graphql.json"),
             headers={"X-Shopify-Access-Token": shop.access_token, "Content-Type": "application/json"},
             json={
                 "query": ORDER_SEARCH_GRAPHQL,
@@ -905,7 +906,7 @@ class ShopifyTools(Toolkit):
                     "id": gid
                 }
                 
-                url = f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json"
+                url = shopify_admin_url(shop.shop_domain, "graphql.json")
                 headers = {
                     "X-Shopify-Access-Token": shop.access_token,
                     "Content-Type": "application/json"
@@ -1096,7 +1097,7 @@ class ShopifyTools(Toolkit):
                 search_type = "recommendations"
             
             # Execute the GraphQL query
-            url = f"https://{shop.shop_domain}/admin/api/2025-10/graphql.json"
+            url = shopify_admin_url(shop.shop_domain, "graphql.json")
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"

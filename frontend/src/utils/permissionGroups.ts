@@ -40,6 +40,16 @@ export const CHAT_VIEW_PERMISSIONS = [
   AI_QUEUE_PERMISSION,
 ]
 
+/**
+ * Seeing chats nobody owns — UNASSIGNED_CHAT_VIEWERS in
+ * services/chat_notifications.py, which also gates the org inbox room.
+ */
+export const UNASSIGNED_CHAT_VIEW_PERMISSIONS = [
+  ALL_CHATS_PERMISSION,
+  'manage_all_chats',
+  AI_QUEUE_PERMISSION,
+]
+
 /** Acting on one: takeover, reassign, outbound — CHAT_MANAGE_PERMISSIONS. */
 export const CHAT_MANAGE_PERMISSIONS = ['manage_all_chats', 'manage_assigned_chats']
 

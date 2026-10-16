@@ -35,6 +35,7 @@ from app.channels.meta_base import (
     exchange_instagram_long_lived,
     graph_get,
     graph_list_all,
+    graph_post,
     graph_post_json,
     instagram_token_payload,
     GRAPH_BASE,
@@ -266,6 +267,19 @@ class TestWhatsAppStatuses:
         assert (e.pricing_category, e.billable) == ("utility", True)
         assert e.timestamp.tzinfo is not None
 
+    def test_parses_per_message_pricing(self):
+        [e] = get_adapter("whatsapp").parse_status_events(_wa_statuses({
+            "id": "wamid.ABC", "status": "delivered", "timestamp": "1720000000", "recipient_id": "447",
+            "pricing": {"billable": False, "pricing_model": "PMP", "category": "service",
+                        "type": "free_customer_service"},
+        }))
+        assert (e.pricing_category, e.pricing_type, e.pricing_model) == ("service", "free_customer_service", "PMP")
+
+    def test_a_status_without_pricing_or_errors_has_none(self):
+        [e] = get_adapter("whatsapp").parse_status_events(_wa_statuses({
+            "id": "wamid.ABC", "status": "sent", "timestamp": "1720000000", "recipient_id": "447"}))
+        assert (e.pricing_type, e.pricing_model, e.error_code) == (None, None, None)
+
     def test_failed_status_carries_the_reason(self):
         events = get_adapter("whatsapp").parse_status_events(_wa_statuses({
             "id": "wamid.X", "status": "failed",
@@ -274,6 +288,7 @@ class TestWhatsAppStatuses:
         }))
         assert events[0].status == DeliveryState.FAILED
         assert events[0].error == "More than 24 hours have passed"
+        assert events[0].error_code == "131047"
 
     def test_unknown_states_and_messages_are_ignored(self):
         adapter = get_adapter("whatsapp")
@@ -685,8 +700,70 @@ class TestWhatsAppInteractiveSend:
 
     @pytest.mark.asyncio
     async def test_channels_without_support_refuse(self):
-        adapter = get_adapter("messenger")
+        adapter = get_adapter("slack")
         assert adapter.supports_interactive is False
         result = await adapter.send_interactive(
             MagicMock(), MagicMock(), InteractiveMessage(kind=InteractiveKind.BUTTONS, body="x"))
         assert result.ok is False
+
+
+class TestWhatsAppReadReceipts:
+    @pytest.mark.asyncio
+    async def test_mark_read_has_no_typing_indicator(self, graph_client, monkeypatch):
+        adapter = get_adapter("whatsapp")
+        monkeypatch.setattr(adapter, "access_token", lambda account: "WATOKEN")
+        graph_client.response = _FakeResponse(200, {"success": True})
+
+        await adapter.mark_read(MagicMock(), "wamid.IN")
+
+        assert graph_client.calls[0]["json"] == {
+            "messaging_product": "whatsapp", "status": "read", "message_id": "wamid.IN"}
+
+    @pytest.mark.asyncio
+    async def test_typing_marks_read_with_the_indicator(self, graph_client, monkeypatch):
+        adapter = get_adapter("whatsapp")
+        monkeypatch.setattr(adapter, "access_token", lambda account: "WATOKEN")
+        conversation = MagicMock()
+        conversation.extra = {"last_inbound_message_id": "wamid.IN"}
+
+        await adapter.send_typing(MagicMock(), conversation)
+
+        assert graph_client.calls[0]["json"]["typing_indicator"] == {"type": "text"}
+
+
+class TestGraphPostAuthFailure:
+    """A refused token is flagged so the account can be marked for
+    reconnection; a refused message is not."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status,body", [
+        (401, {"error": {"message": "Authentication Error", "code": 0}}),
+        (400, {"error": {"message": "Authentication Error", "code": 0}}),
+        (400, {"error": {"message": "Session has expired", "code": 190, "error_subcode": 463}}),
+        (400, {"error": {"message": "Error validating access token", "code": 102}}),
+        (401, {}),
+    ])
+    async def test_token_refusals_are_auth_failures(self, graph_client, status, body):
+        graph_client.response = _FakeResponse(status, body)
+        result = await graph_post("PN1/messages", "tok", {})
+        assert result.ok is False
+        assert result.auth_failed is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("body", [
+        {"error": {"message": "Re-engagement message", "code": 131047}},
+        {"error": {"message": "Invalid parameter", "code": 100}},
+        {"error": "not a dict"},
+    ])
+    async def test_message_refusals_are_not(self, graph_client, body):
+        graph_client.response = _FakeResponse(400, body)
+        result = await graph_post("PN1/messages", "tok", {})
+        assert result.ok is False
+        assert result.auth_failed is False
+
+    @pytest.mark.asyncio
+    async def test_success_is_not(self, graph_client):
+        graph_client.response = _FakeResponse(200, {"messages": [{"id": "wamid.1"}]})
+        result = await graph_post("PN1/messages", "tok", {})
+        assert result.ok is True
+        assert result.auth_failed is False

@@ -457,14 +457,19 @@ npm run build:webclient
 
 **Backend**
 ```bash
-pytest tests/
+cd backend && pytest tests/
 ```
 
 **Frontend**
 ```bash
-npm run test:unit    # Unit tests
-npm run test:e2e     # E2E tests
+cd frontend && npm run test:unit
 ```
+
+**End-to-end**: Playwright drives the real dashboard, widget and backend against a throwaway database and a fake LLM, all on `127.0.0.1`. Needs a local Postgres with pgvector and [Mailpit](https://mailpit.axllent.org).
+```bash
+cd e2e && npm ci && npx playwright install chromium && npm test
+```
+See [e2e/AUTHORING.md](e2e/AUTHORING.md) to add a test and [e2e/FEATURES.md](e2e/FEATURES.md) for what's covered.
 
 ---
 
@@ -583,7 +588,7 @@ We welcome contributions! Here's how to get started:
 
 ### Development Guidelines
 - Follow PEP 8 style guide
-- Write tests for new features
+- Write tests for new features (and an [e2e](e2e/AUTHORING.md) spec when a user journey changes)
 - Update documentation as needed
 - Add type hints to new functions
 

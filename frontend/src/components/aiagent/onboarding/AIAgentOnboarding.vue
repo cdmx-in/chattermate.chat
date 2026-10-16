@@ -18,7 +18,9 @@ limitations under the License.
 import { onMounted, ref } from 'vue'
 import { userService } from '@/services/user'
 import { agentService } from '@/services/agent'
+import { widgetService } from '@/services/widget'
 import { useOnboardingState, type OnboardingStepIndex } from '@/composables/useOnboardingState'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import type { Agent } from '@/types/agent'
 import StepCreate from './steps/StepCreate.vue'
 import StepTeach from './steps/StepTeach.vue'
@@ -31,6 +33,39 @@ const emit = defineEmits<{
 }>()
 
 const onboarding = useOnboardingState()
+const { loadModule, moduleImports } = useEnterpriseFeatures()
+
+// The wizard step to reopen at for each server-side stage
+const WIZARD_STEP_FOR: Record<string, OnboardingStepIndex> = {
+  create: 0, teach: 1, test: 2, launch: 3, live: 3,
+}
+
+/** Where the server says the org is, when the enterprise module tracks it. */
+const serverProgress = async () => {
+  try {
+    const module = await loadModule(moduleImports.setupService)
+    return (await module?.setupService?.getProgress()) ?? null
+  } catch (err) {
+    console.error('Failed to load setup progress:', err)
+    return null
+  }
+}
+
+/**
+ * This browser's run if it has one, else where the server says the org is
+ * (enterprise module only): another device, cleared storage, a link.
+ */
+const resumePoint = async () => {
+  const record = onboarding.get(orgId)
+  if (record.agentId) return record
+  const server = await serverProgress()
+  if (!server?.agent_id || !(server.step in WIZARD_STEP_FOR)) return record
+  return onboarding.patch(orgId, {
+    agentId: server.agent_id,
+    widgetId: server.widget_id,
+    currentStep: WIZARD_STEP_FOR[server.step],
+  })
+}
 
 const orgId = userService.getCurrentUser()?.organization_id || ''
 const steps = ['Create', 'Teach', 'Test', 'Launch']
@@ -45,8 +80,8 @@ const widgetId = ref<string | null>(null)
 const createdAgent = ref<Agent | null>(null)
 
 onMounted(async () => {
-  // Resume an in-progress run if one is stored for this org
-  const record = onboarding.get(orgId)
+  // Resume an in-progress run, from this browser or from the server
+  const record = await resumePoint()
   agentId.value = record.agentId
   agentName.value = record.agentName || ''
   widgetId.value = record.widgetId
@@ -57,6 +92,7 @@ onMounted(async () => {
     try {
       createdAgent.value = await agentService.getAgentById(record.agentId)
       agentType.value = createdAgent.value?.agent_type || agentType.value
+      agentName.value = agentName.value || createdAgent.value?.display_name || createdAgent.value?.name || ''
     } catch (err) {
       // The stored agent no longer exists (e.g. deleted) — start the run fresh
       // instead of leaving later steps pointing at a dead agent id.
@@ -74,11 +110,29 @@ const goTo = (step: OnboardingStepIndex) => {
   onboarding.goTo(orgId, step)
 }
 
-const handleCreated = (agent: Agent) => {
+const handleWidgetCreated = (id: string) => {
+  widgetId.value = id
+  onboarding.patch(orgId, { widgetId: id })
+}
+
+// The widget exists from the start, not only once they reach Test: someone
+// who stops at Teach can still be sent their install code. Test creates it
+// if this failed.
+const ensureWidget = async (agent: Agent) => {
+  if (widgetId.value) return
+  try {
+    handleWidgetCreated((await widgetService.createAgentWidget(agent.id, agentName.value)).id)
+  } catch (err) {
+    console.error('Failed to create the widget with the agent:', err)
+  }
+}
+
+const handleCreated = async (agent: Agent) => {
   createdAgent.value = agent
   agentId.value = agent.id
   agentName.value = agent.display_name || agent.name
   agentType.value = agent.agent_type
+  await ensureWidget(agent)
   onboarding.patch(orgId, {
     agentId: agent.id,
     agentName: agentName.value,
@@ -86,11 +140,6 @@ const handleCreated = (agent: Agent) => {
     completedSteps: [0],
   })
   currentStep.value = 1
-}
-
-const handleWidgetCreated = (id: string) => {
-  widgetId.value = id
-  onboarding.patch(orgId, { widgetId: id })
 }
 
 const completeAndAdvance = (step: OnboardingStepIndex, next: OnboardingStepIndex) => {

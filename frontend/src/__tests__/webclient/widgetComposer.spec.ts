@@ -38,7 +38,8 @@ const socket = {
     connectionStatus: ref('connected'),
     humanAgent: ref({}),
     currentForm: ref(null),
-    currentSessionId: ref('session-1')
+    currentSessionId: ref('session-1'),
+    refusal: ref(null)
 }
 
 vi.mock('@/composables/useWidgetSocket', () => ({

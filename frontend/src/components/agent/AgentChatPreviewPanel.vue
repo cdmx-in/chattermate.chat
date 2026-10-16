@@ -704,7 +704,7 @@ const handleInitiationClick = () => {
 
             <!-- AI disclosure. No human-takeover state exists in the preview, so
                  the second argument is left at its default. -->
-            <div v-if="shouldShowAiDisclaimer(customization.show_ai_disclaimer)" class="ai-disclaimer" :style="messageNameStyles">
+            <div v-if="shouldShowAiDisclaimer(customization.show_ai_disclaimer)" class="ai-disclaimer">
                 {{ AI_DISCLAIMER_TEXT }}
             </div>
 
@@ -1157,7 +1157,9 @@ const handleInitiationClick = () => {
     padding: 0 var(--space-md) 2px;
     font-size: 0.6875rem;
     line-height: 1.3;
-    opacity: 0.55;
+    /* The theme's muted colour, not opacity over the text colour: dimming
+       by opacity fell below readable contrast on light themes. */
+    color: var(--cm-muted);
 }
 
 .ai-disclaimer + .powered-by { padding-top: 0; }
@@ -1178,7 +1180,7 @@ const handleInitiationClick = () => {
 /* "Powered by" is muted; "ChatterMate" is emphasized (comp). Both inherit the footer's
    own colour (white on dark themes) so ChatterMate stays visible — dimming is on the
    prefix only, never a dark app token that would vanish on the dark panel. */
-.cm-powered-prefix { opacity: 0.6; }
+.cm-powered-prefix { color: var(--cm-muted); }
 .cm-brand { font-weight: 700; }
 
 .message-input input:disabled {

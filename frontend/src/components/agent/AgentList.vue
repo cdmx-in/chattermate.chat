@@ -19,6 +19,7 @@ limitations under the License.
 import type { Agent } from '@/types/agent';
 import type { Widget } from '@/types/widget';
 import { resolveUploadUrl } from '@/config/api'
+import { WIDGET_INSTALL_GUIDE_URL } from '@/config/docs'
 import { resolveOrbStyle } from '@/utils/orb'
 import { useAgentStorage, useSubscriptionStorage } from '@/utils/storage'
 import { onMounted, onUnmounted, ref, computed } from 'vue';
@@ -35,7 +36,9 @@ import { userService } from '@/services/user'
 
 const agentStorage = useAgentStorage()
 const subscriptionStorage = useSubscriptionStorage()
-const { hasEnterpriseModule } = useEnterpriseFeatures()
+const { hasEnterpriseModule, enterpriseComponent, moduleImports } = useEnterpriseFeatures()
+// With the enterprise module, its setup bar takes the place of this banner
+const SetupProgressBar = enterpriseComponent(moduleImports.setupProgressBar)
 
 const agents = ref<Agent[]>([])
 const selectedAgent = ref<Agent | null>(null)
@@ -184,7 +187,7 @@ const copyWidgetCodeToClipboard = async (widget: Widget, requireTokenAuth?: bool
     }
 }
 
-const openWidgetHelp = () => window.open('https://docs.chattermate.chat/features/widget', '_blank')
+const openWidgetHelp = () => window.open(WIDGET_INSTALL_GUIDE_URL, '_blank')
 
 onMounted(async () => {
     await refreshAgents()
@@ -277,7 +280,8 @@ const getOrbStyle = (agent: Agent): Record<string, string> => {
     <div class="agent-list" :class="{ 'showing-detail': selectedAgent }">
         <div v-if="!selectedAgent">
             <!-- Resume guided setup -->
-            <div v-if="showResumeBanner" class="resume-banner">
+            <SetupProgressBar v-if="hasEnterpriseModule" />
+            <div v-else-if="showResumeBanner" class="resume-banner">
                 <div class="resume-info">
                     <div class="resume-text">
                         <div class="resume-title">Finish setting up your agent</div>

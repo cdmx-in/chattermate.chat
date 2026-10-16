@@ -18,7 +18,12 @@ from typing import Optional, Dict, Any, List
 from agno.tools import Toolkit
 from app.core.config import settings
 from app.core.logger import get_logger
-from app.services.jira import JiraService
+from app.services.jira import (
+    JiraService,
+    jira_accessible_resources_url,
+    jira_rest_url,
+    jira_token_url,
+)
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.api.jira import CreateJiraIssueModel
 from app.database import SessionLocal
@@ -170,7 +175,7 @@ class JiraTools(Toolkit):
                     }
                     
                     refresh_response = requests.post(
-                        "https://auth.atlassian.com/oauth/token",
+                        jira_token_url(),
                         data=refresh_data
                     )
                     
@@ -211,7 +216,7 @@ class JiraTools(Toolkit):
             priority_available = False
             try:
                 # Get the create metadata to check available fields
-                create_meta_url = f"https://api.atlassian.com/ex/jira/{str(token.cloud_id)}/rest/api/3/issue/createmeta?projectKeys={issue_data.projectKey}&issuetypeIds={issue_data.issueTypeId}&expand=projects.issuetypes.fields"
+                create_meta_url = jira_rest_url(str(token.cloud_id), f"issue/createmeta?projectKeys={issue_data.projectKey}&issuetypeIds={issue_data.issueTypeId}&expand=projects.issuetypes.fields")
                 meta_response = requests.get(create_meta_url, headers=headers)
                 
                 if meta_response.status_code == 200:
@@ -274,7 +279,7 @@ class JiraTools(Toolkit):
             try:
                 if is_update:
                     # Get the existing ticket details first to get the current description
-                    existing_ticket_url = f"https://api.atlassian.com/ex/jira/{str(token.cloud_id)}/rest/api/3/issue/{existing_ticket_id}"
+                    existing_ticket_url = jira_rest_url(str(token.cloud_id), f"issue/{existing_ticket_id}")
                     existing_ticket_response = requests.get(existing_ticket_url, headers=headers)
                     
                     if existing_ticket_response.status_code == 200:
@@ -328,7 +333,7 @@ class JiraTools(Toolkit):
                         })
                     
                     # Update existing ticket
-                    url = f"https://api.atlassian.com/ex/jira/{str(token.cloud_id)}/rest/api/3/issue/{existing_ticket_id}"
+                    url = jira_rest_url(str(token.cloud_id), f"issue/{existing_ticket_id}")
                     response = requests.put(url, headers=headers, json=api_data)
                     
                     if response.status_code not in (200, 204):
@@ -348,7 +353,7 @@ class JiraTools(Toolkit):
                     action_message = "updated"
                 else:
                     # Create new ticket
-                    url = f"https://api.atlassian.com/ex/jira/{str(token.cloud_id)}/rest/api/3/issue"
+                    url = jira_rest_url(str(token.cloud_id), "issue")
                     response = requests.post(url, headers=headers, json=api_data)
                     
                     if response.status_code not in (200, 201):
@@ -370,7 +375,7 @@ class JiraTools(Toolkit):
                     else:
                         # Try to get the site URL from the cloud resources
                         try:
-                            resources_url = "https://api.atlassian.com/oauth/token/accessible-resources"
+                            resources_url = jira_accessible_resources_url()
                             resources_response = requests.get(resources_url, headers={
                                 "Authorization": f"Bearer {token.access_token}",
                                 "Accept": "application/json"
@@ -535,7 +540,7 @@ class JiraTools(Toolkit):
                     }
                     
                     refresh_response = requests.post(
-                        "https://auth.atlassian.com/oauth/token",
+                        jira_token_url(),
                         data=refresh_data
                     )
                     
@@ -574,7 +579,7 @@ class JiraTools(Toolkit):
             # Ensure ticket_id is a string before using it in the URL
             ticket_id_str = str(ticket_id) if ticket_id else ""
             
-            url = f"https://api.atlassian.com/ex/jira/{str(token.cloud_id)}/rest/api/3/issue/{ticket_id_str}"
+            url = jira_rest_url(str(token.cloud_id), f"issue/{ticket_id_str}")
             
             try:
                 response = requests.get(url, headers=headers)
@@ -610,7 +615,7 @@ class JiraTools(Toolkit):
                 else:
                     # Try to get the site URL from the cloud resources
                     try:
-                        resources_url = "https://api.atlassian.com/oauth/token/accessible-resources"
+                        resources_url = jira_accessible_resources_url()
                         resources_response = requests.get(resources_url, headers={
                             "Authorization": f"Bearer {token.access_token}",
                             "Accept": "application/json"

@@ -28,6 +28,7 @@ from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
 from app.core.logger import get_logger
+from app.core.outbound_policy import pin_outbound_target
 from app.core.security import decrypt_api_key
 
 logger = get_logger(__name__)
@@ -128,9 +129,10 @@ def _load_ssh_key(key_text: str, passphrase: Optional[str]):
 
 
 @contextmanager
-def _ssh_tunnel(config: DBConnectorConfig):
+def _ssh_tunnel(config: DBConnectorConfig, ssh_address: Optional[str] = None):
     """Open an SSH local-forward tunnel to the database and yield the local
-    (host, port) to connect through. Always torn down on exit."""
+    (host, port) to connect through. ``ssh_address`` is the bastion's vetted
+    IP when the outbound policy pinned one. Always torn down on exit."""
     from sshtunnel import SSHTunnelForwarder
 
     kwargs = {
@@ -149,7 +151,7 @@ def _ssh_tunnel(config: DBConnectorConfig):
     else:
         raise ValueError("SSH tunnel needs a private key or password")
 
-    tunnel = SSHTunnelForwarder((config.ssh_host, config.ssh_port), **kwargs)
+    tunnel = SSHTunnelForwarder((ssh_address or config.ssh_host, config.ssh_port), **kwargs)
     tunnel.start()
     try:
         yield "127.0.0.1", tunnel.local_bind_port
@@ -160,13 +162,17 @@ def _ssh_tunnel(config: DBConnectorConfig):
             logger.warning(f"SSH tunnel teardown warning (non-critical): {e}")
 
 
-def _driver_connect(config: DBConnectorConfig, host: str, port: int):
+def _driver_connect(config: DBConnectorConfig, host: str, port: int,
+                    hostaddr: Optional[str] = None):
     """Open a read-only DB session with a statement timeout, to (host, port)
-    — which is the tunnel's local endpoint when tunneling."""
+    — which is the tunnel's local endpoint when tunneling. ``hostaddr`` is
+    the vetted IP to dial instead of resolving ``host`` again."""
     if config.engine == "mysql":
         import pymysql
         conn = pymysql.connect(
-            host=host,
+            # pymysql has no separate address field; no TLS is configured
+            # here, so the name isn't needed for verification.
+            host=hostaddr or host,
             port=port,
             user=config.username,
             password=config.password,
@@ -180,8 +186,11 @@ def _driver_connect(config: DBConnectorConfig, host: str, port: int):
             cursor.execute(f"SET SESSION max_execution_time = {int(config.statement_timeout_ms)}")
         return conn
     import psycopg
+    # libpq dials hostaddr and keeps host for TLS verification.
+    pinned = {"hostaddr": hostaddr} if hostaddr else {}
     return psycopg.connect(
         host=host,
+        **pinned,
         port=port,
         dbname=config.database,
         user=config.username,
@@ -194,16 +203,28 @@ def _driver_connect(config: DBConnectorConfig, host: str, port: int):
     )
 
 
+def first_hop(ssh_enabled: bool, ssh_host: Optional[str], host: Optional[str]) -> Tuple[Optional[str], str]:
+    """The host this server dials first, with its field label, for the
+    outbound policy: the SSH bastion when tunnelling, else the database. A
+    database behind a bastion is reached from the bastion, and may be private."""
+    if ssh_enabled:
+        return ssh_host, "SSH host"
+    return host, "Database host"
+
+
 @contextmanager
 def _connection(config: DBConnectorConfig):
     """Yield a read-only DB connection, opening an SSH tunnel first when the
     connector is configured for one. Tunnel and connection are both closed on
     exit — a fresh pair per call keeps the (short-lived) investigation queries
     isolated."""
+    # Vetted on every connect, not only on save, and the vetted address is
+    # the one dialled: DNS can change, even between two lookups.
+    pinned = pin_outbound_target(*first_hop(config.ssh_enabled, config.ssh_host, config.host))
     if config.ssh_enabled:
         if not config.ssh_host or not config.ssh_username:
             raise ValueError("SSH tunnel is enabled but host/username are missing")
-        with _ssh_tunnel(config) as (host, port):
+        with _ssh_tunnel(config, pinned) as (host, port):
             conn = _driver_connect(config, host, port)
             try:
                 yield conn
@@ -213,7 +234,7 @@ def _connection(config: DBConnectorConfig):
                 except Exception:
                     pass
     else:
-        conn = _driver_connect(config, config.host, config.port)
+        conn = _driver_connect(config, config.host, config.port, pinned)
         try:
             yield conn
         finally:

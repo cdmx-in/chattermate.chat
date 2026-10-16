@@ -90,6 +90,35 @@ describe('widget socket reconnection', () => {
     expect(currentAuth().conversation_token).toBe('token-2')
   })
 
+  /** A conversation token for `customerId` (only the claims matter here). */
+  const tokenFor = (customerId: string, version = 1) =>
+    `header.${btoa(JSON.stringify({ sub: customerId, v: version }))}.signature`
+
+  it('keeps a live connection for the same visitor instead of rebuilding it', async () => {
+    const widget = await connectWidget()
+    widget.setToken(tokenFor('customer-1'))
+    socket.connected = true
+    fire('connect')
+
+    // A takeover re-runs the widget's authorization, which calls connect() again.
+    // Rebuilding the socket here dropped the agent's first reply (found by e2e).
+    // A rotated token for the same visitor is not a reason to rebuild either.
+    widget.setToken(tokenFor('customer-1', 2))
+    await expect(widget.connect()).resolves.toBe(true)
+    expect(socket.disconnect).not.toHaveBeenCalled()
+  })
+
+  it('reconnects when the visitor changes', async () => {
+    const widget = await connectWidget()
+    widget.setToken(tokenFor('customer-1'))
+    socket.connected = true
+    fire('connect')
+
+    widget.setToken(tokenFor('customer-2'))
+    void widget.connect()
+    expect(socket.disconnect).toHaveBeenCalled()
+  })
+
   it('keeps retrying rather than giving up after a handful of attempts', async () => {
     await connectWidget()
     expect(ioOptions.reconnectionAttempts).toBe(Infinity)
@@ -117,17 +146,59 @@ describe('widget socket reconnection', () => {
     expect(socket.connect).toHaveBeenCalledTimes(1)
   })
 
-  it('stops knocking when the server says the widget is unusable', async () => {
-    await connectWidget()
-
-    // The connect handler names the reason before it rejects. An org with no AI
-    // config will refuse every attempt, so retrying is only load.
-    fire('error', { error: 'AI configuration required', type: 'ai_config_missing' })
+  /** How socket.io delivers a refusal: the reason rides on the connect_error.
+   *  Events the server emits before refusing never reach the client. */
+  const refuse = (type: string, error = 'refused') => {
     socket.active = false
-    fire('connect_error')
+    fire('connect_error', Object.assign(new Error(error), { data: { type, error } }))
+  }
+
+  it('stops knocking when the server says the widget is unusable', async () => {
+    const { useWidgetSocket } = await import('@/composables/useWidgetSocket')
+    const widget = useWidgetSocket()
+    widget.setToken('token-1')
+    const connected = widget.connect()
+
+    // An org with no AI config will refuse every attempt, so retrying is only load.
+    refuse('ai_config_missing', 'AI configuration required')
+    expect(widget.errorMessage.value).toBe('Chat service is currently unavailable.')
+    expect(widget.connectionStatus.value).toBe('failed')
+    // The widget's startup awaits this: a refusal has to settle it.
+    await expect(connected).resolves.toBe(false)
 
     vi.advanceTimersByTime(60000)
     expect(socket.connect).not.toHaveBeenCalled()
+  })
+
+  describe('a visitor the server has not bound to a customer yet', () => {
+    it('settles connect() with the reason, so the caller can authorize again', async () => {
+      const { useWidgetSocket } = await import('@/composables/useWidgetSocket')
+      const widget = useWidgetSocket()
+      widget.setToken('anonymous-token')
+      const connected = widget.connect()
+
+      refuse('customer_required')
+
+      await expect(connected).resolves.toBe(false)
+      expect(widget.refusal.value).toBe('customer_required')
+      expect(widget.showError.value).toBe(false) // nothing the visitor can act on
+    })
+
+    it('does not retry the same token', async () => {
+      await connectWidget()
+      refuse('customer_required')
+
+      vi.advanceTimersByTime(60000)
+      expect(socket.connect).not.toHaveBeenCalled()
+    })
+
+    it('forgets the refusal when it connects again', async () => {
+      const widget = await connectWidget()
+      refuse('customer_required')
+
+      void widget.connect()
+      expect(widget.refusal.value).toBeNull()
+    })
   })
 
   it('does not leave a retry running after the widget is torn down', async () => {

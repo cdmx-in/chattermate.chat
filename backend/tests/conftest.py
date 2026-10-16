@@ -15,7 +15,6 @@ limitations under the License.
 """
 
 import os
-import sys as _sys
 
 # Set before any app import: app.core.encryption reads these when it first loads a
 # key, and a fixed key keeps encrypted fixtures reproducible across runs. This key
@@ -25,37 +24,12 @@ os.environ.setdefault(
     "ENCRYPTION_KEY", "QmFTbXc5RWQ4czRfQWpqSnhqZjhraGtYSGFYaXZ4SkRNS2kxZFB1Y2NrMD0=")
 
 
-# NO_ENTERPRISE=1 — run the suite the way CI does.
-#
-# CI checks out with actions/checkout@v3 and no `submodules: recursive`, so
-# app/enterprise is empty there and every `try: import app.enterprise` falls
-# back to community mode. Locally the submodule IS populated, so plan and
-# subscription gating switches on and ~30 API tests return a 403 they never
-# see in CI. Setting this makes the import fail the same way, so a local run
-# is comparable to the CI result:
+# NO_ENTERPRISE=1 — run the suite the way CI does:
 #
 #     NO_ENTERPRISE=1 python -m pytest tests/
 #
-# An env var rather than a CLI flag because the blocker has to be installed
-# before this module's own `from app...` imports below, which happens before
-# pytest would hand us a parsed option.
-if os.getenv("NO_ENTERPRISE") == "1":
-
-    class _BlockEnterprise:
-        """Meta-path finder that makes app.enterprise look un-checked-out."""
-
-        def find_spec(self, fullname, path=None, target=None):
-            if fullname == "app.enterprise" or fullname.startswith("app.enterprise."):
-                # ModuleNotFoundError, not bare ImportError: that is what an
-                # un-checked-out submodule actually raises, and it is what
-                # pytest.importorskip and the app's own guards look for.
-                raise ModuleNotFoundError(
-                    f"No module named {fullname!r} (disabled by NO_ENTERPRISE=1)",
-                    name=fullname,
-                )
-            return None
-
-    _sys.meta_path.insert(0, _BlockEnterprise())
+# The blocker lives in app/core/edition.py and is installed by app/__init__.py,
+# so it is in place before the `from app...` imports below.
 
 import pytest
 import uuid
@@ -99,6 +73,7 @@ from app.core.security import encrypt_api_key, get_password_hash, create_access_
 from unittest.mock import MagicMock
 from fastapi.testclient import TestClient
 from app.main import app
+from app.channels import app_hooks
 from app.models.shopify.shopify_shop import ShopifyShop
 from app.models.shopify.agent_shopify_config import AgentShopifyConfig
 import jwt
@@ -399,3 +374,9 @@ def test_agent_shopify_config(db, test_agent, test_shopify_shop):
     yield config
     db.delete(config)
     db.commit() 
+
+@pytest.fixture(autouse=True)
+def _reset_channel_hooks():
+    """No test leaks an extension hook it registered into the next one."""
+    yield
+    app_hooks.reset()

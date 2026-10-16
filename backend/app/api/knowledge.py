@@ -31,11 +31,14 @@ from app.models.knowledge import Knowledge
 from app.repositories.knowledge import KnowledgeRepository
 from app.knowledge import page_editor
 from app.knowledge.crawl_scope import CRAWL_SCOPES
+from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause, plain_reason
+from app.knowledge.pdf_download import MAX_PDF_SIZE
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.agent import AgentRepository
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.core.config import settings
+from app.utils.domain_check import bare_host, domain_resolves
 from app.services import knowledge_vector_links
 from sqlalchemy.orm import Session
 from app.core.s3 import upload_file_to_s3, get_s3_signed_url
@@ -63,12 +66,12 @@ logger = get_logger(__name__)
 TEMP_DIR = "temp"
 
 # PDF upload limits (see app/core/file_validation.py)
-MAX_PDF_SIZE = 25 * 1024 * 1024  # 25MB per file
 MAX_PDF_FILES = 20  # per request
 ALLOWED_PDF_TYPES = ("application/pdf",)
 
 # Import processor status from shared module
 from app.core.processor import PROCESSOR_STATUS
+from app.core.params import DbIntId, PageNumber
 
 
 def resolve_plan_max_links(subscription) -> int:
@@ -334,7 +337,7 @@ def _get_crawled_urls_info(crawled_urls):
 
 @router.get("/explore/progress/{queue_id}")
 async def get_explore_progress(
-    queue_id: int,
+    queue_id: DbIntId,
     db: Session = Depends(get_db)
 ):
     """Get progress status for knowledge base processing"""
@@ -427,6 +430,14 @@ async def get_explore_progress(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+async def _hosts_that_do_not_exist(urls: List[str]) -> set:
+    """Hosts DNS says have no such name. Lookups that time out or can't tell
+    are left to the crawler."""
+    hosts = sorted({bare_host(url) for url in urls} - {""})
+    answers = await asyncio.gather(*(domain_resolves(host) for host in hosts))
+    return {host for host, answer in zip(hosts, answers) if answer is False}
+
+
 @router.post("/add/urls")
 async def add_urls(
     request: UrlsRequest = Body(...),
@@ -498,49 +509,35 @@ async def add_urls(
                 "duplicate_urls": duplicate_urls
             }
 
-        # Queue PDF URLs with user_id
+        # A domain that doesn't exist fails now, not after its turn in the
+        # processor (up to a minute or more): onboarding is waiting to hear.
+        missing_hosts = await _hosts_that_do_not_exist(all_urls)
+
+        def queue(source_type: str, url: str, metadata: dict) -> None:
+            dead = bare_host(url) in missing_hosts
+            queued_items.append(queue_repo.create(KnowledgeQueue(
+                organization_id=request.org_id,
+                agent_id=agent_uuid,
+                user_id=current_user.id,
+                source_type=source_type,
+                source=url,
+                status=QueueStatus.FAILED if dead else QueueStatus.PENDING,
+                error=FAILURE_ADVICE[FailureCause.DNS].format(url=url) if dead else None,
+                queue_metadata=metadata,
+            )))
+
         for url in request.pdf_urls:
-            queue_item = KnowledgeQueue(
-                organization_id=request.org_id,
-                agent_id=agent_uuid,
-                user_id=current_user.id,
-                source_type='pdf_url',
-                source=url,
-                status=QueueStatus.PENDING,
-                queue_metadata={"max_links": plan_sub_pages}
-            )
-            queued_items.append(queue_repo.create(queue_item))
-
-        # Queue websites with user_id
+            queue('pdf_url', url, {"max_links": plan_sub_pages})
         for url in request.websites:
-            queue_item = KnowledgeQueue(
-                organization_id=request.org_id,
-                agent_id=agent_uuid,
-                user_id=current_user.id,
-                source_type='website',
-                source=url,
-                status=QueueStatus.PENDING,
-                queue_metadata={
-                    "max_links": website_max_links,
-                    # Omitted (None) means the crawler's default: the seed's host.
-                    "crawl_scope": request.crawl_scope,
-                }
-            )
-            queued_items.append(queue_repo.create(queue_item))
-
-        # Queue sitemaps — one source each; pages are discovered from the sitemap
+            queue('website', url, {
+                "max_links": website_max_links,
+                # Omitted (None) means the crawler's default: the seed's host.
+                "crawl_scope": request.crawl_scope,
+            })
+        # Sitemaps — one source each; pages are discovered from the sitemap
         # and capped at the plan's sub-page limit (no per-request crawl scope).
         for url in request.sitemaps:
-            queue_item = KnowledgeQueue(
-                organization_id=request.org_id,
-                agent_id=agent_uuid,
-                user_id=current_user.id,
-                source_type='sitemap',
-                source=url,
-                status=QueueStatus.PENDING,
-                queue_metadata={"max_links": plan_sub_pages}
-            )
-            queued_items.append(queue_repo.create(queue_item))
+            queue('sitemap', url, {"max_links": plan_sub_pages})
 
         return {
             "message": "URLs queued for processing, it will take a while to process, we will notify you when it is done",
@@ -762,7 +759,7 @@ def _linked_agents_map(db: Session, knowledge_items) -> dict:
 @router.get("/agent/{agent_id}")
 async def get_knowledge_by_agent(
     agent_id: str,
-    page: int = Query(default=1, ge=1),
+    page: PageNumber = 1,
     page_size: int = Query(default=10, ge=1, le=100),
     current_user: User = Depends(
         require_any_permission("view_knowledge", "manage_knowledge")),
@@ -879,6 +876,8 @@ def _serialize_queue_item(item: KnowledgeQueue) -> dict:
         "source_type": item.source_type,
         "status": _enum_value(item.status),
         "error": item.error,
+        # One plain sentence for people; `error` stays for the knowledge page
+        "reason": plain_reason(item.error, item.source) if _enum_value(item.status) == QueueStatus.FAILED.value else None,
         "created_at": item.created_at.isoformat() if item.created_at else None,
         "updated_at": item.updated_at.isoformat() if item.updated_at else None,
         "processing_stage": _enum_value(item.processing_stage),
@@ -946,7 +945,7 @@ async def get_organization_queue_items(
 
 @router.delete("/queue/{queue_id}")
 async def delete_queue_item(
-    queue_id: int,
+    queue_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)
 ):
@@ -985,7 +984,7 @@ async def delete_queue_item(
 
 async def get_knowledge_by_organization(
     org_id: str,
-    page: int = Query(default=1, ge=1),
+    page: PageNumber = 1,
     page_size: int = Query(default=10, ge=1, le=100),
     current_user: User = Depends(
         require_any_permission("view_knowledge", "manage_knowledge")),
@@ -1086,7 +1085,7 @@ async def get_knowledge_by_organization(
 
 @router.get("/queue/{queue_id}")
 async def get_queue_status(
-    queue_id: int,
+    queue_id: DbIntId,
     current_user: User = Depends(
         require_any_permission("view_knowledge", "manage_knowledge")),
     db: Session = Depends(get_db)
@@ -1166,7 +1165,7 @@ async def get_processor_status(
 
 @router.delete("/{knowledge_id}")
 async def delete_knowledge(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)
 ):
@@ -1211,7 +1210,7 @@ async def delete_knowledge(
 
 @router.get("/{knowledge_id}/content")
 async def get_knowledge_content(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -1319,7 +1318,7 @@ def _require_editable_knowledge(
 
 @router.put("/{knowledge_id}/chunk/{chunk_id:path}")
 async def update_chunk_content(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     chunk_id: str,
     content: str = Body(..., embed=True),
     current_user: User = Depends(require_permissions("manage_knowledge")),
@@ -1377,7 +1376,7 @@ async def update_chunk_content(
 
 @router.delete("/{knowledge_id}/chunk/{chunk_id:path}")
 async def delete_chunk(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     chunk_id: str,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)
@@ -1431,7 +1430,7 @@ async def delete_chunk(
 
 @router.post("/{knowledge_id}/subpage")
 async def add_subpage(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     subpage_name: str = Body(..., embed=True),
     content: str = Body(..., embed=True),
     url: Optional[str] = Body(None, embed=True),
@@ -1549,7 +1548,7 @@ async def add_subpage(
 
 @router.put("/{knowledge_id}/page/{page_id:path}")
 async def update_page_content(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     page_id: str,
     content: str = Body(..., embed=True),
     title: Optional[str] = Body(None, embed=True),
@@ -1590,7 +1589,7 @@ async def update_page_content(
 
 @router.delete("/{knowledge_id}/page/{page_id:path}")
 async def delete_page(
-    knowledge_id: int,
+    knowledge_id: DbIntId,
     page_id: str,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db)

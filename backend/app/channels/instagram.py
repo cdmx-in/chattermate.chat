@@ -14,8 +14,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from typing import ClassVar, List
+from typing import ClassVar, List, Optional
 
+from app.channels.interactive_limits import INSTAGRAM_LIMITS, InteractiveLimits
 from app.channels.messenger import MessengerAdapter
 from app.channels.meta_base import GRAPH_INSTAGRAM_BASE
 from app.channels.registry import register_adapter
@@ -38,6 +39,11 @@ class InstagramAdapter(MessengerAdapter):
     # Instagram's send body is just {recipient, message} — messaging_type is a
     # Messenger-only parameter and has no meaning here.
     send_extras: ClassVar[dict] = {}
+    # Quick replies, but Instagram doesn't show them on desktop or the web,
+    # so the choices are written into the text too
+    interactive_limits: ClassVar[Optional[InteractiveLimits]] = INSTAGRAM_LIMITS
+    # Instagram's own cap on a message's text
+    max_text_length: ClassVar[Optional[int]] = INSTAGRAM_LIMITS.body_max
 
     def _events(self, entry: dict) -> List[dict]:
         """Instagram delivers a DM either as messaging[] or, depending on the

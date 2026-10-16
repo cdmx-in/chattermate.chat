@@ -82,6 +82,7 @@ const {
     cleanup,
     humanAgent,
     onTakeover,
+    refusal,
     submitRating: socketSubmitRating,
     submitForm,
     currentForm,
@@ -180,8 +181,12 @@ let currentInputFields: HTMLElement[] = []
 // setTimeout outlives the component and then touches a document that is gone
 // (surfaced by the test runner as an error after environment teardown).
 const pendingListenerSetups = new Set<ReturnType<typeof setTimeout>>()
+// Set on unmount. The async onMounted can finish after the component is gone and
+// would schedule a fresh setup that the unmount-time cancel never saw.
+let isUnmounted = false
 
 const scheduleNativeListenerSetup = (delayMs: number) => {
+    if (isUnmounted) return
     const timer = setTimeout(() => {
         pendingListenerSetups.delete(timer)
         setupNativeEventListeners()
@@ -523,7 +528,7 @@ const handleKeyPress = (event: KeyboardEvent) => {
 }
 
 // Update the checkAuthorization function
-const checkAuthorization = async () => {
+const checkAuthorization = async ({ afterRefusal = false } = {}): Promise<boolean> => {
     try {
         if (!widgetId.value) {
             console.error('Widget ID is not available')
@@ -550,8 +555,11 @@ const checkAuthorization = async () => {
             headers['Authorization'] = `Bearer ${token.value}`
         }
 
+        // Never a stored copy: this call is what binds the visitor to a customer,
+        // and a cached answer left the socket holding the page's anonymous token.
         const response = await fetch(url, {
-            headers
+            headers,
+            cache: 'no-store'
         })
 
         if (response.status === 401) {
@@ -621,6 +629,11 @@ const checkAuthorization = async () => {
         // banner, so replacing the whole widget with an error overlay would take
         // away the chat the visitor is about to get back.
         const connected = await connect()
+        // The socket was refused because this token isn't bound to a customer yet
+        // (an anonymous token reached it): authorizing again binds one. Once.
+        if (!connected && refusal.value === 'customer_required' && !afterRefusal) {
+            return await checkAuthorization({ afterRefusal: true })
+        }
         if (!connected) {
             console.error('Chat service not reachable yet; retrying in the background')
         }
@@ -719,7 +732,7 @@ watch(() => messages.value, (newMessages) => {
 // Add reconnect handler
 const handleReconnect = async () => {
     const connected = await reconnect()
-    if (connected) {
+    if (connected || refusal.value === 'customer_required') {
         await checkAuthorization()
     }
 }
@@ -1590,6 +1603,7 @@ onUnmounted(() => {
         clearTimeout(setupDOMObserver.timeoutId)
         setupDOMObserver.timeoutId = null
     }
+    isUnmounted = true
     cancelPendingListenerSetups()
 
     // Clean up native event listeners
@@ -2386,7 +2400,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                 @cancel="disarmNewChat"
             />
 
-            <div v-show="!showEmailGate" class="chat-messages" ref="messagesContainer">
+            <div v-show="!showEmailGate" class="chat-messages" ref="messagesContainer" role="log" aria-label="Messages">
                 <!-- Welcome message on open (cleared after the first send). Quick actions
                      render as a bar above the input — see below. -->
                 <div v-if="showWelcomeBlock" class="cm-welcome-block">
@@ -2926,6 +2940,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     </button>
                     <button
                         class="send-button"
+                        aria-label="Send message"
                         :class="{ 'ask-anything-send': isAskAnythingStyle }"
                         :style="userBubbleStyles"
                         @click="sendMessage"
@@ -2954,7 +2969,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
             </div>
 
             <!-- AI disclosure — dropped as soon as a human agent takes over -->
-            <div v-if="showAiDisclaimer" class="ai-disclaimer" :style="messageNameStyles">
+            <div v-if="showAiDisclaimer" class="ai-disclaimer">
                 {{ AI_DISCLAIMER_TEXT }}
             </div>
 
@@ -3596,7 +3611,9 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
     padding: 0 var(--space-md) 2px;
     font-size: 0.6875rem;
     line-height: 1.3;
-    opacity: 0.55;
+    /* The theme's muted colour, not opacity over the text colour: dimming
+       by opacity fell below readable contrast on light themes. */
+    color: var(--cm-muted);
 }
 
 /* Close the gap between the two footer lines, but only when the disclosure is
@@ -3618,7 +3635,7 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
 
 /* Footer: "Powered by" muted, "ChatterMate" emphasized (comp). Dimming lives on the
    prefix span (not the container) so the brand keeps the full text colour. */
-.cm-powered-prefix { opacity: 0.6; }
+.cm-powered-prefix { color: var(--cm-muted); }
 .cm-brand { font-weight: 700; }
 .cm-powered-link { color: inherit; text-decoration: none; cursor: pointer; }
 .cm-powered-link:hover .cm-brand { text-decoration: underline; }

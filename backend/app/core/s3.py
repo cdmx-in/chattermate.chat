@@ -107,6 +107,25 @@ def _key_from_url(s3_url: str) -> str:
     return '/'.join(path_parts[1:])
 
 
+def owned_s3_key(url: Optional[str]) -> Optional[str]:
+    """The object key when ``url`` names an object in OUR bucket, else None.
+
+    _key_from_url assumes the URL is ours and reads any S3 URL as a key in our
+    bucket; use this instead before acting on a URL a user supplied.
+    """
+    if not is_s3_url(url):
+        return None
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower()
+    parts = parsed.path.strip('/').split('/')
+    bucket = settings.S3_BUCKET.lower()
+    if host.startswith(f"{bucket}."):
+        return '/'.join(parts)
+    if host.startswith(("s3.", "s3-")) and parts[0] == settings.S3_BUCKET:
+        return '/'.join(parts[1:])
+    return None
+
+
 @lru_cache(maxsize=1)
 def get_s3_client():
     """Get boto3 S3 client.

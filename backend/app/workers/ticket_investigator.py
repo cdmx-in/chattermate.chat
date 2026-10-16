@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from uuid import UUID
 
+from app.channels.app_hooks import load_extensions
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.security import decrypt_api_key
@@ -677,6 +678,8 @@ async def main():
     # to the web containers. Without Redis the frontend's poll fallback covers.
     from app.core.socketio import configure_socketio
     configure_socketio()
+    # Ticket replies reach customers' channels from this process too
+    load_extensions()
     reap_orphaned_runs()
     await asyncio.gather(
         run_ticket_investigator_loop(),

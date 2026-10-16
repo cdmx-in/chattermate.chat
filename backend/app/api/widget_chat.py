@@ -21,6 +21,8 @@ import os
 import re
 from types import SimpleNamespace
 from fastapi import APIRouter
+from socketio.exceptions import ConnectionRefusedError as SocketRefused
+from app.channels.constants import MessageSource
 from app.core.socketio import sio
 from app.core.logger import get_logger
 import traceback
@@ -43,12 +45,12 @@ from app.services.socket_rate_limit import socket_rate_limit
 from app.services import conversation_token as conversation_token_service
 from app.services.workflow_chat import WorkflowChatService
 from app.services.file_upload_service import FileUploadService
-from app.core.config import settings
-from app.core.s3 import get_s3_signed_url
+from app.services.file_storage import resolve_public_url
 
 from app.models.session_to_agent import SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
+from app.services.agent_rooms import is_org_inbox_room, may_join_org_inbox
 from app.services.chat_notifications import notify_new_chat
 from app.services.contact_capture import retain_unstored_email
 from app.services.human_routing import (
@@ -64,7 +66,6 @@ from app.services.ticket_csat import record_conversation_rating
 from app.repositories.jira import JiraRepository
 from app.models.ai_config import AIModelType
 from app.services.workflow_execution import WorkflowExecutionService
-from app.core.config import settings
 
 
 # Try to import enterprise modules
@@ -104,6 +105,19 @@ MAX_RATING_FEEDBACK_LENGTH = 2000
 def format_datetime(dt):
     """Convert datetime to ISO format string"""
     return dt.isoformat() if dt else None
+
+
+async def _client_attachments(uploaded_files: list) -> list:
+    """Socket payload for freshly uploaded files, each with a signed URL."""
+    return [
+        {
+            'filename': file_info['filename'],
+            'file_url': await resolve_public_url(file_info['file_url']),
+            'content_type': file_info['content_type'],
+            'file_size': file_info['size'],
+        }
+        for file_info in uploaded_files or []
+    ]
 
 def validate_email(email: str) -> bool:
     """Validate email format"""
@@ -185,6 +199,12 @@ def validate_form_data(form_fields: list, form_data: dict) -> list:
     
     return errors
 
+def _refuse_connection(error: str, error_type: str):
+    """Reject the connect with a reason the widget can act on. It has to travel
+    in the refusal itself: socket.io clients drop events emitted to a connection
+    that is then refused, so an 'error' emit never reached a browser."""
+    raise SocketRefused(error, {'error': error, 'type': error_type})
+
 
 ACTIVE_STATUSES = (SessionStatus.OPEN, SessionStatus.TRANSFERRED)
 
@@ -218,6 +238,13 @@ async def widget_connect(sid, environ, auth):
         if not widget_id or not org_id:
             raise ValueError("Widget authentication failed")
 
+        # The widget page hands out an anonymous token; GET /widgets/{id} binds it
+        # to a customer. A conversation can't be stored without one, so say so
+        # instead of failing on the insert: the widget re-authorizes and retries.
+        # (Legacy tokens carry the string "None", as GET /widgets/{id} also allows.)
+        if not customer_id or customer_id == "None":
+            _refuse_connection('Visitor not authorized yet', 'customer_required')
+
         # The token's scope decides which conversations this socket may join, so
         # an unverifiable token fails the connection instead of being shrugged off.
         token_data = verify_conversation_token(conversation_token)
@@ -235,20 +262,16 @@ async def widget_connect(sid, environ, auth):
             raise ValueError("Invalid widget ID")
 
         # A widget-issued token may not stand for a person the embedding app has
-        # since signed in. The widget's next GET /widgets swaps it for a customer
-        # of its own.
+        # since signed in. Refused like an unbound token, so the widget authorizes
+        # again - and GET /widgets/{id} swaps it for a customer of its own.
         if not may_stand_for(CustomerRepository(db).get_by_id(customer_id), scope):
-            raise ValueError("Conversation token may not act as this customer")
+            _refuse_connection('Visitor not authorized yet', 'customer_required')
 
         # Get AI config for widget's organization
         ai_config_repo = AIConfigRepository(db)
         ai_config = ai_config_repo.get_active_config(org_id)
         if not ai_config:
-            await sio.emit('error', {
-                'error': 'AI configuration required',
-                'type': 'ai_config_missing'
-            }, to=sid, namespace='/widget')
-            return False
+            _refuse_connection('AI configuration required', 'ai_config_missing')
         
         message_limit_reached = False
         # Check message limits if enterprise module is available
@@ -364,6 +387,8 @@ async def widget_connect(sid, environ, auth):
 
         return True
 
+    except SocketRefused:
+        raise
     except Exception as e:
         logger.error(f"Widget connection error for sid {sid}: {str(e)}")
         logger.error(traceback.format_exc())
@@ -713,25 +738,7 @@ async def handle_widget_chat(sid, data):
             user_id = str(session_data.user_id) if session_data and session_data.user_id else None
             timestamp = format_datetime(datetime.datetime.now())
             
-            # Prepare attachments data if files were uploaded
-            attachments_data = []
-            if uploaded_files:
-                for file_info in uploaded_files:
-                    file_url = file_info['file_url']
-
-                    # Generate S3 signed URL if S3 storage is enabled
-                    if settings.S3_FILE_STORAGE:
-                        try:
-                            file_url = await get_s3_signed_url(file_url)
-                        except Exception as e:
-                            logger.error(f"Error generating signed URL for attachment: {str(e)}")
-
-                    attachments_data.append({
-                        'filename': file_info['filename'],
-                        'file_url': file_url,
-                        'content_type': file_info['content_type'],
-                        'file_size': file_info['size']
-                    })
+            attachments_data = await _client_attachments(uploaded_files)
 
             if user_id:
                 # Also emit to user-specific room
@@ -790,25 +797,7 @@ async def handle_widget_chat(sid, data):
             user_id = str(session_data.user_id) if session_data and session_data.user_id else None
             timestamp = format_datetime(datetime.datetime.now())
             
-            # Prepare attachments data if files were uploaded
-            attachments_data = []
-            if uploaded_files:
-                for file_info in uploaded_files:
-                    file_url = file_info['file_url']
-
-                    # Generate S3 signed URL if S3 storage is enabled
-                    if settings.S3_FILE_STORAGE:
-                        try:
-                            file_url = await get_s3_signed_url(file_url)
-                        except Exception as e:
-                            logger.error(f"Error generating signed URL for attachment: {str(e)}")
-
-                    attachments_data.append({
-                        'filename': file_info['filename'],
-                        'file_url': file_url,
-                        'content_type': file_info['content_type'],
-                        'file_size': file_info['size']
-                    })
+            attachments_data = await _client_attachments(uploaded_files)
 
             if user_id:
                 # Also emit to user-specific room
@@ -1014,21 +1003,10 @@ async def get_widget_chat_history(sid):
                     att_dict = {
                         'id': attachment.id,
                         'filename': attachment.filename,
-                        'file_url': attachment.file_url,
+                        'file_url': attachment.file_url,  # signed by get_session_history
                         'content_type': attachment.content_type,
                         'file_size': attachment.file_size
                     }
-                    
-                    # Generate signed URL for S3 files
-                    if settings.S3_FILE_STORAGE and attachment.file_url:
-                        try:
-                            from app.core.s3 import get_s3_signed_url
-                            signed_url = await get_s3_signed_url(attachment.file_url)
-                            att_dict['file_url'] = signed_url
-                        except Exception as e:
-                            logger.error(f"Error generating signed URL for attachment {attachment.id}: {str(e)}")
-                            # Use original file_url if signing fails
-                    
                     attachments.append(att_dict)
                 msg_dict['attachments'] = attachments
             
@@ -1347,28 +1325,12 @@ async def handle_agent_message(sid, data):
         
         # Add attachments to response if files were uploaded
         if uploaded_files:
-            attachments_data = []
-            for file_info in uploaded_files:
-                file_url = file_info['file_url']
-
-                # Generate S3 signed URL if S3 storage is enabled
-                if settings.S3_FILE_STORAGE:
-                    try:
-                        file_url = await get_s3_signed_url(file_url)
-                    except Exception as e:
-                        logger.error(f"Error generating signed URL for attachment: {str(e)}")
-
-                attachments_data.append({
-                    'filename': file_info['filename'],
-                    'file_url': file_url,
-                    'content_type': file_info['content_type'],
-                    'file_size': file_info['size']
-                })
-            response_payload['attachments'] = attachments_data
+            response_payload['attachments'] = await _client_attachments(uploaded_files)
             response_payload['message_id'] = created_message.id
 
         delivery = await deliver_to_customer(db, session_data, response_payload,
-                                             message_id=created_message.id)
+                                             message_id=created_message.id,
+                                             source=MessageSource.HUMAN)
         if not delivery.ok:
             if delivery.reason == 'window_expired':
                 error_message = (
@@ -1430,6 +1392,15 @@ async def handle_join_room(sid, data):
             logger.info(f"Agent {session.get('user_id')} joined ticket room for org {org_id}")
             return
 
+        # Per-org inbox room (live delivery receipts on any of the org's
+        # chats) — for the people who can see chats nobody owns
+        if is_org_inbox_room(session_id):
+            db = next(get_db())
+            if not may_join_org_inbox(db, session, session_id):
+                raise ValueError("Unauthorized to join org inbox room")
+            await sio.enter_room(sid, session_id, namespace='/agent')
+            return
+
         # Verify this agent has permission to join this room
         db = next(get_db())
         session_repo = SessionToAgentRepository(db)
@@ -1483,11 +1454,13 @@ async def handle_leave_room(sid, data):
         await sio.leave_room(sid, session_id, namespace='/agent')
         logger.info(f"Agent {session.get('user_id')} left room: {session_id}")
 
-        # Notify room of leave
-        await sio.emit('room_event', {
-            'type': 'leave',
-            'user_id': str(session.get('user_id')),
-        }, room=session_id, namespace='/agent')
+        # Notify a conversation room of the leave — not the org inbox room,
+        # where the whole team would hear every chat switch
+        if not is_org_inbox_room(session_id):
+            await sio.emit('room_event', {
+                'type': 'leave',
+                'user_id': str(session.get('user_id')),
+            }, room=session_id, namespace='/agent')
 
     except Exception as e:
         logger.error(f"Error leaving room for sid {sid}: {str(e)}")
@@ -1718,7 +1691,18 @@ async def handle_get_workflow_state(sid):
                                 "initial_message": True
                             }
                         })
-                        
+
+                        # The widget does not render a workflow_state message, so
+                        # send the text as a chat_response like the other handlers.
+                        await sio.emit('chat_response', {
+                            'message': workflow_result.message,
+                            'type': 'chat_response',
+                            'transfer_to_human': workflow_result.transfer_to_human,
+                            'end_chat': workflow_result.end_chat,
+                            'request_rating': workflow_result.request_rating,
+                            'shopify_output': None
+                        }, room=session_id, namespace='/widget')
+
                         await sio.emit('workflow_state', {
                             'type': 'message',
                             'message': workflow_result.message,

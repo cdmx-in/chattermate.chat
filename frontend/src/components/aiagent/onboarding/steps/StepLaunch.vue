@@ -15,9 +15,11 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref } from 'vue'
 import { toast } from 'vue-sonner'
 import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+import { WIDGET_INSTALL_GUIDE_URL } from '@/config/docs'
+import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 
 const props = defineProps<{
   widgetId: string | null
@@ -33,10 +35,39 @@ const widgetSnippet = computed(() =>
   props.widgetId ? buildWidgetEmbed(props.widgetId, false) : '',
 )
 
-const copy = async (text: string, label: string) => {
+// Where the widget is live, or blocked (enterprise module; nothing in open source)
+const { enterpriseComponent, moduleImports } = useEnterpriseFeatures()
+const WidgetInstallStatus = enterpriseComponent(moduleImports.widgetInstallStatus)
+
+// Built in the browser and handed to the user's own mail app: nothing is sent
+// from our servers, so it can't be used to mail arbitrary addresses.
+const developerMailto = computed(() => {
+  if (!widgetSnippet.value) return ''
+  const body = [
+    'Hi,',
+    '',
+    'Could you add our ChatterMate chat to the website? Paste this just before </body> on every page:',
+    '',
+    widgetSnippet.value,
+    '',
+    `Guide: ${WIDGET_INSTALL_GUIDE_URL}`,
+  ].join('\n')
+  const params = new URLSearchParams({ subject: 'Add our ChatterMate chat to the website', body })
+  return `mailto:?${params.toString().replace(/\+/g, '%20')}`
+})
+
+// The button itself says it worked, for a moment; a failure gets a toast.
+const COPIED_FOR_MS = 2000
+const copied = ref(false)
+let copiedTimer: ReturnType<typeof setTimeout> | undefined
+onBeforeUnmount(() => clearTimeout(copiedTimer))
+
+const copySnippet = async () => {
   try {
-    await navigator.clipboard.writeText(text)
-    toast.success(`${label} copied to clipboard!`, { duration: 3000 })
+    await navigator.clipboard.writeText(widgetSnippet.value)
+    copied.value = true
+    clearTimeout(copiedTimer)
+    copiedTimer = setTimeout(() => (copied.value = false), COPIED_FOR_MS)
   } catch (err) {
     console.error('Failed to copy:', err)
     toast.error('Failed to copy to clipboard')
@@ -51,10 +82,28 @@ const copy = async (text: string, label: string) => {
       <p class="step-sub">Embed this snippet on your site to start chatting with visitors.</p>
     </header>
 
-    <div>
+    <div class="snippet">
       <pre class="code-block">{{ widgetSnippet }}</pre>
-      <button type="button" class="btn-soft" :disabled="!widgetSnippet" @click="copy(widgetSnippet, 'Widget snippet')">Copy snippet</button>
+      <button type="button" class="copy-btn" :disabled="!widgetSnippet" @click="copySnippet">
+        <font-awesome-icon :icon="copied ? 'fa-solid fa-check' : 'fa-regular fa-copy'" aria-hidden="true" />
+        <span aria-live="polite">{{ copied ? 'Copied' : 'Copy' }}</span>
+      </button>
     </div>
+
+    <div class="snippet-actions">
+      <a v-if="developerMailto" class="action-btn" :href="developerMailto">
+        <font-awesome-icon icon="fa-regular fa-envelope" aria-hidden="true" />
+        Email it to my developer
+      </a>
+      <a class="action-btn" :href="WIDGET_INSTALL_GUIDE_URL" target="_blank" rel="noopener">
+        <font-awesome-icon icon="fa-solid fa-book-open" aria-hidden="true" />
+        Install guide
+        <font-awesome-icon icon="fa-solid fa-arrow-up-right-from-square" class="external" aria-hidden="true" />
+        <span class="sr-only">(opens in a new tab)</span>
+      </a>
+    </div>
+
+    <WidgetInstallStatus :widget-id="widgetId" />
 
     <div class="step-actions">
       <button type="button" class="btn-ghost" @click="emit('back')">Back</button>
@@ -90,11 +139,16 @@ const copy = async (text: string, label: string) => {
   margin: 0;
 }
 
+.snippet {
+  position: relative;
+}
+
 .code-block {
   background: var(--bg);
   border: 1px solid var(--o10);
   border-radius: var(--radius-input);
-  padding: 18px;
+  /* Room on the right for the Copy button over the first line */
+  padding: 18px 96px 18px 18px;
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.6;
@@ -102,29 +156,88 @@ const copy = async (text: string, label: string) => {
   overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
-  margin: 0 0 12px;
+  margin: 0;
 }
 
-.btn-soft {
-  padding: 11px 18px;
+.copy-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
   background: var(--o06);
   border: 1px solid var(--o14);
-  border-radius: var(--radius-btn);
+  border-radius: 8px;
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 12.5px;
   font-weight: 500;
   font-family: var(--font-sans);
   cursor: pointer;
   transition: var(--transition-fast);
 }
 
-.btn-soft:hover:not(:disabled) {
+/* On a phone the code needs every pixel of width: Copy goes above it instead */
+@media (max-width: 480px) {
+  .code-block {
+    padding: 52px 14px 14px;
+  }
+}
+
+.copy-btn:hover:not(:disabled) {
   background: var(--o10);
 }
 
-.btn-soft:disabled {
+.copy-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.snippet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  background: var(--o06);
+  border: 1px solid var(--o14);
+  border-radius: var(--radius-btn);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  text-decoration: none;
+  transition: var(--transition-fast);
+}
+
+.action-btn:hover {
+  background: var(--o10);
+}
+
+.copy-btn:focus-visible,
+.action-btn:focus-visible {
+  outline: 2px solid var(--accent-ink);
+  outline-offset: 2px;
+}
+
+.action-btn .external {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
 .step-actions {

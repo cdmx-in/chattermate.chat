@@ -28,7 +28,8 @@ from app.agents.chat_agent import (
     ChatAgent, _GROQ_JSON_TOOL_SCHEMA, _GROQ_QUICK_REPLIES_PROPERTY,
     _build_chat_response_from_capture, drop_stale_choices,
 )
-from app.agents.choice_prompt import CHOICE_INSTRUCTIONS
+from app.agents.choice_prompt import choice_instructions
+from app.channels.interactive_limits import MESSENGER_LIMITS, TELEGRAM_LIMITS, WHATSAPP_LIMITS
 from app.channels.constants import MAX_CHOICE_LENGTH, MAX_CHOICE_OPTIONS
 from app.models.schemas.chat import ChannelChatResponse, ChatResponse
 from app.utils.response_parser import parse_response_content
@@ -106,7 +107,7 @@ def test_a_malformed_value_is_dropped():
     assert _response().quick_replies is None
 
 
-def _build_agent(offer_choices: bool) -> ChatAgent:
+def _build_agent(choice_limits) -> ChatAgent:
     """A ChatAgent with everything external stubbed, to read its prompt."""
     agent_data = Mock()
     agent_data.name = "Support"
@@ -129,8 +130,7 @@ def _build_agent(offer_choices: bool) -> ChatAgent:
         return ChatAgent(api_key="test-key", model_name="gpt-4", model_type="openai",
                          org_id=str(uuid4()), agent_id=str(uuid4()),
                          customer_id=str(uuid4()), session_id=str(uuid4()),
-                         channel="whatsapp" if offer_choices else "telegram",
-                         offer_choices=offer_choices)
+                         channel="whatsapp", choice_limits=choice_limits)
 
 
 def _prompt(agent: ChatAgent) -> str:
@@ -139,9 +139,9 @@ def _prompt(agent: ChatAgent) -> str:
 
 
 def test_only_a_channel_with_buttons_gets_the_choice_instructions():
-    offered, plain = _build_agent(offer_choices=True), _build_agent(offer_choices=False)
-    assert CHOICE_INSTRUCTIONS in _prompt(offered)
-    assert CHOICE_INSTRUCTIONS not in _prompt(plain)
+    offered, plain = _build_agent(WHATSAPP_LIMITS), _build_agent(None)
+    assert choice_instructions(WHATSAPP_LIMITS) in _prompt(offered)
+    assert "tappable choices" not in _prompt(plain)
     assert offered.agent.response_model is ChannelChatResponse
     assert plain.agent.response_model is ChatResponse
 
@@ -159,3 +159,12 @@ def test_choices_are_dropped_with_an_empty_turn_fallback():
     response.message = "I'm sorry, I didn't quite catch that."  # the empty-turn fallback
     drop_stale_choices(response, "")
     assert response.quick_replies is None
+
+
+def test_the_instructions_follow_the_channels_limits():
+    assert "up to 3 short options show as buttons, more as a list" in choice_instructions(WHATSAPP_LIMITS)
+    telegram = choice_instructions(TELEGRAM_LIMITS)
+    assert "at most 10," in telegram and "more as a list" not in telegram
+    assert "under 64 characters" in telegram
+    messenger = choice_instructions(MESSENGER_LIMITS)
+    assert "at most 10," in messenger and "13" not in messenger

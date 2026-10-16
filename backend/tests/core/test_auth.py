@@ -145,13 +145,13 @@ async def test_get_current_user_with_cookie(mock_db, mock_user):
     request = MagicMock(spec=Request)
     access_token = "valid_access_token"
     
-    # Mock verify_token
+    # Mock live_payload
     payload = {"sub": str(mock_user.id)}
     
     # Mock db query
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
     
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         result = await get_current_user(request, access_token, mock_db)
         assert result == mock_user
 
@@ -163,13 +163,13 @@ async def test_get_current_user_with_auth_header(mock_db, mock_user):
     request = MagicMock(spec=Request)
     request.headers.get.return_value = "Bearer valid_access_token"
     
-    # Mock verify_token
+    # Mock live_payload
     payload = {"sub": str(mock_user.id)}
     
     # Mock db query
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
     
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         result = await get_current_user(request, None, mock_db)
         assert result == mock_user
 
@@ -195,8 +195,8 @@ async def test_get_current_user_invalid_token(mock_db):
     request = MagicMock(spec=Request)
     access_token = "invalid_token"
     
-    # Mock verify_token
-    with patch('app.core.auth.verify_token', return_value=None):
+    # Mock live_payload
+    with patch('app.core.auth.live_payload', return_value=None):
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(request, access_token, mock_db)
         
@@ -211,10 +211,10 @@ async def test_get_current_user_invalid_payload(mock_db):
     request = MagicMock(spec=Request)
     access_token = "valid_token_invalid_payload"
     
-    # Mock verify_token
+    # Mock live_payload
     payload = {"not_sub": "invalid"}
     
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(request, access_token, mock_db)
         
@@ -229,13 +229,13 @@ async def test_get_current_user_user_not_found(mock_db):
     request = MagicMock(spec=Request)
     access_token = "valid_token"
     
-    # Mock verify_token
+    # Mock live_payload
     payload = {"sub": str(uuid4())}
     
     # Mock db query - user not found
     mock_db.query.return_value.filter.return_value.first.return_value = None
     
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(request, access_token, mock_db)
         
@@ -253,13 +253,13 @@ async def test_get_current_user_inactive_user(mock_db, mock_user):
     # Set user as inactive
     mock_user.is_active = False
     
-    # Mock verify_token
+    # Mock live_payload
     payload = {"sub": str(mock_user.id)}
     
     # Mock db query
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
     
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(request, access_token, mock_db)
         
@@ -274,8 +274,8 @@ async def test_get_current_user_exception(mock_db):
     request = MagicMock(spec=Request)
     access_token = "valid_token"
     
-    # Mock verify_token to raise exception
-    with patch('app.core.auth.verify_token', side_effect=Exception("Test exception")):
+    # Mock live_payload to raise exception
+    with patch('app.core.auth.live_payload', side_effect=Exception("Test exception")):
         with pytest.raises(HTTPException) as exc_info:
             await get_current_user(request, access_token, mock_db)
         
@@ -521,7 +521,7 @@ async def test_get_unified_auth_jwt_success(mock_db, mock_user):
     payload = {"sub": str(mock_user.id)}
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         result = await get_unified_auth(request, mock_db)
 
     assert result["auth_type"] == "jwt"
@@ -553,7 +553,7 @@ async def test_get_unified_auth_jwt_invalid_token(mock_db):
     request.cookies.get.return_value = "invalid_token"
     request.headers.get.return_value = None
 
-    with patch('app.core.auth.verify_token', return_value=None):
+    with patch('app.core.auth.live_payload', return_value=None):
         with pytest.raises(HTTPException) as exc_info:
             await get_unified_auth(request, mock_db)
 
@@ -573,7 +573,7 @@ async def test_get_unified_auth_jwt_user_not_found(mock_db):
     payload = {"sub": str(uuid4())}
     mock_db.query.return_value.filter.return_value.first.return_value = None
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
             await get_unified_auth(request, mock_db)
 
@@ -594,7 +594,7 @@ async def test_get_unified_auth_jwt_inactive_user(mock_db, mock_user):
     payload = {"sub": str(mock_user.id)}
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
             await get_unified_auth(request, mock_db)
 
@@ -621,7 +621,7 @@ async def test_get_unified_auth_authenticates_without_permissions(mock_db, mock_
     payload = {"sub": str(mock_user.id)}
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         result = await get_unified_auth(request, mock_db)
 
     assert result["auth_type"] == "jwt"
@@ -720,7 +720,7 @@ async def test_get_unified_auth_with_auth_header(mock_db, mock_user):
     payload = {"sub": str(mock_user.id)}
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         result = await get_unified_auth(request, mock_db)
 
     assert result["auth_type"] == "jwt"
@@ -746,7 +746,7 @@ async def test_get_unified_chat_auth_jwt_success(mock_db, mock_user):
     payload = {"sub": str(mock_user.id)}
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         result = await get_unified_chat_auth(request, mock_db)
 
     assert result["auth_type"] == "jwt"
@@ -769,7 +769,7 @@ async def test_get_unified_chat_auth_view_assigned(mock_db, mock_user):
     payload = {"sub": str(mock_user.id)}
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         result = await get_unified_chat_auth(request, mock_db)
 
     assert result["auth_type"] == "jwt"
@@ -792,7 +792,7 @@ async def test_get_unified_chat_auth_no_permissions(mock_db, mock_user):
     payload = {"sub": str(mock_user.id)}
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
             await get_unified_chat_auth(request, mock_db)
 
@@ -842,7 +842,7 @@ async def test_get_unified_chat_auth_exception(mock_db):
     request.cookies.get.return_value = "valid_token"
     request.headers.get.return_value = None
 
-    with patch('app.core.auth.verify_token', side_effect=Exception("Test error")):
+    with patch('app.core.auth.live_payload', side_effect=Exception("Test error")):
         with pytest.raises(HTTPException) as exc_info:
             await get_unified_chat_auth(request, mock_db)
 
@@ -858,7 +858,7 @@ async def test_get_unified_auth_exception(mock_db):
     request.cookies.get.return_value = "valid_token"
     request.headers.get.return_value = None
 
-    with patch('app.core.auth.verify_token', side_effect=Exception("Unexpected error")):
+    with patch('app.core.auth.live_payload', side_effect=Exception("Unexpected error")):
         with pytest.raises(HTTPException) as exc_info:
             await get_unified_auth(request, mock_db)
 
@@ -875,6 +875,6 @@ async def test_get_current_user_from_cookie_directly(mock_db, mock_user):
     payload = {"sub": str(mock_user.id)}
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    with patch('app.core.auth.verify_token', return_value=payload):
+    with patch('app.core.auth.live_payload', return_value=payload):
         result = await get_current_user(request, None, mock_db)
         assert result == mock_user

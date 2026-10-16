@@ -408,8 +408,7 @@ class TestWorkflowExecutionService:
         node = Mock(spec=WorkflowNode)
         node.id = uuid4()
         node.node_type = NodeType.WAIT
-        node.config = {"duration": 1}  # 1 second
-        node.wait_duration = 1
+        node.config = {"wait_duration": 1}  # unit defaults to seconds
         node.outgoing_connections = [connection]
 
         result = workflow_service._execute_wait_node(node, {})
@@ -524,26 +523,6 @@ class TestWorkflowExecutionService:
         result = workflow_service._interpolate_variables(text, workflow_state)
 
         assert result == "Order 12345 for Bob"
-
-    def test_parse_operands(self, workflow_service):
-        """Test parsing operands from strings"""
-        left, right = workflow_service._parse_operands("100", "50")
-        assert left == "100"
-        assert right == "50"
-
-        left, right = workflow_service._parse_operands('"hello"', '"world"')
-        assert left == "hello"
-        assert right == "world"
-
-    def test_parse_numeric_operands(self, workflow_service):
-        """Test parsing numeric operands"""
-        left, right = workflow_service._parse_numeric_operands("100", "50")
-        assert left == 100.0
-        assert right == 50.0
-
-        left, right = workflow_service._parse_numeric_operands("10.5", "20.3")
-        assert left == 10.5
-        assert right == 20.3
 
     def test_store_form_variables(self, workflow_service):
         """Test storing form data in workflow state"""
@@ -673,3 +652,146 @@ class TestWorkflowExecutionService:
         assert result.success is True
         assert result.should_continue is True
         assert result.next_node_id == next_node_id
+
+
+def _linked_nodes(*nodes):
+    """Chain mock nodes in order with mock connections; the first is the start."""
+    for node in nodes:
+        node.incoming_connections = []
+        node.outgoing_connections = []
+    for source, target in zip(nodes, nodes[1:]):
+        connection = Mock()
+        connection.target_node_id = target.id
+        source.outgoing_connections.append(connection)
+        target.incoming_connections.append(connection)
+    return list(nodes)
+
+
+def _message_node(text):
+    node = Mock(spec=WorkflowNode)
+    node.id = uuid4()
+    node.node_type = NodeType.MESSAGE
+    node.config = {"message_text": text}
+    return node
+
+
+async def _run_workflow(workflow_service, workflow, nodes, user_message="hi"):
+    workflow.nodes = nodes
+    with patch.object(workflow_service.workflow_repo, 'get_workflow_with_nodes_and_connections',
+                      return_value=workflow), \
+         patch.object(workflow_service, '_update_session_workflow_state'):
+        return await workflow_service.execute_workflow(
+            session_id="test-session",
+            user_message=user_message,
+            workflow_id=workflow.id,
+        )
+
+
+class TestTerminalMessageNotDuplicated:
+    """The node execution stops on is returned as the final message, so it must
+    not also be reported as an intermediate one: every caller emits and stores
+    both, which sent the visitor the same text twice."""
+
+    @pytest.mark.asyncio
+    async def test_single_message_node_is_only_the_final_message(self, workflow_service, sample_workflow):
+        result = await _run_workflow(workflow_service, sample_workflow, _linked_nodes(_message_node("Hello")))
+
+        assert result.success is True
+        assert result.message == "Hello"
+        assert result.intermediate_messages == []
+
+    @pytest.mark.asyncio
+    async def test_message_chain_keeps_earlier_messages_as_intermediate(self, workflow_service, sample_workflow):
+        nodes = _linked_nodes(_message_node("First"), _message_node("Second"))
+
+        result = await _run_workflow(workflow_service, sample_workflow, nodes)
+
+        assert result.message == "Second"
+        assert result.intermediate_messages == ["First"]
+
+    @pytest.mark.asyncio
+    async def test_message_before_user_input_stays_intermediate(self, workflow_service, sample_workflow):
+        user_input = Mock(spec=WorkflowNode)
+        user_input.id = uuid4()
+        user_input.name = "Ask"
+        user_input.node_type = NodeType.USER_INPUT
+        user_input.config = {"prompt_message": "What is your name?"}
+        nodes = _linked_nodes(_message_node("Welcome"), user_input)
+
+        result = await _run_workflow(workflow_service, sample_workflow, nodes, user_message=None)
+
+        assert result.message == "What is your name?"
+        assert result.intermediate_messages == ["Welcome"]
+
+
+class TestUserMessageVariable:
+    """{{user_message}} sits at the top level of variables, not under a node."""
+
+    def test_user_message_is_interpolated(self, workflow_service):
+        workflow_state = {"variables": {"user_message": "where is my order"}}
+
+        result = workflow_service._process_variables("You said: {{user_message}}", workflow_state)
+
+        assert result == "You said: where is my order"
+
+    def test_user_message_does_not_hide_node_variables(self, workflow_service):
+        # The user message was searched as if it were a node's variables, so a
+        # message containing a field's name broke the lookup for that field.
+        node_id = str(uuid4())
+        workflow_state = {"variables": {
+            node_id: {"contact_email": "a@example.com"},
+            "user_message": "my contact_email changed",
+        }}
+
+        result = workflow_service._process_variables("Email: {{contact_email}}", workflow_state)
+
+        assert result == "Email: a@example.com"
+
+    @pytest.mark.asyncio
+    async def test_message_node_sees_the_current_user_message(self, workflow_service, sample_workflow):
+        nodes = _linked_nodes(_message_node("Echo: {{user_message}}"))
+
+        result = await _run_workflow(workflow_service, sample_workflow, nodes, user_message="hello there")
+
+        assert result.message == "Echo: hello there"
+
+
+class TestWaitNodeConfig:
+
+    @pytest.mark.asyncio
+    async def test_wait_node_reads_duration_from_config(self, workflow_service, sample_workflow):
+        # A real node: wait settings live in config; there is no wait_duration column.
+        node = WorkflowNode(
+            id=uuid4(),
+            node_type=NodeType.WAIT,
+            name="Wait",
+            config={"wait_duration": 5, "wait_unit": "minutes"},
+        )
+
+        result = await workflow_service._execute_node(
+            node, sample_workflow, {}, None, None, None, None, None, None, None, None, "test-session")
+
+        assert result.success is True
+        assert result.message == "Please wait 5 minutes..."
+        assert result.next_node_id is None
+
+
+class TestUnknownConditionFormat:
+
+    def test_unparseable_condition_is_false(self, workflow_service):
+        assert workflow_service._evaluate_condition("this is not a condition", {}) is False
+
+    def test_unparseable_condition_takes_the_false_branch(self, workflow_service, sample_workflow):
+        true_target, false_target = uuid4(), uuid4()
+        true_conn = Mock(target_node_id=true_target, label="true", condition="true")
+        false_conn = Mock(target_node_id=false_target, label="false", condition="false")
+
+        node = Mock(spec=WorkflowNode)
+        node.id = uuid4()
+        node.node_type = NodeType.CONDITION
+        node.config = {"condition_expression": "{{missing_field}}"}
+        node.outgoing_connections = [true_conn, false_conn]
+
+        result = workflow_service._execute_condition_node(node, sample_workflow, {"variables": {}})
+
+        assert result.next_node_id == false_target

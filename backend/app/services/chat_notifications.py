@@ -19,6 +19,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 from app.core.logger import get_logger
+from app.repositories.channels import ChannelConversationRepository
 from app.repositories.user import UserRepository
 from app.services.notifications import ChatNotificationEvent, notify_chat_event
 
@@ -70,6 +71,36 @@ async def notify_new_chat(db: Session, session) -> None:
         )
     except Exception as e:
         logger.error(f"Error notifying new chat: {e}")
+
+
+# channel_conversations.extra flag. A thread is created with it False and it
+# turns True once the team has been told. A thread with no flag at all predates
+# it and was announced when it was created, so it is never announced again.
+TEAM_NOTIFIED = "team_notified"
+
+
+def team_not_yet_notified() -> dict:
+    """The extra a new channel thread starts with."""
+    return {TEAM_NOTIFIED: False}
+
+
+async def notify_new_channel_chat_once(db: Session, session, conversation) -> None:
+    """notify_new_chat for a channel thread, at most once. A thread can start
+    without needing the team — an external app answered it, or the business
+    sent the first message — so the moment to tell them is the first time it
+    actually reaches the AI or the inbox, not when it was created.
+
+    The flag is claimed under the conversation's row lock, so two first
+    messages processed at once page the team once. A thread a human already
+    holds is marked without paging anyone."""
+    if conversation is None or (conversation.extra or {}).get(TEAM_NOTIFIED) is not False:
+        return
+    previous = ChannelConversationRepository(db).merge_extra(conversation, {TEAM_NOTIFIED: True})
+    if (previous or {}).get(TEAM_NOTIFIED) is not False:
+        return  # another process claimed it first
+    if getattr(session, 'user_id', None) is not None:
+        return
+    await notify_new_chat(db, session)
 
 
 async def notify_chat_assigned(db: Session, session, user_id, assigned_by: Optional[str] = None) -> None:

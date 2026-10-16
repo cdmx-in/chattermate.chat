@@ -22,6 +22,7 @@ from app.channels.base import (
     StatusEvent, WindowStatus,
 )
 from app.channels.constants import DEFAULT_TEMPLATE_LANGUAGE
+from app.channels.interactive_limits import WHATSAPP_LIMITS, InteractiveLimits
 from app.channels.meta_base import MetaBaseAdapter, graph_post
 from app.channels.registry import register_adapter
 from app.models.channels import ChannelAccount, ChannelConversation, ChannelType
@@ -37,7 +38,7 @@ class WhatsAppAdapter(MetaBaseAdapter):
     channel_type: ClassVar[str] = ChannelType.WHATSAPP.value
     # Outside the 24h window WhatsApp allows re-opening with an approved template
     expired_status: ClassVar[WindowStatus] = WindowStatus.TEMPLATE_REQUIRED
-    supports_interactive: ClassVar[bool] = True
+    interactive_limits: ClassVar[Optional[InteractiveLimits]] = WHATSAPP_LIMITS
     reports_delivery_status: ClassVar[bool] = True
     max_text_length: ClassVar[Optional[int]] = MAX_MESSAGE_LENGTH
 
@@ -161,7 +162,10 @@ class WhatsAppAdapter(MetaBaseAdapter):
             status=state,
             timestamp=self._timestamp(status.get("timestamp")),
             error=_status_error(errors[0]) if errors else None,
+            error_code=str(errors[0]["code"]) if errors and errors[0].get("code") is not None else None,
             pricing_category=pricing.get("category"),
+            pricing_type=pricing.get("type"),
+            pricing_model=pricing.get("pricing_model"),
             billable=pricing.get("billable"),
         )
 
@@ -177,23 +181,24 @@ class WhatsAppAdapter(MetaBaseAdapter):
         an inbound message read, so this also blue-ticks that message. Expires
         after 25s or when the reply is delivered."""
         message_id = (conversation.extra or {}).get("last_inbound_message_id")
-        if not message_id:
-            return
+        if message_id:
+            await self._read_receipt(account, message_id, typing=True)
+
+    async def mark_read(self, account: ChannelAccount, external_message_id: str) -> None:
+        if external_message_id:
+            await self._read_receipt(account, external_message_id, typing=False)
+
+    async def _read_receipt(self, account: ChannelAccount, message_id: str, typing: bool) -> None:
+        payload = {"messaging_product": "whatsapp", "status": "read", "message_id": message_id}
+        if typing:
+            payload["typing_indicator"] = {"type": "text"}
         try:
-            result = await graph_post(
-                f"{account.external_account_id}/messages",
-                self.access_token(account),
-                {
-                    "messaging_product": "whatsapp",
-                    "status": "read",
-                    "message_id": message_id,
-                    "typing_indicator": {"type": "text"},
-                },
-            )
+            result = await graph_post(f"{account.external_account_id}/messages",
+                                      self.access_token(account), payload)
             if not result.ok:
-                logger.debug(f"WhatsApp typing indicator failed (non-critical): {result.error}")
+                logger.debug(f"WhatsApp read receipt failed (non-critical): {result.error}")
         except Exception as e:
-            logger.debug(f"WhatsApp typing indicator failed (non-critical): {e}")
+            logger.debug(f"WhatsApp read receipt failed (non-critical): {e}")
 
     async def send_text(self, account: ChannelAccount, conversation: ChannelConversation, text: str) -> SendResult:
         return await graph_post(

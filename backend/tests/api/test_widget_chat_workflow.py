@@ -15,12 +15,15 @@ limitations under the License.
 """
 
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
+from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from app.models.agent import Agent, AgentType
+from app.models.chat_history import ChatHistory
 from app.models.workflow import Workflow, WorkflowStatus
+from app.models.workflow_node import WorkflowNode, NodeType
 from app.models.organization import Organization
 from app.models.user import User
-from uuid import uuid4
+from uuid import UUID, uuid4
+from app.services.conversation_token import VERIFIED_SCOPE
 
 
 @pytest.fixture
@@ -169,4 +172,84 @@ class TestWidgetChatWorkflow:
         """Test the relationship between agent and workflow"""
         assert test_agent.active_workflow_id == test_workflow.id
         assert test_workflow.agent_id == test_agent.id
-        assert test_agent.organization_id == test_workflow.organization_id 
+        assert test_agent.organization_id == test_workflow.organization_id
+
+
+@pytest.fixture
+def one_message_session(db, test_workflow, test_agent, test_customer, test_ai_config, monkeypatch):
+    """A widget session on a workflow that is a single MESSAGE node."""
+    from app.api import widget_chat
+    from app.services import message_delivery
+    from app.repositories.session_to_agent import SessionToAgentRepository
+
+    db.add(WorkflowNode(
+        id=uuid4(),
+        workflow_id=test_workflow.id,
+        node_type=NodeType.MESSAGE,
+        name="Greeting",
+        config={"message_text": "Hello from the workflow"},
+    ))
+    db.commit()
+
+    session_id = uuid4()
+    active_session = SessionToAgentRepository(db).create_session(
+        session_id=session_id,
+        agent_id=test_agent.id,
+        customer_id=test_customer.id,
+        organization_id=test_agent.organization_id,
+    )
+    assert active_session.workflow_id == test_workflow.id
+
+    sio = MagicMock()
+    sio.emit = AsyncMock()
+    sio.get_session = AsyncMock(return_value={
+        "widget_id": str(uuid4()),
+        "org_id": str(test_agent.organization_id),
+        "agent_id": str(test_agent.id),
+        "customer_id": str(test_customer.id),
+        "session_id": str(session_id),
+        "ai_config": test_ai_config,
+        # A keyless session is resumed by a token the embedding app vouched for.
+        "conversation_scope": VERIFIED_SCOPE,
+    })
+    monkeypatch.setattr(widget_chat, "sio", sio)
+    monkeypatch.setattr(message_delivery, "sio", sio)
+    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    monkeypatch.setattr(widget_chat, "notify_new_chat", AsyncMock())
+    return sio, str(session_id)
+
+
+def _chat_responses(sio):
+    return [c.args[1]["message"] for c in sio.emit.call_args_list if c.args[0] == "chat_response"]
+
+
+def _stored_bot_messages(db, session_id):
+    return [m.message for m in db.query(ChatHistory).filter(
+        ChatHistory.session_id == UUID(session_id), ChatHistory.message_type == "bot").all()]
+
+
+class TestOneMessageWorkflowIsSentOnce:
+    """A workflow ending on a MESSAGE node used to send and store that message
+    twice: once as an intermediate message and once as the final reply."""
+
+    @pytest.mark.asyncio
+    async def test_on_load(self, db, one_message_session):
+        from app.api import widget_chat
+        sio, session_id = one_message_session
+
+        await widget_chat.handle_get_workflow_state("test_sid")
+
+        assert _chat_responses(sio) == ["Hello from the workflow"]
+        states = [c.args[1] for c in sio.emit.call_args_list if c.args[0] == "workflow_state"]
+        assert [(s["type"], s["message"]) for s in states] == [("message", "Hello from the workflow")]
+        assert _stored_bot_messages(db, session_id) == ["Hello from the workflow"]
+
+    @pytest.mark.asyncio
+    async def test_on_first_message(self, db, one_message_session):
+        from app.api import widget_chat
+        sio, session_id = one_message_session
+
+        await widget_chat.handle_widget_chat("test_sid", {"message": "hi"})
+
+        assert _chat_responses(sio) == ["Hello from the workflow"]
+        assert _stored_bot_messages(db, session_id) == ["Hello from the workflow"]

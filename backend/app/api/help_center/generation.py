@@ -45,6 +45,7 @@ from app.services.faq_usage import (
     remaining_message_credits,
 )
 from app.services.help_center_access import check_help_center_access
+from app.core.params import DbIntId
 
 router = APIRouter()
 
@@ -270,7 +271,7 @@ async def get_job(
 
 @router.get("/jobs/{job_id}", response_model=GenerationJobResponse)
 async def get_job_by_id(
-    job_id: int,
+    job_id: DbIntId,
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db),
 ):

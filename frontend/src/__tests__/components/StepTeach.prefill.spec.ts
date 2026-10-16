@@ -6,6 +6,7 @@ import { createPinia, setActivePinia } from 'pinia'
 const getOrganization = vi.fn()
 const getKnowledgeByAgent = vi.fn()
 const getKnowledgeByOrganization = vi.fn()
+const addUrls = vi.fn()
 
 vi.mock('@/services/organization', () => ({
   organizationService: { getOrganization: (id: string) => getOrganization(id) }
@@ -14,6 +15,7 @@ vi.mock('@/services/knowledge', () => ({
   knowledgeService: {
     getKnowledgeByAgent: (...a: unknown[]) => getKnowledgeByAgent(...a),
     getKnowledgeByOrganization: (...a: unknown[]) => getKnowledgeByOrganization(...a),
+    addUrls: (...a: unknown[]) => addUrls(...a),
     getAgentQueueItems: vi.fn().mockResolvedValue({ queue_items: [] })
   }
 }))
@@ -25,7 +27,7 @@ const empty = { knowledge: [], pagination: { total_pages: 0 } }
 const mountStep = async () => {
   const wrapper = mount(StepTeach, {
     props: { agentId: 'agent-1', organizationId: 'org-1' },
-    global: { plugins: [createPinia()] }
+    global: { plugins: [createPinia()], stubs: { 'font-awesome-icon': true } }
   })
   await flushPromises()
   return wrapper
@@ -40,6 +42,7 @@ describe('StepTeach - signup domain prefill', () => {
     vi.clearAllMocks()
     getKnowledgeByAgent.mockResolvedValue(empty)
     getKnowledgeByOrganization.mockResolvedValue(empty)
+    addUrls.mockResolvedValue({ message: 'Queued' })
   })
 
   it('stages the signup domain as a source, scheme added', async () => {
@@ -50,6 +53,13 @@ describe('StepTeach - signup domain prefill', () => {
     // Visible as an added source, not parked in the input where it reads as a
     // placeholder the user must still press "Add" to accept.
     expect(wrapper.find('.source-list').text()).toContain('https://testypo.com')
+    expect(urlInput(wrapper).value).toBe('')
+  })
+
+  it('does not suggest a domain the server would refuse', async () => {
+    getOrganization.mockResolvedValue({ id: 'org-1', domain: 'localhost' })
+    const wrapper = await mountStep()
+    expect(wrapper.find('.source-list').exists()).toBe(false)
     expect(urlInput(wrapper).value).toBe('')
   })
 

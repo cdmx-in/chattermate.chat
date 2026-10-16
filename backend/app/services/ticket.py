@@ -20,6 +20,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.channels.constants import MessageSource
 from app.core.logger import get_logger
 from app.models.investigation import (
     InvestigationRun,
@@ -667,15 +668,35 @@ class TicketService:
         session_record = self._primary_session(ticket)
         if session_record is None:
             return
+        message = (
+            f"How did we do on ticket {ticket.display_number}? "
+            "Your feedback helps us improve — you can rate this conversation."
+        )
+        # The widget only shows its stars on a message that also ends the chat
+        # (as the AI's own wrap-up does); without these the customer was asked
+        # to rate with nothing to rate with. Stored with the same attributes so
+        # the thread and a reloaded widget show the ask too.
+        rating_ask = {
+            "request_rating": True,
+            "end_chat": True,
+            "end_chat_reason": "ISSUE_RESOLVED",
+        }
         try:
-            await deliver_to_customer(self.db, session_record, {
-                "message": (
-                    f"How did we do on ticket {ticket.display_number}? "
-                    "Your feedback helps us improve — you can rate this conversation."
-                ),
-                "type": "chat_response",
-                "request_rating": True,
+            stored = ChatRepository(self.db).create_message({
+                "message": message,
+                "message_type": "bot",
+                "session_id": session_record.session_id,
+                "organization_id": ticket.organization_id,
+                "agent_id": session_record.agent_id,
+                "customer_id": session_record.customer_id,
+                "attributes": {"ticket_number": ticket.display_number, **rating_ask},
             })
+            await deliver_to_customer(self.db, session_record, {
+                "message": message,
+                "type": "chat_response",
+                "session_id": str(session_record.session_id),
+                **rating_ask,
+            }, message_id=stored.id, source=MessageSource.SYSTEM)
             ticket.csat_requested_at = datetime.now(timezone.utc)
             self._add_activity(
                 ticket, TicketActivityType.CSAT_REQUESTED,
@@ -802,7 +823,7 @@ class TicketService:
                 "message": message,
                 "type": "chat_response",
                 "session_id": str(session_record.session_id),
-            }, message_id=stored.id)
+            }, message_id=stored.id, source=MessageSource.SYSTEM)
             if not delivery.ok:
                 chat_repo.mark_delivery_failed(stored.id, delivery.reason)
             if ticket.first_response_at is None:

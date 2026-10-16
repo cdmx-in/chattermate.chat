@@ -16,6 +16,7 @@ limitations under the License.
 
 from sqlalchemy.orm import Session
 from typing import Any, Dict, Iterable, List, Optional
+from app.models.channels import ChannelConversation
 from app.models.chat_history import ChatHistory
 from app.models.customer import Customer
 from uuid import UUID
@@ -25,15 +26,15 @@ from app.models.agent import Agent
 from app.models.session_to_agent import SessionToAgent
 from app.repositories.channels import ChannelConversationRepository
 from app.core.logger import get_logger
-from app.channels.constants import is_widget_channel
+from app.channels.constants import is_widget_channel, MessageSource
 from app.channels.sent_choices import SENT_CHOICES_ATTRIBUTE, decode_sent_choices
 from app.models.user import User
 from app.repositories.customer import CustomerRepository
 from sqlalchemy.orm import joinedload
+from sqlalchemy.orm.attributes import set_committed_value
 from datetime import datetime
 from pydantic import BaseModel
-from app.core.s3 import get_s3_signed_url
-from app.core.config import settings
+from app.services.file_storage import resolve_public_url
 from app.services.sentiment import analyze_sentiment, compute_session_sentiment
 
 logger = get_logger(__name__)
@@ -73,7 +74,8 @@ class ChatRepository:
     ) -> int:
         """
         Get the total number of bot messages for an organization within a specific date range.
-        Only counts messages with message_type='bot'.
+        Only counts messages with message_type='bot', and not ones an external
+        app sent (attributes.source == 'app'): they cost no AI.
         
         Args:
             org_id: Organization ID
@@ -88,9 +90,12 @@ class ChatRepository:
             
         try:
             # Build filter conditions
+            source = ChatHistory.attributes['source'].as_string()
             conditions = [
                 ChatHistory.organization_id == org_id,
-                ChatHistory.message_type == 'bot'  # Only count bot messages
+                ChatHistory.message_type == 'bot',  # Only count bot messages
+                # NULL-safe: nearly every row has no source at all
+                or_(source.is_(None), source != MessageSource.APP.value),
             ]
             
             # Add date range conditions if they are not None
@@ -180,7 +185,10 @@ class ChatRepository:
 
     def set_external_message_id(self, message_id: int, external_message_id: str) -> Optional[ChatHistory]:
         """Record the platform's id for a message we sent, so its delivery
-        receipts can find it. Returns the row, or None if it is gone."""
+        receipts and taps on its choices can find it. Returns the row, or None
+        if it is gone. Some platforms (Telegram) number messages per chat:
+        look those up within the chat (in_channel_chat_by_external_message_id),
+        never organization-wide."""
         try:
             message = self.db.query(ChatHistory).filter(ChatHistory.id == message_id).first()
             if message is None:
@@ -206,6 +214,38 @@ class ChatRepository:
                 ChatHistory.external_message_id == external_message_id,
             )
             .first()
+        )
+
+    def in_channel_chat_by_external_message_id(self, channel_account_id: UUID, external_conversation_id: str,
+                                               external_message_id: str) -> Optional[ChatHistory]:
+        """The message a platform id belongs to, within one customer's chat on
+        one channel account — across its sessions (a chat that closed and
+        reopened is a new session), and never another chat's: some platforms
+        number messages per chat, not globally."""
+        return (
+            self._in_channel_chat(channel_account_id, external_conversation_id)
+            .filter(ChatHistory.external_message_id == external_message_id)
+            .first()
+        )
+
+    def latest_replies_in_channel_chat(self, channel_account_id: UUID, external_conversation_id: str,
+                                       limit: int) -> List[ChatHistory]:
+        """That chat's most recent replies to the customer, the AI's or a
+        person's, newest first."""
+        return (
+            self._in_channel_chat(channel_account_id, external_conversation_id)
+            .filter(ChatHistory.message_type.in_(('bot', 'agent')))
+            .order_by(ChatHistory.created_at.desc(), ChatHistory.id.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def _in_channel_chat(self, channel_account_id: UUID, external_conversation_id: str):
+        return (
+            self.db.query(ChatHistory)
+            .join(ChannelConversation, ChannelConversation.session_id == ChatHistory.session_id)
+            .filter(ChannelConversation.channel_account_id == channel_account_id,
+                    ChannelConversation.external_conversation_id == external_conversation_id)
         )
 
     def advance_channel_status(self, message_id: int, status: str, at: datetime,
@@ -298,20 +338,16 @@ class ChatRepository:
             .all()
         )
         
-        # Generate signed URLs for S3 attachments
-        if settings.S3_FILE_STORAGE:
-            for message in messages:
-                if message.attachments:
-                    for attachment in message.attachments:
-                        if attachment.file_url:
-                            try:
-                                signed_url = await get_s3_signed_url(attachment.file_url)
-                                # Store the signed URL in a temporary attribute
-                                attachment.file_url = signed_url
-                            except Exception as e:
-                                logger.error(f"Error generating signed URL for attachment {attachment.id}: {str(e)}")
-                                
-        
+        # Hand out signed URLs. set_committed_value, not assignment: a plain
+        # assignment marks the row dirty, and the next commit on this session
+        # would store a link that expires in place of the file's real path.
+        for message in messages:
+            for attachment in message.attachments or []:
+                if attachment.file_url:
+                    set_committed_value(
+                        attachment, "file_url", await resolve_public_url(attachment.file_url)
+                    )
+
         return messages
 
     def get_last_messages(self, session_ids: List[UUID]) -> Dict[UUID, str]:

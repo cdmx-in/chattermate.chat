@@ -27,7 +27,9 @@ from app.models.widget import Widget
 from uuid import uuid4
 import http.cookies
 from datetime import datetime, timezone
-from app.core.security import verify_token, verify_conversation_token, create_access_token, create_conversation_token
+from app.core.security import verify_token, verify_conversation_token, create_access_token, create_refresh_token, create_conversation_token
+from app.models.auth_session import AuthSession
+from app.services.auth_sessions import issue_tokens, revoke_session
 
 @pytest.fixture
 def mock_db():
@@ -60,120 +62,175 @@ def mock_widget():
         name="Test Widget"
     )
 
-@pytest.mark.asyncio
-async def test_refresh_access_token_success(mock_db, mock_user):
-    """Test successful access token refresh"""
-    # Setup
-    refresh_token = "valid_refresh_token"
-    mock_db.query.return_value.filter.return_value.first.return_value = mock_user
-    
-    with patch('app.core.auth_utils.verify_token') as mock_verify, \
-         patch('app.core.auth_utils.create_access_token') as mock_create:
-        # Configure mocks
-        mock_verify.return_value = {
-            "type": "refresh",
-            "sub": str(mock_user.id),
-            "org": str(mock_user.organization_id)
-        }
-        mock_create.return_value = "new_access_token"
-        
-        # Execute
-        result = await refresh_access_token(refresh_token, mock_db)
-        
-        # Assert
-        assert result == "new_access_token"
-        mock_verify.assert_called_once_with(refresh_token)
-        mock_create.assert_called_once_with({
-            "sub": str(mock_user.id),
-            "org": str(mock_user.organization_id)
-        })
+@pytest.fixture
+def live_user(db, test_organization):
+    """A real, active user — session checks run against the database."""
+    user = User(
+        id=uuid4(),
+        email="socket@example.com",
+        hashed_password="hashed_password",
+        is_active=True,
+        organization_id=test_organization.id,
+        full_name="Socket User",
+    )
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@pytest.fixture
+def socket_db(db):
+    """Point authenticate_socket's SessionLocal() at the test database."""
+    with patch('app.core.auth_utils.SessionLocal') as mock_session_local:
+        mock_session_local.return_value.__enter__.return_value = db
+        yield db
+
+
+def _socket_environ(**cookies):
+    jar = http.cookies.SimpleCookie()
+    for name, value in cookies.items():
+        jar[name] = value
+    return {'HTTP_COOKIE': jar.output(header='', sep=';')}
+
 
 @pytest.mark.asyncio
-async def test_refresh_access_token_invalid_token(mock_db):
+async def test_refresh_access_token_success(db, live_user):
+    """A live refresh token re-mints an access token for the same session"""
+    _, refresh_token = issue_tokens(db, live_user.id, live_user.organization_id)
+    db.commit()
+
+    result = await refresh_access_token(refresh_token, db)
+
+    payload = verify_token(result)
+    assert payload["type"] == "access"
+    assert payload["sub"] == str(live_user.id)
+    assert payload["sid"] == verify_token(refresh_token)["sid"]
+    assert db.query(AuthSession).count() == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_access_token_invalid_token(db):
     """Test access token refresh with invalid token"""
-    refresh_token = "invalid_token"
-    
-    with patch('app.core.auth_utils.verify_token') as mock_verify:
-        mock_verify.return_value = None
-        result = await refresh_access_token(refresh_token, mock_db)
-        assert result is None
+    assert await refresh_access_token("invalid_token", db) is None
+
 
 @pytest.mark.asyncio
-async def test_refresh_access_token_inactive_user(mock_db, mock_user):
+async def test_refresh_access_token_inactive_user(db, live_user):
     """Test access token refresh with inactive user"""
-    refresh_token = "valid_refresh_token"
-    mock_user.is_active = False
-    mock_db.query.return_value.filter.return_value.first.return_value = mock_user
-    
-    with patch('app.core.auth_utils.verify_token') as mock_verify:
-        mock_verify.return_value = {
-            "type": "refresh",
-            "sub": str(mock_user.id),
-            "org": str(mock_user.organization_id)
-        }
-        result = await refresh_access_token(refresh_token, mock_db)
-        assert result is None
+    _, refresh_token = issue_tokens(db, live_user.id, live_user.organization_id)
+    live_user.is_active = False
+    db.commit()
+
+    assert await refresh_access_token(refresh_token, db) is None
+
 
 @pytest.mark.asyncio
-async def test_authenticate_socket_success(mock_db):
+async def test_refresh_access_token_rejects_revoked_session(db, live_user):
+    """A refresh token from a signed-out session mints nothing"""
+    _, refresh_token = issue_tokens(db, live_user.id, live_user.organization_id)
+    revoke_session(db, verify_token(refresh_token)["sid"])
+    db.commit()
+
+    assert await refresh_access_token(refresh_token, db) is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_access_token_rejects_an_access_token(db, live_user):
+    """Only a refresh token can be refreshed"""
+    access_token, _ = issue_tokens(db, live_user.id, live_user.organization_id)
+    db.commit()
+
+    assert await refresh_access_token(access_token, db) is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_access_token_migrates_a_legacy_token(db, live_user):
+    """A refresh token from before sessions still works, and gets a session"""
+    legacy = create_refresh_token({"sub": str(live_user.id), "org": str(live_user.organization_id)})
+
+    result = await refresh_access_token(legacy, db)
+
+    sid = verify_token(result)["sid"]
+    session = db.query(AuthSession).one()
+    assert str(session.id) == sid
+    assert session.user_id == live_user.id
+
+
+@pytest.mark.asyncio
+async def test_authenticate_socket_success(socket_db, live_user):
     """Test successful socket authentication"""
-    # Setup
-    sid = "test_sid"
-    access_token = "valid_access_token"
-    user_id = str(uuid4())
-    org_id = str(uuid4())
-    
-    # Create mock environ with cookies
-    cookies = http.cookies.SimpleCookie()
-    cookies['access_token'] = access_token
-    environ = {'HTTP_COOKIE': cookies.output(header='', sep=';')}
-    
-    with patch('app.core.auth_utils.verify_token') as mock_verify:
-        mock_verify.return_value = {
-            "sub": user_id,
-            "org": org_id
-        }
-        
-        # Execute
-        result_token, result_user_id, result_org_id = await authenticate_socket(sid, environ)
-        
-        # Assert
-        assert result_token == access_token
-        assert result_user_id == user_id
-        assert result_org_id == org_id
+    access_token, _ = issue_tokens(socket_db, live_user.id, live_user.organization_id)
+    socket_db.commit()
+
+    result = await authenticate_socket("test_sid", _socket_environ(access_token=access_token))
+
+    assert result == (access_token, str(live_user.id), str(live_user.organization_id))
+
 
 @pytest.mark.asyncio
-async def test_authenticate_socket_with_refresh(mock_db, mock_user):
+async def test_authenticate_socket_with_refresh(socket_db, live_user):
     """Test socket authentication with token refresh"""
-    # Setup
     sid = "test_sid"
-    refresh_token = "valid_refresh_token"
-    new_access_token = "new_access_token"
-    
-    # Create mock environ with cookies
-    cookies = http.cookies.SimpleCookie()
-    cookies['refresh_token'] = refresh_token
-    environ = {'HTTP_COOKIE': cookies.output(header='', sep=';')}
-    
-    with patch('app.core.auth_utils.verify_token') as mock_verify, \
-         patch('app.core.auth_utils.refresh_access_token') as mock_refresh, \
-         patch('app.core.socketio.sio.emit') as mock_emit:
-        mock_refresh.return_value = new_access_token
-        mock_verify.return_value = {
-            "sub": str(mock_user.id),
-            "org": str(mock_user.organization_id)
-        }
-        
-        # Execute
-        result_token, result_user_id, result_org_id = await authenticate_socket(sid, environ)
-        
-        # Assert
-        assert result_token == new_access_token
-        assert result_user_id == str(mock_user.id)
-        assert result_org_id == str(mock_user.organization_id)
-        mock_emit.assert_called_once_with('cookie_set', {
-            'access_token': new_access_token
-        }, to=sid)
+    _, refresh_token = issue_tokens(socket_db, live_user.id, live_user.organization_id)
+    socket_db.commit()
+
+    with patch('app.core.socketio.sio.emit') as mock_emit:
+        result_token, result_user_id, result_org_id = await authenticate_socket(
+            sid, _socket_environ(refresh_token=refresh_token))
+
+    assert verify_token(result_token)["type"] == "access"
+    assert result_user_id == str(live_user.id)
+    assert result_org_id == str(live_user.organization_id)
+    mock_emit.assert_called_once_with('cookie_set', {
+        'access_token': result_token
+    }, to=sid)
+
+
+@pytest.mark.asyncio
+async def test_authenticate_socket_rejects_a_revoked_session(socket_db, live_user):
+    """A token copied before sign-out cannot open a socket"""
+    access_token, _ = issue_tokens(socket_db, live_user.id, live_user.organization_id)
+    revoke_session(socket_db, verify_token(access_token)["sid"])
+    socket_db.commit()
+
+    result = await authenticate_socket("test_sid", _socket_environ(access_token=access_token))
+
+    assert result == (None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_authenticate_socket_rejects_a_refresh_token(socket_db, live_user):
+    """A refresh token in the access_token cookie is the wrong type"""
+    _, refresh_token = issue_tokens(socket_db, live_user.id, live_user.organization_id)
+    socket_db.commit()
+
+    result = await authenticate_socket("test_sid", _socket_environ(access_token=refresh_token))
+
+    assert result == (None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_authenticate_socket_rejects_an_inactive_user(socket_db, live_user):
+    """A deactivated user's still-unexpired token cannot open a socket"""
+    access_token, _ = issue_tokens(socket_db, live_user.id, live_user.organization_id)
+    live_user.is_active = False
+    socket_db.commit()
+
+    result = await authenticate_socket("test_sid", _socket_environ(access_token=access_token))
+
+    assert result == (None, None, None)
+
+
+@pytest.mark.asyncio
+async def test_authenticate_socket_rejects_a_deleted_user(socket_db):
+    """A legacy token for a user who no longer exists cannot open a socket"""
+    access_token = create_access_token({"sub": str(uuid4()), "org": str(uuid4())})
+
+    result = await authenticate_socket("test_sid", _socket_environ(access_token=access_token))
+
+    assert result == (None, None, None)
+
 
 @pytest.mark.asyncio
 async def test_authenticate_socket_conversation_token_success(mock_db, mock_widget):
@@ -312,7 +369,7 @@ async def test_authenticate_socket_invalid_token_format(mock_db):
     cookies['access_token'] = access_token
     environ = {'HTTP_COOKIE': cookies.output(header='', sep=';')}
     
-    with patch('app.core.auth_utils.verify_token') as mock_verify:
+    with patch('app.core.auth_utils.live_payload') as mock_verify:
         mock_verify.side_effect = Exception("Invalid token format")
         
         # Execute

@@ -57,7 +57,7 @@ onMounted(() => {
       </button>
     </div>
 
-    <select v-model="filters.priority" class="filter-select">
+    <select v-model="filters.priority" class="filter-select" aria-label="Filter by priority">
       <option value="all">Priority · All</option>
       <option value="urgent">Urgent</option>
       <option value="high">High</option>
@@ -65,7 +65,7 @@ onMounted(() => {
       <option value="low">Low</option>
     </select>
 
-    <select v-model="filters.assignee" class="filter-select">
+    <select v-model="filters.assignee" class="filter-select" aria-label="Filter by assignee">
       <option value="all">Assignee · All</option>
       <option value="unassigned">Unassigned / AI</option>
       <option v-for="user in users" :key="user.id" :value="user.id">
@@ -90,7 +90,7 @@ onMounted(() => {
       <input v-model="filters.search" class="search-input" placeholder="Search tickets…" />
     </div>
 
-    <select v-model="filters.sort" class="filter-select">
+    <select v-model="filters.sort" class="filter-select" aria-label="Sort tickets">
       <option value="updated">Sort · Updated</option>
       <option value="created">Newest</option>
       <option value="priority">Priority</option>

@@ -14,14 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response, Header, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, Header, Query, status
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from uuid import UUID
 from datetime import datetime
 from pathlib import Path
 import json
-import time
 from urllib.parse import urlparse
 
 from app.models.widget import Widget
@@ -33,6 +33,7 @@ from app.repositories.widget import WidgetRepository
 from app.repositories.agent import AgentRepository
 from app.core.security import create_conversation_token, verify_conversation_token
 from app.services import conversation_token
+from app.utils.client_ip import forwarded_client_ip
 from app.repositories.customer import CustomerRepository
 from app.models.schemas.widget import WidgetCreate, WidgetResponse
 from app.core.logger import get_logger
@@ -46,6 +47,13 @@ from app.utils.business_hours import is_within_business_hours
 
 router = APIRouter()
 logger = get_logger(__name__)
+
+# The enterprise module can record where each widget is live; without it,
+# nothing is recorded.
+try:
+    from app.enterprise.services import widget_install
+except ImportError:
+    widget_install = None
 
 
 def _identity_expired() -> HTTPException:
@@ -64,7 +72,7 @@ def _identity_expired() -> HTTPException:
     )
 
 
-_ASSETS_DIR = Path(__file__).resolve().parents[2] / "assets"
+_ASSETS_DIR = Path(settings.WIDGET_ASSETS_DIR)
 
 
 def _asset_version() -> str:
@@ -182,11 +190,25 @@ def create_new_widget(
     return widget_repo.create_widget(widget, current_user.organization_id)
 
 
+def _note_install(db: Session, widget: Widget, request: Request, background_tasks: BackgroundTasks) -> None:
+    """Note where the widget is live (or blocked), after the response is
+    sent. Never lets a tracking error break the widget itself."""
+    if widget_install is None:
+        return
+    try:
+        sighting = widget_install.claim_write(db, widget, request.headers.get("origin"), forwarded_client_ip(request))
+        if sighting:
+            background_tasks.add_task(widget_install.record, widget.id, sighting)
+    except Exception:
+        logger.exception(f"Install tracking failed for widget {widget.id}")
+
+
 @router.get("/{widget_id}/data", response_class=HTMLResponse)
 async def get_widget_ui(
     widget_id: str,
     request: Request,
     response: Response,
+    background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),
     source: Optional[str] = Query(None),
     db: Session = Depends(get_db)
@@ -196,6 +218,8 @@ async def get_widget_ui(
     widget = db.query(Widget).filter(Widget.id == widget_id).first()
     if not widget:
         raise HTTPException(status_code=404, detail="Widget not found")
+
+    _note_install(db, widget, request, background_tasks)
 
     # Get agent data
     agent_repo = AgentRepository(db)
@@ -385,11 +409,6 @@ async def get_human_agent_session_info(db: Session, customer_id: str, scope: str
     return human_agent_info
 
 
-def _anonymous_email() -> str:
-    # Milliseconds keep these unique per org, as the (email, organization_id) key needs.
-    return f"{int(time.time() * 1000)}@noemail.com"
-
-
 def _conversation_key(token_payload: Optional[dict]) -> str:
     """Keep the browser's conversation key across re-mints, or start one."""
     key = (token_payload or {}).get(conversation_token.CONVERSATION_KEY_CLAIM)
@@ -438,6 +457,9 @@ async def get_widget_data(
 ):
     """Get widget data including agent customization"""
     logger.info(f"Getting widget data for widget_id {widget_id}, email {email}, has_token {bool(authorization)}")
+    # Binds this visitor to a customer: a stored copy would skip that and leave
+    # the widget holding the page's anonymous token.
+    response.headers["Cache-Control"] = "no-store"
 
     widget = db.query(Widget).filter(Widget.id == widget_id).first()
     if not widget:
@@ -507,7 +529,7 @@ async def get_widget_data(
             logger.info(f"Widget {widget_id}: unverified token names a signed-in customer; starting an anonymous one")
             conversation_key = _conversation_key(token_payload)
             anonymous = customer_repo.create_customer(
-                _anonymous_email(), widget.organization_id,
+                CustomerRepository.anonymous_email(), widget.organization_id,
                 meta_data={CONTACT_EMAIL_META_KEY: customer.email},
                 conversation_key=conversation_key)
             new_token = _mint_widget_token(widget_id, conversation_key,
@@ -540,7 +562,7 @@ async def get_widget_data(
         elif existing is not None:
             meta_data = {CONTACT_EMAIL_META_KEY: email}
     if customer is None:
-        customer_email = email if email and meta_data is None else _anonymous_email()
+        customer_email = email if email and meta_data is None else CustomerRepository.anonymous_email()
         customer = customer_repo.create_customer(customer_email, widget.organization_id,
                                                  meta_data=meta_data, conversation_key=conversation_key)
 
@@ -632,7 +654,7 @@ def list_widgets(
 
 @router.get("/agent/{agent_id}", response_model=List[WidgetResponse])
 def get_widgets_by_agent(
-    agent_id: str,
+    agent_id: UUID,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user)
 ):

@@ -40,6 +40,7 @@ from app.services.shopify import ShopifyService
 from app.services.shopify_auth_service import ShopifyAuthService
 from app.services.shopify_helper_service import ShopifyHelperService
 from app.services.shopify_session import require_shopify_session
+from app.services.shopify_urls import shopify_admin_url, shopify_oauth_token_url
 from app.repositories.knowledge import KnowledgeRepository
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
@@ -49,12 +50,13 @@ from app.models.knowledge_to_agent import KnowledgeToAgent
 from uuid import UUID
 from app.core.cors import update_cors_middleware
 from app.core.application import app
+from app.core.params import MAX_DB_INT
 
 router = APIRouter()
 logger = get_logger(__name__)
 
 # Define the scopes needed for your app
-SCOPES = "read_products,read_themes,write_themes,write_script_tags,read_script_tags,read_orders,read_customers"
+SCOPES = "read_products,read_themes,write_themes,write_script_tags,read_script_tags,read_orders,read_all_orders,read_customers"
 
 
 def _require_shopify_agent_in_org(db, agent_id, org_id) -> None:
@@ -106,7 +108,7 @@ async def exchange_session_token(
         logger.info(f"Extracted shop domain from token: {shop_domain}")
         
         # 3. Call Shopify token exchange API
-        token_url = f"https://{shop_domain}/admin/oauth/access_token"
+        token_url = shopify_oauth_token_url(shop_domain)
         payload = {
             "client_id": settings.SHOPIFY_API_KEY,
             "client_secret": settings.SHOPIFY_API_SECRET,
@@ -272,8 +274,8 @@ async def link_shop_to_org(
 @router.get("/shops", response_model=list[ShopifyShop])
 async def get_shops(
     db: Session = Depends(get_db),
-    skip: int = 0,
-    limit: int = 100,
+    skip: int = Query(0, ge=0, le=MAX_DB_INT),
+    limit: int = Query(100, ge=1, le=1000),
     organization: Organization = Depends(get_current_organization),
     current_user: User = Depends(require_permissions("manage_organization"))
 ):
@@ -350,7 +352,7 @@ async def delete_shop(
     if db_shop.access_token:
         try:
             # Request to delete app data from Shopify
-            uninstall_url = f"https://{db_shop.shop_domain}/admin/api/2025-10/graphql.json"
+            uninstall_url = shopify_admin_url(db_shop.shop_domain, "graphql.json")
             headers = {
                 "X-Shopify-Access-Token": db_shop.access_token,
                 "Content-Type": "application/json"

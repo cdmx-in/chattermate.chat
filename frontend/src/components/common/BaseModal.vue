@@ -26,6 +26,8 @@ limitations under the License.
  * fixing that three times is how the fourth modal ends up without one.
  *
  * Slots: default (body) and `actions` (footer buttons). `width` sizes the panel.
+ * `dismissible: false` closes it only from its own buttons — no ×, scrim
+ * click or Escape — for a dialog whose content is lost once closed.
  */
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
@@ -33,7 +35,12 @@ const props = withDefaults(defineProps<{
   title: string
   /** Panel width; the shell caps it to the viewport. */
   width?: string
-}>(), { width: '520px' })
+  dismissible?: boolean
+}>(), { width: '520px', dismissible: true })
+
+const dismiss = () => {
+  if (props.dismissible) emit('close')
+}
 
 const emit = defineEmits<{ (e: 'close'): void }>()
 
@@ -56,7 +63,7 @@ const FOCUSABLE = [
  */
 const onKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') {
-    emit('close')
+    dismiss()
     return
   }
   if (event.key !== 'Tab' || !dialog.value) return
@@ -101,13 +108,13 @@ onBeforeUnmount(() => {
     aria-modal="true"
     :aria-label="title"
     tabindex="-1"
-    @click.self="emit('close')"
+    @click.self="dismiss"
     @keydown="onKeydown"
   >
     <div class="bm-panel" :style="{ '--bm-width': props.width }">
       <div class="bm-header">
         <h3 class="bm-title">{{ title }}</h3>
-        <button class="bm-close" aria-label="Close" @click="emit('close')">×</button>
+        <button v-if="dismissible" class="bm-close" aria-label="Close" @click="emit('close')">×</button>
       </div>
 
       <div class="bm-body">

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -181,6 +181,42 @@ class TestTelegramWebhook:
             )
         assert response.status_code == 200
         process.assert_not_awaited()
+
+
+    def test_a_tap_is_processed_and_answered_in_the_reply(self, client, telegram_account):
+        tap = {"update_id": 10, "callback_query": {
+            "id": "cb-1", "from": {"id": 111, "first_name": "Ada"}, "data": "qr_0",
+            "message": {"message_id": 41, "date": 1720000000, "chat": {"id": 222, "type": "private"},
+                        "reply_markup": {"inline_keyboard": [[{"text": "Yes", "callback_data": "qr_0"}]]}}}}
+        with patch("app.api.webhooks.telegram.process_channel_message", AsyncMock()) as process:
+            response = client.post(
+                f"{WEBHOOK_BASE}/telegram/{telegram_account.id}", json=tap,
+                headers={"X-Telegram-Bot-Api-Secret-Token": telegram_account.webhook_secret})
+        assert response.json() == {"method": "answerCallbackQuery", "callback_query_id": "cb-1"}
+        inbound = process.await_args.args[1]
+        assert (inbound.interactive.id, inbound.text, inbound.reply_to_message_id) == ("qr_0", "Yes", "41")
+
+    def test_a_second_tap_on_the_same_keyboard_is_answered_but_not_processed(self, client, telegram_account):
+        def tap(callback_id, data):
+            return {"update_id": 11, "callback_query": {
+                "id": callback_id, "from": {"id": 111, "first_name": "Ada"}, "data": data,
+                "message": {"message_id": 41, "date": 1720000000, "chat": {"id": 222, "type": "private"},
+                            "reply_markup": {"inline_keyboard": [[{"text": "Yes", "callback_data": "qr_0"}],
+                                                                 [{"text": "No", "callback_data": "qr_1"}]]}}}}
+        headers = {"X-Telegram-Bot-Api-Secret-Token": telegram_account.webhook_secret}
+        process, clear, order = AsyncMock(), AsyncMock(), MagicMock()
+        order.attach_mock(process, "process")
+        order.attach_mock(clear, "clear")
+        with patch("app.api.webhooks.telegram.process_channel_message", process), \
+             patch("app.api.webhooks.telegram.is_duplicate_message", side_effect=[False, True]), \
+             patch("app.channels.telegram.TelegramAdapter.clear_buttons", clear):
+            first = client.post(f"{WEBHOOK_BASE}/telegram/{telegram_account.id}", json=tap("cb-1", "qr_0"),
+                                headers=headers)
+            second = client.post(f"{WEBHOOK_BASE}/telegram/{telegram_account.id}", json=tap("cb-2", "qr_1"),
+                                 headers=headers)
+        # The reply goes first: a slow keyboard edit never holds it up
+        assert [name for name, _, _ in order.mock_calls] == ["process", "clear"]
+        assert "text" not in first.json() and second.json()["text"] == "This choice is no longer available"
 
 
 class TestEmailConnectSmtp:

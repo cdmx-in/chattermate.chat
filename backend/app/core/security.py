@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
 import re
@@ -101,6 +102,11 @@ def encrypt_api_key(api_key: str) -> str:
     except Exception as e:
         logger.error(f"Encryption error: {str(e)}")
         raise ValueError("Failed to encrypt API key")
+
+
+def decrypt_credentials(encrypted: str) -> dict:
+    """Decrypt a JSON credential blob stored with encrypt_api_key."""
+    return json.loads(decrypt_api_key(encrypted))
 
 
 def decrypt_api_key(encrypted_key: str) -> str:
@@ -490,7 +496,6 @@ def cache_widget_api_key(api_key: str, app_id: str, organization_id: str, ttl: i
     """
     try:
         from app.core.redis import redis_client
-        import json
 
         if redis_client:
             # Use first 20 chars of key as cache key (enough to be unique)
@@ -519,7 +524,6 @@ def get_cached_widget_api_key(api_key: str) -> Optional[dict]:
     """
     try:
         from app.core.redis import redis_client
-        import json
 
         if redis_client:
             cache_key = f"widget_api_key:{api_key[:20]}"

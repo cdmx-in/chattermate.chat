@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.logger import get_logger
+from app.utils.domain_check import site_host
 
 logger = get_logger(__name__)
 
@@ -53,12 +54,15 @@ def get_cors_origins() -> Set[str]:
         orgs = org_repo.get_active_organizations()
         
         for org in orgs:
-            # Add both http and https variants
-            all_origins.add(f"https://{org.domain}")
-            all_origins.add(f"http://{org.domain}")
-            # Add www subdomain variants
-            all_origins.add(f"https://www.{org.domain}")
-            all_origins.add(f"http://www.{org.domain}")
+            # The site with and without www., over http and https. Normalised:
+            # a domain typed as "www.Acme.com" must admit https://acme.com
+            # (browsers send Origin lowercase), not www.www.Acme.com.
+            host = site_host(org.domain or "")
+            if not host:
+                continue
+            for scheme in ("https", "http"):
+                all_origins.add(f"{scheme}://{host}")
+                all_origins.add(f"{scheme}://www.{host}")
 
         # Help-center hosts embed the org's chat widget, which fetches
         # /widgets/{id}/data and opens a socket from the public help-center

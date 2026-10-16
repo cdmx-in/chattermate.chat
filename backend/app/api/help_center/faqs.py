@@ -36,6 +36,7 @@ from app.models.user import User
 from app.repositories.faq import FAQRepository
 from app.services.help_center_access import check_help_center_access
 from app.services.image_security import sanitize_image
+from app.core.params import PageNumber
 from app.services.help_center_images import (
     FAQ_IMAGE_FIT_DIM,
     FAQ_IMAGE_MAX_DIM,
@@ -66,7 +67,7 @@ async def list_faqs(
     status: Optional[FAQStatus] = Query(default=None),
     category: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None, max_length=200),
-    page: int = Query(default=1, ge=1),
+    page: PageNumber = 1,
     page_size: int = Query(default=100, ge=1, le=200),
     current_user: User = Depends(require_permissions("manage_knowledge")),
     db: Session = Depends(get_db),

@@ -27,13 +27,15 @@ from app.core.auth import (
     require_any_permission,
     require_permissions,
 )
-from app.core.config import settings
+from app.services.meta_own_app import AUTO_WEBHOOK_SETTING, is_own_app, own_app_webhook_url
+from app.core.config import webhooks_base_url
 from app.database import get_db
 from app.models.channels import ChannelType
 from app.models.organization import Organization
 from app.models.schemas.channel import ChannelAccountOut
 from app.models.user import User
 from app.repositories.channels import ChannelAccountRepository, AgentChannelConfigRepository
+from app.repositories.channels.accounts import needs_reconnect
 from app.core.logger import get_logger
 
 router = APIRouter()
@@ -46,12 +48,14 @@ _UNRESOLVED = object()
 def channel_webhook_url(account) -> str | None:
     """The webhook URL the customer must configure on their provider, for the
     channels where that's a manual step. Auto-managed channels return None."""
-    base = f"{settings.BACKEND_URL.rstrip('/')}{settings.API_V1_STR}/webhooks"
+    base = webhooks_base_url()
     if account.channel_type == ChannelType.EMAIL.value:
         return f"{base}/email/{account.id}?token={account.webhook_secret}"
     if account.channel_type == ChannelType.SMS.value:
         provider = (account.settings or {}).get("provider", "twilio")
         return f"{base}/sms/{provider}/{account.id}?token={account.webhook_secret}"
+    if is_own_app(account):
+        return own_app_webhook_url(account)
     return None
 
 
@@ -79,6 +83,11 @@ def to_account_out(
     out = ChannelAccountOut.model_validate(account)
     out.agent_id = config.agent_id if config and config.is_active else None
     out.webhook_url = channel_webhook_url(account) if include_webhook_url else None
+    out.needs_reconnect = needs_reconnect(account)
+    # Meta asks for this token when the customer points their app at us
+    if include_webhook_url and is_own_app(account):
+        out.webhook_verify_token = account.webhook_secret
+        out.webhook_auto_configured = (account.settings or {}).get(AUTO_WEBHOOK_SETTING)
     return out
 
 

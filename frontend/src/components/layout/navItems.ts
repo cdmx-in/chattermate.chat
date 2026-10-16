@@ -134,6 +134,12 @@ export function useNavItems() {
             show: canAccessPath('/settings/integrations'),
           },
           {
+            to: '/settings/app-integrations',
+            icon: 'integrations',
+            label: 'App Integrations',
+            show: hasEnterpriseModule && canAccessPath('/settings/app-integrations'),
+          },
+          {
             to: '/settings/widget-apps',
             icon: 'widgets',
             label: 'Widget Apps',

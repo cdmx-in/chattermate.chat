@@ -24,6 +24,7 @@ from app.repositories.agent_shopify_config_repository import AgentShopifyConfigR
 import json
 import re # Import regex module
 import aiohttp
+from app.services.shopify_urls import shopify_admin_url
 
 logger = get_logger(__name__)
 
@@ -34,7 +35,6 @@ class ShopifyService:
         self.db = db
         self.shopify_shop_repository = ShopifyShopRepository(db)
         self.agent_shopify_config_repository = AgentShopifyConfigRepository(db)
-        self.api_version = "2025-10"
 
     def _execute_graphql(self, shop: ShopifyShop, query: str, variables: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
@@ -55,7 +55,7 @@ class ShopifyService:
                     "message": "Shop not connected or missing access token"
                 }
 
-            url = f"https://{shop.shop_domain}/admin/api/{self.api_version}/graphql.json"
+            url = shopify_admin_url(shop.shop_domain, "graphql.json")
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -120,7 +120,7 @@ class ShopifyService:
                     "message": "Shop not connected or missing access token"
                 }
 
-            url = f"https://{shop.shop_domain}/admin/api/{self.api_version}/graphql.json"
+            url = shopify_admin_url(shop.shop_domain, "graphql.json")
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -457,7 +457,7 @@ class ShopifyService:
                     "message": "Shop not connected or missing access token"
                 }
 
-            url = f"https://{shop.shop_domain}/admin/api/2025-10/products.json"
+            url = shopify_admin_url(shop.shop_domain, "products.json")
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -509,7 +509,7 @@ class ShopifyService:
                     "message": "Shop not connected or missing access token"
                 }
 
-            url = f"https://{shop.shop_domain}/admin/api/2025-10/products/{product_id}.json"
+            url = shopify_admin_url(shop.shop_domain, f"products/{product_id}.json")
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -560,7 +560,7 @@ class ShopifyService:
                     "message": "Shop not connected or missing access token"
                 }
 
-            url = f"https://{shop.shop_domain}/admin/api/2025-10/products/{product_id}.json"
+            url = shopify_admin_url(shop.shop_domain, f"products/{product_id}.json")
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json"
@@ -1109,7 +1109,7 @@ class ShopifyService:
             if not shop or not shop.access_token or not shop.is_installed:
                 return {"success": False, "message": "Shop not connected or missing access token"}
 
-            url = f"https://{shop.shop_domain}/admin/api/{self.api_version}/{endpoint}"
+            url = shopify_admin_url(shop.shop_domain, endpoint)
             headers = {
                 "X-Shopify-Access-Token": shop.access_token,
                 "Content-Type": "application/json",

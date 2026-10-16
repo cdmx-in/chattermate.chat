@@ -18,12 +18,17 @@ import asyncio
 from datetime import timedelta
 from time import monotonic
 from typing import List, Optional
-from agno.tools.mcp import MCPTools, SSEClientParams, StreamableHTTPClientParams
+from agno.tools.mcp import MCPTools
+from app.channels.interactive_limits import InteractiveLimits
 from app.database import SessionLocal
 from app.repositories.mcp_tool import MCPToolRepository
 from app.models.mcp_tool import MCPTransportType
 from app.models.schemas.mcp_tool import MAX_USAGE_GUIDANCE_CHARS
 from app.core.logger import get_logger
+from app.core.outbound_policy import check_outbound_target
+from app.tools.mcp_connection import HeldConnection
+from app.tools.mcp_outbound import remote_params_classes
+from app.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -54,11 +59,13 @@ CHAT_CONNECT_BUDGET_SECONDS = 15.0
 # far more patient than a chat turn while still bounding the request.
 TEST_CONNECT_BUDGET_SECONDS = 60.0
 
+MCP_URL_LABEL = "MCP server URL"
+
 # Background callers pass no ceiling at all: the ticket investigation worker
 # derives its own from the run's wall-clock budget.
 
-# How long a detached teardown is given before we stop caring about it.
-ABORT_TIMEOUT_SECONDS = 2.0
+# How long a connected tool is given to close before it is abandoned.
+CLOSE_TIMEOUT_SECONDS = 5.0
 
 # A server can expose a hundred functions; listing them all would cost more
 # prompt than the guidance itself. Enough to disambiguate, then a count.
@@ -99,11 +106,6 @@ def _connector_guidance(config, mcp_tool) -> Optional[str]:
     )
 
 
-# Strong references to in-flight teardowns; without them the loop can garbage
-# collect a task mid-flight.
-_pending_teardowns: set = set()
-
-
 def _session_timeout(config) -> int:
     """Per-request read timeout for the MCP session, on every transport.
     Bounds the startup handshake and each individual tool call."""
@@ -115,6 +117,14 @@ def _connect_timeout(config) -> float:
     can legitimately spend so a slow-but-healthy server isn't cut off by the
     outer guard."""
     return _session_timeout(config) * HANDSHAKE_REQUESTS + CONNECT_TIMEOUT_MARGIN_SECONDS
+
+
+def _connect_error_message(error: BaseException) -> str:
+    """The underlying cause, not "unhandled errors in a TaskGroup": the MCP
+    transports wrap connection errors in exception groups."""
+    while isinstance(error, BaseExceptionGroup) and error.exceptions:
+        error = error.exceptions[0]
+    return str(error) or type(error).__name__
 
 
 class MCPToolsManager:
@@ -243,6 +253,10 @@ class MCPToolsManager:
     @staticmethod
     def _build_stdio_tool(config) -> Optional[MCPTools]:
         """MCPTools for a local subprocess server (npx/uvx/binary)."""
+        if not settings.MCP_STDIO_ENABLED:
+            # Connectors saved before it was turned off never get to run.
+            logger.warning(f"STDIO MCP tool {config.name} skipped: MCP_STDIO_ENABLED is false")
+            return None
         if not (config.command and config.args):
             logger.warning(f"STDIO MCP tool {config.name} missing command or args")
             return None
@@ -316,11 +330,15 @@ class MCPToolsManager:
         if not config.url:
             logger.warning(f"Remote MCP tool {config.name} missing URL, skipping")
             return None
+        # Checked again at connect time, not only on save: DNS can change.
+        check_outbound_target(config.url, MCP_URL_LABEL)
+        # Under public_only these also pin every connect to a vetted address.
+        sse_params_cls, http_params_cls = remote_params_classes()
         headers = config.headers or None
         timeout = _session_timeout(config)
         sse_read_timeout = config.sse_read_timeout or 300
         if config.transport_type == MCPTransportType.SSE:
-            server_params = SSEClientParams(
+            server_params = sse_params_cls(
                 url=config.url,
                 headers=headers,
                 timeout=timeout,
@@ -332,7 +350,7 @@ class MCPToolsManager:
                 server_params=server_params,
                 timeout_seconds=timeout,
             )
-        server_params = StreamableHTTPClientParams(
+        server_params = http_params_cls(
             url=config.url,
             headers=headers,
             timeout=timedelta(seconds=timeout),
@@ -360,8 +378,9 @@ class MCPToolsManager:
                 "error": "Tool is misconfigured — check its command/args (STDIO) or URL (SSE/HTTP)",
             })
             return False
+        connection = HeldConnection(mcp_tool)
         try:
-            await asyncio.wait_for(mcp_tool.__aenter__(), timeout=connect_timeout)
+            await connection.open(connect_timeout)
             logger.debug(f"Entered MCP tool context: {name}")
         except asyncio.TimeoutError:
             logger.error(f"Timeout connecting to MCP tool {name}")
@@ -369,16 +388,16 @@ class MCPToolsManager:
                 "name": name,
                 "error": f"Timed out after {connect_timeout:.0f}s connecting to the server",
             })
-            await self._abort_tool(mcp_tool)
             return False
         except Exception as e:
-            logger.error(f"Failed to connect MCP tool {name}: {e}")
+            error = _connect_error_message(e)
+            logger.error(f"Failed to connect MCP tool {name}: {error}")
             # For package not found errors (like Git server), skip silently after first error
-            if "404" in str(e) or "not found" in str(e).lower() or "no such package" in str(e).lower():
+            if "404" in error or "not found" in error.lower() or "no such package" in error.lower():
                 logger.warning(f"MCP tool package not found, skipping: {name}")
-            self.failed_tools.append({"name": name, "error": str(e)})
-            await self._abort_tool(mcp_tool)
+            self.failed_tools.append({"name": name, "error": error})
             return False
+        mcp_tool._held_connection = connection
 
         # Verify functions are loaded after connection
         if getattr(mcp_tool, "functions", None):
@@ -400,7 +419,7 @@ class MCPToolsManager:
             return True
         logger.warning(f"MCP tool {name} has no functions available after connection")
         self.failed_tools.append({"name": name, "error": "Connected, but the server exposed no tools"})
-        await self._abort_tool(mcp_tool)
+        connection.release()
         return False
 
     @staticmethod
@@ -425,94 +444,12 @@ class MCPToolsManager:
             function.strict = False
         logger.debug(f"MCP tool {name} functions opted out of provider strict mode")
 
-    @staticmethod
-    async def _abort_tool(mcp_tool: MCPTools) -> None:
-        """Best-effort teardown of a tool that failed to come up.
-
-        Detached deliberately. When a STDIO server never answers the
-        handshake, __aexit__ unwinds anyio scopes that were entered inside the
-        task asyncio.wait_for has already cancelled; that unwind cannot
-        process further cancellation, so awaiting it — even through another
-        wait_for — blocks until the child process happens to exit and defeats
-        the connect budget entirely.
-        """
-        task = asyncio.create_task(MCPToolsManager._close_quietly(mcp_tool))
-        _pending_teardowns.add(task)
-        task.add_done_callback(_pending_teardowns.discard)
-
-    @staticmethod
-    async def _close_quietly(mcp_tool: MCPTools) -> None:
-        """Exit a tool's context, swallowing whatever it throws on the way."""
-        try:
-            await asyncio.wait_for(
-                mcp_tool.__aexit__(None, None, None), timeout=ABORT_TIMEOUT_SECONDS
-            )
-        except Exception as e:
-            logger.debug(f"MCP tool teardown after a failed connect did not finish: {e}")
-
     async def cleanup_mcp_tools(self):
-        """
-        Clean up MCP tools by properly disconnecting them.
-        """
-        if not self.mcp_tools:
-            logger.debug("No MCP tools to clean up")
-            return
-            
-        for i, mcp_tool in enumerate(self.mcp_tools):
-            try:
-                logger.debug(f"Cleaning up MCP tool {i+1}/{len(self.mcp_tools)}")
-                
-                # Try multiple cleanup methods with timeout
-                cleaned_up = False
-                
-                # Try __aexit__ first (most common for MCPTools)
-                if hasattr(mcp_tool, '__aexit__'):
-                    try:
-                        await asyncio.wait_for(mcp_tool.__aexit__(None, None, None), timeout=5.0)
-                        cleaned_up = True
-                        logger.debug(f"Exited MCP tool {i+1} context")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Timeout exiting MCP tool {i+1} context")
-                    except Exception as e:
-                        # Handle known non-critical async context manager warnings
-                        if "cancel scope" in str(e) or "different task" in str(e):
-                            logger.debug(f"MCP tool {i+1} cleanup warning (non-critical): {e}")
-                        else:
-                            logger.warning(f"Error exiting MCP tool {i+1} context: {e}")
-                
-                if not cleaned_up and hasattr(mcp_tool, 'disconnect'):
-                    try:
-                        await asyncio.wait_for(mcp_tool.disconnect(), timeout=5.0)
-                        cleaned_up = True
-                        logger.debug(f"Disconnected MCP tool {i+1}")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Timeout disconnecting MCP tool {i+1}")
-                    except Exception as e:
-                        if "cancel scope" in str(e) or "different task" in str(e):
-                            logger.debug(f"MCP tool {i+1} disconnect warning (non-critical): {e}")
-                        else:
-                            logger.warning(f"Error disconnecting MCP tool {i+1}: {e}")
-                
-                if not cleaned_up and hasattr(mcp_tool, 'stop'):
-                    try:
-                        await asyncio.wait_for(mcp_tool.stop(), timeout=5.0)
-                        cleaned_up = True
-                        logger.debug(f"Stopped MCP tool {i+1}")
-                    except asyncio.TimeoutError:
-                        logger.warning(f"Timeout stopping MCP tool {i+1}")
-                    except Exception as e:
-                        if "cancel scope" in str(e) or "different task" in str(e):
-                            logger.debug(f"MCP tool {i+1} stop warning (non-critical): {e}")
-                        else:
-                            logger.warning(f"Error stopping MCP tool {i+1}: {e}")
-                
-                if not cleaned_up:
-                    logger.warning(f"Could not properly cleanup MCP tool {i+1}")
-                    
-            except Exception as e:
-                logger.error(f"Unexpected error cleaning up MCP tool {i+1}: {e}")
-        
-        # Clear the tools list after cleanup
+        """Close every connected tool, each from the task that opened it."""
+        for mcp_tool in self.mcp_tools:
+            connection = getattr(mcp_tool, "_held_connection", None)
+            if connection is not None:
+                await connection.close(timeout=CLOSE_TIMEOUT_SECONDS)
         self.mcp_tools.clear()
         logger.debug("All MCP tools cleaned up")
 
@@ -547,7 +484,7 @@ class ChatAgentMCPMixin:
                           session_id: str = None, custom_system_prompt: str = None,
                           transfer_to_human: bool | None = None, source: str = None,
                           channel: str = None, extra_context: str = None, base_url: str = None,
-                          offer_choices: bool = False):
+                          choice_limits: Optional[InteractiveLimits] = None):
         """
         Async factory method to create a ChatAgent with MCP tools initialized.
         """
@@ -579,7 +516,7 @@ class ChatAgentMCPMixin:
             channel=channel,
             extra_context=extra_context,
             base_url=base_url,
-            offer_choices=offer_choices,
+            choice_limits=choice_limits,
         )
         
         # Attach the MCP manager to the instance for cleanup

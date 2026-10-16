@@ -29,11 +29,12 @@ from app.crm.base import (
 from app.crm.mapping import build_note_body, split_name
 from app.crm.registry import register_adapter
 from app.models.crm import CrmProvider
+from app.core.external_urls import external_base
 
 logger = get_logger(__name__)
 
 AUTHORIZE_URL = "https://app.hubspot.com/oauth/authorize"
-API_BASE = "https://api.hubapi.com"
+API_BASE = external_base("HUBSPOT_API_BASE", "https://api.hubapi.com")
 TOKEN_URL = f"{API_BASE}/oauth/v1/token"
 # Request only what the push needs — the marketplace review checks scope usage.
 SCOPES = "crm.objects.contacts.read crm.objects.contacts.write"

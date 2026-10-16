@@ -37,6 +37,7 @@ from app.database import get_db
 from app.api.channels.meta import _seal_signup_pages
 from app.channels.base import SendResult
 from app.repositories.channels import ChannelAccountRepository
+from app.repositories.channels.accounts import needs_reconnect
 
 BASE = "/api/v1/channels/meta"
 WEBHOOK = "/api/v1/webhooks/meta"
@@ -1021,6 +1022,32 @@ class TestOutboundConversation:
              patch("app.services.whatsapp_outbound.get_adapter", lambda _: adapter):
             return client.post(self.URL(account), json=payload), adapter
 
+    def test_a_refused_token_on_the_template_check_marks_the_number(self, client, db, routed):
+        refused = {"error": {"message": "Error validating access token", "code": 190}}
+        with patch("app.services.whatsapp_outbound.fetch_message_templates",
+                   AsyncMock(return_value=(False, refused))):
+            r = client.post(self.URL(routed), json={
+                "to": "+91 12345 67890", "template_name": "order_update",
+                "language": "en_US", "components": self.BODY_PARAMS})
+        assert r.status_code == 502
+        db.refresh(routed)
+        assert needs_reconnect(routed) is True
+
+    def test_a_refused_token_on_the_send_marks_the_number(self, client, db, routed):
+        from unittest.mock import MagicMock
+        adapter = MagicMock()
+        adapter.send_template = AsyncMock(return_value=SendResult(
+            ok=False, error="Authentication Error", auth_failed=True))
+        with patch("app.services.whatsapp_outbound.fetch_message_templates",
+                   AsyncMock(return_value=(True, self.APPROVED_UTILITY))), \
+             patch("app.services.whatsapp_outbound.get_adapter", lambda _: adapter):
+            r = client.post(self.URL(routed), json={
+                "to": "+91 12345 67890", "template_name": "order_update",
+                "language": "en_US", "components": self.BODY_PARAMS})
+        assert r.status_code == 502
+        db.refresh(routed)
+        assert needs_reconnect(routed) is True
+
     def test_creates_person_session_and_windowless_conversation(self, client, db, routed):
         from app.models.customer import Customer
         from app.models.chat_history import ChatHistory
@@ -1039,7 +1066,8 @@ class TestOutboundConversation:
         conversation = ChannelConversationRepository(db).get_by_session(session_id)
         # The window lie: no inbound message means no open 24h window.
         assert conversation.last_inbound_at is None
-        assert conversation.extra["outbound_template"] == "Hi Priya, your order A-12 shipped."
+        assert conversation.extra["last_business_message"]["text"] == "Hi Priya, your order A-12 shipped."
+        assert conversation.extra["last_business_message"]["external_message_id"] == "wamid.OUT1"
 
         from uuid import UUID as _UUID
         row = db.query(ChatHistory).filter(
@@ -1060,6 +1088,25 @@ class TestOutboundConversation:
         row = db.query(ChatHistory).filter(
             ChatHistory.session_id == _UUID(r.json()["session_id"])).one()
         assert row.external_message_id == "wamid.OUT1"
+
+    def test_template_send_is_announced_as_the_inbox_users(self, client, db, routed):
+        from app.channels.app_hooks import EventKind, register_event_listener
+        from app.channels.constants import MessageSource
+        seen = []
+
+        async def listen(event):
+            seen.append(event)
+        register_event_listener(listen)
+
+        with patch("app.services.chat_notifications.notify_new_chat", AsyncMock()) as notify:
+            r, _ = self._send(client, routed, customer_name="Priya")
+
+        assert r.status_code == 200
+        (event,) = seen
+        assert event.kind == EventKind.OUTBOUND
+        assert event.outbound.source == MessageSource.HUMAN
+        assert event.outbound.external_message_id == "wamid.OUT1"
+        notify.assert_not_awaited()  # the sender knows; the reply will notify
 
     def test_picked_person_at_someone_elses_number_is_refused(self, client, db, routed):
         """`to` and `customer_id` arrive as independent fields. Binding Alice to
@@ -1247,6 +1294,26 @@ class TestInboxAgentCanActuallyReachTheFeature:
             r = inbox_client.get(f"{BASE}/whatsapp/{waba_account.id}/templates")
         assert r.status_code == 200
         assert r.json()[0]["name"] == "order_update"
+
+    def test_a_refused_token_marks_the_number_for_reconnection(self, inbox_client, db, waba_account):
+        refused = {"error": {"message": "Authentication Error", "code": 0}}
+        with patch("app.api.channels.whatsapp_messaging.fetch_message_templates",
+                   AsyncMock(return_value=(False, refused))):
+            r = inbox_client.get(f"{BASE}/whatsapp/{waba_account.id}/templates")
+        assert r.status_code == 502
+        db.refresh(waba_account)
+        assert needs_reconnect(waba_account) is True
+
+        accounts = inbox_client.get("/api/v1/channels/accounts").json()
+        assert next(a for a in accounts if a["id"] == str(waba_account.id))["needs_reconnect"] is True
+
+    def test_other_template_read_failures_do_not(self, inbox_client, db, waba_account):
+        with patch("app.api.channels.whatsapp_messaging.fetch_message_templates",
+                   AsyncMock(return_value=(False, {"error": {"message": "Unsupported get", "code": 100}}))):
+            r = inbox_client.get(f"{BASE}/whatsapp/{waba_account.id}/templates")
+        assert r.status_code == 502
+        db.refresh(waba_account)
+        assert needs_reconnect(waba_account) is False
 
     def test_can_see_the_accounts_that_gate_the_new_conversation_button(
             self, inbox_client, waba_account):
