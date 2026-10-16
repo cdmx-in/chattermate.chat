@@ -68,7 +68,7 @@ def test_refresh_updates_the_existing_middleware(app):
 
     layers = cors_layers(app)
     assert len(layers) == 1
-    assert layers[0].kwargs["allow_origins"] == [KEPT]
+    assert layers[0].kwargs["allow_origins"] == cors.with_configured_origins([KEPT])
     assert layers[0].kwargs["allow_origin_regex"] == cors.get_cors_origin_regex()
 
 
@@ -143,7 +143,7 @@ def test_unchanged_origins_skip_the_rebuild(app):
 def test_socketio_origins_follow_the_refresh(app):
     cors.update_local_cors(app, [KEPT])
 
-    assert sio.eio.cors_allowed_origins == [KEPT]
+    assert sio.eio.cors_allowed_origins == cors.with_configured_origins([KEPT])
 
 
 def test_app_without_cors_middleware_gets_one():
@@ -153,4 +153,4 @@ def test_app_without_cors_middleware_gets_one():
 
     layers = cors_layers(bare)
     assert len(layers) == 1
-    assert layers[0].kwargs["allow_origins"] == [KEPT]
+    assert layers[0].kwargs["allow_origins"] == cors.with_configured_origins([KEPT])

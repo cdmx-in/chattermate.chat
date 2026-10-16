@@ -17,12 +17,12 @@ limitations under the License.
 from typing import Optional, Tuple
 from uuid import UUID
 import http.cookies
+from urllib.parse import parse_qs, urlparse
 from app.core.security import verify_conversation_token
 from app.core.logger import get_logger
 from app.database import get_db, SessionLocal
 from app.models.user import User
 from sqlalchemy.orm import Session
-from app.core.socketio import sio
 from app.core.cors import is_first_party_origin
 from app.models.widget import Widget
 from app.services.auth_sessions import ACCESS, REFRESH, issue_tokens, live_payload
@@ -59,18 +59,34 @@ async def refresh_access_token(refresh_token: str, db: Session) -> str | None:
         return None
 
 
+def cookie_socket_allowed(environ: dict) -> bool:
+    """Whether a socket handshake may sign in with the dashboard's cookies.
+
+    Sockets get no CORS check and the cookies are SameSite=None, so a page on
+    another site (an org's signup domain is unverified) could otherwise open
+    the socket as whoever is signed in. socket.io authenticates a namespace
+    with the headers of the first handshake request, so all of it must have
+    come from our own pages:
+    - never a JSONP handshake: a <script> tag sends the cookies without an Origin
+    - with an Origin, a first-party one or the API's own origin
+    - without one, only a same-origin request (browsers omit Origin on
+      same-origin GETs, e.g. polling behind a single-host proxy)
+    """
+    if "j" in parse_qs(environ.get("QUERY_STRING", "")):
+        return False
+    origin = environ.get("HTTP_ORIGIN")
+    if origin:
+        return is_first_party_origin(origin) or urlparse(origin).netloc.lower() == environ.get("HTTP_HOST", "").lower()
+    return environ.get("HTTP_SEC_FETCH_SITE") == "same-origin"
+
+
 async def authenticate_socket(sid: str, environ: dict) -> Tuple[Optional[str], Optional[int], Optional[int]]:
     """
     Authenticate socket connection using cookies
     Returns: (access_token, user_id, org_id)
     """
-    # WebSockets carry cookies without any CORS check, so a page on another
-    # site (an org's signup domain is unverified) could otherwise open this
-    # socket as whoever is signed in - and be sent a refreshed token. Browsers
-    # always send Origin on the handshake; only our own may use the cookies.
-    origin = environ.get('HTTP_ORIGIN')
-    if origin and not is_first_party_origin(origin):
-        logger.warning(f"Refused cookie socket auth for sid {sid} from origin {origin}")
+    if not cookie_socket_allowed(environ):
+        logger.warning(f"Refused cookie socket auth for sid {sid} from origin {environ.get('HTTP_ORIGIN')}")
         return None, None, None
 
     try:
@@ -91,12 +107,6 @@ async def authenticate_socket(sid: str, environ: dict) -> Tuple[Optional[str], O
                 refresh_token = cookies['refresh_token'].value
                 with SessionLocal() as db:
                     access_token = await refresh_access_token(refresh_token, db)
-
-                # Emit cookie_set event with the new token
-                await sio.emit('cookie_set', {
-                    'access_token': access_token
-                }, to=sid)
-                logger.info(f"New access token generated for sid {sid}")
 
         if not access_token:
             return None, None, None

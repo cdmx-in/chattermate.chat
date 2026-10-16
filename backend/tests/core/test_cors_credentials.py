@@ -20,8 +20,10 @@ domain is in the CORS list. If those origins were also allowed credentials, a
 page on any signed-up domain could read a signed-in dashboard user's account.
 """
 
+import logging
+
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app.core import auth_utils, cors
@@ -30,6 +32,7 @@ DASHBOARD = "https://app.example.com"
 OPERATOR_LISTED = "https://admin.example.com"
 ORG_SITE = "https://signed-up-domain.example"
 HELP_CENTER = "https://acme.help.example.com"
+API_HOST = "api.example.com"
 
 
 @pytest.fixture(autouse=True)
@@ -38,13 +41,12 @@ def first_party(monkeypatch):
     monkeypatch.setattr(cors, "BASE_CORS_ORIGINS", [OPERATOR_LISTED, DASHBOARD + "/"])
 
 
-@pytest.fixture
-def client():
+def cors_app(allow_origins=(DASHBOARD, OPERATOR_LISTED, ORG_SITE)):
     app = FastAPI()
     app.add_middleware(
         cors.FirstPartyCredentialsCORSMiddleware,
         credentialed_origins=cors.first_party_origins(),
-        allow_origins=[DASHBOARD, OPERATOR_LISTED, ORG_SITE],
+        allow_origins=list(allow_origins),
         allow_origin_regex=r"^https://[a-z0-9-]+\.help\.example\.com$",
         allow_methods=["*"],
         allow_headers=["*"],
@@ -54,21 +56,59 @@ def client():
     def me():
         return {"who": "a signed-in user"}
 
-    return TestClient(app)
+    @app.get("/refused")
+    def refused():
+        raise HTTPException(status_code=401, detail="Not signed in")
+
+    return app
+
+
+@pytest.fixture
+def client():
+    return TestClient(cors_app())
 
 
 def preflight(client, origin):
     return client.options("/me", headers={"Origin": origin, "Access-Control-Request-Method": "GET"})
 
 
+def cors_layers(app):
+    return [m for m in app.user_middleware if isinstance(m.cls, type) and issubclass(m.cls, cors.CORSMiddleware)]
+
+
 class TestFirstPartyOrigins:
     def test_the_dashboard_and_operator_listed_origins(self):
         assert cors.first_party_origins() == {DASHBOARD, OPERATOR_LISTED}
 
+    @pytest.mark.parametrize("frontend_url, expected", [
+        ("https://App.Example.com:443/dashboard/", "https://app.example.com"),
+        ("http://localhost:5173/", "http://localhost:5173"),
+        ("http://localhost:80", "http://localhost"),
+        ("https://app.example.com:8443", "https://app.example.com:8443"),
+    ])
+    def test_frontend_url_is_read_the_way_browsers_send_origin(self, monkeypatch, frontend_url, expected):
+        monkeypatch.setattr(cors.settings, "FRONTEND_URL", frontend_url)
+        assert expected in cors.first_party_origins()
+
+    def test_a_frontend_url_without_a_scheme_is_reported(self, monkeypatch, caplog):
+        monkeypatch.setattr(cors.settings, "FRONTEND_URL", "app.example.com")
+        with caplog.at_level(logging.ERROR):
+            assert cors.first_party_origins() == {OPERATOR_LISTED, DASHBOARD}
+        assert "FRONTEND_URL" in caplog.text
+
+    def test_a_wildcard_in_cors_origins_trusts_no_one(self, monkeypatch):
+        monkeypatch.setattr(cors, "BASE_CORS_ORIGINS", ["*"])
+        assert cors.first_party_origins() == {DASHBOARD}
+        assert not cors.is_first_party_origin(ORG_SITE)
+
     @pytest.mark.parametrize("origin, expected", [
         (DASHBOARD, True),
         (DASHBOARD.upper(), True),
+        (DASHBOARD + "/", True),
+        (DASHBOARD + ":443", True),
         (OPERATOR_LISTED, True),
+        ("http://app.example.com", False),
+        ("https://app.example.com:8443", False),
         (ORG_SITE, False),
         (HELP_CENTER, False),
         ("null", False),
@@ -96,6 +136,21 @@ class TestCredentials:
         response = client.get("/me", headers={"Origin": ORG_SITE, "Cookie": "access_token=x"})
         assert "access-control-allow-credentials" not in response.headers
 
+    def test_error_responses_too(self, client):
+        org = client.get("/refused", headers={"Origin": ORG_SITE})
+        assert org.status_code == 401
+        assert org.headers["access-control-allow-origin"] == ORG_SITE
+        assert "access-control-allow-credentials" not in org.headers
+        assert client.get("/refused", headers={"Origin": DASHBOARD}).headers["access-control-allow-credentials"] == "true"
+
+    def test_a_wildcard_allow_list_still_keeps_cookies_first_party(self):
+        client = TestClient(cors_app(allow_origins=["*"]))
+        org = client.get("/me", headers={"Origin": ORG_SITE, "Cookie": "access_token=x"})
+        assert "access-control-allow-credentials" not in org.headers
+        dashboard = client.get("/me", headers={"Origin": DASHBOARD, "Cookie": "access_token=x"})
+        assert dashboard.headers["access-control-allow-origin"] == DASHBOARD
+        assert dashboard.headers["access-control-allow-credentials"] == "true"
+
     def test_an_unknown_site_gets_nothing(self, client):
         response = client.get("/me", headers={"Origin": "https://evil.example"})
         assert "access-control-allow-origin" not in response.headers
@@ -108,11 +163,29 @@ class TestRefreshKeepsTheSplit:
         app = client.app
         cors.update_local_cors(app, [DASHBOARD, ORG_SITE])
 
-        layers = [m for m in app.user_middleware if isinstance(m.cls, type) and issubclass(m.cls, cors.CORSMiddleware)]
+        layers = cors_layers(app)
         assert len(layers) == 1
         assert layers[0].cls is cors.FirstPartyCredentialsCORSMiddleware
         assert "access-control-allow-credentials" not in client.get("/me", headers={"Origin": ORG_SITE}).headers
         assert client.get("/me", headers={"Origin": DASHBOARD}).headers["access-control-allow-credentials"] == "true"
+
+    def test_a_cached_list_from_an_older_config_never_drops_the_dashboard(self, client):
+        # Redis keeps the list across restarts; it may predate the current env
+        cors.update_local_cors(client.app, [ORG_SITE])
+
+        response = client.get("/me", headers={"Origin": DASHBOARD})
+        assert response.headers["access-control-allow-origin"] == DASHBOARD
+        assert response.headers["access-control-allow-credentials"] == "true"
+
+    def test_the_same_origins_in_another_order_do_not_rebuild(self, client):
+        origins = cors.with_configured_origins([ORG_SITE, "https://other.example"])
+        cors.update_local_cors(client.app, origins)
+        client.get("/me")
+        built = client.app.middleware_stack
+
+        cors.update_local_cors(client.app, list(reversed(origins)))
+
+        assert client.app.middleware_stack is built
 
     def test_a_rebuilt_middleware_is_the_first_party_one(self):
         bare = FastAPI()
@@ -120,33 +193,83 @@ class TestRefreshKeepsTheSplit:
         assert bare.user_middleware[0].cls is cors.FirstPartyCredentialsCORSMiddleware
 
 
+def test_the_app_is_wired_with_the_first_party_middleware():
+    import app.main  # noqa: F401 - the middleware is added on import
+    from app.core.application import app as api
+
+    layers = cors_layers(api)
+    assert len(layers) == 1
+    assert layers[0].cls is cors.FirstPartyCredentialsCORSMiddleware
+    assert layers[0].kwargs["credentialed_origins"]
+
+
+def handshake(origin=None, query="EIO=4&transport=polling", host=API_HOST, fetch_site=None, cookie="access_token=tok"):
+    environ = {"QUERY_STRING": query, "HTTP_HOST": host, "HTTP_COOKIE": cookie}
+    if origin:
+        environ["HTTP_ORIGIN"] = origin
+    if fetch_site:
+        environ["HTTP_SEC_FETCH_SITE"] = fetch_site
+    return environ
+
+
 class TestCookieSockets:
-    """WebSockets get no CORS check, so the cookie-authenticated namespace
-    checks the handshake's Origin itself."""
+    """Sockets get no CORS check, and socket.io signs a namespace in with the
+    headers of the first handshake request, so the handshake itself must have
+    come from our own pages."""
+
+    @pytest.mark.parametrize("environ", [
+        handshake(origin=DASHBOARD),
+        handshake(origin=DASHBOARD + ":443"),
+        handshake(origin=OPERATOR_LISTED),
+        handshake(origin=f"https://{API_HOST}"),
+        handshake(fetch_site="same-origin"),
+    ], ids=["dashboard", "dashboard-default-port", "operator-listed", "the-api-itself", "same-origin-no-origin"])
+    def test_our_own_pages_may_use_the_cookies(self, environ):
+        assert auth_utils.cookie_socket_allowed(environ)
+
+    @pytest.mark.parametrize("environ", [
+        handshake(origin=ORG_SITE),
+        handshake(origin=HELP_CENTER),
+        handshake(origin="null"),
+        handshake(),
+        handshake(fetch_site="cross-site"),
+        handshake(fetch_site="same-site"),
+        handshake(query="EIO=4&transport=polling&j=0"),
+        handshake(query="EIO=4&transport=polling&j=0", fetch_site="same-origin"),
+        handshake(origin=DASHBOARD, query="EIO=4&transport=polling&j=0"),
+        handshake(origin=ORG_SITE, host="signed-up-domain.example:8443"),
+    ], ids=["org-site", "help-centre", "opaque", "no-origin", "cross-site-no-origin", "same-site-no-origin",
+            "jsonp", "jsonp-same-origin", "jsonp-from-dashboard", "org-site-other-port"])
+    def test_anything_else_may_not(self, environ):
+        assert not auth_utils.cookie_socket_allowed(environ)
 
     @pytest.fixture
-    def emitted(self, monkeypatch):
-        sent = []
+    def auth_calls(self, monkeypatch):
+        calls = []
 
-        async def emit(event, data, to=None):
-            sent.append(event)
+        async def refresh(token, db):
+            calls.append(("refresh", token))
+            return "fresh-access-token"
 
-        monkeypatch.setattr(auth_utils.sio, "emit", emit)
-        return sent
+        monkeypatch.setattr(auth_utils, "refresh_access_token", refresh)
+        monkeypatch.setattr(auth_utils, "live_payload", lambda db, token, kind: calls.append(("verify", token)) or None)
+        return calls
 
     @pytest.mark.asyncio
-    async def test_another_site_gets_no_cookie_auth_and_no_fresh_token(self, emitted):
-        environ = {"HTTP_ORIGIN": ORG_SITE, "HTTP_COOKIE": "refresh_token=stolen-by-the-browser"}
-
+    @pytest.mark.parametrize("environ", [
+        handshake(origin=ORG_SITE, cookie="refresh_token=r; access_token=a"),
+        handshake(cookie="refresh_token=r", query="EIO=4&transport=polling&j=0"),
+    ], ids=["org-site", "jsonp"])
+    async def test_a_refused_handshake_never_reads_or_refreshes_the_cookies(self, auth_calls, environ):
         assert await auth_utils.authenticate_socket("sid-1", environ) == (None, None, None)
-        assert emitted == []
+        assert auth_calls == []
 
     @pytest.mark.asyncio
-    async def test_our_dashboard_is_still_authenticated_from_its_cookies(self, monkeypatch):
-        reached = []
-        monkeypatch.setattr(auth_utils, "live_payload", lambda db, token, kind: reached.append(token) or None)
-        environ = {"HTTP_ORIGIN": DASHBOARD, "HTTP_COOKIE": "access_token=tok"}
+    async def test_our_dashboard_is_still_authenticated_from_its_cookies(self, auth_calls):
+        await auth_utils.authenticate_socket("sid-1", handshake(origin=DASHBOARD))
+        assert auth_calls == [("verify", "tok")]
 
-        await auth_utils.authenticate_socket("sid-1", environ)
-
-        assert reached == ["tok"]
+    @pytest.mark.asyncio
+    async def test_a_refreshed_token_stays_on_the_server(self, auth_calls):
+        await auth_utils.authenticate_socket("sid-1", handshake(origin=DASHBOARD, cookie="refresh_token=r"))
+        assert auth_calls == [("refresh", "r"), ("verify", "fresh-access-token")]

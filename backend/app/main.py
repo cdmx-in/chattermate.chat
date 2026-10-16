@@ -45,6 +45,7 @@ from app.core.cors import (
     first_party_origins,
     get_cors_origin_regex,
     get_cors_origins,
+    with_configured_origins,
 )
 from app.core.application import app, initialize_cors_listener
 from app.core.crawler_policy import install_crawler_policy
@@ -74,7 +75,7 @@ async def lifespan(app: FastAPI):
     pass
 
 # Move the CORS setup before app instantiation
-cors_origins = get_cors_origins()
+cors_origins = with_configured_origins(get_cors_origins())
 logger.debug(f"CORS origins: {cors_origins}")
 
 # Update the FastAPI app to use the lifespan function
@@ -87,7 +88,7 @@ app.router.lifespan_context = lifespan
 app.add_middleware(
     FirstPartyCredentialsCORSMiddleware,
     credentialed_origins=first_party_origins(),
-    allow_origins=list(cors_origins),
+    allow_origins=cors_origins,
     allow_origin_regex=get_cors_origin_regex(),
     allow_methods=["*"],
     allow_headers=["*"],

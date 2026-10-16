@@ -40,11 +40,21 @@ BASE_CORS_ORIGINS: list = settings.CORS_ORIGINS
 _CREDENTIALS_HEADER = "access-control-allow-credentials"
 
 
-def _origin_of(url: str) -> Optional[str]:
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def origin_of(url: Optional[str]) -> Optional[str]:
+    """The origin of a URL the way a browser sends it: lowercase, no path and
+    no default port, so https://App.example.com:443/ is https://app.example.com."""
     parsed = urlparse((url or "").strip())
-    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+    if parsed.scheme not in _DEFAULT_PORTS or not parsed.hostname:
         return None
-    return f"{parsed.scheme}://{parsed.netloc}".lower()
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    netloc = parsed.hostname if port in (None, _DEFAULT_PORTS[parsed.scheme]) else f"{parsed.hostname}:{port}"
+    return f"{parsed.scheme}://{netloc}".lower()
 
 
 def first_party_origins() -> Set[str]:
@@ -55,13 +65,21 @@ def first_party_origins() -> Set[str]:
     typed at signup, unverified, so trusting it with credentials would let a
     page on any signed-up domain read a signed-in user's account.
     """
-    configured = BASE_CORS_ORIGINS if isinstance(BASE_CORS_ORIGINS, list) else [BASE_CORS_ORIGINS]
-    origins = {_origin_of(url) for url in [settings.FRONTEND_URL, *configured]}
+    dashboard = origin_of(settings.FRONTEND_URL)
+    if not dashboard:
+        logger.error(f"FRONTEND_URL {settings.FRONTEND_URL!r} is not an http(s) URL; the dashboard can't sign in cross-origin")
+    origins = {dashboard, *(origin_of(url) for url in BASE_CORS_ORIGINS)}
     return {o for o in origins if o}
 
 
 def is_first_party_origin(origin: Optional[str]) -> bool:
-    return bool(origin) and origin.lower().rstrip("/") in first_party_origins()
+    return origin_of(origin) in first_party_origins()
+
+
+def with_configured_origins(origins: Iterable[str]) -> List[str]:
+    """The given origins plus the operator's own, sorted. A cached list from
+    Redis was built from an earlier config, and must never drop the dashboard."""
+    return sorted(set(origins) | set(BASE_CORS_ORIGINS) | first_party_origins())
 
 
 class FirstPartyCredentialsCORSMiddleware(CORSMiddleware):
@@ -76,10 +94,10 @@ class FirstPartyCredentialsCORSMiddleware(CORSMiddleware):
     def __init__(self, app, credentialed_origins: Iterable[str] = (), **kwargs) -> None:
         kwargs["allow_credentials"] = True
         super().__init__(app, **kwargs)
-        self.credentialed_origins = frozenset(o.lower() for o in credentialed_origins)
+        self.credentialed_origins = frozenset(filter(None, map(origin_of, credentialed_origins)))
 
     def _credentialed(self, origin: str) -> bool:
-        return origin.lower() in self.credentialed_origins
+        return origin_of(origin) in self.credentialed_origins
 
     def preflight_response(self, request_headers: Headers):
         response = super().preflight_response(request_headers)
@@ -186,6 +204,7 @@ def update_local_cors(app: FastAPI, new_origins: List[str]) -> bool:
         bool: True if CORS middleware was found and updated, False otherwise
     """
     middleware_found = False
+    new_origins = with_configured_origins(new_origins)
 
     # Update the registered CORS middleware in place. `user_middleware` holds
     # the class plus its kwargs, so match on the class itself; adding another
@@ -194,7 +213,7 @@ def update_local_cors(app: FastAPI, new_origins: List[str]) -> bool:
         if isinstance(middleware.cls, type) and issubclass(middleware.cls, CORSMiddleware):
             # The publishing worker also hears its own Redis broadcast, and
             # startup re-applies the cached list; skip the rebuild when nothing changed
-            if middleware.kwargs.get('allow_origins') != new_origins:
+            if set(middleware.kwargs.get('allow_origins') or ()) != set(new_origins):
                 middleware.kwargs['allow_origins'] = new_origins
                 # Starlette rebuilds the stack from user_middleware on the next request
                 app.middleware_stack = None
