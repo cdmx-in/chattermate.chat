@@ -44,6 +44,7 @@ from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services.chat_notifications import notify_new_chat
 from app.services.human_routing import HUMAN_ONLY_ACK, notify_customer
 from app.services.lead_capture import record_lead_from_response
+from app.services.conversation_token import VERIFIED_SCOPE
 from app.services.agent_rooms import emit_to_session_agents
 from app.services.channel_replies import inbound_attributes, reply_text
 from app.services.message_delivery import DeliveryResult, deliver_to_customer
@@ -168,6 +169,8 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
             customer_id=customer_id,
             session_id=session_id,
             channel=account.channel_type,
+            # The platform vouches for who is messaging.
+            scope=VERIFIED_SCOPE,
         )
 
         delivery = await _deliver(db, session_record, {

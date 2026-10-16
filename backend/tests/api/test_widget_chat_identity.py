@@ -117,16 +117,12 @@ async def test_resuming_a_conversation_is_not_reported_as_created(
     )
     db.add(open_session)
     db.commit()
-    # The lookup takes a string customer id, which SQLite's UUID column cannot bind -
-    # the same reason the other widget socket tests stub this out.
-    monkeypatch.setattr(
-        "app.repositories.session_to_agent.SessionToAgentRepository.get_active_customer_session",
-        lambda self, customer_id, agent_id=None: open_session,
-    )
 
     assert await widget_chat.widget_connect("sid-2", {}, {}) is True
 
-    assert _session_initialized(mock_sio)['created'] is False
+    payload = _session_initialized(mock_sio)
+    assert payload['created'] is False
+    assert payload['session_id'] == str(open_session.session_id)
 
 
 @pytest.mark.asyncio

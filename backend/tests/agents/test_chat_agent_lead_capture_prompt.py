@@ -28,11 +28,12 @@ LEAD_FIELDS = [
 ]
 
 
-def build_agent(known_email: str = None, known_name: str = None) -> ChatAgent:
+def build_agent(known_email: str = None, known_name: str = None, trusted: bool = True) -> ChatAgent:
     """A ChatAgent with everything external stubbed, to read the prompt it built.
 
     `known_email`/`known_name` stand for a visitor we already hold details for:
     one who passed the email gate, or who an embedding app identified.
+    `trusted` is whether this conversation may be told them (widget_identity).
     """
     agent_data = Mock()
     agent_data.name = "Sales"
@@ -70,6 +71,7 @@ def build_agent(known_email: str = None, known_name: str = None) -> ChatAgent:
          patch('app.repositories.customer.CustomerRepository', customer_repo), \
          patch('app.repositories.lead_capture.LeadCaptureConfigRepository', lead_repo), \
          patch('app.services.lead_capture.has_captured_lead', return_value=False), \
+         patch('app.services.widget_identity.trusts_identity_in_session', return_value=trusted), \
          patch('app.tools.knowledge_search_byagent.KnowledgeSearchByAgent', return_value=Mock()), \
          patch('app.agents.chat_agent.EncryptedPostgresAgentStorage', return_value=storage), \
          patch('app.agents.chat_agent.settings.DATABASE_URL', "mock://test"), \
@@ -115,6 +117,16 @@ class TestLeadCapturePrompt:
         assert "count them as collected" in prompt
         # And the visitor can still correct us.
         assert "volunteers a different value" in prompt
+
+    def test_details_are_not_recited_to_a_visitor_who_only_claimed_the_customer(self):
+        """Someone who typed another person's email into the widget is bound to
+        that customer, but must not hear their name or address from the bot."""
+        prompt = prompt_of(build_agent(known_email="ravi@academy.example", known_name="Ravi Kumar",
+                                       trusted=False))
+
+        assert "ALREADY KNOWN" not in prompt
+        assert "Ravi Kumar" not in prompt
+        assert "ravi@academy.example" not in prompt
 
     def test_an_unknown_visitor_is_still_asked(self):
         prompt = prompt_of(build_agent())

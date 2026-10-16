@@ -53,6 +53,10 @@ class SessionToAgent(Base):
     # Messaging channel the session belongs to ('web' = widget, 'telegram',
     # 'whatsapp', ...). Routing key for outbound delivery of replies.
     channel = Column(String, nullable=False, server_default='web', index=True)
+    # Which widget conversation token may resume this session (see
+    # conversation_token.conversation_scope). NULL: only a token the embedding app
+    # vouched for - and every non-widget channel, which never resumes by token.
+    conversation_key = Column(String(64), nullable=True)
     assigned_at = Column(DateTime(timezone=True), server_default=func.now())
 
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

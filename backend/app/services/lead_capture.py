@@ -53,6 +53,8 @@ def record_lead_capture(
     consent: bool,
     page_url: Optional[str] = None,
     channel: str = "widget",
+    *,
+    scope: Optional[str],
 ) -> Optional[LeadCaptureResponse]:
     """Persist an AI-captured lead (fields the agent extracted conversationally +
     an AI qualification summary). Returns None — recording nothing — when there is
@@ -66,6 +68,13 @@ def record_lead_capture(
     anonymous visitor is MERGED into that existing customer (history/sessions
     reassigned, visitor row marked merged) so People shows one entry. The returned
     response's customer_id is the final (possibly merged-into) customer.
+
+    `scope` is the conversation-token scope of the visitor (VERIFIED_SCOPE for
+    channels, whose identity the platform vouches for). A widget visitor may be
+    bound to a customer by an email they only typed, so the merge, contact
+    update, promotion and CRM push only happen to customers that visitor created
+    (widget_identity.can_act_as); otherwise the captured details stay on the
+    response alone.
 
     A recorded lead is queued for CRM push (post-commit, best-effort) when the
     agent has a crm_sync_target configured. Slack/assignment routing remains
@@ -113,6 +122,17 @@ def record_lead_capture(
         )
         .first()
     )
+    # Merging moves everything of one customer onto another, so the visitor must
+    # be able to act as both. For a widget visitor that rules out merging into
+    # anyone who already existed - an email they typed proves nothing - and the
+    # lead stays on their own row. Neither row is touched if they can't act as
+    # the one they are on.
+    from app.services.widget_identity import can_act_as
+    owns_customer = can_act_as(db, customer, scope)
+    if existing is not None and not (owns_customer and can_act_as(db, existing, scope)):
+        logger.info(f"Lead capture: not merging customer {customer_id}; the visitor does not own both")
+        existing = None
+
     # Merge (reassigning history across rows), the new response row, the contact
     # update, and the promotion must all commit together — roll back on any failure
     # so a mid-merge error can never leave a half-merged customer.
@@ -141,12 +161,13 @@ def record_lead_capture(
         # national number we cannot resolve to one person worldwide, so it is
         # dropped (logged) rather than guessed at — a wrong-country identity key
         # is worse than an unset one.
-        CustomerRepository(db).update_contact(
-            target_customer_id, email=email or None, full_name=name,
-            phone=(field_values or {}).get('phone'))
+        if owns_customer:
+            CustomerRepository(db).update_contact(
+                target_customer_id, email=email or None, full_name=name,
+                phone=(field_values or {}).get('phone'))
 
-        # Promote Visitor -> Lead; never downgrade an existing Customer.
-        _promote_to_lead(db, target_customer_id, session_id, page_url=page_url, channel=channel)
+            # Promote Visitor -> Lead; never downgrade an existing Customer.
+            _promote_to_lead(db, target_customer_id, session_id, page_url=page_url, channel=channel)
 
         db.commit()
     except Exception:
@@ -155,7 +176,11 @@ def record_lead_capture(
     db.refresh(response)
 
     # Post-commit so a job can never reference a rolled-back lead; wrapped so
-    # CRM problems can never break the conversation flow.
+    # CRM problems can never break the conversation flow. Never for a customer
+    # the visitor only claimed to be: that would push their words under the
+    # real customer's name.
+    if not owns_customer:
+        return response
     try:
         from app.services.crm_sync import enqueue_crm_sync
         enqueue_crm_sync(db, config, response)
@@ -250,6 +275,8 @@ def record_lead_from_response(
     session_id,
     page_url: Optional[str] = None,
     channel: str = "widget",
+    *,
+    scope: Optional[str],
 ) -> Optional[LeadCaptureResponse]:
     """Persist a lead from a ChatResponse whose request_lead_capture is set.
 
@@ -289,6 +316,7 @@ def record_lead_from_response(
             consent=getattr(response, 'lead_consent', False),
             page_url=page_url,
             channel=channel,
+            scope=scope,
         )
     except Exception as e:
         # Lead capture must never break the conversation flow.

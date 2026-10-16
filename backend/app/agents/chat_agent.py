@@ -438,8 +438,9 @@ class ChatAgent(ChatAgentMCPMixin):
             if customer_id:
                 try:
                     from app.repositories.customer import CustomerRepository
+                    from app.services.widget_identity import trusts_identity_in_session
                     cust = CustomerRepository(db).get_by_id(customer_id)
-                    if cust:
+                    if cust and trusts_identity_in_session(db, cust, session_id):
                         if not CustomerRepository.is_placeholder_email(cust.email):
                             self.known_customer_email = cust.email
                         if (cust.full_name or "").strip():

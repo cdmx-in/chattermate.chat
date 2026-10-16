@@ -41,6 +41,17 @@ def client(db) -> TestClient:
     return TestClient(app)
 
 
+BROWSER_KEY = "browser-a"
+
+
+@pytest.fixture
+def widget_token(test_widget, test_customer) -> str:
+    """The token the widget issued to the browser that opened the session."""
+    return create_conversation_token(
+        widget_id=str(test_widget.id), customer_id=str(test_customer.id), ckey=BROWSER_KEY
+    )
+
+
 @pytest.fixture
 def open_session(db, test_widget, test_customer, test_agent) -> SessionToAgent:
     session = SessionToAgent(
@@ -49,6 +60,7 @@ def open_session(db, test_widget, test_customer, test_agent) -> SessionToAgent:
         agent_id=test_agent.id,
         organization_id=test_customer.organization_id,
         status=SessionStatus.OPEN,
+        conversation_key=BROWSER_KEY,
     )
     db.add(session)
     db.commit()
@@ -65,10 +77,10 @@ def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_closes_the_session(client, db, test_widget, open_session, test_conversation_token):
+def test_closes_the_session(client, db, test_widget, open_session, widget_token):
     response = client.post(
         _url(test_widget.id, open_session.session_id, reason="CUSTOMER_REQUEST"),
-        headers=_auth(test_conversation_token),
+        headers=_auth(widget_token),
     )
 
     assert response.status_code == 200
@@ -130,10 +142,29 @@ def test_cannot_close_another_customers_session(client, db, test_widget, open_se
     assert open_session.status == SessionStatus.OPEN
 
 
-def test_unknown_session_is_not_found(client, test_widget, test_conversation_token):
+def test_cannot_close_another_browsers_session_of_the_same_customer(
+    client, db, test_widget, open_session, test_customer
+):
+    """Naming the customer is not enough: a token the widget issued to another
+    browser (e.g. after someone typed this customer's email) is out of scope."""
+    other_browser_token = create_conversation_token(
+        widget_id=str(test_widget.id), customer_id=str(test_customer.id), ckey="browser-b"
+    )
+
+    response = client.post(
+        _url(test_widget.id, open_session.session_id),
+        headers=_auth(other_browser_token),
+    )
+
+    assert response.status_code == 404
+    db.refresh(open_session)
+    assert open_session.status == SessionStatus.OPEN
+
+
+def test_unknown_session_is_not_found(client, test_widget, widget_token):
     response = client.post(
         _url(test_widget.id, uuid4()),
-        headers=_auth(test_conversation_token),
+        headers=_auth(widget_token),
     )
 
     assert response.status_code == 404

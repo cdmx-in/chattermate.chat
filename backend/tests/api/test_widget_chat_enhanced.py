@@ -263,7 +263,7 @@ class TestHandleWidgetChat:
         )
         
         # Mock no active session found
-        with patch.object(SessionToAgentRepository, 'get_active_customer_session', return_value=None):
+        with patch('app.api.widget_chat._own_session', return_value=None):
             with patch.object(SessionToAgentRepository, 'get_latest_customer_session', return_value=None):
                 sid = "test_sid"
                 data = {"message": "Hello"}
@@ -306,6 +306,7 @@ class TestHandleWidgetChat:
         mock_session = MagicMock()
         mock_session.session_id = session_id
         mock_session.workflow_id = test_workflow.id
+        mock_session.status = SessionStatus.OPEN
         mock_session.user_id = None  # No human agent
         mock_session.current_node_id = None
         mock_session.workflow_state = {}
@@ -320,7 +321,7 @@ class TestHandleWidgetChat:
         mock_workflow_result.end_conversation = False
         mock_workflow_result.transfer_to_human = False
         
-        with patch.object(SessionToAgentRepository, 'get_active_customer_session', return_value=mock_session):
+        with patch('app.api.widget_chat._own_session', return_value=mock_session):
             with patch.object(ChatRepository, 'create_message', return_value=MagicMock()):
                 with patch('app.api.widget_chat.WorkflowChatService') as mock_workflow_chat_service:
                     mock_workflow_chat_service.return_value.handle_workflow_chat = AsyncMock(return_value=mock_workflow_result)
@@ -394,7 +395,7 @@ class TestGetWidgetChatHistory:
 
         sid = "test_sid"
 
-        with patch.object(SessionToAgentRepository, 'get_active_customer_session', return_value=None):
+        with patch('app.api.widget_chat._own_session', return_value=None):
             await widget_chat.get_widget_chat_history(sid)
 
         mock_sio.emit.assert_called_with(
@@ -426,7 +427,7 @@ class TestGetWidgetChatHistory:
         )
         
         # Mock no active session found
-        with patch.object(SessionToAgentRepository, 'get_active_customer_session', return_value=None):
+        with patch('app.api.widget_chat._own_session', return_value=None):
             sid = "test_sid"
             
             await widget_chat.get_widget_chat_history(sid)
@@ -477,7 +478,7 @@ class TestGetWidgetChatHistory:
         mock_message2.user = None
         mock_message2.agent = None
         
-        with patch.object(SessionToAgentRepository, 'get_active_customer_session', return_value=test_session):
+        with patch('app.api.widget_chat._own_session', return_value=test_session):
             with patch.object(ChatRepository, 'get_session_history', return_value=[mock_message1, mock_message2]):
                 with patch('app.api.widget_chat.format_datetime', return_value="2024-01-01T00:00:00Z"):
                     sid = "test_sid"
@@ -535,7 +536,7 @@ class TestGetWidgetChatHistory:
         )
         
         # Mock database error
-        with patch.object(SessionToAgentRepository, 'get_active_customer_session', side_effect=Exception("Database error")):
+        with patch('app.api.widget_chat._own_session', side_effect=Exception("Database error")):
             sid = "test_sid"
             
             await widget_chat.get_widget_chat_history(sid)

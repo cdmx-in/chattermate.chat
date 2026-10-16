@@ -178,9 +178,15 @@ class TicketTools(Toolkit):
         try:
             from app.repositories.customer import CustomerRepository
             from app.repositories.session_to_agent import SessionToAgentRepository
+            from app.services.widget_identity import trusts_identity_in_session
 
             session = SessionToAgentRepository(db).get_session(session_id)
             if session is None or session.customer_id is None:
+                return
+            # Only the customer's own conversation may change their record: a
+            # visitor who typed someone else's email is bound to that person.
+            customer = CustomerRepository(db).get_by_id(session.customer_id)
+            if not trusts_identity_in_session(db, customer, session_id):
                 return
             CustomerRepository(db).update_contact(
                 session.customer_id, email=email, full_name=name

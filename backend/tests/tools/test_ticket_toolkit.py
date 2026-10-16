@@ -85,3 +85,40 @@ class TestCustomerIdentitySection:
             full_name="Arun", meta_data={"account_id": "acc_991", "plan": "pro"}
         )
         assert "acc_991" in section
+
+
+class TestCaptureCustomerIdentity:
+    """A name stated in chat only lands on the record of the conversation's own
+    customer - never on one the visitor is bound to by an email they typed."""
+
+    def _customer_with_session(self, db, org_id, key, customer_key):
+        from uuid import uuid4
+        from app.models.customer import Customer
+        from app.models.session_to_agent import SessionStatus, SessionToAgent
+        customer = Customer(email=f"{uuid4().hex}@noemail.com", organization_id=org_id,
+                            conversation_key=customer_key)
+        db.add(customer); db.commit(); db.refresh(customer)
+        session = SessionToAgent(session_id=uuid4(), customer_id=customer.id, organization_id=org_id,
+                                 status=SessionStatus.OPEN, conversation_key=key)
+        db.add(session); db.commit()
+        return customer, session
+
+    def test_the_visitors_own_customer_is_named(self, db, test_organization_id):
+        from app.tools.ticket_toolkit import TicketTools
+        customer, session = self._customer_with_session(db, test_organization_id, "browser-a", "browser-a")
+
+        TicketTools("agent", str(test_organization_id), str(session.session_id)) \
+            ._capture_customer_identity(db, session.session_id, None, "Own Name")
+
+        db.refresh(customer)
+        assert customer.full_name == "Own Name"
+
+    def test_a_customer_created_by_another_browser_is_not_renamed(self, db, test_organization_id):
+        from app.tools.ticket_toolkit import TicketTools
+        customer, session = self._customer_with_session(db, test_organization_id, "browser-b", "browser-a")
+
+        TicketTools("agent", str(test_organization_id), str(session.session_id)) \
+            ._capture_customer_identity(db, session.session_id, None, "Someone Else")
+
+        db.refresh(customer)
+        assert customer.full_name is None
