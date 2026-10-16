@@ -237,12 +237,13 @@ const allRoutes = hasEnterpriseModule
         component: loadEnterpriseComponent(moduleImports.signupView),
         meta: { requiresAuth: false },
       },
-      {
-        path: '/explore',
-        name: 'explore',
-        component: loadEnterpriseComponent(moduleImports.exploreView),
-        meta: { requiresAuth: false },
-      },
+      // Explore is retired and its backend proxy unregistered
+      // {
+      //   path: '/explore',
+      //   name: 'explore',
+      //   component: loadEnterpriseComponent(moduleImports.exploreView),
+      //   meta: { requiresAuth: false },
+      // },
       {
         path: '/settings/subscription',
         name: 'subscription',
