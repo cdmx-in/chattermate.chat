@@ -109,6 +109,10 @@ class Settings(BaseSettings):
     # "common" accepts any Microsoft work, school or personal account that has an
     # account here; a tenant id limits sign-in to that directory.
     MICROSOFT_SSO_TENANT: str = os.getenv("MICROSOFT_SSO_TENANT", "common")
+    # false makes single sign-on the only way into the dashboard: the login page
+    # hides the e-mail/password form and /users/login refuses. Ignored while no
+    # provider is configured, so a misconfiguration can never lock everyone out.
+    PASSWORD_LOGIN_ENABLED: bool = os.getenv("PASSWORD_LOGIN_ENABLED", "true").lower() == "true"
 
     # Jira. Unlike the others the redirect URI IS configured, because it must
     # match the callback registered on the Atlassian app exactly. Self-hosters

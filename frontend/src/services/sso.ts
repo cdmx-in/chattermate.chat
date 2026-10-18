@@ -33,6 +33,12 @@ export interface SsoProvider {
   label: string
 }
 
+export interface SsoConfig {
+  providers: SsoProvider[]
+  /** False once an operator made SSO the only way in; the form is then hidden. */
+  passwordLogin: boolean
+}
+
 /** What the login page says for each `sso_error` the backend redirects with. */
 export const SSO_ERROR_MESSAGES: Record<string, string> = {
   no_account: 'No team account matches that e-mail address. Ask an administrator for an invite.',
@@ -43,13 +49,16 @@ export const SSO_ERROR_MESSAGES: Record<string, string> = {
 }
 
 export const ssoService = {
-  /** Providers the operator configured; empty means no SSO buttons. */
-  async listProviders(): Promise<SsoProvider[]> {
+  /** Providers the operator configured (empty means no SSO buttons) and
+   * whether password sign-in is still offered. */
+  async getConfig(): Promise<SsoConfig> {
     try {
-      const response = await api.get<SsoProvider[]>('/sso/providers')
-      return Array.isArray(response.data) ? response.data : []
+      const { data } = await api.get<{ providers?: SsoProvider[]; password_login?: boolean }>('/sso/config')
+      const providers = Array.isArray(data?.providers) ? data.providers : []
+      // Never hide the form when there is nothing else to sign in with.
+      return { providers, passwordLogin: data?.password_login !== false || providers.length === 0 }
     } catch {
-      return []
+      return { providers: [], passwordLogin: true }
     }
   },
 

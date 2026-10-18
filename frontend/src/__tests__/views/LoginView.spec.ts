@@ -30,9 +30,10 @@ vi.mock('@/services/auth', () => ({
 
 // SSO: no providers unless a test configures some
 const ssoProviders = vi.hoisted(() => ({ value: [] as { key: string; label: string }[] }))
+const passwordLogin = vi.hoisted(() => ({ value: true }))
 vi.mock('@/services/sso', () => ({
   ssoService: {
-    listProviders: vi.fn(async () => ssoProviders.value),
+    getConfig: vi.fn(async () => ({ providers: ssoProviders.value, passwordLogin: passwordLogin.value })),
     startUrl: vi.fn((provider: string, next: string) => `http://api.test/api/v1/sso/${provider}/start?next=${encodeURIComponent(next)}`),
     completeSignIn: vi.fn(),
     errorMessage: vi.fn((code: string | null) => (code === 'no_account' ? 'No team account matches that e-mail address.' : 'Single sign-on failed.')),
@@ -126,6 +127,7 @@ describe('LoginView', () => {
     // A user with no grants unless a test says otherwise
     currentUser.value = userWithPermissions([])
     ssoProviders.value = []
+    passwordLogin.value = true
     
     wrapper = mount(LoginView, {
       global: {
@@ -318,5 +320,37 @@ describe('LoginView', () => {
     await remountAt('/?sso_error=no_account')
     expect(ssoService.completeSignIn).not.toHaveBeenCalled()
     expect(wrapper.find('.auth-error').text()).toContain('No team account matches')
+  })
+
+  it('shows the redirect on the clicked provider button, not on the password button', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    await remountAt('/')
+    const original = window.location
+    Object.defineProperty(window, 'location', { value: { ...original, set href(_url: string) {} }, writable: true, configurable: true })
+    try {
+      await wrapper.find('.sso-btn').trigger('click')
+      expect(wrapper.find('.sso-btn').text()).toBe('Redirecting to Google…')
+      expect(wrapper.find('.auth-submit').text()).toBe('Sign In')
+      expect(wrapper.find('.auth-submit').attributes('disabled')).toBeDefined()
+    } finally {
+      Object.defineProperty(window, 'location', { value: original, writable: true, configurable: true })
+    }
+  })
+
+  it('hides the password form once an operator made SSO the only way in', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    passwordLogin.value = false
+    await remountAt('/')
+    expect(wrapper.find('#email').exists()).toBe(false)
+    expect(wrapper.find('.auth-submit').exists()).toBe(false)
+    expect(wrapper.find('.auth-divider').exists()).toBe(false)
+    expect(wrapper.find('.sso-btn').text()).toBe('Continue with Google')
+  })
+
+  it('keeps the password form when SSO-only is set but no provider is configured', async () => {
+    passwordLogin.value = false
+    await remountAt('/')
+    expect(wrapper.find('#email').exists()).toBe(true)
+    expect(wrapper.find('.auth-submit').exists()).toBe(true)
   })
 })

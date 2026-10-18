@@ -1800,7 +1800,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/sso/providers": {
+    "/api/v1/sso/config": {
         parameters: {
             query?: never;
             header?: never;
@@ -1808,10 +1808,11 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Providers
-         * @description The sign-in providers this deployment offers; the login page renders a button per entry.
+         * Sign In Config
+         * @description What the login page offers: a button per configured provider, and whether
+         *     the e-mail/password form is still shown (an operator can turn it off once SSO works).
          */
-        get: operations["list_providers_api_v1_sso_providers_get"];
+        get: operations["sign_in_config_api_v1_sso_config_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -12739,7 +12740,7 @@ export interface operations {
             };
         };
     };
-    list_providers_api_v1_sso_providers_get: {
+    sign_in_config_api_v1_sso_config_get: {
         parameters: {
             query?: never;
             header?: never;

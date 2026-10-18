@@ -83,6 +83,12 @@ class Provider:
     issuer_template: Optional[str] = None
 
 
+def password_login_enabled() -> bool:
+    """Whether the e-mail/password form is offered. It can only be switched off
+    once an SSO provider exists; otherwise nobody could sign in at all."""
+    return settings.PASSWORD_LOGIN_ENABLED or not providers()
+
+
 def providers() -> Dict[str, Provider]:
     """The providers an operator has configured, in the order the login page shows them."""
     out: Dict[str, Provider] = {}

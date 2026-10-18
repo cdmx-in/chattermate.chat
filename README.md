@@ -150,7 +150,8 @@ Team members can sign in to the dashboard with **Google** or **Microsoft**
 `backend/.env.example`). SSO signs in existing team members, matched by e-mail,
 and refreshes their profile picture from the provider on every sign-in; it never
 creates accounts. Register `{BACKEND_URL}/api/v1/sso/<provider>/callback` as the
-redirect URI with the provider.
+redirect URI with the provider. Once SSO works, `PASSWORD_LOGIN_ENABLED=false`
+makes it the only way in (the setting is ignored while no provider is configured).
 
 ### Integrations
 

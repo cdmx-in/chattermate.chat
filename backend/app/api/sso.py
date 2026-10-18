@@ -62,10 +62,14 @@ def _provider_or_404(key: str) -> sso.Provider:
     return provider
 
 
-@router.get("/providers")
-async def list_providers():
-    """The sign-in providers this deployment offers; the login page renders a button per entry."""
-    return [{"key": p.key, "label": p.label} for p in sso.providers().values()]
+@router.get("/config")
+async def sign_in_config():
+    """What the login page offers: a button per configured provider, and whether
+    the e-mail/password form is still shown (an operator can turn it off once SSO works)."""
+    return {
+        "providers": [{"key": p.key, "label": p.label} for p in sso.providers().values()],
+        "password_login": sso.password_login_enabled(),
+    }
 
 
 @router.get("/{provider_key}/start")
