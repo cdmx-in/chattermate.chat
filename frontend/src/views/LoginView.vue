@@ -15,7 +15,7 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { authService } from '@/services/auth'
 import { ssoService, type SsoProvider } from '@/services/sso'
@@ -42,6 +42,13 @@ const error = ref('')
 const isLoading = ref(false)
 // Single sign-on providers the backend is configured for; none means no buttons.
 const ssoProviders = ref<SsoProvider[]>([])
+// Whether the e-mail/password form is offered at all (an operator can make SSO the only way in).
+const passwordLogin = ref(true)
+const showPasswordForm = computed(() => passwordLogin.value || ssoProviders.value.length === 0)
+// SSO has its own progress states so the password button never says "Signing in…" for it.
+const ssoRedirecting = ref('')   // provider key the browser is being sent to
+const ssoCompleting = ref(false) // back from the provider, fetching the session
+const busy = computed(() => isLoading.value || ssoRedirecting.value !== '' || ssoCompleting.value)
 
 // Check if enterprise module is available
 const { hasEnterpriseModule } = useEnterpriseFeatures()
@@ -224,7 +231,7 @@ const startSso = (provider: SsoProvider) => {
     // Keep the ?redirect= destination through the provider round trip.
     const redirect = router.currentRoute.value.query.redirect
     const next = typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/'
-    isLoading.value = true
+    ssoRedirecting.value = provider.key
     window.location.href = ssoService.startUrl(provider.key, next)
 }
 
@@ -237,7 +244,7 @@ const finishSso = async () => {
     }
     if (query.sso !== 'ok') return
     try {
-        isLoading.value = true
+        ssoCompleting.value = true
         await ssoService.completeSignIn()
         trackLogin('sso')
         const next = typeof query.next === 'string' && query.next.startsWith('/') && !query.next.startsWith('//') ? query.next : '/'
@@ -250,12 +257,14 @@ const finishSso = async () => {
         console.error('SSO completion error:', err)
         error.value = ssoService.errorMessage(null)
     } finally {
-        isLoading.value = false
+        ssoCompleting.value = false
     }
 }
 
 onMounted(async () => {
-    ssoProviders.value = await ssoService.listProviders()
+    const config = await ssoService.getConfig()
+    ssoProviders.value = config.providers
+    passwordLogin.value = config.passwordLogin
     await finishSso()
 })
 
@@ -332,33 +341,36 @@ const handleVerifyAndResetPassword = async () => {
             <p class="auth-sub">Sign in to continue to your dashboard</p>
 
             <form @submit.prevent="handleLogin" class="auth-form">
-                <div class="field">
-                    <label for="email">Email</label>
-                    <input id="email" v-model="email" type="email" required placeholder="you@company.com" autocomplete="email" />
-                </div>
+                <template v-if="showPasswordForm">
+                    <div class="field">
+                        <label for="email">Email</label>
+                        <input id="email" v-model="email" type="email" required placeholder="you@company.com" autocomplete="email" />
+                    </div>
 
-                <div class="field">
-                    <label for="password">Password</label>
-                    <input id="password" v-model="password" type="password" required placeholder="••••••••" autocomplete="current-password" />
-                    <a v-if="hasEnterpriseModule" href="#" @click.prevent="openForgotPasswordModal" class="forgot-link">Forgot password?</a>
-                </div>
+                    <div class="field">
+                        <label for="password">Password</label>
+                        <input id="password" v-model="password" type="password" required placeholder="••••••••" autocomplete="current-password" />
+                        <a v-if="hasEnterpriseModule" href="#" @click.prevent="openForgotPasswordModal" class="forgot-link">Forgot password?</a>
+                    </div>
+                </template>
 
                 <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
 
-                <button type="submit" class="auth-submit" :disabled="isLoading">
+                <button v-if="showPasswordForm" type="submit" class="auth-submit" :disabled="busy">
                     <span v-if="isLoading">{{ router.currentRoute.value.query.embedded === 'true' ? 'Connecting…' : 'Signing in…' }}</span>
                     <span v-else>Sign In</span>
                 </button>
 
                 <template v-if="ssoProviders.length">
-                    <div class="auth-divider" aria-hidden="true"><span>or</span></div>
+                    <div v-if="showPasswordForm" class="auth-divider" aria-hidden="true"><span>or</span></div>
+                    <p v-if="ssoCompleting" class="sso-status" role="status">Completing sign-in…</p>
                     <button
                         v-for="provider in ssoProviders"
                         :key="provider.key"
                         type="button"
                         class="sso-btn"
                         :data-provider="provider.key"
-                        :disabled="isLoading"
+                        :disabled="busy"
                         @click="startSso(provider)"
                     >
                         <svg v-if="provider.key === 'google'" class="sso-logo" viewBox="0 0 24 24" aria-hidden="true">
@@ -371,7 +383,7 @@ const handleVerifyAndResetPassword = async () => {
                             <path fill="#F25022" d="M1 1h10.5v10.5H1z"/><path fill="#7FBA00" d="M12.5 1H23v10.5H12.5z"/>
                             <path fill="#00A4EF" d="M1 12.5h10.5V23H1z"/><path fill="#FFB900" d="M12.5 12.5H23V23H12.5z"/>
                         </svg>
-                        Continue with {{ provider.label }}
+                        {{ ssoRedirecting === provider.key ? `Redirecting to ${provider.label}…` : `Continue with ${provider.label}` }}
                     </button>
                 </template>
 
@@ -632,6 +644,13 @@ const handleVerifyAndResetPassword = async () => {
     color: var(--muted);
     font-size: 15px;
     margin-bottom: 36px;
+}
+
+.sso-status {
+    color: var(--muted);
+    font-size: 13px;
+    text-align: center;
+    margin: 0 0 10px;
 }
 
 /* Form */

@@ -100,16 +100,35 @@ def _error_of(response) -> str:
     return parse_qs(urlparse(response.headers["location"]).query).get("sso_error", [""])[0]
 
 
-# --- providers -----------------------------------------------------------------
+# --- config --------------------------------------------------------------------
 
-def test_providers_lists_only_what_is_configured(client: TestClient, google_only):
-    assert client.get("/api/v1/sso/providers").json() == [{"key": "google", "label": "Google"}]
-
-
-def test_providers_is_empty_without_configuration(client: TestClient, monkeypatch):
+def _no_providers(monkeypatch):
     for name in ("GOOGLE_SSO_CLIENT_ID", "GOOGLE_SSO_CLIENT_SECRET", "MICROSOFT_SSO_CLIENT_ID", "MICROSOFT_SSO_CLIENT_SECRET"):
         monkeypatch.setattr(settings, name, "")
-    assert client.get("/api/v1/sso/providers").json() == []
+
+
+def test_config_lists_only_what_is_configured(client: TestClient, google_only):
+    assert client.get("/api/v1/sso/config").json() == {
+        "providers": [{"key": "google", "label": "Google"}],
+        "password_login": True,
+    }
+
+
+def test_config_is_empty_without_configuration(client: TestClient, monkeypatch):
+    _no_providers(monkeypatch)
+    assert client.get("/api/v1/sso/config").json() == {"providers": [], "password_login": True}
+
+
+def test_password_login_can_be_switched_off_once_a_provider_exists(client: TestClient, google_only, monkeypatch):
+    monkeypatch.setattr(settings, "PASSWORD_LOGIN_ENABLED", False)
+    assert client.get("/api/v1/sso/config").json()["password_login"] is False
+
+
+def test_password_login_stays_on_without_a_provider(client: TestClient, monkeypatch):
+    """The switch must never lock everyone out."""
+    _no_providers(monkeypatch)
+    monkeypatch.setattr(settings, "PASSWORD_LOGIN_ENABLED", False)
+    assert client.get("/api/v1/sso/config").json()["password_login"] is True
 
 
 # --- start ---------------------------------------------------------------------

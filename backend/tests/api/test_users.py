@@ -325,6 +325,29 @@ def test_login_success(client: TestClient, test_user: User):
     assert "refresh_token" in cookies
     assert "user_info" in cookies
 
+def test_login_refused_when_password_sign_in_is_switched_off(client: TestClient, test_user: User, monkeypatch):
+    monkeypatch.setattr(settings, "GOOGLE_SSO_CLIENT_ID", "google-client")
+    monkeypatch.setattr(settings, "GOOGLE_SSO_CLIENT_SECRET", "google-secret")
+    monkeypatch.setattr(settings, "PASSWORD_LOGIN_ENABLED", False)
+    response = client.post(
+        "/api/v1/users/login",
+        data={"username": test_user.email, "password": "testpassword"},
+    )
+    assert response.status_code == 403
+    assert "single sign-on" in response.json()["detail"]
+
+
+def test_login_still_works_when_switched_off_without_a_provider(client: TestClient, test_user: User, monkeypatch):
+    for name in ("GOOGLE_SSO_CLIENT_ID", "GOOGLE_SSO_CLIENT_SECRET", "MICROSOFT_SSO_CLIENT_ID", "MICROSOFT_SSO_CLIENT_SECRET"):
+        monkeypatch.setattr(settings, name, "")
+    monkeypatch.setattr(settings, "PASSWORD_LOGIN_ENABLED", False)
+    response = client.post(
+        "/api/v1/users/login",
+        data={"username": test_user.email, "password": "testpassword"},
+    )
+    assert response.status_code == 200
+
+
 def test_login_invalid_credentials(client: TestClient):
     """Test login with invalid credentials"""
     response = client.post(

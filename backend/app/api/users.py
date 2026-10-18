@@ -30,6 +30,7 @@ from app.models.schemas.user import AdminPasswordReset, TeammateResponse, UserCr
 from datetime import datetime, timezone
 from app.core.security import validate_password_strength
 from app.core.auth import INBOX_PERMISSIONS, get_current_user, request_token, require_any_permission, require_permissions
+from app.services.sso import password_login_enabled
 from app.services.auth_sessions import (
     REFRESH, issue_tokens, live_payload, revoke_session, revoke_user_sessions, session_id_of,
     session_user_payload, set_session_cookies,
@@ -496,6 +497,11 @@ async def login(
     db: Session = Depends(get_db)
 ):
     """Authenticate user and set cookies"""
+    if not password_login_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Password sign-in is switched off here. Use single sign-on.",
+        )
     try:
         # Verify credentials
         user = db.query(User).filter(
