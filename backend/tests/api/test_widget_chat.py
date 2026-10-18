@@ -16,6 +16,7 @@ limitations under the License.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from app.api import widget_chat
 from app.models.widget import Widget
 from app.models.agent import Agent, AgentType
 from app.models.ai_config import AIConfig, AIModelType
@@ -140,7 +141,6 @@ def test_workflow_node(db, test_workflow) -> WorkflowNode:
 
 def _accept_conversation_token(monkeypatch):
     """Connect verifies the token to read its scope; these tests pass a literal."""
-    from app.api import widget_chat
     monkeypatch.setattr(
         widget_chat,
         "verify_conversation_token",

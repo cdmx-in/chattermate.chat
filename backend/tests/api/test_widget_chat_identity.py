@@ -106,7 +106,7 @@ async def test_a_new_conversation_is_reported_as_created_and_authenticated(mock_
 
 @pytest.mark.asyncio
 async def test_resuming_a_conversation_is_not_reported_as_created(
-    db, test_widget, identified_customer, mock_sio, connected, monkeypatch
+    db, test_widget, identified_customer, mock_sio, connected
 ):
     open_session = SessionToAgent(
         session_id=uuid4(),

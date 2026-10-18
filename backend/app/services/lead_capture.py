@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.models.lead_capture import LeadCaptureConfig, LeadCaptureResponse
 from app.repositories.customer import CustomerRepository
+from app.services.widget_identity import can_act_as
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -71,10 +72,9 @@ def record_lead_capture(
 
     `scope` is the conversation-token scope of the visitor (VERIFIED_SCOPE for
     channels, whose identity the platform vouches for). A widget visitor may be
-    bound to a customer by an email they only typed, so the merge, contact
-    update, promotion and CRM push only happen to customers that visitor created
-    (widget_identity.can_act_as); otherwise the captured details stay on the
-    response alone.
+    bound to a customer by an email they only typed, so a lead is only recorded
+    on a customer that visitor created (widget_identity.can_act_as), and only
+    merged into one it may also act as. Otherwise nothing is recorded.
 
     A recorded lead is queued for CRM push (post-commit, best-effort) when the
     agent has a crm_sync_target configured. Slack/assignment routing remains
@@ -122,14 +122,18 @@ def record_lead_capture(
         )
         .first()
     )
+    # A visitor bound to this customer by an email they only typed records
+    # nothing against them: no lead, no contact details, no CRM push - and the
+    # real customer is still asked for their details next time.
+    if not can_act_as(db, customer, scope):
+        logger.info(f"Lead capture: not recording for customer {customer_id}; the visitor does not own it")
+        return None
+
     # Merging moves everything of one customer onto another, so the visitor must
     # be able to act as both. For a widget visitor that rules out merging into
     # anyone who already existed - an email they typed proves nothing - and the
-    # lead stays on their own row. Neither row is touched if they can't act as
-    # the one they are on.
-    from app.services.widget_identity import can_act_as
-    owns_customer = can_act_as(db, customer, scope)
-    if existing is not None and not (owns_customer and can_act_as(db, existing, scope)):
+    # lead stays on their own row.
+    if existing is not None and not can_act_as(db, existing, scope):
         logger.info(f"Lead capture: not merging customer {customer_id}; the visitor does not own both")
         existing = None
 
@@ -161,13 +165,12 @@ def record_lead_capture(
         # national number we cannot resolve to one person worldwide, so it is
         # dropped (logged) rather than guessed at — a wrong-country identity key
         # is worse than an unset one.
-        if owns_customer:
-            CustomerRepository(db).update_contact(
-                target_customer_id, email=email or None, full_name=name,
-                phone=(field_values or {}).get('phone'))
+        CustomerRepository(db).update_contact(
+            target_customer_id, email=email or None, full_name=name,
+            phone=(field_values or {}).get('phone'))
 
-            # Promote Visitor -> Lead; never downgrade an existing Customer.
-            _promote_to_lead(db, target_customer_id, session_id, page_url=page_url, channel=channel)
+        # Promote Visitor -> Lead; never downgrade an existing Customer.
+        _promote_to_lead(db, target_customer_id, session_id, page_url=page_url, channel=channel)
 
         db.commit()
     except Exception:
@@ -176,11 +179,7 @@ def record_lead_capture(
     db.refresh(response)
 
     # Post-commit so a job can never reference a rolled-back lead; wrapped so
-    # CRM problems can never break the conversation flow. Never for a customer
-    # the visitor only claimed to be: that would push their words under the
-    # real customer's name.
-    if not owns_customer:
-        return response
+    # CRM problems can never break the conversation flow.
     try:
         from app.services.crm_sync import enqueue_crm_sync
         enqueue_crm_sync(db, config, response)

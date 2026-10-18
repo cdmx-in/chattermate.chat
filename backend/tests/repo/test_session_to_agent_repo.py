@@ -247,7 +247,7 @@ def test_get_customer_sessions(session_repo, test_session, test_customer):
     )
 
     # Get customer sessions
-    sessions = session_repo.get_customer_sessions(test_customer.id)
+    sessions = session_repo.get_customer_sessions(test_customer.id, SessionStatus.OPEN, VERIFIED_SCOPE)
     assert len(sessions) == 2
     assert all(s[0].customer_id == test_customer.id for s in sessions)
 

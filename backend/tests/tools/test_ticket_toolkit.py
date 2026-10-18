@@ -19,9 +19,17 @@ customer, and surfaced to the investigator — the …@noemail.com placeholder m
 never be presented as a real identity.
 """
 
+from contextlib import nullcontext
 from types import SimpleNamespace
+from unittest.mock import patch
+from uuid import uuid4
 
-from app.tools.ticket_toolkit import _clean_email, _clean_name
+import pytest
+
+from app.models.customer import Customer
+from app.models.session_to_agent import SessionStatus, SessionToAgent
+from app.models.ticket import Ticket
+from app.tools.ticket_toolkit import TicketTools, _clean_email, _clean_name
 
 
 class TestCleanEmail:
@@ -87,38 +95,63 @@ class TestCustomerIdentitySection:
         assert "acc_991" in section
 
 
-class TestCaptureCustomerIdentity:
-    """A name stated in chat only lands on the record of the conversation's own
-    customer - never on one the visitor is bound to by an email they typed."""
 
-    def _customer_with_session(self, db, org_id, key, customer_key):
-        from uuid import uuid4
-        from app.models.customer import Customer
-        from app.models.session_to_agent import SessionStatus, SessionToAgent
-        customer = Customer(email=f"{uuid4().hex}@noemail.com", organization_id=org_id,
-                            conversation_key=customer_key)
+@pytest.fixture
+def ticket_tools_db(db):
+    """TicketTools opens its own SessionLocal; hand it the test database."""
+    with patch("app.tools.ticket_toolkit.SessionLocal", return_value=nullcontext(db)), \
+         patch("app.services.ticket.embed_ticket_text", return_value=None):
+        yield db
+
+
+class TestCreateTicketIdentity:
+    """A ticket only carries the identity of a customer the conversation belongs to:
+    a visitor bound to a customer by an email they typed must not hand the
+    investigator that customer's records."""
+
+    def _conversation(self, db, org_id, agent_id, session_key, customer_key, email=None, name=None):
+        customer = Customer(email=email or f"{uuid4().hex}@noemail.com", full_name=name,
+                            organization_id=org_id, conversation_key=customer_key)
         db.add(customer); db.commit(); db.refresh(customer)
-        session = SessionToAgent(session_id=uuid4(), customer_id=customer.id, organization_id=org_id,
-                                 status=SessionStatus.OPEN, conversation_key=key)
+        session = SessionToAgent(session_id=uuid4(), customer_id=customer.id, agent_id=agent_id,
+                                 organization_id=org_id, status=SessionStatus.OPEN,
+                                 conversation_key=session_key)
         db.add(session); db.commit()
         return customer, session
 
-    def test_the_visitors_own_customer_is_named(self, db, test_organization_id):
-        from app.tools.ticket_toolkit import TicketTools
-        customer, session = self._customer_with_session(db, test_organization_id, "browser-a", "browser-a")
+    def _create(self, db, org_id, agent_id, session, **identity) -> Ticket:
+        TicketTools(str(agent_id), str(org_id), str(session.session_id)).create_ticket(
+            summary="Login fails", description="Every attempt errors.", **identity)
+        return db.query(Ticket).filter(Ticket.organization_id == org_id).order_by(Ticket.created_at.desc()).first()
 
-        TicketTools("agent", str(test_organization_id), str(session.session_id)) \
-            ._capture_customer_identity(db, session.session_id, None, "Own Name")
+    def test_the_customers_own_conversation_names_them(self, ticket_tools_db, test_organization_id, test_agent):
+        db = ticket_tools_db
+        customer, session = self._conversation(db, test_organization_id, test_agent.id, "browser-a", "browser-a")
+
+        ticket = self._create(db, test_organization_id, test_agent.id, session, customer_name="Own Name")
 
         db.refresh(customer)
+        assert ticket.customer_id == customer.id
         assert customer.full_name == "Own Name"
 
-    def test_a_customer_created_by_another_browser_is_not_renamed(self, db, test_organization_id):
-        from app.tools.ticket_toolkit import TicketTools
-        customer, session = self._customer_with_session(db, test_organization_id, "browser-b", "browser-a")
+    def test_a_claimed_customer_is_left_off_the_ticket(self, ticket_tools_db, test_organization_id, test_agent):
+        db = ticket_tools_db
+        victim, session = self._conversation(db, test_organization_id, test_agent.id, "browser-b", "browser-a",
+                                             email="victim@acme.com", name="Victim")
 
-        TicketTools("agent", str(test_organization_id), str(session.session_id)) \
-            ._capture_customer_identity(db, session.session_id, None, "Someone Else")
+        ticket = self._create(db, test_organization_id, test_agent.id, session,
+                              customer_email="victim@acme.com", customer_name="Someone Else")
 
-        db.refresh(customer)
-        assert customer.full_name is None
+        db.refresh(victim)
+        assert ticket.customer_id is None
+        assert victim.full_name == "Victim"
+
+    def test_a_typed_email_never_resolves_to_another_customer(self, ticket_tools_db, test_organization_id, test_agent):
+        db = ticket_tools_db
+        other = Customer(email="other@acme.com", organization_id=test_organization_id)
+        db.add(other); db.commit()
+        _, session = self._conversation(db, test_organization_id, test_agent.id, "browser-b", "browser-a")
+
+        ticket = self._create(db, test_organization_id, test_agent.id, session, customer_email="other@acme.com")
+
+        assert ticket.customer_id is None

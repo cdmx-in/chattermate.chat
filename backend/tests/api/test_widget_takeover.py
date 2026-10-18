@@ -26,6 +26,7 @@ from uuid import uuid4
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from socketio.exceptions import ConnectionRefusedError
 
 from app.api import token as token_router
 from app.api import widget as widget_router
@@ -320,7 +321,6 @@ class TestPreClaimedAddress:
     async def test_the_old_token_is_sent_back_to_authorize(self, socket, pre_claim):
         """Refused the way an unbound token is, so the widget authorizes again
         and GET /widgets/{id} hands it a customer of its own."""
-        from socketio.exceptions import ConnectionRefusedError
         attacker_token, _, _ = pre_claim
 
         with pytest.raises(ConnectionRefusedError) as refused:
@@ -352,3 +352,79 @@ class TestPreClaimedAddress:
         connected = await socket(verified_token, "user")
 
         assert connected["session_id"] == str(users_chat.session_id)
+
+
+def _mint(widget, customer, **claims) -> str:
+    token, _, _ = conversation_token.mint(
+        {"sub": str(customer.id), "widget_id": str(widget.id), **claims}, ttl_seconds=600)
+    return token
+
+
+class TestAccountScope:
+    """Our in-app support chat: a token our backend vouched for on behalf of one
+    dashboard account, keyed to that account rather than to the address."""
+
+    @pytest.fixture
+    def signed_in(self, db, test_organization) -> Customer:
+        customer = Customer(email="member@acme.com", organization_id=test_organization.id, is_authenticated=True)
+        db.add(customer)
+        db.commit()
+        return customer
+
+    @pytest.mark.asyncio
+    async def test_the_account_keeps_its_customer_and_its_conversation(self, client, socket, test_widget, signed_in):
+        key = conversation_token.account_conversation_key("account-1")
+        token = _mint(test_widget, signed_in, customer_email=signed_in.email, ckey=key)
+
+        data = client.get(f"/api/v1/widgets/{test_widget.id}", headers={"Authorization": f"Bearer {token}"}).json()
+        assert "token" not in data or data["token"] is None  # no swap to an anonymous customer
+
+        first = await socket(token, "drawer-1")
+        again = await socket(token, "drawer-2")
+        assert again["session_id"] == first["session_id"]
+
+    def test_a_widget_token_never_carries_an_account_key_forward(self, client, test_widget, signed_in):
+        """An unverified token claiming an account key is refused, and the widget's
+        replacement starts a key of its own."""
+        forged = create_conversation_token(widget_id=str(test_widget.id),
+                                           ckey=conversation_token.account_conversation_key("account-1"))
+
+        data = client.get(f"/api/v1/widgets/{test_widget.id}", headers={"Authorization": f"Bearer {forged}"}).json()
+
+        claims = conversation_token.claims_ignoring_expiry(data["token"])
+        assert not conversation_token.is_account_key(claims["ckey"])
+
+
+class TestEdges:
+    def test_a_token_for_a_customer_that_is_gone_gets_a_new_one(self, client, test_widget):
+        """Answering without a token here meant every connect was refused, forever."""
+        ghost = create_conversation_token(widget_id=str(test_widget.id), customer_id=str(uuid4()), ckey="browser-a")
+
+        data = client.get(f"/api/v1/widgets/{test_widget.id}", headers={"Authorization": f"Bearer {ghost}"}).json()
+
+        assert data["token"]
+        assert conversation_token.claims_ignoring_expiry(data["token"])["ckey"] == "browser-a"
+
+    @pytest.mark.asyncio
+    async def test_a_refresh_cannot_move_the_socket_to_another_scope(self, socket, mock_sio, test_widget, test_customer):
+        connected = await socket(_victim_token(test_widget, test_customer), "victim")
+        other_scope = create_conversation_token(widget_id=str(test_widget.id), customer_id=str(test_customer.id),
+                                                ckey="another-browser")
+        mock_sio.get_session.return_value = dict(connected)
+        mock_sio.save_session.reset_mock()
+
+        await widget_chat.handle_refresh_token("victim", {"conversation_token": other_scope})
+
+        mock_sio.save_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_visitor_who_cannot_save_contact_details_still_hears_back(
+        self, db, client, socket, mock_sio, test_widget, test_customer, victim_session
+    ):
+        stranger = client.get(f"/api/v1/widgets/{test_widget.id}", params={"email": test_customer.email}).json()["token"]
+        mock_sio.get_session.return_value = await socket(stranger, "stranger")
+        mock_sio.emit.reset_mock()
+
+        await widget_chat.handle_contact_info("stranger", {"form_data": {"name": "Someone"}})
+
+        assert _emitted(mock_sio, "chat_response")["message"] == "Thanks — a teammate will follow up here."

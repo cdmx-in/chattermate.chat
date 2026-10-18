@@ -40,13 +40,17 @@ class EndChatReasonType(str, enum.Enum):
     TASK_COMPLETED = "TASK_COMPLETED"
 
 
+# A conversation the visitor can still talk in.
+ACTIVE_STATUSES = (SessionStatus.OPEN, SessionStatus.TRANSFERRED)
+
+
 class SessionToAgent(Base):
     __tablename__ = "session_to_agents"
 
     session_id = Column(UUID(as_uuid=True), primary_key=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=False)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=False, index=True)
     group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     status = Column(SQLEnum(SessionStatus), nullable=False, default=SessionStatus.OPEN)

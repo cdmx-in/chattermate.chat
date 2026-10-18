@@ -24,6 +24,7 @@ from app.models.user import User
 from sqlalchemy.orm import Session
 from app.core.socketio import sio
 from app.models.widget import Widget
+from app.repositories.customer import CustomerRepository
 from app.services.auth_sessions import ACCESS, REFRESH, issue_tokens, live_payload
 
 logger = get_logger(__name__)
@@ -162,7 +163,6 @@ async def authenticate_socket_conversation_token(sid: str, auth: dict) -> Tuple[
             # capture matched an existing email), continue as the merged target so
             # returning visitors keep their identity and history.
             if customer_id:
-                from app.repositories.customer import CustomerRepository
                 survivor = CustomerRepository(db).resolve_merged(customer_id)
                 if survivor is not None:
                     customer_id = str(survivor.id)

@@ -300,3 +300,42 @@ def test_rotation_keeps_a_vouched_for_token_keyless():
     rotated_token, _, _ = conversation_token.rotate(_claims(token))
 
     assert conversation_token.CONVERSATION_KEY_CLAIM not in _claims(rotated_token)
+
+
+def test_an_account_key_is_verified_only_on_a_token_that_names_its_email():
+    key = conversation_token.account_conversation_key("user-1")
+    identified = {**IDENTIFIED_CLAIMS, "jti": "j", conversation_token.CONVERSATION_KEY_CLAIM: key}
+
+    assert conversation_token.conversation_scope(identified) == key
+    assert conversation_token.is_verified_scope(key)
+    with pytest.raises(ValueError):
+        conversation_token.conversation_scope({**ANONYMOUS_CLAIMS, conversation_token.CONVERSATION_KEY_CLAIM: key})
+
+
+def test_a_key_can_never_claim_the_vouched_for_scope():
+    claims = {**ANONYMOUS_CLAIMS, conversation_token.CONVERSATION_KEY_CLAIM: conversation_token.VERIFIED_SCOPE}
+
+    with pytest.raises(ValueError):
+        conversation_token.conversation_scope(claims)
+
+
+def test_a_widget_key_is_not_verified():
+    assert not conversation_token.is_verified_scope("browser-a")
+    assert not conversation_token.is_verified_scope(None)
+
+
+def test_no_scope_never_reads_as_keyless():
+    with pytest.raises(ValueError):
+        conversation_token.session_key_for_scope(None)
+    with pytest.raises(ValueError):
+        conversation_token.session_key_for_scope("")
+
+
+def test_rotation_keeps_an_account_key():
+    key = conversation_token.account_conversation_key("user-1")
+    token, _, _ = conversation_token.mint({**IDENTIFIED_CLAIMS, conversation_token.CONVERSATION_KEY_CLAIM: key},
+                                          ttl_seconds=600)
+
+    rotated_token, _, _ = conversation_token.rotate(_claims(token))
+
+    assert conversation_token.conversation_scope(_claims(rotated_token)) == key

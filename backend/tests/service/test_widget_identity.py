@@ -21,8 +21,13 @@ import pytest
 
 from app.models.customer import Customer
 from app.models.session_to_agent import SessionStatus, SessionToAgent
-from app.services.conversation_token import VERIFIED_SCOPE
-from app.services.widget_identity import can_act_as, may_stand_for, trusts_identity_in_session
+from app.services.conversation_token import VERIFIED_SCOPE, account_conversation_key
+from app.services.widget_identity import (
+    can_act_as,
+    may_stand_for,
+    trusts_identity_in_conversation,
+    trusts_identity_in_session,
+)
 
 
 @pytest.fixture
@@ -112,3 +117,19 @@ def test_a_vouched_for_conversation_is_trusted(db, customer):
     verified = _session(db, customer, None)
 
     assert trusts_identity_in_session(db, customer, verified.session_id)
+
+
+def test_a_signed_in_account_may_stand_for_and_act_as_its_customer(db, customer):
+    """The in-app support chat: our backend vouched for the account, so its key is
+    as trusted as the embedding app's - for the conversations it started."""
+    customer.is_authenticated = True
+    db.commit()
+    scope = account_conversation_key("user-1")
+
+    assert may_stand_for(customer, scope)
+    assert can_act_as(db, customer, scope)
+    assert trusts_identity_in_conversation(db, customer, _session(db, customer, scope))
+
+
+def test_no_conversation_means_no_trust(db, customer):
+    assert not trusts_identity_in_conversation(db, customer, None)

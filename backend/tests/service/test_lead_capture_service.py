@@ -18,6 +18,7 @@ import pytest
 from uuid import uuid4
 
 from app.models.customer import Customer, LeadStage
+from app.models.session_to_agent import SessionStatus, SessionToAgent
 from app.services.conversation_token import VERIFIED_SCOPE
 from app.models.lead_capture import LeadCaptureConfig, LeadCaptureResponse
 from app.services.lead_capture import (
@@ -272,7 +273,6 @@ def test_merge_never_leaves_a_live_number_on_the_tombstone(
 # --- a widget visitor may only merge or edit a customer its own browser created ---
 
 def _session(db, customer, org_id, key):
-    from app.models.session_to_agent import SessionStatus, SessionToAgent
     db.add(SessionToAgent(session_id=uuid4(), customer_id=customer.id, organization_id=org_id,
                           status=SessionStatus.OPEN, conversation_key=key))
     db.commit()
@@ -339,8 +339,8 @@ def test_a_claimed_customer_is_not_merged_away(db, test_agent, test_organization
         scope="attacker-browser",
     )
 
-    assert resp is not None and resp.customer_id == victim.id
-    assert resp.field_values["email"] == "attacker@evil.com"  # the lead keeps what was said
+    assert resp is None
+    assert has_captured_lead(db, victim.id, test_agent.id) is False  # the real customer is still asked
     db.refresh(victim)
     assert victim.merged_into_customer_id is None
     assert victim.full_name == "Victim"
@@ -376,7 +376,7 @@ def test_a_visitor_without_a_scope_changes_nothing(db, test_agent, test_organiza
         scope=None,
     )
 
-    assert resp is not None
+    assert resp is None
     db.refresh(anon)
     assert anon.full_name is None
     assert anon.email.endswith("@noemail.com")

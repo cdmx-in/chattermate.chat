@@ -469,7 +469,7 @@ class TestSessionQueries:
             organization_id=test_session.organization_id
         )
 
-        sessions = session_repo.get_customer_sessions(test_customer.id)
+        sessions = session_repo.get_customer_sessions(test_customer.id, SessionStatus.OPEN, VERIFIED_SCOPE)
         assert len(sessions) == 2
         # Note: get_customer_sessions returns tuples with user info
         assert all(s[0].customer_id == test_customer.id for s in sessions)
@@ -520,7 +520,7 @@ class TestSessionQueries:
             organization_id=test_session.organization_id
         )
 
-        latest_session = session_repo.get_latest_customer_session(test_customer.id)
+        latest_session = session_repo.get_latest_customer_session(test_customer.id, VERIFIED_SCOPE)
         assert latest_session is not None
         # The latest session should be the newer one based on assigned_at timestamp
         # If timestamps are too close, either session could be returned, so check both are valid

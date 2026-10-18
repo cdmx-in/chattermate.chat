@@ -37,7 +37,7 @@ from app.repositories.ai_config import AIConfigRepository
 from app.repositories.widget import WidgetRepository
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
 from app.core.security import decrypt_api_key, verify_conversation_token
-from app.repositories.session_to_agent import SessionToAgentRepository, session_in_scope
+from app.repositories.session_to_agent import SessionToAgentRepository
 from app.repositories.chat import ChatRepository
 from app.repositories.customer import CustomerRepository
 import uuid
@@ -47,7 +47,7 @@ from app.services.workflow_chat import WorkflowChatService
 from app.services.file_upload_service import FileUploadService
 from app.services.file_storage import resolve_public_url
 
-from app.models.session_to_agent import SessionStatus
+from app.models.session_to_agent import ACTIVE_STATUSES, SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
 from app.services.agent_rooms import is_org_inbox_room, may_join_org_inbox
@@ -206,24 +206,11 @@ def _refuse_connection(error: str, error_type: str):
     raise SocketRefused(error, {'error': error, 'type': error_type})
 
 
-ACTIVE_STATUSES = (SessionStatus.OPEN, SessionStatus.TRANSFERRED)
-
-
 def _own_session(session_repo: SessionToAgentRepository, session: dict, active_only: bool = True):
-    """The conversation this socket connected to, while it still belongs to it.
-
-    Handlers act on this rather than on "the customer's open session": a widget
-    token may name a customer the visitor only claimed to be, and must never
-    reach a conversation outside its own scope.
-    """
-    own = session_repo.get_session(session.get('session_id'))
-    if own is None or str(own.customer_id) != str(session.get('customer_id')):
-        return None
-    if not session_in_scope(own, session.get('conversation_scope')):
-        return None
-    if active_only and own.status not in ACTIVE_STATUSES:
-        return None
-    return own
+    """The conversation this socket connected to, while it still belongs to it."""
+    return session_repo.get_widget_session(
+        session.get('session_id'), session.get('customer_id'),
+        session.get('conversation_scope'), active_only=active_only)
 
 
 @sio.on('connect', namespace='/widget')
@@ -526,7 +513,7 @@ async def handle_widget_chat(sid, data):
             # must not be able to lock the visitor out.
             latest_session = session_repo.get_latest_customer_session(
                 customer_id=customer_id,
-                scope=session.get('conversation_scope')
+                scope=session['conversation_scope']
             ) if own_session else None
 
             if latest_session and latest_session.status == SessionStatus.CLOSED:
@@ -1059,6 +1046,14 @@ async def handle_refresh_token(sid, data):
         # another customer, which would hand this socket someone else's conversation.
         if str(state.payload.get('sub')) != str(session.get('customer_id')):
             logger.warning(f"Rejected token refresh for sid {sid}: customer mismatch")
+            return
+        # Nor to another scope: the socket's conversations were chosen by it.
+        try:
+            same_scope = conversation_token_service.conversation_scope(state.payload) == session.get('conversation_scope')
+        except ValueError:
+            same_scope = False
+        if not same_scope:
+            logger.warning(f"Rejected token refresh for sid {sid}: conversation scope mismatch")
             return
 
         session['conversation_token'] = token
@@ -2010,6 +2005,17 @@ async def handle_proceed_workflow(sid, data):
             db.close()
 
 
+async def _confirm_contact(session_id: str, message: str) -> None:
+    """Tell the visitor their contact details were received, as a bot message."""
+    await sio.emit('chat_response', {
+        'message': message,
+        'type': 'chat_response',
+        'session_id': session_id,
+        'transfer_to_human': False,
+        'end_chat': False,
+    }, room=session_id, namespace='/widget')
+
+
 @sio.on('submit_contact_info', namespace='/widget')
 @socket_rate_limit(namespace='/widget')
 async def handle_contact_info(sid, data):
@@ -2050,6 +2056,9 @@ async def handle_contact_info(sid, data):
         # team to follow up at.
         if not can_act_as(db, customer_repo.get_by_id(customer_id), session.get('conversation_scope')):
             logger.info(f"Contact details from sid {sid} not stored: the visitor does not own customer {customer_id}")
+            # Silence would read as the form having failed. The team can still
+            # follow up here, in the conversation they see in the inbox.
+            await _confirm_contact(session_id, "Thanks — a teammate will follow up here.")
             return
         result = customer_repo.update_contact(customer_id, email=email or None, full_name=name or None)
 
@@ -2071,13 +2080,7 @@ async def handle_contact_info(sid, data):
             elif email_retained:
                 confirm += f" at {email}"
             confirm += "."
-            await sio.emit('chat_response', {
-                'message': confirm,
-                'type': 'chat_response',
-                'session_id': session_id,
-                'transfer_to_human': False,
-                'end_chat': False,
-            }, room=session_id, namespace='/widget')
+            await _confirm_contact(session_id, confirm)
     except Exception as e:
         logger.error(f"Error handling contact info for sid {sid}: {str(e)}")
     finally:
@@ -2173,9 +2176,9 @@ async def handle_form_submission(sid, data):
                     customer_repo = CustomerRepository(db)
                     customer = customer_repo.get_by_id(customer_id)
 
-                    if customer and customer.email and '@noemail.com' in customer.email \
+                    if customer and CustomerRepository.is_placeholder_email(customer.email) \
                             and can_act_as(db, customer, session.get('conversation_scope')):
-                        # Customer has a generated @noemail.com email, update it with the real email
+                        # Customer has a generated placeholder email, update it with the real one
                         try:
                             # Check if the new email already exists for another customer in the same organization
                             existing_customer = customer_repo.get_customer_by_email(submitted_email, org_id)

@@ -23,7 +23,11 @@ from agno.tools import Toolkit
 
 from app.core.logger import get_logger
 from app.database import SessionLocal
+from app.models.session_to_agent import SessionToAgent
 from app.models.ticket import TicketPriority, TicketSource
+from app.repositories.customer import CustomerRepository
+from app.repositories.session_to_agent import SessionToAgentRepository
+from app.services.widget_identity import trusts_identity_in_conversation
 from app.models.ticket_activity import TicketActivityType, TicketActorType
 
 logger = get_logger(__name__)
@@ -109,11 +113,23 @@ class TicketTools(Toolkit):
             with SessionLocal() as db:
                 service = TicketService(db)
                 session_uuid = UUID(str(self.session_id))
-                # Enrich the (usually anonymous) widget customer with the
-                # identity the customer stated in chat, so the ticket — and the
-                # investigator's DB correlation — carry a real email + name
-                # instead of the …@noemail.com placeholder.
-                self._capture_customer_identity(db, session_uuid, email, name)
+                conversation = SessionToAgentRepository(db).get_session(session_uuid)
+                customer = (
+                    CustomerRepository(db).get_by_id(conversation.customer_id)
+                    if conversation is not None and conversation.customer_id else None
+                )
+                trusted = trusts_identity_in_conversation(db, customer, conversation)
+                if trusted:
+                    # Enrich the (usually anonymous) widget customer with the
+                    # identity the customer stated in chat, so the ticket — and
+                    # the investigator's DB correlation — carry a real email +
+                    # name instead of the …@noemail.com placeholder.
+                    self._capture_customer_identity(db, conversation, email, name)
+                else:
+                    # A visitor who only typed a customer's email is not them:
+                    # the ticket carries no customer, so the investigator has no
+                    # one's records to look up or quote back into this chat.
+                    email = name = None
                 existing = service.repo.get_by_session(session_uuid)
                 if existing is not None:
                     service._add_activity(
@@ -144,6 +160,7 @@ class TicketTools(Toolkit):
                     agent_id=UUID(str(self.agent_id)),
                     customer_email=email,
                     customer_name=name,
+                    link_session_customer=trusted,
                 )
                 db.commit()
                 db.refresh(ticket)
@@ -164,38 +181,27 @@ class TicketTools(Toolkit):
             return json.dumps({"success": False, "message": "Failed to create the ticket."})
 
     def _capture_customer_identity(
-        self, db, session_id: UUID, email: Optional[str], name: Optional[str]
+        self, db, conversation: SessionToAgent, email: Optional[str], name: Optional[str]
     ) -> None:
-        """Fold a stated email/name onto the session's customer record in place.
+        """Fold a stated email/name onto the conversation's customer record in place.
 
         Widget visitors are anonymous (`…@noemail.com`, no name); the customer
         naming their real account in chat is the only identity the investigator
         gets. update_contact only overwrites a placeholder email and never
-        clobbers a real one or a channel identity key.
+        clobbers a real one or a channel identity key. Only for a conversation
+        trusted to speak for its customer (see create_ticket).
         """
         if not email and not name:
             return
         try:
-            from app.repositories.customer import CustomerRepository
-            from app.repositories.session_to_agent import SessionToAgentRepository
-            from app.services.widget_identity import trusts_identity_in_session
-
-            session = SessionToAgentRepository(db).get_session(session_id)
-            if session is None or session.customer_id is None:
-                return
-            # Only the customer's own conversation may change their record: a
-            # visitor who typed someone else's email is bound to that person.
-            customer = CustomerRepository(db).get_by_id(session.customer_id)
-            if not trusts_identity_in_session(db, customer, session_id):
-                return
             CustomerRepository(db).update_contact(
-                session.customer_id, email=email, full_name=name
+                conversation.customer_id, email=email, full_name=name
             )
             db.commit()
         except Exception as e:
             db.rollback()
             logger.error(
-                f"Failed to capture customer identity for session {session_id}: {e}"
+                f"Failed to capture customer identity for session {conversation.session_id}: {e}"
             )
 
     def get_ticket_status(self, ticket_number: Optional[str] = None) -> str:

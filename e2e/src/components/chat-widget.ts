@@ -12,7 +12,7 @@ export interface EmbedOptions {
   withTriggerButton?: boolean
 }
 
-type JsApiMethod = 'open' | 'close' | 'toggle' | 'isOpen' | 'showLauncher' | 'hideLauncher' | 'identify' | 'logout'
+type JsApiMethod = 'open' | 'close' | 'toggle' | 'isOpen' | 'showLauncher' | 'hideLauncher' | 'identify'
 
 /**
  * The customer's view: a pretend website with the widget embedded exactly the way the

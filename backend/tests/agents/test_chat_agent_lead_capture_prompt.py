@@ -71,7 +71,7 @@ def build_agent(known_email: str = None, known_name: str = None, trusted: bool =
          patch('app.repositories.customer.CustomerRepository', customer_repo), \
          patch('app.repositories.lead_capture.LeadCaptureConfigRepository', lead_repo), \
          patch('app.services.lead_capture.has_captured_lead', return_value=False), \
-         patch('app.services.widget_identity.trusts_identity_in_session', return_value=trusted), \
+         patch('app.agents.chat_agent.trusts_identity_in_session', return_value=trusted), \
          patch('app.tools.knowledge_search_byagent.KnowledgeSearchByAgent', return_value=Mock()), \
          patch('app.agents.chat_agent.EncryptedPostgresAgentStorage', return_value=storage), \
          patch('app.agents.chat_agent.settings.DATABASE_URL', "mock://test"), \

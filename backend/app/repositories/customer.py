@@ -16,6 +16,7 @@ limitations under the License.
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from app.utils.uuids import as_uuid
 from app.models.customer import Customer
 from app.utils.phone import normalize_phone
 from uuid import UUID, uuid4
@@ -331,9 +332,7 @@ class CustomerRepository:
     def get_by_id(self, customer_id: UUID | str) -> Customer | None:
         """Get customer by ID"""
         try:
-            if isinstance(customer_id, str):
-                customer_id = UUID(customer_id)
-            customer = self.db.query(Customer).filter(Customer.id == customer_id).first()
+            customer = self.db.query(Customer).filter(Customer.id == as_uuid(customer_id)).first()
             return customer
         except Exception as e:
             logger.error(f"Error getting customer by ID: {str(e)}")
