@@ -98,6 +98,18 @@ class Settings(BaseSettings):
     SLACK_CLIENT_SECRET: str = os.getenv("SLACK_CLIENT_SECRET", "")
     SLACK_SIGNING_SECRET: str = os.getenv("SLACK_SIGNING_SECRET", "")
 
+    # Dashboard single sign-on (OpenID Connect). Each provider appears on the login
+    # page once both its values are set. Redirect URIs derive from BACKEND_URL:
+    #   {BACKEND_URL}/api/v1/sso/google/callback
+    #   {BACKEND_URL}/api/v1/sso/microsoft/callback
+    GOOGLE_SSO_CLIENT_ID: str = os.getenv("GOOGLE_SSO_CLIENT_ID", "")
+    GOOGLE_SSO_CLIENT_SECRET: str = os.getenv("GOOGLE_SSO_CLIENT_SECRET", "")
+    MICROSOFT_SSO_CLIENT_ID: str = os.getenv("MICROSOFT_SSO_CLIENT_ID", "")
+    MICROSOFT_SSO_CLIENT_SECRET: str = os.getenv("MICROSOFT_SSO_CLIENT_SECRET", "")
+    # "common" accepts any Microsoft work, school or personal account that has an
+    # account here; a tenant id limits sign-in to that directory.
+    MICROSOFT_SSO_TENANT: str = os.getenv("MICROSOFT_SSO_TENANT", "common")
+
     # Jira. Unlike the others the redirect URI IS configured, because it must
     # match the callback registered on the Atlassian app exactly. Self-hosters
     # supply their own OAuth app creds.
