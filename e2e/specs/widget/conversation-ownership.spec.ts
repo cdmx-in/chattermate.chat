@@ -96,3 +96,53 @@ test.describe('conversation ownership', () => {
     await expect(widget.customerMessages).toHaveText(['Where is my invoice?'])
   })
 })
+
+// What scoping a conversation to its browser must not take away.
+test.describe('a visitor keeps their own conversation', () => {
+  test('a second tab of the same browser joins the same conversation @widget', async ({ agent, widget, llm }) => {
+    await llm.script(agent, (s) => s.otherwise().reply('Happy to help!'))
+
+    await widget.embed()
+    await widget.open()
+    await widget.send('Hello from the first tab')
+    await expect(widget.lastAgentMessage()).toHaveText('Happy to help!', AI_REPLY)
+
+    const tab = await widget.inAnotherTab()
+    await tab.embed()
+    await tab.open()
+    await expect(tab.customerMessages).toHaveText(['Hello from the first tab'])
+  })
+
+  test('a visitor the site signed in finds their conversation in another browser @widget', async ({ agent, widget, makeVisitor, llm, adminApi }) => {
+    await llm.script(agent, (s) => s.otherwise().reply('Happy to help!'))
+    const { apiKey } = await createWidgetApp(adminApi, unique('acme-site'))
+
+    await widget.embed({ token: await issueConversationToken(adminApi, apiKey, widget.widgetId, widget.customer) })
+    await widget.open()
+    await widget.send('Started on my laptop')
+    await expect(widget.lastAgentMessage()).toHaveText('Happy to help!', AI_REPLY)
+
+    const phone = await makeVisitor(widget.customer)
+    await phone.embed({ token: await issueConversationToken(adminApi, apiKey, widget.widgetId, widget.customer) })
+    await phone.open()
+    await expect(phone.customerMessages).toHaveText(['Started on my laptop'])
+  })
+
+  test('a site that signs the visitor in with identify() hands the widget their conversation @widget', async ({ agent, widget, makeVisitor, llm, adminApi }) => {
+    await llm.script(agent, (s) => s.otherwise().reply('Happy to help!'))
+    const { apiKey } = await createWidgetApp(adminApi, unique('acme-site'))
+
+    await widget.embed({ token: await issueConversationToken(adminApi, apiKey, widget.widgetId, widget.customer) })
+    await widget.open()
+    await widget.send('Signed-in question')
+    await expect(widget.lastAgentMessage()).toHaveText('Happy to help!', AI_REPLY)
+
+    // The same person opens the site signed out, then signs in on the page.
+    const later = await makeVisitor(widget.customer)
+    await later.embed()
+    await later.open()
+    await later.api('identify', await issueConversationToken(adminApi, apiKey, widget.widgetId, widget.customer))
+    await later.open()
+    await expect(later.customerMessages).toHaveText(['Signed-in question'])
+  })
+})
