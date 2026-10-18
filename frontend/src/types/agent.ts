@@ -46,6 +46,11 @@ export interface Agent {
   /** Tenant-editable scope rule; null uses the platform default. */
   guardrail_prompt?: string | null
   guardrail_enabled?: boolean
+  // Nova Framework Guardrails settings
+  enable_guardrails: boolean
+  guardrail_types: string[] | null
+  guardrail_sensitivity: number
+  guardrail_pii_action: string
   knowledge: Array<{
     id: number
     name: string
@@ -79,6 +84,11 @@ export interface AgentUpdate {
   ticketing_enabled?: boolean
   guardrail_prompt?: string | null
   guardrail_enabled?: boolean
+  // Nova Framework Guardrails settings
+  enable_guardrails?: boolean
+  guardrail_types?: string[] | null
+  guardrail_sensitivity?: number
+  guardrail_pii_action?: string
   customization?: AgentCustomization
 }
 

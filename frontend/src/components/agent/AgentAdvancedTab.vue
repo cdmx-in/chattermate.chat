@@ -194,6 +194,115 @@ const updateTokenAuthSetting = async (enabled: boolean) => {
     })
   }
 }
+
+// ========== Nova Framework Guardrails ==========
+// Available guardrail types with descriptions
+const guardrailTypes = [
+  { value: 'pii', label: 'PII Detection', description: 'Detect personal identifiable information', icon: 'fa-user-shield' },
+  { value: 'jailbreak', label: 'Jailbreak Prevention', description: 'Block jailbreak attempts', icon: 'fa-lock' },
+  { value: 'prompt_injection', label: 'Prompt Injection', description: 'Detect malicious prompt injections', icon: 'fa-syringe' },
+  { value: 'malicious_code', label: 'Malicious Code', description: 'Block code execution attempts', icon: 'fa-bug' },
+  { value: 'harmful_content', label: 'Harmful Content', description: 'Filter harmful or toxic content', icon: 'fa-exclamation-triangle' },
+  { value: 'data_exfiltration', label: 'Data Exfiltration', description: 'Prevent data extraction attempts', icon: 'fa-database' }
+]
+
+// PII action options
+const piiActionOptions = [
+  { value: 'block', label: 'Block Message', description: 'Block the entire message' },
+  { value: 'redact', label: 'Redact PII', description: 'Replace PII with [REDACTED]' },
+  { value: 'warning', label: 'Show Warning', description: 'Show warning but allow message' },
+  { value: 'log', label: 'Log Only', description: 'Only log, allow message' }
+]
+
+// Local guardrails settings
+const guardrailsSettings = ref({
+  enabled: agentRef.value.enable_guardrails ?? false,
+  types: agentRef.value.guardrail_types || [],
+  sensitivity: agentRef.value.guardrail_sensitivity ?? 0.7,
+  piiAction: agentRef.value.guardrail_pii_action || 'block'
+})
+
+const isGuardrailsLoading = ref(false)
+const hasGuardrailsChanges = ref(false)
+
+// Check if a guardrail type is selected
+const isGuardrailTypeSelected = (type: string): boolean => {
+  return guardrailsSettings.value.types.includes(type)
+}
+
+// Toggle guardrail type
+const toggleGuardrailType = (type: string) => {
+  const currentTypes = guardrailsSettings.value.types
+  if (currentTypes.includes(type)) {
+    guardrailsSettings.value.types = currentTypes.filter(t => t !== type)
+  } else {
+    guardrailsSettings.value.types = [...currentTypes, type]
+  }
+  hasGuardrailsChanges.value = true
+}
+
+// Toggle guardrails enabled
+const toggleGuardrails = async () => {
+  try {
+    isGuardrailsLoading.value = true
+    const newValue = !guardrailsSettings.value.enabled
+    
+    const updatedAgent = await agentService.updateAgent(agentRef.value.id, {
+      enable_guardrails: newValue
+    })
+    
+    guardrailsSettings.value.enabled = updatedAgent.enable_guardrails
+    agentRef.value.enable_guardrails = updatedAgent.enable_guardrails
+    emit('update', updatedAgent)
+    
+    toast.success(`Nova Guardrails ${newValue ? 'enabled' : 'disabled'}`, { duration: 2000 })
+  } catch (err) {
+    console.error('Failed to toggle guardrails:', err)
+    toast.error('Failed to update guardrails setting', { duration: 2000 })
+  } finally {
+    isGuardrailsLoading.value = false
+  }
+}
+
+// Update sensitivity slider
+const updateSensitivity = (event: Event) => {
+  const target = event.target as HTMLInputElement
+  guardrailsSettings.value.sensitivity = parseFloat(target.value)
+  hasGuardrailsChanges.value = true
+}
+
+// Update PII action
+const updatePiiAction = (action: string) => {
+  guardrailsSettings.value.piiAction = action
+  hasGuardrailsChanges.value = true
+}
+
+// Save guardrails settings
+const saveGuardrailsSettings = async () => {
+  try {
+    isGuardrailsLoading.value = true
+    
+    const updatedAgent = await agentService.updateAgent(agentRef.value.id, {
+      guardrail_types: guardrailsSettings.value.types.length > 0 ? guardrailsSettings.value.types : null,
+      guardrail_sensitivity: guardrailsSettings.value.sensitivity,
+      guardrail_pii_action: guardrailsSettings.value.piiAction
+    })
+    
+    agentRef.value.guardrail_types = updatedAgent.guardrail_types
+    agentRef.value.guardrail_sensitivity = updatedAgent.guardrail_sensitivity
+    agentRef.value.guardrail_pii_action = updatedAgent.guardrail_pii_action
+    
+    emit('update', updatedAgent)
+    hasGuardrailsChanges.value = false
+    
+    toast.success('Guardrails settings saved', { duration: 2000 })
+  } catch (err) {
+    console.error('Failed to save guardrails settings:', err)
+    toast.error('Failed to save guardrails settings', { duration: 2000 })
+  } finally {
+    isGuardrailsLoading.value = false
+  }
+}
 </script>
 
 <template>
@@ -359,6 +468,139 @@ const updateTokenAuthSetting = async (enabled: boolean) => {
 
         <div v-else class="card-extra">
           <p class="extra-note">Enable to allow file uploads during human-agent conversations.</p>
+        </div>
+      </div>
+
+      <!-- Nova Framework Guardrails Section -->
+      <div class="guardrails-section" :class="{ 'loading': isGuardrailsLoading }">
+        <div class="section-header">
+          <div class="nova-branding">
+            <h4 class="subsection-title">Nova Guardrails</h4>
+            <span class="nova-badge">
+              <i class="fas fa-shield-alt"></i>
+              Nova Framework
+            </span>
+          </div>
+          <div class="toggle-switch">
+            <span class="toggle-label">
+              Enable Guardrails
+            </span>
+            <label class="switch">
+              <input 
+                type="checkbox" 
+                :checked="guardrailsSettings.enabled" 
+                @change="toggleGuardrails"
+                :disabled="isGuardrailsLoading"
+              >
+              <span class="slider" :class="{ 'enabled': guardrailsSettings.enabled }"></span>
+            </label>
+          </div>
+        </div>
+        
+        <hr class="divider">
+        
+        <div v-if="guardrailsSettings.enabled" class="guardrails-settings">
+          <p class="helper-text">
+            <i class="fas fa-info-circle"></i>
+            Nova Framework provides advanced prompt guardrails to protect your AI agent from malicious inputs.
+            Select which guardrail types to enable and configure sensitivity settings.
+          </p>
+          
+          <!-- Guardrail Types Grid -->
+          <div class="guardrails-types-section">
+            <h5 class="subsection-subtitle">Guardrail Types</h5>
+            <div class="guardrail-type-grid">
+              <div 
+                v-for="type in guardrailTypes" 
+                :key="type.value"
+                class="guardrail-type-option"
+                :class="{ 'selected': isGuardrailTypeSelected(type.value) }"
+                @click="toggleGuardrailType(type.value)"
+              >
+                <div class="guardrail-type-checkbox">
+                  <i v-if="isGuardrailTypeSelected(type.value)" class="fas fa-check-circle"></i>
+                  <i v-else class="far fa-circle"></i>
+                </div>
+                <div class="guardrail-type-icon">
+                  <i :class="['fas', type.icon]"></i>
+                </div>
+                <div class="guardrail-type-info">
+                  <span class="guardrail-type-label">{{ type.label }}</span>
+                  <span class="guardrail-type-desc">{{ type.description }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sensitivity Slider -->
+          <div class="sensitivity-section">
+            <div class="subsection-divider"></div>
+            <h5 class="subsection-subtitle">Detection Sensitivity</h5>
+            <p class="helper-text info-text">
+              <i class="fas fa-sliders-h"></i>
+              Higher sensitivity catches more potential threats but may increase false positives.
+            </p>
+            <div class="sensitivity-control">
+              <span class="sensitivity-label low">Low</span>
+              <input 
+                type="range" 
+                :value="guardrailsSettings.sensitivity"
+                @input="updateSensitivity"
+                min="0.1" 
+                max="1.0" 
+                step="0.1"
+                class="sensitivity-slider"
+                :disabled="isGuardrailsLoading"
+              >
+              <span class="sensitivity-label high">High</span>
+              <span class="sensitivity-value">{{ (guardrailsSettings.sensitivity * 100).toFixed(0) }}%</span>
+            </div>
+          </div>
+
+          <!-- PII Action (only shown if PII Detection is selected) -->
+          <div v-if="isGuardrailTypeSelected('pii')" class="pii-action-section">
+            <div class="subsection-divider"></div>
+            <h5 class="subsection-subtitle">PII Detection Action</h5>
+            <p class="helper-text info-text">
+              <i class="fas fa-user-shield"></i>
+              Choose what happens when personal information is detected in messages.
+            </p>
+            <div class="pii-action-grid">
+              <div 
+                v-for="action in piiActionOptions" 
+                :key="action.value"
+                class="pii-action-option"
+                :class="{ 'selected': guardrailsSettings.piiAction === action.value }"
+                @click="updatePiiAction(action.value)"
+              >
+                <div class="pii-action-radio">
+                  <i v-if="guardrailsSettings.piiAction === action.value" class="fas fa-dot-circle"></i>
+                  <i v-else class="far fa-circle"></i>
+                </div>
+                <div class="pii-action-info">
+                  <span class="pii-action-label">{{ action.label }}</span>
+                  <span class="pii-action-desc">{{ action.description }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Save Button -->
+          <button 
+            class="save-settings-btn" 
+            @click="saveGuardrailsSettings"
+            :disabled="isGuardrailsLoading || !hasGuardrailsChanges"
+          >
+            <i class="fas fa-save"></i>
+            Save Guardrails Settings
+          </button>
+        </div>
+        
+        <div class="guardrails-disabled" v-else>
+          <p class="disabled-message">
+            <i class="fas fa-shield-alt"></i>
+            Nova Guardrails are currently disabled. Enable them to protect your AI agent from malicious inputs, jailbreaks, prompt injections, and harmful content.
+          </p>
         </div>
       </div>
     </div>
@@ -746,5 +988,284 @@ input:checked + .slider:before {
     align-items: flex-start;
     gap: var(--space-md);
   }
+}
+
+/* ========== Nova Guardrails Section Styles ========== */
+.guardrails-section {
+  background: var(--background-soft);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  margin-bottom: var(--space-xl);
+  border: 1px solid var(--border-color);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  width: 100%;
+  transition: opacity 0.3s ease;
+}
+
+.guardrails-section.loading {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.nova-branding {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+
+.nova-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: #00d4ff;
+  font-size: 0.7rem;
+  font-weight: 600;
+  border-radius: 12px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  border: 1px solid rgba(0, 212, 255, 0.3);
+  box-shadow: 0 0 8px rgba(0, 212, 255, 0.2);
+}
+
+.nova-badge i {
+  font-size: 0.65rem;
+}
+
+.guardrails-settings {
+  margin-top: var(--space-md);
+}
+
+.guardrails-types-section {
+  margin-top: var(--space-md);
+}
+
+.guardrail-type-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.guardrail-type-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--background-soft);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.guardrail-type-option:hover {
+  border-color: #00d4ff;
+  background: rgba(0, 212, 255, 0.05);
+}
+
+.guardrail-type-option.selected {
+  border-color: #00d4ff;
+  background: rgba(0, 212, 255, 0.1);
+}
+
+.guardrail-type-checkbox {
+  flex-shrink: 0;
+  font-size: 1.1rem;
+  color: var(--text-muted);
+}
+
+.guardrail-type-option.selected .guardrail-type-checkbox {
+  color: #00d4ff;
+}
+
+.guardrail-type-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 212, 255, 0.1);
+  border-radius: 50%;
+  color: #00d4ff;
+  font-size: 0.9rem;
+}
+
+.guardrail-type-option.selected .guardrail-type-icon {
+  background: rgba(0, 212, 255, 0.2);
+}
+
+.guardrail-type-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.guardrail-type-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.guardrail-type-desc {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Sensitivity Section */
+.sensitivity-section {
+  margin-top: var(--space-md);
+}
+
+.sensitivity-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+  margin-top: var(--space-sm);
+}
+
+.sensitivity-label {
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  min-width: 35px;
+}
+
+.sensitivity-label.low {
+  color: #27ae60;
+}
+
+.sensitivity-label.high {
+  color: #e74c3c;
+}
+
+.sensitivity-slider {
+  flex: 1;
+  max-width: 300px;
+  accent-color: #00d4ff;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(to right, #27ae60, #f39c12, #e74c3c);
+  border-radius: 4px;
+  outline: none;
+}
+
+.sensitivity-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #00d4ff;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.sensitivity-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #00d4ff;
+  cursor: pointer;
+  border: 2px solid white;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.sensitivity-value {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #00d4ff;
+  background: rgba(0, 212, 255, 0.1);
+  padding: 4px 10px;
+  border-radius: 12px;
+  min-width: 50px;
+  text-align: center;
+}
+
+/* PII Action Section */
+.pii-action-section {
+  margin-top: var(--space-md);
+}
+
+.pii-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-sm);
+}
+
+.pii-action-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: var(--background-soft);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.pii-action-option:hover {
+  border-color: var(--accent-color);
+  background: var(--background-mute);
+}
+
+.pii-action-option.selected {
+  border-color: var(--accent-color);
+  background: rgba(243, 70, 17, 0.08);
+}
+
+.pii-action-radio {
+  flex-shrink: 0;
+  font-size: 1rem;
+  color: var(--text-muted);
+}
+
+.pii-action-option.selected .pii-action-radio {
+  color: var(--accent-color);
+}
+
+.pii-action-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pii-action-label {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text-color);
+}
+
+.pii-action-desc {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+
+/* Guardrails Disabled State */
+.guardrails-disabled {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  background: var(--background-mute);
+  border-radius: var(--radius-md);
+}
+
+.guardrails-disabled .disabled-message {
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.guardrails-disabled .disabled-message i {
+  color: #00d4ff;
+  flex-shrink: 0;
 }
 </style> 

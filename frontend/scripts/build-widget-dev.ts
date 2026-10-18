@@ -19,7 +19,7 @@ async function buildWidgetDev() {
     process.env.NODE_ENV = 'development'
     
     // Run the Vite build
-    await build({ configFile: config })
+    await build({ configFile: config, mode: 'development' })
     console.log('Vite build completed')
 
     // Copy CSS file from unused directory to the root assets directory

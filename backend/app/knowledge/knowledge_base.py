@@ -25,7 +25,7 @@ from app.knowledge.enhanced_website_reader import EnhancedWebsiteReader
 from app.knowledge.sitemap_reader import SitemapReader
 from app.knowledge.chunking import PageChunking
 from app.knowledge.enhanced_pdf_kb import EnhancedPDFKnowledgeBase
-from app.core.s3 import delete_file_from_s3, owned_s3_key
+from app.core.s3 import delete_file_from_s3, download_file_from_s3, owned_s3_key, strip_s3_signature
 from app.knowledge.pdf_download import download_pdf
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
@@ -135,6 +135,9 @@ class KnowledgeManager:
         try:
             for url in urls:
                 logger.info(f"Adding PDF URL: {url}")
+                # Dashboard uploads arrive as signed links; the bare object URL
+                # is what the bucket helpers recognise (a no-op for other URLs).
+                stored = strip_s3_signature(url)
                 filename = _pdf_name_from_url(url)
                 os.makedirs(PDF_TEMP_ROOT, exist_ok=True)
                 # A private directory per download: the readable file name
@@ -142,10 +145,17 @@ class KnowledgeManager:
                 temp_dir = tempfile.mkdtemp(dir=PDF_TEMP_ROOT)
                 try:
                     temp_path = os.path.join(temp_dir, f"{filename}.pdf")
-                    await asyncio.to_thread(download_pdf, url, temp_path)
+                    if settings.S3_ENDPOINT_URL and owned_s3_key(stored):
+                        # Our own upload on an S3-compatible endpoint (MinIO):
+                        # read it straight from the bucket. The endpoint is an
+                        # internal host that download_pdf rightly refuses.
+                        with open(temp_path, "wb") as f:
+                            f.write(await download_file_from_s3(stored))
+                    else:
+                        await asyncio.to_thread(download_pdf, url, temp_path)
                     logger.info(f"Downloaded {url} to {temp_path}, processing as: {filename}")
                     await self.add_pdf_files([temp_path], filename=filename)
-                    await self._delete_uploaded_pdf(url)
+                    await self._delete_uploaded_pdf(stored)
                 finally:
                     shutil.rmtree(temp_dir, ignore_errors=True)
             return True

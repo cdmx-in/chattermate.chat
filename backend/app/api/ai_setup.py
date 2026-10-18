@@ -113,7 +113,7 @@ async def setup_ai(
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
             # Use Groq as provider with keys from env
             model_type = AIModelType.CHATTERMATE
-            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
+            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-6-luna')
             api_key = os.getenv('CHATTERMATE_API_KEY', '')
         
             if not api_key:
@@ -302,7 +302,7 @@ async def update_ai_config(
         if HAS_ENTERPRISE and config_data.model_type.lower() == 'chattermate' and config_data.model_name.lower() == 'chattermate':
             # Use Groq as provider with keys from env
             model_type = AIModelType.CHATTERMATE
-            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
+            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-6-luna')
             api_key = os.getenv('CHATTERMATE_API_KEY', '')
             
             if not api_key:

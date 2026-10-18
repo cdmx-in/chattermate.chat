@@ -230,6 +230,10 @@ async def create_agent(
             topic_scope=agent.topic_scope,
             guardrail_prompt=agent.guardrail_prompt,
             guardrail_enabled=agent.guardrail_enabled if agent.guardrail_enabled is not None else True,
+            enable_guardrails=agent.enable_guardrails,
+            guardrail_types=agent.guardrail_types,
+            guardrail_sensitivity=agent.guardrail_sensitivity,
+            guardrail_pii_action=agent.guardrail_pii_action,
             knowledge=[],
             groups=[]
         )
@@ -336,6 +340,10 @@ async def update_agent(
             topic_scope=agent.topic_scope,
             guardrail_prompt=agent.guardrail_prompt,
             guardrail_enabled=agent.guardrail_enabled if agent.guardrail_enabled is not None else True,
+            enable_guardrails=agent.enable_guardrails,
+            guardrail_types=agent.guardrail_types,
+            guardrail_sensitivity=agent.guardrail_sensitivity,
+            guardrail_pii_action=agent.guardrail_pii_action,
             knowledge=[{
                 "id": k.id,
                 "name": k.source,
@@ -444,6 +452,10 @@ async def get_organization_agents(
                 topic_scope=agent.topic_scope,
                 guardrail_prompt=agent.guardrail_prompt,
                 guardrail_enabled=agent.guardrail_enabled if agent.guardrail_enabled is not None else True,
+                enable_guardrails=agent.enable_guardrails,
+                guardrail_types=agent.guardrail_types,
+                guardrail_sensitivity=agent.guardrail_sensitivity,
+                guardrail_pii_action=agent.guardrail_pii_action,
                 knowledge=[{
                     "id": k.id,
                     "name": k.source,
@@ -638,6 +650,10 @@ async def update_agent_groups(
             topic_scope=agent.topic_scope,
             guardrail_prompt=agent.guardrail_prompt,
             guardrail_enabled=agent.guardrail_enabled if agent.guardrail_enabled is not None else True,
+            enable_guardrails=agent.enable_guardrails,
+            guardrail_types=agent.guardrail_types,
+            guardrail_sensitivity=agent.guardrail_sensitivity,
+            guardrail_pii_action=agent.guardrail_pii_action,
             groups=agent.groups,
             knowledge=[{
                 "id": k.id,
@@ -732,7 +748,7 @@ async def generate_instructions(
         if HAS_ENTERPRISE:
             # Use Groq/OpenAI with keys from env for ChatterMate model
             model_type = 'OPENAI'
-            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-4o-mini')
+            model_name = os.getenv('CHATTERMATE_MODEL_NAME', 'gpt-6-luna')
             api_key = os.getenv('CHATTERMATE_API_KEY', '')
             
             if not api_key:

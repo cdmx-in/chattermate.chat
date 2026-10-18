@@ -20,7 +20,7 @@ export default defineConfig({
       fileName: 'widget',
       formats: ['es'],
     },
-    outDir: '/app/backend-assets',
+    outDir: '/app/backend/assets',
     emptyOutDir: false,
     rollupOptions: {
       output: {
@@ -41,4 +41,7 @@ export default defineConfig({
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || 'production'),
   },
+  // Pass environment variables to the build
+  // These will be available as import.meta.env.VITE_*
+  envPrefix: 'VITE_',
 }) 

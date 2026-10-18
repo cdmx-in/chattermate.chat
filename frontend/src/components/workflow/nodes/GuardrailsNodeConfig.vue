@@ -99,8 +99,8 @@ const copyVariableToClipboard = async (variable: Variable) => {
 
 <template>
   <div class="guardrails-node-config">
-    <div class="info-box">
-      <p>Configure content guardrails to detect and block inappropriate content.</p>
+    <div class="info-box nova-badge">
+      <p>🛡️ <strong>Nova Framework Guardrails</strong> - Advanced prompt pattern matching powered by <a href="https://github.com/fr0gger/nova-framework" target="_blank">Nova</a>. Configure content guardrails to detect and block inappropriate content using keyword detection, semantic similarity, and LLM-based evaluation.</p>
     </div>
 
     <div class="form-group">
@@ -117,7 +117,7 @@ const copyVariableToClipboard = async (variable: Variable) => {
             <span class="guardrail-icon">🔒</span>
             <div>
               <strong>PII Detection</strong>
-              <p>Detects personally identifiable information (emails, phone numbers, SSNs, etc.)</p>
+              <p>Detects personally identifiable information (emails, phone numbers, SSNs, credit cards)</p>
             </div>
           </div>
         </label>
@@ -133,7 +133,71 @@ const copyVariableToClipboard = async (variable: Variable) => {
             <span class="guardrail-icon">⚠️</span>
             <div>
               <strong>Jailbreak Detection</strong>
-              <p>Detects attempts to bypass AI safety guidelines or manipulate system prompts</p>
+              <p>Detects attempts to bypass AI safety guidelines using Nova pattern matching</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="guardrail-option">
+          <input
+            type="checkbox"
+            :checked="isGuardrailEnabled('prompt_injection')"
+            @change="toggleGuardrail('prompt_injection')"
+            class="form-checkbox"
+          />
+          <div class="guardrail-info">
+            <span class="guardrail-icon">💉</span>
+            <div>
+              <strong>Prompt Injection</strong>
+              <p>Detects prompt injection attacks and system prompt extraction attempts</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="guardrail-option">
+          <input
+            type="checkbox"
+            :checked="isGuardrailEnabled('malicious_code')"
+            @change="toggleGuardrail('malicious_code')"
+            class="form-checkbox"
+          />
+          <div class="guardrail-info">
+            <span class="guardrail-icon">🦠</span>
+            <div>
+              <strong>Malicious Code Detection</strong>
+              <p>Detects requests for malware, exploits, or malicious code generation</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="guardrail-option">
+          <input
+            type="checkbox"
+            :checked="isGuardrailEnabled('harmful_content')"
+            @change="toggleGuardrail('harmful_content')"
+            class="form-checkbox"
+          />
+          <div class="guardrail-info">
+            <span class="guardrail-icon">☠️</span>
+            <div>
+              <strong>Harmful Content</strong>
+              <p>Detects requests for weapons, drugs, violence, or dangerous instructions</p>
+            </div>
+          </div>
+        </label>
+
+        <label class="guardrail-option">
+          <input
+            type="checkbox"
+            :checked="isGuardrailEnabled('data_exfiltration')"
+            @change="toggleGuardrail('data_exfiltration')"
+            class="form-checkbox"
+          />
+          <div class="guardrail-info">
+            <span class="guardrail-icon">🔓</span>
+            <div>
+              <strong>Data Exfiltration</strong>
+              <p>Detects attempts to extract sensitive system data or credentials</p>
             </div>
           </div>
         </label>
@@ -159,10 +223,10 @@ const copyVariableToClipboard = async (variable: Variable) => {
       </select>
     </div>
 
-    <!-- Jailbreak Sensitivity -->
-    <div v-if="isGuardrailEnabled('jailbreak')" class="form-group">
+    <!-- Detection Sensitivity (for all Nova guardrails) -->
+    <div class="form-group">
       <label for="jailbreak-sensitivity">
-        Jailbreak Sensitivity: {{ formData.jailbreak_sensitivity?.toFixed(1) || '0.7' }}
+        Detection Sensitivity: {{ formData.jailbreak_sensitivity?.toFixed(1) || '0.7' }}
       </label>
       <input
         id="jailbreak-sensitivity"
@@ -179,7 +243,7 @@ const copyVariableToClipboard = async (variable: Variable) => {
         <span>More Sensitive (1.0)</span>
       </div>
       <small class="help-text">
-        Higher sensitivity = more likely to detect potential jailbreak attempts
+        Controls Nova Framework detection sensitivity. Higher values = stricter matching for all enabled guardrails.
       </small>
     </div>
 
@@ -258,6 +322,25 @@ const copyVariableToClipboard = async (variable: Variable) => {
   padding: var(--space-xs);
   margin-bottom: var(--space-sm);
   border-radius: 4px;
+}
+
+.info-box.nova-badge {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  border-left: 3px solid #00d9ff;
+  color: #e0e0e0;
+}
+
+.info-box.nova-badge p {
+  color: #e0e0e0;
+}
+
+.info-box.nova-badge a {
+  color: #00d9ff;
+  text-decoration: none;
+}
+
+.info-box.nova-badge a:hover {
+  text-decoration: underline;
 }
 
 .info-box p {

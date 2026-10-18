@@ -128,6 +128,8 @@ export default defineConfig(({ command, mode }) => {
       '.ngrok.io',
       'frontendchat.ngrok.app',
       '.chattermate.chat',
+      'chm.c-dev.in',
+      'dev-nps-mng.local'
     ],
   },
   publicDir: 'public',

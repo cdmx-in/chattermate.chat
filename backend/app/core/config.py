@@ -164,6 +164,9 @@ class Settings(BaseSettings):
     # Presigned URLs are regenerated on every response, so this only needs to
     # outlive a single page render. Hard-capped at S3_MAX_PRESIGN_SECONDS.
     S3_PRESIGN_EXPIRY_SECONDS: int = int(os.getenv("S3_PRESIGN_EXPIRY_SECONDS", "3600"))
+    # S3-compatible endpoint (MinIO etc.); unset means AWS. Objects behind an
+    # endpoint are served through the API via signed links, see core/s3.sign_s3_url.
+    S3_ENDPOINT_URL: Optional[str] = os.getenv("S3_ENDPOINT_URL") or None
 
     # Enhanced Website Knowledge Base Configuration
     KB_MAX_DEPTH: int = int(os.getenv("KB_MAX_DEPTH", "5"))

@@ -161,17 +161,103 @@ def _inline_attachment(path: str, filename: str) -> FileResponse:
                         headers=ATTACHMENT_HEADERS)
 
 
+def _stream_s3_object(s3_key: str):
+    """Stream an object from the bucket (AWS or an S3-compatible endpoint),
+    inline, with the attachment headers. Callers have already authorized the
+    read; this only fetches."""
+    from fastapi.responses import StreamingResponse
+    from app.core.s3 import get_s3_client
+
+    try:
+        s3_client = get_s3_client()
+    except Exception as client_err:
+        logger.error(f"Failed to create S3 client: {str(client_err)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create S3 client"
+        )
+    
+    bucket = settings.S3_BUCKET
+    
+    # Check if the file exists
+    try:
+        s3_client.head_object(Bucket=bucket, Key=s3_key)
+    except s3_client.exceptions.NoSuchKey:
+        logger.warning(f"File not found in S3: {s3_key}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    except Exception as head_err:
+        logger.error(f"Error checking file in S3: {str(head_err)}", exc_info=True)
+    
+    # Get the object from S3
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=s3_key)
+    except s3_client.exceptions.NoSuchKey:
+        logger.warning(f"File not found in S3: {s3_key}")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    except Exception as s3_err:
+        logger.error(f"S3 error: {str(s3_err)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve file from S3"
+        )
+    
+    # Stream the file back to client
+    def generate():
+        while True:
+            chunk = response['Body'].read(8192)
+            if not chunk:
+                break
+            yield chunk
+    
+    # Determine content type
+    content_type = response.get('ContentType', 'application/octet-stream')
+    
+    # Extract filename from the validated key
+    filename = s3_key.split('/')[-1]
+    
+    logger.info(f"Streaming file from S3: {filename}, content-type: {content_type}")
+    return StreamingResponse(
+        generate(),
+        media_type=content_type,
+        headers={
+            **ATTACHMENT_HEADERS,
+            "Content-Disposition": f"inline; filename*=utf-8''{quote(filename)}",
+        }
+    )
+
+
 @router.get("/local/{file_path:path}")
 async def serve_signed_local_file(
     file_path: str,
     exp: Optional[int] = Query(None),
     sig: Optional[str] = Query(None),
 ):
-    """Serve a local-storage attachment through a link from sign_local_key.
+    """Serve a private file through a link from sign_local_key.
 
     The signature is the authorization, as with an S3 presigned URL, because
-    the widget loads attachments with plain <img>/<a> tags.
+    the widget loads attachments with plain <img>/<a> tags. Two stores hand
+    out these links: local disk (chat attachments only), and an S3-compatible
+    endpoint such as MinIO, where sign_s3_url routes every object through here
+    because the endpoint itself is not browser-reachable.
     """
+    if settings.S3_FILE_STORAGE and settings.S3_ENDPOINT_URL:
+        key = file_path.lstrip('/')
+        if not verify_local_signature(key, exp, sig):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid or expired link")
+        # Attachments written to disk before the object store was enabled.
+        try:
+            _, local_key = attachment_key(file_path)
+            if os.path.isfile(os.path.join("uploads", local_key)):
+                return _inline_attachment(os.path.join("uploads", local_key), os.path.basename(local_key))
+        except HTTPException:
+            pass
+        return _stream_s3_object(key)
     _, key = attachment_key(file_path)
     if not verify_local_signature(key, exp, sig):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid or expired link")
@@ -195,9 +281,6 @@ async def download_file(
     Usage: GET /api/v1/files/download/chat_attachments/org-id/filename.jpg
     """
     try:
-        from fastapi.responses import StreamingResponse
-        from app.core.s3 import get_s3_client
-
         # Authentication is required, and the result is what authorizes the
         # read below. This used to swallow the failure and serve the file
         # anyway, making every org's attachments world-readable by path.
@@ -211,72 +294,8 @@ async def download_file(
                 raise _not_found()
             return _inline_attachment(local_file_path, os.path.basename(storage_key))
 
-        # For AWS S3 - stream file from S3
-        try:
-            s3_client = get_s3_client()
-        except Exception as client_err:
-            logger.error(f"Failed to create S3 client: {str(client_err)}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create S3 client"
-            )
-        
-        # S3 keys don't include the /uploads/ prefix
-        s3_key = storage_key
-        bucket = settings.S3_BUCKET
-        
-        # Check if the file exists
-        try:
-            s3_client.head_object(Bucket=bucket, Key=s3_key)
-        except s3_client.exceptions.NoSuchKey:
-            logger.warning(f"File not found in S3: {s3_key}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="File not found"
-            )
-        except Exception as head_err:
-            logger.error(f"Error checking file in S3: {str(head_err)}", exc_info=True)
-        
-        # Get the object from S3
-        try:
-            response = s3_client.get_object(Bucket=bucket, Key=s3_key)
-        except s3_client.exceptions.NoSuchKey:
-            logger.warning(f"File not found in S3: {s3_key}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="File not found"
-            )
-        except Exception as s3_err:
-            logger.error(f"S3 error: {str(s3_err)}", exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to retrieve file from S3"
-            )
-        
-        # Stream the file back to client
-        def generate():
-            while True:
-                chunk = response['Body'].read(8192)
-                if not chunk:
-                    break
-                yield chunk
-        
-        # Determine content type
-        content_type = response.get('ContentType', 'application/octet-stream')
-        
-        # Extract filename from the validated key
-        filename = storage_key.split('/')[-1]
-        
-        logger.info(f"Streaming file from S3: {filename}, content-type: {content_type}")
-        return StreamingResponse(
-            generate(),
-            media_type=content_type,
-            headers={
-                **ATTACHMENT_HEADERS,
-                "Content-Disposition": f"inline; filename*=utf-8''{quote(filename)}",
-            }
-        )
-        
+        return _stream_s3_object(storage_key)
+
     except HTTPException:
         raise
     except Exception as e:

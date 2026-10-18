@@ -22,10 +22,11 @@ import re
 from functools import lru_cache, partial
 import boto3
 from app.core.config import settings
+from app.core.local_file_urls import LOCAL_FILE_ROUTE, sign_local_key
 from app.core.logger import get_logger
 from fastapi import HTTPException
 from typing import Optional
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import unquote, urlparse, urlunparse
 
 logger = get_logger(__name__)
 
@@ -49,7 +50,14 @@ def strip_s3_signature(url: Optional[str]) -> Optional[str]:
     update payloads (the agent customization form does exactly this), so
     stripping on the way in is the only reliable guard.
     """
-    if not url or 'amazonaws.com' not in url:
+    if not url:
+        return url
+    if settings.S3_ENDPOINT_URL and url.startswith(f"{LOCAL_FILE_ROUTE}/"):
+        # Endpoint-backed stores hand out API-signed links (see sign_s3_url);
+        # reduce those back to the canonical object URL.
+        key = unquote(url[len(LOCAL_FILE_ROUTE) + 1:].split('?', 1)[0])
+        return url_for_s3_key(key)
+    if not is_s3_url(url):
         return url
     return urlunparse(urlparse(url)._replace(query='', fragment=''))
 
@@ -60,6 +68,14 @@ def strip_s3_signature(url: Optional[str]) -> Optional[str]:
 # both ends so "evil.com/s3.amazonaws.com/x" and "s3.amazonaws.com.attacker.com"
 # do not match, and neither does "foos3.amazonaws.com".
 _S3_HOST_RE = re.compile(r"(^|\.)s3([.-][a-z0-9-]+)?\.amazonaws\.com$", re.IGNORECASE)
+
+
+def _endpoint_netloc() -> str:
+    """host[:port] of the configured S3-compatible endpoint (MinIO etc.), or ''
+    when objects live on AWS."""
+    if not settings.S3_ENDPOINT_URL:
+        return ""
+    return (urlparse(settings.S3_ENDPOINT_URL).netloc or "").lower()
 
 
 def is_s3_url(url: Optional[str]) -> bool:
@@ -74,7 +90,11 @@ def is_s3_url(url: Optional[str]) -> bool:
     """
     if not url:
         return False
-    return bool(_S3_HOST_RE.search(urlparse(url).hostname or ""))
+    parsed = urlparse(url)
+    endpoint = _endpoint_netloc()
+    if endpoint and (parsed.netloc or "").lower() == endpoint:
+        return True
+    return bool(_S3_HOST_RE.search(parsed.hostname or ""))
 
 
 def url_for_s3_key(s3_key: str) -> str:
@@ -87,6 +107,10 @@ def url_for_s3_key(s3_key: str) -> str:
     form (my.bucket.s3.<region>.amazonaws.com) fails TLS verification in any
     strict client.
     """
+    if settings.S3_ENDPOINT_URL:
+        # S3-compatible endpoint (MinIO): path-style, which is also how boto3
+        # addresses a custom endpoint.
+        return f"{settings.S3_ENDPOINT_URL.rstrip('/')}/{settings.S3_BUCKET}/{s3_key}"
     if '.' in settings.S3_BUCKET:
         return f"https://s3.{settings.S3_REGION}.amazonaws.com/{settings.S3_BUCKET}/{s3_key}"
     return f"https://{settings.S3_BUCKET}.s3.{settings.S3_REGION}.amazonaws.com/{s3_key}"
@@ -119,6 +143,9 @@ def owned_s3_key(url: Optional[str]) -> Optional[str]:
     host = (parsed.hostname or "").lower()
     parts = parsed.path.strip('/').split('/')
     bucket = settings.S3_BUCKET.lower()
+    endpoint = _endpoint_netloc()
+    if endpoint and (parsed.netloc or "").lower() == endpoint:
+        return '/'.join(parts[1:]) if parts[0] == settings.S3_BUCKET else None
     if host.startswith(f"{bucket}."):
         return '/'.join(parts)
     if host.startswith(("s3.", "s3-")) and parts[0] == settings.S3_BUCKET:
@@ -139,12 +166,16 @@ def get_s3_client():
     boto3 fall through to its default chain and pick up an IAM instance or
     container role. See the note on AWS_ACCESS_KEY_ID in core/config.py.
     """
-    return boto3.client(
-        's3',
+    client_kwargs = dict(
         aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
         aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-        region_name=settings.S3_REGION
+        region_name=settings.S3_REGION,
     )
+    if settings.S3_ENDPOINT_URL:
+        # MinIO or another S3-compatible service; boto3 switches to path-style
+        # addressing on its own for a custom endpoint.
+        client_kwargs['endpoint_url'] = settings.S3_ENDPOINT_URL
+    return boto3.client('s3', **client_kwargs)
 
 
 def sign_s3_url(s3_url: str, expiration: Optional[int] = None) -> str:
@@ -168,12 +199,20 @@ def sign_s3_url(s3_url: str, expiration: Optional[int] = None) -> str:
 
         # Inline data URIs (e.g. generated orb avatars stored in photo_url) and any
         # non-S3 absolute URL are not S3 objects — return them unchanged.
-        if s3_url.startswith('data:') or 'amazonaws.com' not in s3_url:
+        if s3_url.startswith('data:') or not is_s3_url(s3_url):
             return s3_url
 
         if expiration is None:
             expiration = settings.S3_PRESIGN_EXPIRY_SECONDS
         expiration = min(expiration, S3_MAX_PRESIGN_SECONDS)
+
+        if settings.S3_ENDPOINT_URL:
+            # ponytail: an S3-compatible endpoint (MinIO on the compose network)
+            # is usually not reachable from the browser, so hand out an API-signed
+            # link that streams the object instead (file_upload.serve_signed_local_file).
+            # Upgrade path if delivery bandwidth matters: a browser-reachable
+            # public endpoint and presign against that.
+            return sign_local_key(_key_from_url(s3_url), expiration)
 
         s3_client = get_s3_client()
         signed_url = s3_client.generate_presigned_url(

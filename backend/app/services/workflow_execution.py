@@ -964,6 +964,7 @@ class WorkflowExecutionService:
     ) -> WorkflowExecutionResult:
         """
         Execute a guardrails node to check content against configured guardrails
+        Uses Nova Framework for advanced prompt pattern matching when available.
         
         Args:
             node: Guardrails workflow node
@@ -974,7 +975,15 @@ class WorkflowExecutionService:
         Returns:
             WorkflowExecutionResult with pass/fail status
         """
-        from app.utils.guardrails import check_guardrails
+        # Try Nova Framework first, fallback to basic guardrails
+        try:
+            from app.utils.nova_guardrails import check_nova_guardrails
+            use_nova = True
+            logger.info("Using Nova Framework for guardrails")
+        except ImportError:
+            from app.utils.guardrails import check_guardrails
+            use_nova = False
+            logger.info("Falling back to basic guardrails (Nova not available)")
         
         config = node.config or {}
         
@@ -1013,13 +1022,21 @@ class WorkflowExecutionService:
                 should_continue=True
             )
         
-        # Run guardrail checks
-        passed, results, block_message = check_guardrails(
-            text=text_to_check,
-            guardrail_types=enabled_guardrails,
-            pii_action=pii_action,
-            jailbreak_sensitivity=jailbreak_sensitivity
-        )
+        # Run guardrail checks using Nova Framework or fallback
+        if use_nova:
+            passed, results, block_message = check_nova_guardrails(
+                text=text_to_check,
+                guardrail_types=enabled_guardrails,
+                pii_action=pii_action,
+                sensitivity=jailbreak_sensitivity
+            )
+        else:
+            passed, results, block_message = check_guardrails(
+                text=text_to_check,
+                guardrail_types=enabled_guardrails,
+                pii_action=pii_action,
+                jailbreak_sensitivity=jailbreak_sensitivity
+            )
         
         # Store results in workflow state
         if "guardrails" not in workflow_state:

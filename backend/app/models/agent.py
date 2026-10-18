@@ -151,6 +151,11 @@ class Agent(Base):
     # Off means no scope rule at all. Injection and disclosure rules are not
     # covered by this toggle; they stay code-owned.
     guardrail_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
+    # Nova Framework Guardrails settings for AI mode
+    enable_guardrails = Column(Boolean, default=False, nullable=False)
+    guardrail_types = Column(JSON, default=None, nullable=True)  # List of enabled guardrail types
+    guardrail_sensitivity = Column(Float, default=0.7, nullable=True)  # Detection sensitivity 0.1-1.0
+    guardrail_pii_action = Column(String(20), default='block', nullable=True)  # block, redact, warning, log
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     # Relationships
@@ -184,6 +189,12 @@ class Agent(Base):
         foreign_keys="[Workflow.agent_id]",
         back_populates="agent"
     )
+    custom_webhooks = relationship(
+        "CustomWebhook",
+        back_populates="agent",
+        cascade="all, delete-orphan"
+    )
+
     @property
     def instructions(self):
         """Get instructions as a list"""

@@ -19,9 +19,11 @@ from app.core.logger import get_logger
 from app.agents.chat_agent import ChatAgent, ChatResponse
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
+from app.repositories.agent import AgentRepository
 from app.services.workflow_execution import WorkflowExecutionService
 from app.core.security import decrypt_api_key
 from app.models.schemas.chat import TransferReasonType
+from app.utils.nova_guardrails import check_nova_guardrails, NOVA_AVAILABLE
 
 logger = get_logger(__name__)
 
@@ -63,6 +65,48 @@ class WorkflowChatService:
         Returns:
             ChatResponse: The response from workflow execution
         """
+        
+        # === Nova Guardrails Check for Workflow Mode ===
+        try:
+            agent_repo = AgentRepository(self.db)
+            agent_for_guardrails = agent_repo.get_agent(session['agent_id'])
+            
+            if agent_for_guardrails and agent_for_guardrails.enable_guardrails:
+                logger.debug(f"Nova Guardrails enabled for workflow agent {session['agent_id']}")
+                guardrail_types = agent_for_guardrails.guardrail_types or ['jailbreak', 'prompt_injection', 'harmful_content']
+                sensitivity = agent_for_guardrails.guardrail_sensitivity or 0.7
+                pii_action = agent_for_guardrails.guardrail_pii_action or 'block'
+                
+                # Run guardrails check (returns tuple: passed, results_list, block_message)
+                passed, results_list, block_message = check_nova_guardrails(
+                    text=message,
+                    guardrail_types=guardrail_types,
+                    pii_action=pii_action,
+                    sensitivity=sensitivity
+                )
+                
+                if not passed:
+                    # Guardrails blocked the message
+                    violations = [r.get('guardrail_type', 'Unknown') for r in results_list if not r.get('passed', True)]
+                    logger.warning(f"Nova Guardrails blocked message for workflow session {session_id}: {violations}")
+                    
+                    # Emit blocked response and return None (special signal to not send regular response)
+                    await sio.emit('chat_response', {
+                        'message': f"🛡️ **Security Notice**: {block_message}",
+                        'session_id': session_id,
+                        'blocked_by_guardrails': True,
+                        'guardrail_violations': violations
+                    }, room=session_id, namespace=namespace)
+                    return None
+                
+                # Check if any PII was redacted
+                for result in results_list:
+                    if result.get('guardrail_type') == 'PII' and result.get('redacted_text'):
+                        message = result['redacted_text']
+                        logger.info(f"PII redacted from message for workflow session {session_id}")
+        except Exception as guardrail_error:
+            logger.warning(f"Guardrails check failed in workflow mode (continuing without guardrails): {str(guardrail_error)}")
+        # === End Nova Guardrails Check ===
         
         # Store user message in chat history
         self.chat_repo.create_message({

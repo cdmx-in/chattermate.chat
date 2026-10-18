@@ -69,6 +69,14 @@ class AgentBase(BaseModel):
         default=True,
         description="Apply the scope rule. Injection and disclosure protections are always on."
     )
+    # Nova Framework Guardrails settings
+    enable_guardrails: bool = False
+    guardrail_types: Optional[List[str]] = Field(
+        default=None,
+        description="List of enabled guardrail types: 'pii', 'jailbreak', 'prompt_injection', 'malicious_code', 'harmful_content', 'data_exfiltration'"
+    )
+    guardrail_sensitivity: float = Field(default=0.7, description="Detection sensitivity 0.1-1.0")
+    guardrail_pii_action: str = Field(default='block', description="PII action: block, redact, warning, log")
 
 
 class AgentCreate(AgentBase):
@@ -100,6 +108,11 @@ class AgentUpdate(BaseModel):
     topic_scope: Optional[str] = Field(default=None, max_length=500)
     guardrail_prompt: Optional[str] = Field(default=None, max_length=GUARDRAIL_PROMPT_MAX)
     guardrail_enabled: Optional[bool] = None
+    # Nova Framework Guardrails settings
+    enable_guardrails: Optional[bool] = None
+    guardrail_types: Optional[List[str]] = None
+    guardrail_sensitivity: Optional[float] = None
+    guardrail_pii_action: Optional[str] = None
 
 
 class AgentKnowledge(BaseModel):
@@ -151,6 +164,11 @@ class AgentResponse(BaseModel):
     topic_scope: Optional[str] = None
     guardrail_prompt: Optional[str] = None
     guardrail_enabled: bool = True
+    # Nova Framework Guardrails settings
+    enable_guardrails: bool = False
+    guardrail_types: Optional[List[str]] = None
+    guardrail_sensitivity: float = 0.7
+    guardrail_pii_action: str = 'block'
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

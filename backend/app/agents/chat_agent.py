@@ -29,8 +29,10 @@ from app.agents.encrypted_storage import EncryptedPostgresAgentStorage
 from app.agents.history_memory import BoundedHistoryMemory, run_with_overflow_recovery
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
+from app.repositories.webhook import WebhookRepository
 from app.models.session_to_agent import SessionStatus
 from app.models.schemas.chat import ChannelChatResponse, ChatResponse, TransferReasonType, EndChatReasonType
+from app.services.webhook_service import WebhookService
 from app.core.config import settings
 from app.agents.structured_output import (
     build_groq_json_tool,
@@ -356,7 +358,7 @@ def enrich_shopify_response(response_content: ChatResponse, session_id: str, fal
     return response_content
 
 class ChatAgent(ChatAgentMCPMixin):
-    def __init__(self, api_key: str, model_name: str = "gpt-4o-mini", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None, source: str = None, channel: str = None, extra_context: str = None, base_url: str = None, choice_limits: Optional[InteractiveLimits] = None):
+    def __init__(self, api_key: str, model_name: str = "gpt-6-luna", model_type: str = "OPENAI", org_id: str = None, agent_id: str = None, customer_id: str = None, session_id: str = None, custom_system_prompt: str = None, transfer_to_human: bool | None = None, mcp_tools: list = None, source: str = None, channel: str = None, extra_context: str = None, base_url: str = None, choice_limits: Optional[InteractiveLimits] = None):
         # NOTE: `source` is a knowledge-base document-name filter (see
         # KnowledgeSearchByAgent), NOT the messaging channel. `channel` is the
         # messaging channel tag ('web', 'telegram', ...) and must never be
@@ -382,7 +384,16 @@ class ChatAgent(ChatAgentMCPMixin):
             
             # Base knowledge tool prompt
             knowledge_tool_prompt = """
-            You have access to the knowledge search tool. You can use this tool to search for information about the customer's query on product, services, policies, etc. Only use the tool if required, dont use it for general greeting. Dont hallucinate information. For all other queries other than general always search tools before answering.
+            You have access to the knowledge search tool. You can use this tool to search for information about the customer's query on product, services, policies, etc. Dont hallucinate information.
+
+            **WHEN TO USE the knowledge search tool:**
+            - Use it when the customer asks a SPECIFIC question about products, services, policies, pricing, features, etc.
+            - Do NOT use it for greetings (hi, hello, hey), general conversation starters (i need help, i have a question, can you help me), or vague messages without a specific topic.
+            - For vague requests like "i need help" or "i have a question", respond conversationally by asking what they need help with. Do NOT search the knowledge base.
+
+            **CRITICAL - STOP calling tools if they fail:**
+            - If a tool call returns "Tool call limit reached" or any error, STOP calling tools immediately and respond to the user with a helpful message.
+            - NEVER call the same tool more than 2 times. If you don't find results after 2 attempts, respond with what you know or ask the user to clarify.
 
             **IMPORTANT - Include URLs in Responses:**
             When tools return information that includes URLs, product links, documentation links, or reference URLs, you MUST include these URLs in your response to the customer. URLs provide valuable references and allow customers to access more detailed information. Always preserve and share URLs that are relevant to the customer's query."""
@@ -1554,6 +1565,21 @@ Keep your responses concise and focused. Provide clear, actionable information i
                         "ticket_status": response_content.ticket_status,
                         "ticket_priority": response_content.ticket_priority
                     })
+                    
+                    # Trigger webhooks when ticket is created
+                    try:
+                        await self._trigger_webhooks_for_ticket(
+                            db=db,
+                            org_id=org_id,
+                            ticket_summary=response_content.ticket_summary,
+                            ticket_description=response_content.ticket_description,
+                            ticket_priority=response_content.ticket_priority or "Medium",
+                            customer_id=customer_id,
+                            agent_id=agent_id,
+                            session_id=session_id
+                        )
+                    except Exception as e:
+                        logger.error(f"Error triggering webhooks for ticket: {str(e)}")
                 
                 
                 self._store_bot_message(chat_repo, {
@@ -1604,6 +1630,97 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 logger.error(f"Failed to store error message: {str(store_error)}")
             
             return error_response
+
+    async def _trigger_webhooks_for_ticket(
+        self,
+        db,
+        org_id: str,
+        ticket_summary: str,
+        ticket_description: str,
+        ticket_priority: str,
+        customer_id: str,
+        agent_id: str,
+        session_id: str
+    ) -> None:
+        """
+        Trigger all active webhooks for this agent when a ticket is created.
+        Works similarly to JIRA ticket creation - triggers all configured webhooks.
+        """
+        try:
+            webhook_repo = WebhookRepository(db)
+            webhook_service = WebhookService()
+            
+            # Get all active webhooks for this AGENT (new agent-based architecture)
+            from uuid import UUID
+            webhooks = webhook_repo.get_active_webhooks_by_agent(UUID(str(agent_id)))
+            
+            if not webhooks:
+                logger.debug(f"No active webhooks found for agent {agent_id}")
+                return
+            
+            # Get customer details from session
+            session_repo = SessionToAgentRepository(db)
+            session_data = session_repo.get_session(session_id)
+            customer_email = session_data.email if hasattr(session_data, 'email') else ""
+            customer_name = session_data.customer_name if hasattr(session_data, 'customer_name') else ""
+            
+            # Get agent name
+            from app.models.agent import Agent
+            try:
+                agent_uuid = UUID(str(agent_id))
+                agent = db.query(Agent).filter(Agent.id == agent_uuid).first()
+                agent_name = agent.name if agent else "Unknown Agent"
+            except:
+                agent_name = "Unknown Agent"
+            
+            # Prepare webhook data
+            webhook_data = {
+                "title": ticket_summary or "No summary provided",
+                "description": ticket_description or "No description provided",
+                "priority": ticket_priority,
+                "customer_email": customer_email,
+                "customer_name": customer_name,
+                "session_id": session_id,
+                "agent_name": agent_name
+            }
+            
+            # Execute all webhooks for this agent that listen for ticket_created event
+            for webhook in webhooks:
+                try:
+                    # Check if this webhook listens for ticket_created events
+                    event_types = webhook.event_types or ["ticket_created"]
+                    if "ticket_created" not in event_types:
+                        logger.debug(f"Skipping webhook {webhook.id} ({webhook.name}) - not configured for ticket_created events")
+                        continue
+                    
+                    logger.debug(f"Triggering webhook {webhook.id} ({webhook.name}) for agent {agent_id}, ticket: {ticket_summary}")
+                    
+                    success, status_code, response_body, error_message = await webhook_service.execute_webhook(
+                        webhook,
+                        webhook_data
+                    )
+                    
+                    # Log webhook execution
+                    webhook_repo.create_webhook_log(
+                        webhook_id=webhook.id,
+                        agent_id=agent_id,
+                        request_payload=str(webhook_data),
+                        response_status_code=status_code,
+                        response_body=response_body[:500] if response_body else None,
+                        success=success,
+                        error_message=error_message
+                    )
+                    
+                    if success:
+                        logger.info(f"Webhook {webhook.name} executed successfully for agent {agent_id}, ticket: {ticket_summary}")
+                    else:
+                        logger.warning(f"Webhook {webhook.name} failed: {error_message}")
+                        
+                except Exception as webhook_error:
+                    logger.error(f"Error executing webhook {webhook.id}: {str(webhook_error)}")
+                    
+        except Exception as e:
+            logger.error(f"Error triggering webhooks: {str(e)}")
 
     @staticmethod
     async def test_api_key(api_key: str, model_type: str, model_name: str, base_url: str = None) -> bool:

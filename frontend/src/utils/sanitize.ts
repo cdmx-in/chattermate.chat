@@ -157,6 +157,34 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 })
 
 /**
+ * Validates input to ensure it doesn't contain DOCTYPE or full HTML document structure
+ * @param html The input string to validate
+ * @returns true if input is safe (no DOCTYPE or document structure), false otherwise
+ */
+function isValidContentInput(html: string): boolean {
+  if (!html || typeof html !== 'string') {
+    return true // Empty or non-string inputs are valid (they'll be sanitized to empty)
+  }
+
+  const normalizedHtml = html.trim().toLowerCase()
+
+  // Block DOCTYPE declarations
+  if (normalizedHtml.startsWith('<!doctype')) {
+    return false
+  }
+
+  // Block full HTML document structure tags
+  const documentStructureTags = ['<html', '<head', '<body', '<?xml']
+  for (const tag of documentStructureTags) {
+    if (normalizedHtml.includes(tag)) {
+      return false
+    }
+  }
+
+  return true
+}
+
+/**
  * Comprehensive HTML sanitization to prevent all XSS attacks including:
  * - Encoded payloads (HTML entities, URL encoding, Unicode)
  * - SVG-based XSS vectors
@@ -165,8 +193,14 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
  * - CSS expressions and injections
  * - Event handlers
  * - All dangerous HTML tags
+ * - DOCTYPE declarations and full HTML document structures
  */
 export function sanitizeHtml(html: string): string {
+  // First validate that input doesn't contain DOCTYPE or document structure
+  if (!isValidContentInput(html)) {
+    console.warn('Blocked HTML input: Contains DOCTYPE or document structure tags')
+    return '' // Return empty string for invalid inputs
+  }
   // Configure DOMPurify with strict security settings
   const config = {
     // Block all dangerous tags including SVG, form elements and images.
@@ -179,6 +213,7 @@ export function sanitizeHtml(html: string): string {
       'button', 'textarea', 'select', 'option', 'xml', 'xss', 'import',
       'video', 'audio', 'track', 'source', 'canvas', 'details', 'template',
       'slot', 'noscript', 'marquee', 'bgsound', 'keygen', 'command',
+      'html', 'head', 'body',  // SECURITY: Block document structure tags
       'img', 'area', 'map'  // SECURITY: Remove image/map tags completely
     ],
 

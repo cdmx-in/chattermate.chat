@@ -65,6 +65,7 @@ MODEL_CATALOG: Dict[str, CatalogProvider] = {
         "custom_allowed": True,
         "api_key_url": "https://platform.openai.com/api-keys",
         "models": [
+            _m("gpt-6-luna", "GPT-6 Luna"),
             _m("gpt-4.1", "GPT-4.1"),
             _m("gpt-4o", "GPT-4o"),
             _m("gpt-4.1-mini", "GPT-4.1 Mini"),

@@ -6,7 +6,7 @@ import * as path from 'path'
 const config = resolve(process.cwd(), 'vite.widget.docker.config.ts')
 // For Docker, we need to copy to a shared volume or mounted directory
 // This assumes the backend assets are mounted/shared between containers
-const assetsDir = resolve(process.cwd(), '/app/backend-assets')
+const assetsDir = resolve(process.cwd(), '/app/backend/assets')
 const filesToKeep = ['widget.js', 'widget.css']
 
 async function buildWidgetDocker() {

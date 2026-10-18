@@ -459,6 +459,17 @@ export function useWidgetSocket() {
         errorMessage.value = getErrorMessage(error as SocketError)
         showError.value = true
 
+        // A rejected message (sanitization or upload validation) was already echoed
+        // into the list optimistically; drop that bubble so the visitor does not see
+        // a blank one. Other error types (auth, rating) leave the history alone.
+        const errType = (error as SocketError)?.type
+        if ((errType === 'validation_error' || errType === 'upload_error') && messages.value.length > 0) {
+            const lastMessage = messages.value[messages.value.length - 1]
+            if (lastMessage.message_type === 'user') {
+                messages.value.pop()
+            }
+        }
+
         // Hide error after 5 seconds
         setTimeout(() => {
             showError.value = false

@@ -604,17 +604,6 @@ const handleInitiationClick = () => {
                     </button>
                 </div>
             </div>
-            
-            <!-- Powered by footer for welcome message -->
-            <div class="powered-by-welcome" :style="messageNameStyles">
-                <svg class="chattermate-logo" width="15" height="15" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E"/>
-                    <circle cx="19.7" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
-                </svg>
-                <span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong>
-            </div>
         </div>
 
         <!-- Chat Panel -->
@@ -706,17 +695,6 @@ const handleInitiationClick = () => {
                  the second argument is left at its default. -->
             <div v-if="shouldShowAiDisclaimer(customization.show_ai_disclaimer)" class="ai-disclaimer">
                 {{ AI_DISCLAIMER_TEXT }}
-            </div>
-
-            <!-- Add powered by footer -->
-            <div class="powered-by" :style="messageNameStyles">
-                <svg class="chattermate-logo" width="15" height="15" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E"/>
-                    <circle cx="19.7" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
-                </svg>
-                <span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong>
             </div>
         </div>
 

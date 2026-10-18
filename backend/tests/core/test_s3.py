@@ -26,8 +26,11 @@ from app.core.s3 import (
     get_s3_client,
     get_s3_signed_url,
     is_s3_url,
+    owned_s3_key,
+    sign_s3_url,
     strip_s3_signature,
     upload_file_to_s3,
+    url_for_s3_key,
 )
 from app.core.config import Settings, settings
 from botocore.exceptions import ClientError
@@ -341,3 +344,45 @@ def test_is_s3_url_matches_what_url_for_s3_key_produces():
     from app.core.s3 import url_for_s3_key
 
     assert is_s3_url(url_for_s3_key("some/key.pdf")) is True
+
+
+# --- S3-compatible endpoint (MinIO) ------------------------------------------
+# Objects live at a custom endpoint the browser cannot reach, so the helpers
+# recognise its path-style URLs and hand out API-signed links instead of
+# presigned ones.
+
+@pytest.fixture
+def minio_settings(monkeypatch):
+    monkeypatch.setattr(settings, 'S3_FILE_STORAGE', True)
+    monkeypatch.setattr(settings, 'S3_ENDPOINT_URL', 'http://minio:9000')
+    monkeypatch.setattr(settings, 'S3_BUCKET', 'chattermate-uploads')
+    get_s3_client.cache_clear()
+    yield
+    get_s3_client.cache_clear()
+
+
+def test_endpoint_client_is_built_against_the_endpoint(minio_settings):
+    with patch('boto3.client') as mock_boto3_client:
+        get_s3_client()
+        assert mock_boto3_client.call_args.kwargs['endpoint_url'] == 'http://minio:9000'
+
+
+def test_endpoint_urls_are_path_style_and_round_trip(minio_settings):
+    url = url_for_s3_key('chat_attachments/org/f.jpg')
+    assert url == 'http://minio:9000/chattermate-uploads/chat_attachments/org/f.jpg'
+    assert is_s3_url(url)
+    assert owned_s3_key(url) == 'chat_attachments/org/f.jpg'
+    # Another bucket on the same endpoint, or the endpoint smuggled into a path,
+    # is not ours.
+    assert owned_s3_key('http://minio:9000/other-bucket/x.jpg') is None
+    assert not is_s3_url('http://evil.example/minio:9000/chattermate-uploads/x')
+
+
+def test_endpoint_sign_hands_out_api_link_that_strips_back(minio_settings):
+    url = url_for_s3_key('agents/photo.png')
+    signed = sign_s3_url(url)
+    assert signed.startswith(f"{settings.API_V1_STR}/files/local/agents/photo.png?")
+    assert 'sig=' in signed and 'exp=' in signed
+    # The client round-trips the link into update payloads; it must reduce to
+    # the canonical object URL on the way in, like a presigned URL does.
+    assert strip_s3_signature(signed) == url

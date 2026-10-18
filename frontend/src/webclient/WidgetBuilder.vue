@@ -407,6 +407,18 @@ const hasActiveForm = computed(() => {
 
 // Update the computed property for message input enabled state
 const isMessageInputEnabled = computed(() => {
+    // Check if chat has ended by looking for any message with end_chat
+    const hasEndedChat = messages.value.some(msg => msg.attributes?.end_chat)
+    if (hasEndedChat) {
+        return false
+    }
+
+    // Check if there's a rating message being displayed (submitted or not)
+    const hasRatingMessage = messages.value.some(msg => msg.message_type === 'rating')
+    if (hasRatingMessage) {
+        return false
+    }
+
     // If we already have a conversation started, allow input
     if (hasStartedChat.value && hasConversationToken.value) {
 
@@ -1917,7 +1929,6 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
                     <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
                 </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
             </div>
         </div>
     </div>
@@ -2075,17 +2086,6 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                     </button>
                 </div>
             </div>
-
-            <!-- Powered by footer for welcome message -->
-            <div class="powered-by-welcome" :style="messageNameStyles">
-                <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E"/>
-                    <circle cx="19.7" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
-                </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
-            </div>
         </div>
 
         <!-- Landing Page Display (Full Screen) -->
@@ -2107,16 +2107,6 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                         {{ workflowButtonText }}
                     </button>
                 </div>
-            </div>
-            <!-- Powered by footer for landing page -->
-            <div class="powered-by-landing" :style="messageNameStyles">
-                <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E"/>
-                    <circle cx="19.7" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
-                </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
             </div>
         </div>
 
@@ -2270,16 +2260,6 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
                         <span v-else>{{ fullScreenFormData.submit_button_text || 'Submit' }}</span>
                     </button>
                 </div>
-            </div>
-            <!-- Powered by footer for form -->
-            <div class="powered-by-landing" :style="messageNameStyles">
-                <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E"/>
-                    <circle cx="19.7" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
-                </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
             </div>
         </div>
 
@@ -2971,17 +2951,6 @@ const askAiHotkey = computed(() => parentDisplay.value?.hotkey !== false)
             <!-- AI disclosure — dropped as soon as a human agent takes over -->
             <div v-if="showAiDisclaimer" class="ai-disclaimer">
                 {{ AI_DISCLAIMER_TEXT }}
-            </div>
-
-            <!-- Powered by footer -->
-            <div class="powered-by" :style="messageNameStyles">
-                <svg class="chattermate-logo" width="16" height="16" viewBox="0 0 60 60" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M19 3H41A16 16 0 0 1 57 19V41A16 16 0 0 1 41 57H9A6 6 0 0 1 3 51V19A16 16 0 0 1 19 3Z" fill="#C9F24E"/>
-                    <circle cx="19.7" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="30" cy="30" r="4.3" fill="#0B0C10"/>
-                    <circle cx="40.3" cy="30" r="4.3" fill="#0B0C10"/>
-                </svg>
-                <a class="cm-powered-link" href="https://chattermate.chat" target="_blank" rel="noopener"><span class="cm-powered-prefix">Powered by </span><strong class="cm-brand">ChatterMate</strong></a>
             </div>
         </div>
 

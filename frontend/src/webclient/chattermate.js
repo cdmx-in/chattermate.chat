@@ -1636,14 +1636,6 @@ window.chattermateConfig;
       logoPath.setAttribute('fill', 'currentColor');
       logoPath.setAttribute('opacity', '0.6');
       logoSvg.appendChild(logoPath);
-      const footerText = document.createElement('a');
-      footerText.href = 'https://chattermate.chat';
-      footerText.target = '_blank';
-      footerText.rel = 'noopener noreferrer';
-      footerText.className = 'chattermate-error-footer-link';
-      footerText.textContent = 'Powered by ChatterMate';
-      footer.appendChild(logoSvg);
-      footer.appendChild(footerText);
 
       // Assemble card
       card.appendChild(iconWrapper);

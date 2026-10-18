@@ -18,6 +18,15 @@ limitations under the License.
 import { computed, ref, watch, onMounted } from 'vue'
 import { checkShopifyConnection } from '@/services/shopify'
 import channelsService, { type ChannelAccount } from '@/services/channels'
+import {
+  getAgentWebhooks,
+  createAgentWebhook,
+  updateAgentWebhook,
+  deleteAgentWebhook,
+  testAgentWebhook,
+  getAgentWebhookLogs,
+  type WebhookEventType
+} from '@/services/webhook'
 
 interface JiraProject {
   id: string;
@@ -141,6 +150,20 @@ const toggleChannelAccount = async (account: ChannelAccount) => {
     channelSaving.value = false
   }
 }
+
+// Webhooks state
+const webhooks = ref<any[]>([])
+const webhooksLoading = ref(false)
+const webhooksError = ref('')
+const showWebhookForm = ref(false)
+const editingWebhook = ref<any>(null)
+const testingWebhook = ref<number | null>(null)
+const newWebhook = ref<{ name: string; webhook_url: string; event_types: WebhookEventType[]; is_active: boolean }>({
+  name: '',
+  webhook_url: '',
+  event_types: ['ticket_created'],
+  is_active: true
+})
 
 const emit = defineEmits([
   'toggle-create-ticket',
@@ -271,11 +294,140 @@ const fetchShopifyStatus = async () => {
   }
 }
 
+// Webhook functions
+const fetchWebhooks = async () => {
+  try {
+    webhooksLoading.value = true
+    webhooksError.value = ''
+    const response = await getAgentWebhooks(props.agentId)
+    webhooks.value = response.webhooks || []
+  } catch (error: any) {
+    console.error('Error fetching webhooks:', error)
+    webhooksError.value = error.response?.data?.detail || 'Failed to load webhooks'
+  } finally {
+    webhooksLoading.value = false
+  }
+}
+
+const openWebhookForm = (webhook?: any) => {
+  if (webhook) {
+    editingWebhook.value = webhook
+    newWebhook.value = {
+      name: webhook.name,
+      webhook_url: webhook.webhook_url,
+      event_types: webhook.event_types || ['ticket_created'],
+      is_active: webhook.is_active
+    }
+  } else {
+    editingWebhook.value = null
+    newWebhook.value = {
+      name: '',
+      webhook_url: '',
+      event_types: ['ticket_created'],
+      is_active: true
+    }
+  }
+  showWebhookForm.value = true
+}
+
+const formatEventType = (eventType: string) => {
+  const formatted = eventType
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+  return formatted
+}
+
+const closeWebhookForm = () => {
+  showWebhookForm.value = false
+  editingWebhook.value = null
+  newWebhook.value = {
+    name: '',
+    webhook_url: '',
+    event_types: ['ticket_created'],
+    is_active: true
+  }
+}
+
+const saveWebhook = async () => {
+  try {
+    webhooksError.value = ''
+    
+    if (!newWebhook.value.name || !newWebhook.value.webhook_url) {
+      webhooksError.value = 'Name and URL are required'
+      return
+    }
+
+    if (!newWebhook.value.event_types || newWebhook.value.event_types.length === 0) {
+      webhooksError.value = 'At least one event type must be selected'
+      return
+    }
+
+    if (editingWebhook.value) {
+      // Update existing webhook
+      await updateAgentWebhook(props.agentId, editingWebhook.value.id, newWebhook.value)
+    } else {
+      // Create new webhook
+      await createAgentWebhook(props.agentId, newWebhook.value)
+    }
+
+    // Refresh list
+    await fetchWebhooks()
+    closeWebhookForm()
+  } catch (error: any) {
+    console.error('Error saving webhook:', error)
+    webhooksError.value = error.response?.data?.detail || 'Failed to save webhook'
+  }
+}
+
+const deleteWebhook = async (webhookId: number) => {
+  if (!confirm('Are you sure you want to delete this webhook?')) {
+    return
+  }
+
+  try {
+    webhooksError.value = ''
+    await deleteAgentWebhook(props.agentId, webhookId)
+    await fetchWebhooks()
+  } catch (error: any) {
+    console.error('Error deleting webhook:', error)
+    webhooksError.value = error.response?.data?.detail || 'Failed to delete webhook'
+  }
+}
+
+const testWebhook = async (webhookId: number) => {
+  try {
+    testingWebhook.value = webhookId
+    webhooksError.value = ''
+    
+    const testData = {
+      event: 'ticket_created',
+      ticket: {
+        id: 'TEST-123',
+        summary: 'Test Ticket',
+        description: 'This is a test ticket',
+        status: 'Open'
+      },
+      agent_id: props.agentId,
+      timestamp: new Date().toISOString()
+    }
+
+    await testAgentWebhook(props.agentId, webhookId, testData)
+    alert('Test webhook sent successfully! Check your webhook endpoint for the payload.')
+  } catch (error: any) {
+    console.error('Error testing webhook:', error)
+    webhooksError.value = error.response?.data?.detail || 'Failed to test webhook'
+  } finally {
+    testingWebhook.value = null
+  }
+}
+
 // Fetch connection status on component mount
 onMounted(async () => {
   await Promise.all([
     fetchShopifyStatus(),
-    fetchChannelAccounts()
+    fetchChannelAccounts(),
+    fetchWebhooks()
   ])
 })
 </script>
@@ -552,6 +704,172 @@ onMounted(async () => {
         </div>
         <div v-else class="no-channels-message">
           No messaging channels connected yet. Connect one from Settings → Integrations.
+        </div>
+      </div>
+
+      <!-- Custom Webhooks -->
+      <div class="integration-section">
+        <h4 class="integration-title">Custom Webhooks</h4>
+        <p class="helper-text">
+          Configure webhook notifications that fire when this agent creates a ticket.
+        </p>
+
+        <!-- Error display -->
+        <div v-if="webhooksError" class="webhook-error">
+          <span class="error-icon">❌</span>
+          {{ webhooksError }}
+        </div>
+
+        <!-- Loading state -->
+        <div v-if="webhooksLoading" class="jira-status loading">
+          Loading webhooks...
+        </div>
+
+        <!-- Webhooks List -->
+        <div v-else-if="webhooks.length > 0" class="webhooks-list">
+          <div v-for="webhook in webhooks" :key="webhook.id" class="webhook-card">
+            <div class="webhook-header">
+              <div class="webhook-info">
+                <h5 class="webhook-name">{{ webhook.name }}</h5>
+                <span :class="['webhook-status', webhook.is_active ? 'active' : 'inactive']">
+                  {{ webhook.is_active ? 'Active' : 'Inactive' }}
+                </span>
+              </div>
+              <div class="webhook-actions">
+                <button 
+                  class="icon-btn test-btn" 
+                  @click="testWebhook(webhook.id)"
+                  :disabled="testingWebhook === webhook.id"
+                  title="Test webhook"
+                >
+                  {{ testingWebhook === webhook.id ? '⏳' : '🧪' }}
+                </button>
+                <button 
+                  class="icon-btn edit-btn" 
+                  @click="openWebhookForm(webhook)"
+                  title="Edit webhook"
+                >
+                  ✏️
+                </button>
+                <button 
+                  class="icon-btn delete-btn" 
+                  @click="deleteWebhook(webhook.id)"
+                  title="Delete webhook"
+                >
+                  🗑️
+                </button>
+              </div>
+            </div>
+            <div class="webhook-details">
+              <div class="webhook-url">
+                <strong>URL:</strong> {{ webhook.webhook_url }}
+              </div>
+              <div class="webhook-events">
+                <strong>Events:</strong>
+                <div class="event-badges">
+                  <span v-for="eventType in (webhook.event_types || ['ticket_created'])" :key="eventType" class="event-badge">
+                    {{ formatEventType(eventType) }}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- No webhooks message -->
+        <div v-else class="no-webhooks-message">
+          No webhooks configured for this agent. Click "Add Webhook" to create one.
+        </div>
+
+        <!-- Add Webhook Button -->
+        <button
+          v-if="!showWebhookForm"
+          class="add-webhook-btn"
+          @click="openWebhookForm()"
+        >
+          + Add Webhook
+        </button>
+
+        <!-- Webhook Form Modal -->
+        <div v-if="showWebhookForm" class="webhook-form-modal">
+          <div class="webhook-form">
+            <h5 class="form-title">{{ editingWebhook ? 'Edit Webhook' : 'Add Webhook' }}</h5>
+            
+            <div class="form-group">
+              <label for="webhook-name">Name</label>
+              <input
+                id="webhook-name"
+                type="text"
+                v-model="newWebhook.name"
+                placeholder="e.g., n8n Integration"
+                class="form-input"
+              />
+            </div>
+
+            <div class="form-group">
+              <label for="webhook-url">Webhook URL</label>
+              <input
+                id="webhook-url"
+                type="url"
+                v-model="newWebhook.webhook_url"
+                placeholder="https://example.com/webhook"
+                class="form-input"
+              />
+            </div>
+
+            <div class="form-group">
+              <label>Event Types</label>
+              <div class="event-types-grid">
+                <label class="event-type-checkbox">
+                  <input
+                    type="checkbox"
+                    value="ticket_created"
+                    v-model="newWebhook.event_types"
+                  />
+                  <span>Ticket Created</span>
+                </label>
+                <label class="event-type-checkbox">
+                  <input
+                    type="checkbox"
+                    value="conversation_started"
+                    v-model="newWebhook.event_types"
+                  />
+                  <span>Conversation Started</span>
+                </label>
+                <label class="event-type-checkbox">
+                  <input
+                    type="checkbox"
+                    value="rating_received"
+                    v-model="newWebhook.event_types"
+                  />
+                  <span>Rating Received</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label class="checkbox-label">
+                <input type="checkbox" v-model="newWebhook.is_active" />
+                <span>Active</span>
+              </label>
+            </div>
+
+            <div class="form-actions">
+              <button
+                class="cancel-btn"
+                @click="closeWebhookForm"
+              >
+                Cancel
+              </button>
+              <button
+                class="save-config-btn"
+                @click="saveWebhook"
+                :disabled="!newWebhook.name || !newWebhook.webhook_url || !newWebhook.event_types || newWebhook.event_types.length === 0"
+              >
+                {{ editingWebhook ? 'Update' : 'Create' }}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -832,6 +1150,41 @@ input:checked + .slider:before {
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+}
+
+.event-types-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-sm);
+  margin-top: var(--space-xs);
+}
+
+.event-type-checkbox {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-xs) var(--space-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  background-color: var(--background-soft);
+}
+
+.event-type-checkbox:hover {
+  background-color: var(--background-mute);
+  border-color: var(--primary-color);
+}
+
+.event-type-checkbox input[type="checkbox"] {
+  cursor: pointer;
+  margin: 0;
+}
+
+.event-type-checkbox span {
+  font-size: var(--text-sm);
+  color: var(--text-color);
+  user-select: none;
 }
 
 .form-group label {
@@ -1226,4 +1579,240 @@ input:checked + .slider:before {
   opacity: 0.7;
   cursor: not-allowed;
 }
+
+/* Webhook Styles */
+.webhook-error {
+  margin-top: var(--space-md);
+  padding: var(--space-md);
+  border-radius: var(--radius-md);
+  background-color: var(--error-light, #FEEAEA);
+  color: var(--error, #EF4444);
+  font-size: var(--text-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.webhooks-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-md);
+  margin-top: var(--space-md);
+}
+
+.webhook-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: var(--radius-lg);
+  padding: 1px;
+  transition: all var(--transition-normal);
+}
+
+.webhook-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px rgba(102, 126, 234, 0.3);
+}
+
+.webhook-card > div {
+  background: var(--background-soft);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+
+.webhook-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  margin-bottom: var(--space-md);
+}
+
+.webhook-info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.webhook-name {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 0;
+}
+
+.webhook-status {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+  width: fit-content;
+}
+
+.webhook-status.active {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+}
+
+.webhook-status.inactive {
+  background: var(--background-mute);
+  color: var(--text-muted);
+}
+
+.webhook-actions {
+  display: flex;
+  gap: var(--space-xs);
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  font-size: 1.25rem;
+  cursor: pointer;
+  padding: var(--space-xs);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+}
+
+.icon-btn:hover {
+  background: var(--background-mute);
+  transform: scale(1.1);
+}
+
+.icon-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.webhook-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+.webhook-url {
+  word-break: break-all;
+}
+
+.webhook-events {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+.event-badges {
+  display: flex;
+  gap: var(--space-xs);
+  flex-wrap: wrap;
+}
+
+.event-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: linear-gradient(135deg, var(--primary-color) 0%, var(--primary-dark) 100%);
+  color: white;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.no-webhooks-message {
+  padding: var(--space-lg);
+  background: var(--background-mute);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: var(--space-md);
+}
+
+.add-webhook-btn {
+  margin-top: var(--space-md);
+  padding: var(--space-sm) var(--space-lg);
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  border: none;
+  border-radius: var(--radius-full);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.add-webhook-btn:hover {
+  filter: brightness(1.1);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+.webhook-form-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: var(--space-lg);
+}
+
+.webhook-form {
+  background: var(--background-soft);
+  border-radius: var(--radius-lg);
+  padding: var(--space-xl);
+  max-width: 500px;
+  width: 100%;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3);
+}
+
+.form-title {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-color);
+  margin: 0 0 var(--space-lg) 0;
+}
+
+.form-group {
+  margin-bottom: var(--space-md);
+}
+
+.form-group label {
+  display: block;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--text-color);
+  margin-bottom: var(--space-xs);
+}
+
+.form-input {
+  width: 100%;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--background);
+  color: var(--text-color);
+  font-size: var(--text-sm);
+  transition: border-color var(--transition-fast);
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--primary-color);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  cursor: pointer;
+  font-size: var(--text-sm);
+}
+
+.checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+}
+
 </style> 

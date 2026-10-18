@@ -42,6 +42,9 @@ _FALLBACK_TOKENS = 8_000
 # Lowercase model-name prefixes; the longest matching prefix wins so
 # "gpt-4o" beats "gpt-4" and "mistral-large" beats "mistral".
 _MODEL_PREFIX_TOKENS = {
+    # gpt-6-luna is listed at ~1M by model directories; OpenAI's own docs lagged the
+    # announcement, so this is the conservative floor of what was published.
+    "gpt-6": 1_000_000,
     "gpt-5": 400_000,
     "gpt-4.1": 1_000_000,
     "gpt-4o": 128_000,

@@ -1,28 +1,56 @@
 version: '3.8'
 
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "8300:80"
+    volumes:
+      - ./frontend/nginx-dev.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - chattermate-network
+    command: nginx -g "daemon off;"
+
   frontend:
+    restart: always
     build:
       context: .
       dockerfile: Dockerfile.frontend
     ports:
-      - "3000:3000"
-    env_file:
-      - ./frontend/.env
+      - "8330:3000"
+    environment:
+      # API endpoint configuration for development
+      - VITE_API_URL=https://chm.c-dev.in/api/v1
+      - VITE_WS_URL=wss://chm.c-dev.in
+      - VITE_WIDGET_URL=https://chm.c-dev.in
+      - VITE_APP_URL=https://chm.c-dev.in
     volumes:
-      - ./frontend:/app
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/vite.widget.config.ts:/app/vite.widget.config.ts
+      - ./frontend/vite.widget.docker.config.ts:/app/vite.widget.docker.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/package.json:/app/package.json
       - frontend_node_modules:/app/node_modules
-      - backend_assets:/app/backend-assets
+      - ./backend/assets:/app/backend/assets
     networks:
-      - app-network
-
+      - chattermate-network
+    # Use the Dockerfile startup script that builds widget first
+    # Keep container running
+    stdin_open: true
+    tty: true
 
   backend:
-    build: 
-      context: .
-      dockerfile: Dockerfile
+    restart: always
+    # Use the pre-built image instead of building every time
+    image: chattermate-backend:dev
     ports:
-      - "8000:8000"
+      - "8400:8000"
     env_file:
       - ./backend/.env
     environment:
@@ -40,21 +68,27 @@ services:
       # Enable safe embedding mode for Docker
       - EMBEDDING_SINGLE_THREADED=true
       - EMBEDDING_SEQUENTIAL_FALLBACK=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # Hot reload: mount source code over the built code
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
       - ./backend/alembic.ini:/app/alembic.ini
       - ./backend/requirements.txt:/app/requirements.txt
+      - ./backend/tests:/app/tests
+      - ./backend/pytest.ini:/app/pytest.ini
       - ./uploads:/app/uploads
       - ./config:/app/config
-      - backend_assets:/app/assets
+      - ./backend/assets:/app/assets
       # Add caching volumes for models
       - huggingface_cache:/app/.cache/huggingface
     depends_on:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-X", "GET", "-f", "http://localhost:8000/health"]
@@ -63,17 +97,15 @@ services:
       retries: 5
       start_period: 10s
     networks:
-      - app-network
+      - chattermate-network
     # Use watchdog for file change detection and auto-reload
-    command: bash -c "python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: bash -c "pip install watchdog python-dotenv && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     # Keep container running
     stdin_open: true
     tty: true
 
   knowledge_processor:
-    build: 
-      context: .
-      dockerfile: Dockerfile
+    image: chattermate-backend:dev
     command: python -m app.workers.knowledge_processor
     env_file:
       - ./backend/.env
@@ -93,7 +125,7 @@ services:
       - EMBEDDING_SINGLE_THREADED=true
       - EMBEDDING_SEQUENTIAL_FALLBACK=true
     volumes:
-      - ./backend:/app
+      - ./backend/app:/app/app
       - ./uploads:/app/uploads
       - ./config:/app/config
       # Share the same caching volumes with backend
@@ -103,6 +135,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     restart: always
     logging:
       driver: "json-file"
@@ -110,12 +144,12 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - app-network
+      - chattermate-network
+    stdin_open: true
+    tty: true
 
   ticket_investigator:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: chattermate-backend:dev
     command: python -m app.workers.ticket_investigator
     env_file:
       - ./backend/.env
@@ -142,12 +176,10 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - app-network
+      - chattermate-network
 
   crm_sync:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: chattermate-backend:dev
     command: python -m app.workers.crm_sync
     env_file:
       - ./backend/.env
@@ -167,14 +199,12 @@ services:
         max-size: "10m"
         max-file: "3"
     networks:
-      - app-network
+      - chattermate-network
 
   db:
     build:
       context: .
       dockerfile: Dockerfile.postgres
-    ports:
-      - "5432:5432"
     environment:
       - POSTGRES_DB=chattermate
       - POSTGRES_USER=postgres
@@ -188,7 +218,7 @@ services:
       retries: 5
       start_period: 10s
     networks:
-      - app-network
+      - chattermate-network
 
   redis:
     image: redis:7-alpine
@@ -203,16 +233,36 @@ services:
       retries: 5
       start_period: 5s
     networks:
-      - app-network
+      - chattermate-network
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9310:9000"
+      - "9311:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - chattermate-network
 
 networks:
-  app-network:
-    driver: bridge
+  chattermate-network:
+    external: true
       
 volumes:
   postgres_data:
   redis_data:
   frontend_node_modules:
-  backend_assets:
+  minio_data:
   # Add new volumes for model caching
   huggingface_cache:
+  torch_cache: 

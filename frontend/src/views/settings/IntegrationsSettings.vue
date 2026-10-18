@@ -545,6 +545,17 @@ const availableIntegrations = computed<IntegrationCard[]>(() => [
     connectAction: () => router.push('/settings/ticketing'),
     disconnectAction: () => router.push('/settings/ticketing')
   },
+  {
+    id: 'webhooks',
+    name: 'Custom Webhooks',
+    description: "Send ticket-created and rating events to n8n, Make, Zapier or any HTTP endpoint. Configured per agent under the agent's Integrations tab.",
+    logo: chattermateLogo,
+    category: 'SUPPORT',
+    color: 'lime',
+    connected: true,
+    connectAction: () => router.push('/agents'),
+    disconnectAction: () => router.push('/agents')
+  },
   // Future integrations
   {
     id: 'zendesk',

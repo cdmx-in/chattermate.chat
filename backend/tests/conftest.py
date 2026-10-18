@@ -380,3 +380,15 @@ def _reset_channel_hooks():
     """No test leaks an extension hook it registered into the next one."""
     yield
     app_hooks.reset()
+
+
+@pytest.fixture(autouse=True)
+def _s3_is_plain_aws_unless_opted_in(monkeypatch):
+    """The S3 tests describe AWS behaviour; a developer's .env that points at an
+    S3-compatible endpoint (MinIO) must not change what they exercise. Tests for
+    endpoint mode set S3_ENDPOINT_URL themselves (see tests/core/test_s3.py)."""
+    from app.core.s3 import get_s3_client
+    monkeypatch.setattr(settings, "S3_ENDPOINT_URL", None)
+    get_s3_client.cache_clear()
+    yield
+    get_s3_client.cache_clear()

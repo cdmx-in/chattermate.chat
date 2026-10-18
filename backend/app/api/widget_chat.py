@@ -74,6 +74,8 @@ try:
 except ImportError:
     HAS_ENTERPRISE = False
 
+# Import Nova Guardrails
+from app.utils.nova_guardrails import check_nova_guardrails, NOVA_AVAILABLE
 from app.utils.sanitize import sanitize_message
 
 router = APIRouter()
@@ -569,6 +571,48 @@ async def handle_widget_chat(sid, data):
         elif ai_replies_enabled and active_session.status == SessionStatus.OPEN and active_session.user_id is None: # open and user has not taken over
             await _emit_bot_typing(session_id)
             logger.debug(f"Initializing chat agent for model {session['ai_config'].model_type}")
+            
+            # === Nova Guardrails Check for AI Mode ===
+            # Get agent to check if guardrails are enabled
+            try:
+                agent_for_guardrails = AgentRepository(db).get_agent(session['agent_id'])
+                if agent_for_guardrails and agent_for_guardrails.enable_guardrails:
+                    logger.debug(f"Nova Guardrails enabled for agent {session['agent_id']}")
+                    guardrail_types = agent_for_guardrails.guardrail_types or ['jailbreak', 'prompt_injection', 'harmful_content']
+                    sensitivity = agent_for_guardrails.guardrail_sensitivity or 0.7
+                    pii_action = agent_for_guardrails.guardrail_pii_action or 'block'
+                    
+                    # Run guardrails check (returns tuple: passed, results_list, block_message)
+                    passed, results_list, block_message = check_nova_guardrails(
+                        text=message,
+                        guardrail_types=guardrail_types,
+                        pii_action=pii_action,
+                        sensitivity=sensitivity
+                    )
+                    
+                    if not passed:
+                        # Guardrails blocked the message
+                        violations = [r.get('guardrail_type', 'Unknown') for r in results_list if not r.get('passed', True)]
+                        logger.warning(f"Nova Guardrails blocked message for session {session_id}: {violations}")
+                        
+                        # Emit blocked response
+                        await sio.emit('chat_response', {
+                            'message': f"🛡️ **Security Notice**: {block_message}",
+                            'session_id': session_id,
+                            'blocked_by_guardrails': True,
+                            'guardrail_violations': violations
+                        }, room=session_id, namespace='/widget')
+                        return
+                    
+                    # Check if any PII was redacted
+                    for result in results_list:
+                        if result.get('guardrail_type') == 'PII' and result.get('redacted_text'):
+                            message = result['redacted_text']
+                            logger.info(f"PII redacted from message for session {session_id}")
+            except Exception as guardrail_error:
+                logger.warning(f"Guardrails check failed (continuing without guardrails): {str(guardrail_error)}")
+            # === End Nova Guardrails Check ===
+            
             # Initialize chat agent with async factory method for MCP tools support
             chat_agent = await ChatAgent.create_async(
                 api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
@@ -1516,6 +1560,41 @@ async def handle_rating_submission(sid, data):
                 'rating': rating,
                 'feedback': feedback
             }, room=user_room, namespace='/agent')
+        
+        # Trigger rating_received webhooks
+        try:
+            from app.repositories.webhook import WebhookRepository
+            from app.services.webhook_service import WebhookService
+            
+            webhook_repo = WebhookRepository(db)
+            webhooks = webhook_repo.get_webhooks_by_agent(agent_id=session_data.agent_id)
+            
+            for webhook in webhooks:
+                if not webhook.is_active:
+                    continue
+                
+                event_types = webhook.event_types or ["ticket_created"]
+                if "rating_received" not in event_types:
+                    continue
+                
+                # Prepare webhook payload
+                payload = {
+                    "event": "rating_received",
+                    "session_id": session_id,
+                    "customer_id": str(customer_id),
+                    "agent_id": str(session_data.agent_id),
+                    "user_id": str(session_data.user_id) if session_data.user_id else None,
+                    "rating": rating,
+                    "feedback": feedback,
+                    "timestamp": datetime.datetime.utcnow().isoformat()
+                }
+                
+                # Execute webhook asynchronously
+                webhook_service = WebhookService()
+                asyncio.create_task(webhook_service.execute_webhook(webhook, payload))
+                logger.info(f"Triggered rating_received webhook {webhook.id} for session {session_id}")
+        except Exception as webhook_error:
+            logger.error(f"Error triggering rating_received webhooks: {str(webhook_error)}")
 
     except ValueError as e:
         logger.error(f"Rating submission error for sid {sid}: {str(e)}")

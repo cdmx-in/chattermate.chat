@@ -26,6 +26,7 @@ from app.api import help_center as help_center_api
 from app.api import help_center_images
 from app.api import channels as channels_api
 from app.api import webhooks as channel_webhooks
+from app.api import webhook as custom_webhook_api
 # Import widget_chat to register socket.io event handlers for /widget namespace
 from app.api import widget_chat  # noqa: F401 - imported for side effects (socket.io handlers registration)
 from fastapi import FastAPI, BackgroundTasks
@@ -289,6 +290,12 @@ app.include_router(
 )
 
 app.include_router(
+    custom_webhook_api.router,
+    prefix=f"{settings.API_V1_STR}/integrations",
+    tags=["webhooks"]
+)
+
+app.include_router(
     workflow.router,
     prefix=f"{settings.API_V1_STR}/workflow",
     tags=["workflow"]
@@ -298,6 +305,12 @@ app.include_router(
     workflow_node.router,
     prefix=f"{settings.API_V1_STR}/workflow",
     tags=["workflow_node"]
+)
+
+app.include_router(
+    file_upload.router,
+    prefix=f"{settings.API_V1_STR}/files",
+    tags=["files"]
 )
 
 app.include_router(

@@ -48,12 +48,21 @@ if (hasEnterpriseModule) {
 }
 
 const api = axios.create({
-  baseURL: getApiUrl(),
   withCredentials: true, // Important for cookies
   headers: {
     'Content-Type': 'application/json',
   },
 })
+
+// Request interceptor to set dynamic baseURL (ensures APP_CONFIG is loaded)
+api.interceptors.request.use(
+  (config) => {
+    const apiUrl = getApiUrl()
+    config.baseURL = apiUrl
+    return config
+  },
+  (error) => Promise.reject(error)
+)
 
 // Request interceptor to add session token for Shopify embedded app
 api.interceptors.request.use(

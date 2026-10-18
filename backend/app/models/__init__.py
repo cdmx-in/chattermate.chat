@@ -68,6 +68,8 @@ from app.models.crm import (
 )
 from app.models.notification_settings import UserNotificationSettings
 from app.models.guardrail_event import GuardrailEvent
+from app.models.widget_app import WidgetApp
+from app.models.webhook import CustomWebhook, WebhookLog
 
 
 
@@ -147,4 +149,7 @@ __all__ = [
     "CrmConnectionStatus",
     "CrmSyncJobStatus",
     "GuardrailEvent",
+    "WidgetApp",
+    "CustomWebhook",
+    "WebhookLog",
 ]
