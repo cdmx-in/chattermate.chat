@@ -173,7 +173,6 @@ class Settings(BaseSettings):
     KB_MAX_RETRIES: int = int(os.getenv("KB_MAX_RETRIES", "3"))
     KB_MAX_WORKERS: int = int(os.getenv("KB_MAX_WORKERS", "5"))
     KB_BATCH_SIZE: int = int(os.getenv("KB_BATCH_SIZE", "5"))
-    KB_OPTIMIZE_ON: int = int(os.getenv("KB_OPTIMIZE_ON", "1000"))
 
     # Hard ceiling on a single agent run (model + tool calls). A stuck run is
     # cancelled instead of hanging the chat handler forever (issue #269).

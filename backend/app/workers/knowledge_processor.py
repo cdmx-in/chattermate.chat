@@ -109,9 +109,36 @@ def _sync_vector_agent_links(db, queue_item) -> None:
         )
 
 
+async def _notify(db, queue_item, kind: NotificationType, title: str, message: str) -> None:
+    """Tell whoever added the source, in the app and by push. Never fatal: the
+    source's own status must not depend on it. A source added without a user
+    (a Shopify install queues the shop's site) has no one to tell."""
+    if not queue_item.user_id:
+        logger.info(f"Queue item {queue_item.id} has no user to notify ({kind.value})")
+        return
+    try:
+        notification = Notification(
+            user_id=queue_item.user_id,
+            type=kind,
+            title=title,
+            message=message,
+            # The column is notification_metadata; the old metadata=
+            # kwarg silently shadowed Base.metadata and stored nothing.
+            notification_metadata={"queue_id": queue_item.id}
+        )
+        db.add(notification)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Could not create {kind.value} notification for queue item {queue_item.id}: {e}")
+        return
+    await send_fcm_notification(queue_item.user_id, notification, db)
+
+
 async def process_queue_item(queue_item_id: int):
     """Process a single queue item"""
     with SessionLocal() as db:
+        queue_item = None
         try:
             queue_repo = KnowledgeQueueRepository(db)
             queue_item = queue_repo.get_by_id(queue_item_id)
@@ -138,22 +165,9 @@ async def process_queue_item(queue_item_id: int):
 
                 _sync_vector_agent_links(db, queue_item)
 
-                # Create notification for successful processing
                 user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
-                notification = Notification(
-                    user_id=queue_item.user_id,
-                    type=NotificationType.KNOWLEDGE_PROCESSED,
-                    title="Knowledge Processing Complete",
-                    message=f"Successfully processed {user_friendly_name}",
-                    # The column is notification_metadata; the old metadata=
-                    # kwarg silently shadowed Base.metadata and stored nothing.
-                    notification_metadata={"queue_id": queue_item.id}
-                )
-                db.add(notification)
-                db.commit()
-
-                # Send FCM notification
-                await send_fcm_notification(queue_item.user_id, notification, db)
+                await _notify(db, queue_item, NotificationType.KNOWLEDGE_PROCESSED,
+                              "Knowledge Processing Complete", f"Successfully processed {user_friendly_name}")
 
                 # Auto-draft FAQs from the new source for orgs using the help
                 # center. Fully non-fatal — even an import failure of the FAQ
@@ -169,27 +183,23 @@ async def process_queue_item(queue_item_id: int):
 
         except Exception as e:
             logger.error(f"Error processing queue item {queue_item_id}: {str(e)}")
+            if queue_item is None:
+                raise
+            # The session may hold a failed flush: start clean, record the
+            # failure first, and only then tell anyone about it.
+            db.rollback()
             try:
                 queue_item.status = QueueStatus.FAILED
                 # Persist the reason so the UI can show why it failed.
                 queue_item.error = str(e)
-
-                # Create notification for failed processing
-                user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
-                notification = Notification(
-                    user_id=queue_item.user_id,
-                    type=NotificationType.KNOWLEDGE_FAILED,
-                    title="Knowledge Processing Failed",
-                    message=f"Failed to process {user_friendly_name}: {str(e)}",
-                    notification_metadata={"queue_id": queue_item.id}
-                )
-                db.add(notification)
                 db.commit()
-
-                # Send FCM notification for failure
-                await send_fcm_notification(queue_item.user_id, notification, db)
-            except Exception as notify_err:
-                logger.error(f"Error creating failure notification: {notify_err}")
+            except Exception as status_err:
+                db.rollback()
+                logger.error(f"Could not mark queue item {queue_item_id} failed: {status_err}")
+            else:
+                user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
+                await _notify(db, queue_item, NotificationType.KNOWLEDGE_FAILED,
+                              "Knowledge Processing Failed", f"Failed to process {user_friendly_name}: {str(e)}")
 
             raise
 
@@ -235,12 +245,20 @@ async def run_processor():
 IDLE_POLL_SECONDS = 10
 
 
-# Main entry point for running as a standalone service
-if __name__ == "__main__":
-    import time
-    
+def run_service():
+    """Run the knowledge and FAQ loops as a standalone service (what the
+    knowledge_processor container runs: python -m app.workers.knowledge_processor)."""
     logger.info("Starting knowledge processor service")
-    
+
+    # Pushes for processed sources go out from this process: without this the
+    # first one failed with "The default Firebase app does not exist"
+    # (run_knowledge_processor.py did it; this entry point, which prod runs, didn't).
+    from app.services.firebase import initialize_firebase
+    try:
+        initialize_firebase()
+    except Exception as e:
+        logger.error(f"Firebase unavailable, push notifications are off: {e}")
+
     async def processor_loop():
         while True:
             try:
@@ -264,6 +282,9 @@ if __name__ == "__main__":
             logger.error(f"FAQ processor unavailable, running knowledge only: {e}")
         await asyncio.gather(*tasks)
 
-    # Run both loops
     asyncio.run(main())
-    
+
+
+# Main entry point for running as a standalone service
+if __name__ == "__main__":
+    run_service()

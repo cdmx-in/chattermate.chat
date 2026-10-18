@@ -389,19 +389,15 @@ class TestEnhancedWebsiteKnowledgeBase:
         # When upsert is False, no upsert should be called
         mock_vector_db.upsert.assert_not_called()
     
-    def test_load_with_optimization(self, mock_vector_db, mock_reader):
-        """Test load method with optimization"""
-        kb = EnhancedWebsiteKnowledgeBase(
-            urls=TEST_URLS,
-            reader=mock_reader,
-            optimize_on=1  # Set low threshold to trigger optimization
-        )
+    def test_load_never_builds_an_approximate_index(self, mock_vector_db, mock_reader):
+        """Agent searches filter by agent_id; an HNSW/IVFFlat index would filter
+        after choosing candidates and could return fewer results. Exact search only."""
+        kb = EnhancedWebsiteKnowledgeBase(urls=TEST_URLS, reader=mock_reader)
         kb.vector_db = mock_vector_db
-        
+
         kb.load()
-        
-        # Should call optimize after inserting documents
-        mock_vector_db.optimize.assert_called_once()
+
+        mock_vector_db.optimize.assert_not_called()
     
     def test_load_with_error_handling(self, mock_vector_db, mock_reader):
         """Test load method error handling"""
