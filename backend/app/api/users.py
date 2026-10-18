@@ -19,9 +19,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.security import HTTPBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from typing import List, Optional
-import json
 import os
-from urllib.parse import quote
 from sqlalchemy.sql import func
 from uuid import UUID
 
@@ -34,6 +32,7 @@ from app.core.security import validate_password_strength
 from app.core.auth import INBOX_PERMISSIONS, get_current_user, request_token, require_any_permission, require_permissions
 from app.services.auth_sessions import (
     REFRESH, issue_tokens, live_payload, revoke_session, revoke_user_sessions, session_id_of,
+    session_user_payload, set_session_cookies,
 )
 from app.core.logger import get_logger
 from app.repositories.user import UserRepository
@@ -520,39 +519,7 @@ async def login(
         # Get role info
         role = db.query(Role).filter(Role.id == user.role_id).first()
 
-        # Set secure cookies
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=1800  # 30 minutes
-        )
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=604800  # 7 days
-        )
-
-        # Set session data with role information
-        user_info = json.dumps({
-            "id": str(user.id),
-            "email": user.email,
-            "full_name": user.full_name,
-            "organization_id": str(user.organization_id),
-            "role": role.to_dict() if role else None
-        }, default=str)
-        response.set_cookie(
-            key="user_info",
-            value=quote(user_info),  # URL encode the JSON string
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            secure=True,  # Required when samesite="none"
-            max_age=604800  # 7 days
-        )
+        set_session_cookies(response, user, role, access_token, refresh_token)
 
         # Handle Shopify shop update if shop_id is provided in query params
         shop_id = request.query_params.get('shop_id')
@@ -611,17 +578,7 @@ async def login(
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "full_name": user.full_name,
-                "organization_id": user.organization_id,
-                "profile_pic": await get_s3_signed_url(user.profile_pic) if settings.S3_FILE_STORAGE and user.profile_pic else user.profile_pic,
-                "is_online": user.is_online,
-                "last_seen": user.last_seen,
-                "is_active": user.is_active,
-                "role": role.to_dict() if role else None
-            }
+            "user": session_user_payload(user, role),
         }
 
     except HTTPException:
@@ -698,55 +655,13 @@ async def refresh_token(
 
         role = db.query(Role).filter(Role.id == user.role_id).first()
 
-        # Set secure cookies
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=1800  # 30 minutes
-        )
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=604800  # 7 days
-        )
-
-        # Set session data
-        user_info = json.dumps({
-            "id": str(user.id),
-            "email": user.email,
-            "full_name": user.full_name,
-            "organization_id": str(user.organization_id),
-            "role": role.to_dict() if role else None
-        }, default=str)
-        response.set_cookie(
-            key="user_info",
-            value=quote(user_info),  # URL encode the JSON string
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            secure=True,  # Required when samesite="none"
-            max_age=604800  # 7 days
-        )
+        set_session_cookies(response, user, role, access_token, refresh_token)
 
         return {
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
-            "user": {
-                "id": user.id,
-                "email": user.email,
-                "full_name": user.full_name,
-                "organization_id": user.organization_id,
-                "profile_pic": await get_s3_signed_url(user.profile_pic) if settings.S3_FILE_STORAGE and user.profile_pic else user.profile_pic,
-                "is_online": user.is_online,
-                "last_seen": user.last_seen,
-                "is_active": user.is_active,
-                "role": role.to_dict() if role else None
-            }
+            "user": session_user_payload(user, role),
         }
 
     except HTTPException:

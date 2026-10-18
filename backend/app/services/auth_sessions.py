@@ -35,6 +35,13 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+import json
+from urllib.parse import quote
+
+from fastapi import Response
+
+from app.core.config import settings
+from app.core.s3 import sign_s3_url
 from app.core.security import create_access_token, create_refresh_token, verify_token
 from app.models.auth_session import AuthSession
 
@@ -122,3 +129,43 @@ def _as_uuid(value) -> Optional[UUID]:
         return UUID(str(value))
     except (TypeError, ValueError):
         return None
+
+
+# Cookie lifetimes: the access token is short-lived, the refresh token and the
+# readable user_info blob last a week.
+ACCESS_COOKIE_MAX_AGE = 30 * 60
+REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60
+
+
+def set_session_cookies(response: Response, user, role, access_token: str, refresh_token: str) -> None:
+    """Install a dashboard session on `response`: the two httpOnly JWT cookies
+    and the user_info blob the dashboard may read. One place for the three
+    sign-in paths (password login, token refresh, organization signup, SSO),
+    so a cookie attribute cannot drift between them."""
+    cookie = dict(secure=True, samesite="none")  # cross-site for the Shopify embedded app
+    response.set_cookie("access_token", access_token, httponly=True, max_age=ACCESS_COOKIE_MAX_AGE, **cookie)
+    response.set_cookie("refresh_token", refresh_token, httponly=True, max_age=REFRESH_COOKIE_MAX_AGE, **cookie)
+    user_info = json.dumps({
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "organization_id": str(user.organization_id),
+        "role": role.to_dict() if role else None,
+    }, default=str)
+    response.set_cookie("user_info", quote(user_info), max_age=REFRESH_COOKIE_MAX_AGE, **cookie)
+
+
+def session_user_payload(user, role) -> dict:
+    """The `user` object a sign-in answers with, with the profile picture
+    signed for delivery."""
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "organization_id": user.organization_id,
+        "profile_pic": sign_s3_url(user.profile_pic) if settings.S3_FILE_STORAGE and user.profile_pic else user.profile_pic,
+        "is_online": user.is_online,
+        "last_seen": user.last_seen,
+        "is_active": user.is_active,
+        "role": role.to_dict() if role else None,
+    }

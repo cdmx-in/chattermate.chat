@@ -15,9 +15,10 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { authService } from '@/services/auth'
+import { ssoService, type SsoProvider } from '@/services/sso'
 import { resolveLandingRoute } from '@/router/landing'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import { useForgotPassword } from '@/composables/useForgotPassword'
@@ -39,6 +40,8 @@ const email = ref('')
 const password = ref('')
 const error = ref('')
 const isLoading = ref(false)
+// Single sign-on providers the backend is configured for; none means no buttons.
+const ssoProviders = ref<SsoProvider[]>([])
 
 // Check if enterprise module is available
 const { hasEnterpriseModule } = useEnterpriseFeatures()
@@ -74,135 +77,137 @@ const goBackToEmailStep = forgotPassword?.goBackToEmailStep ?? (() => {})
 // not even registered, so the user silently ended up on /ai-agents instead.
 const getInitialRoute = () => resolveLandingRoute()
 
+// Where to go once a session exists. Shared by password login and the SSO
+// return leg, so both honour the Shopify flows and the ?redirect= parameter.
+const continueAfterLogin = () => {
+    // Check if this is Shopify flow (new managed installation)
+    const urlParams = new URLSearchParams(window.location.search)
+    const isShopifyFlow = urlParams.get('shopify_flow') === '1'
+    const shopId = urlParams.get('shop_id')
+    const returnTo = urlParams.get('return_to')
+
+    if (isShopifyFlow && shopId) {
+        console.log('🔗 Shopify flow detected, linking organization')
+
+        try {
+
+
+            // If return_to is specified, redirect there
+            if (returnTo) {
+                console.log('📍 Redirecting to return_to:', returnTo)
+                window.location.href = returnTo
+                return
+            }
+        } catch (linkError: any) {
+            console.error('❌ Failed to link organization:', linkError)
+            error.value = linkError.response?.data?.detail || 'Failed to link organization'
+            isLoading.value = false
+            return
+        }
+    }
+    
+    // Check if this is an OLD embedded Shopify login (opened in popup) - for backward compatibility
+    const isEmbedded = router.currentRoute.value.query.embedded === 'true'
+    const legacyShopId = router.currentRoute.value.query.shop_id as string
+    
+    if (isEmbedded && legacyShopId && window.opener) {
+        // This is a popup for Shopify embedded app (old flow)
+        console.log('Login successful in popup, notifying parent window')
+        
+        // Show success state
+        isLoading.value = true
+        error.value = ''
+        
+        // Notify the parent window of successful login
+        if (window.opener && !window.opener.closed) {
+            window.opener.postMessage(
+                { type: 'login_success', shop_id: legacyShopId },
+                window.location.origin
+            )
+            
+            // Close the popup after a brief delay to ensure message is sent
+            setTimeout(() => {
+                window.close()
+            }, 300)
+        } else {
+            // If opener is gone, just close the window
+            setTimeout(() => {
+                window.close()
+            }, 300)
+        }
+        
+        return
+    }
+   
+    // Check for Shopify flow (new simplified flow)
+    if (router.currentRoute.value.query.shopify_flow === '1') {
+        const shop = router.currentRoute.value.query.shop as string
+        const shopId = router.currentRoute.value.query.shop_id as string
+        const host = router.currentRoute.value.query.host as string
+        const returnTo = router.currentRoute.value.query.return_to as string
+
+        // Redirect to auth complete page
+        const query: any = { shop, shop_id: shopId, host }
+        if (returnTo) {
+            query.return_to = returnTo
+        }
+
+        router.push({
+            path: '/shopify/auth-complete',
+            query
+        })
+        return
+    }
+   
+    // Check if there's a Shopify redirect pending in localStorage (legacy flow)
+    const shopifyRedirectData = localStorage.getItem('shopifyRedirect')
+    if (shopifyRedirectData) {
+        try {
+            const redirectInfo = JSON.parse(shopifyRedirectData)
+            // Clear the stored redirect
+            localStorage.removeItem('shopifyRedirect')
+            
+            // Build the full URL with all query parameters
+            const queryParams = new URLSearchParams()
+            for (const [key, value] of Object.entries(redirectInfo)) {
+                queryParams.append(key, value as string)
+            }
+            
+            // Redirect to the backend Shopify auth endpoint
+            window.location.href = apiPath(`/shopify/auth?${queryParams.toString()}`)
+            return // Don't do the normal navigation
+        } catch (e) {
+            console.error('Failed to parse shopifyRedirect data:', e)
+            // Clear invalid data
+            localStorage.removeItem('shopifyRedirect')
+        }
+    }
+
+    // Check for redirect query parameter (internal frontend route)
+    const redirectPath = router.currentRoute.value.query.redirect as string
+    if (redirectPath) {
+        // If it's an internal route (starts with /), use router.push
+        if (redirectPath.startsWith('/')) {
+            router.push(redirectPath)
+            return
+        }
+        // Otherwise treat as API redirect (legacy behavior)
+        window.location.href = `${getApiUrl()}${redirectPath}`
+        return
+    }
+
+    // Determine initial route based on permissions
+    const initialRoute = getInitialRoute()
+    router.push(initialRoute)
+}
+
 const handleLogin = async () => {
     try {
         isLoading.value = true
         error.value = ''
-
         await authService.login(email.value, password.value)
-
         trackLogin('email')
-
-        // Check if this is Shopify flow (new managed installation)
-        const urlParams = new URLSearchParams(window.location.search)
-        const isShopifyFlow = urlParams.get('shopify_flow') === '1'
-        const shopId = urlParams.get('shop_id')
-        const returnTo = urlParams.get('return_to')
-
-        if (isShopifyFlow && shopId) {
-            console.log('🔗 Shopify flow detected, linking organization')
-
-            try {
-
-
-                // If return_to is specified, redirect there
-                if (returnTo) {
-                    console.log('📍 Redirecting to return_to:', returnTo)
-                    window.location.href = returnTo
-                    return
-                }
-            } catch (linkError: any) {
-                console.error('❌ Failed to link organization:', linkError)
-                error.value = linkError.response?.data?.detail || 'Failed to link organization'
-                isLoading.value = false
-                return
-            }
-        }
-        
-        // Check if this is an OLD embedded Shopify login (opened in popup) - for backward compatibility
-        const isEmbedded = router.currentRoute.value.query.embedded === 'true'
-        const legacyShopId = router.currentRoute.value.query.shop_id as string
-        
-        if (isEmbedded && legacyShopId && window.opener) {
-            // This is a popup for Shopify embedded app (old flow)
-            console.log('Login successful in popup, notifying parent window')
-            
-            // Show success state
-            isLoading.value = true
-            error.value = ''
-            
-            // Notify the parent window of successful login
-            if (window.opener && !window.opener.closed) {
-                window.opener.postMessage(
-                    { type: 'login_success', shop_id: legacyShopId },
-                    window.location.origin
-                )
-                
-                // Close the popup after a brief delay to ensure message is sent
-                setTimeout(() => {
-                    window.close()
-                }, 300)
-            } else {
-                // If opener is gone, just close the window
-                setTimeout(() => {
-                    window.close()
-                }, 300)
-            }
-            
-            return
-        }
-       
-        // Check for Shopify flow (new simplified flow)
-        if (router.currentRoute.value.query.shopify_flow === '1') {
-            const shop = router.currentRoute.value.query.shop as string
-            const shopId = router.currentRoute.value.query.shop_id as string
-            const host = router.currentRoute.value.query.host as string
-            const returnTo = router.currentRoute.value.query.return_to as string
-
-            // Redirect to auth complete page
-            const query: any = { shop, shop_id: shopId, host }
-            if (returnTo) {
-                query.return_to = returnTo
-            }
-
-            router.push({
-                path: '/shopify/auth-complete',
-                query
-            })
-            return
-        }
-       
-        // Check if there's a Shopify redirect pending in localStorage (legacy flow)
-        const shopifyRedirectData = localStorage.getItem('shopifyRedirect')
-        if (shopifyRedirectData) {
-            try {
-                const redirectInfo = JSON.parse(shopifyRedirectData)
-                // Clear the stored redirect
-                localStorage.removeItem('shopifyRedirect')
-                
-                // Build the full URL with all query parameters
-                const queryParams = new URLSearchParams()
-                for (const [key, value] of Object.entries(redirectInfo)) {
-                    queryParams.append(key, value as string)
-                }
-                
-                // Redirect to the backend Shopify auth endpoint
-                window.location.href = apiPath(`/shopify/auth?${queryParams.toString()}`)
-                return // Don't do the normal navigation
-            } catch (e) {
-                console.error('Failed to parse shopifyRedirect data:', e)
-                // Clear invalid data
-                localStorage.removeItem('shopifyRedirect')
-            }
-        }
-
-        // Check for redirect query parameter (internal frontend route)
-        const redirectPath = router.currentRoute.value.query.redirect as string
-        if (redirectPath) {
-            // If it's an internal route (starts with /), use router.push
-            if (redirectPath.startsWith('/')) {
-                router.push(redirectPath)
-                return
-            }
-            // Otherwise treat as API redirect (legacy behavior)
-            window.location.href = `${getApiUrl()}${redirectPath}`
-            return
-        }
-
-        // Determine initial route based on permissions
-        const initialRoute = getInitialRoute()
-        router.push(initialRoute)
-
+        continueAfterLogin()
     } catch (err) {
         console.log(err)
         // authService.login rethrows the backend's detail as a plain Error, so
@@ -214,6 +219,45 @@ const handleLogin = async () => {
         isLoading.value = false
     }
 }
+
+const startSso = (provider: SsoProvider) => {
+    // Keep the ?redirect= destination through the provider round trip.
+    const redirect = router.currentRoute.value.query.redirect
+    const next = typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/'
+    isLoading.value = true
+    window.location.href = ssoService.startUrl(provider.key, next)
+}
+
+// The SSO callback lands here with the cookies set and `?sso=ok` (or `?sso_error=`).
+const finishSso = async () => {
+    const query = router.currentRoute.value.query
+    if (typeof query.sso_error === 'string') {
+        error.value = ssoService.errorMessage(query.sso_error)
+        return
+    }
+    if (query.sso !== 'ok') return
+    try {
+        isLoading.value = true
+        await ssoService.completeSignIn()
+        trackLogin('sso')
+        const next = typeof query.next === 'string' && query.next.startsWith('/') && !query.next.startsWith('//') ? query.next : '/'
+        if (next !== '/') {
+            router.push(next)
+            return
+        }
+        continueAfterLogin()
+    } catch (err) {
+        console.error('SSO completion error:', err)
+        error.value = ssoService.errorMessage(null)
+    } finally {
+        isLoading.value = false
+    }
+}
+
+onMounted(async () => {
+    ssoProviders.value = await ssoService.listProviders()
+    await finishSso()
+})
 
 const navigateToSignup = () => {
     // Preserve embedded, shop_id, return_to, redirect query params if present
@@ -305,6 +349,31 @@ const handleVerifyAndResetPassword = async () => {
                     <span v-if="isLoading">{{ router.currentRoute.value.query.embedded === 'true' ? 'Connecting…' : 'Signing in…' }}</span>
                     <span v-else>Sign In</span>
                 </button>
+
+                <template v-if="ssoProviders.length">
+                    <div class="auth-divider" aria-hidden="true"><span>or</span></div>
+                    <button
+                        v-for="provider in ssoProviders"
+                        :key="provider.key"
+                        type="button"
+                        class="sso-btn"
+                        :data-provider="provider.key"
+                        :disabled="isLoading"
+                        @click="startSso(provider)"
+                    >
+                        <svg v-if="provider.key === 'google'" class="sso-logo" viewBox="0 0 24 24" aria-hidden="true">
+                            <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.4h6.5c-.3 1.5-1.1 2.7-2.4 3.6v3h3.9c2.2-2.1 3.5-5.1 3.5-8.7z"/>
+                            <path fill="#34A853" d="M12 24c3.2 0 6-1.1 8-2.9l-3.9-3c-1.1.7-2.5 1.2-4.1 1.2-3.1 0-5.8-2.1-6.7-5H1.2v3.1C3.2 21.3 7.3 24 12 24z"/>
+                            <path fill="#FBBC05" d="M5.3 14.3c-.5-1.5-.5-3.1 0-4.6V6.6H1.2a12 12 0 0 0 0 10.8l4.1-3.1z"/>
+                            <path fill="#EA4335" d="M12 4.8c1.8 0 3.3.6 4.6 1.8l3.4-3.4C17.9 1.2 15.2 0 12 0 7.3 0 3.2 2.7 1.2 6.6l4.1 3.1c.9-2.9 3.6-4.9 6.7-4.9z"/>
+                        </svg>
+                        <svg v-else-if="provider.key === 'microsoft'" class="sso-logo" viewBox="0 0 24 24" aria-hidden="true">
+                            <path fill="#F25022" d="M1 1h10.5v10.5H1z"/><path fill="#7FBA00" d="M12.5 1H23v10.5H12.5z"/>
+                            <path fill="#00A4EF" d="M1 12.5h10.5V23H1z"/><path fill="#FFB900" d="M12.5 12.5H23V23H12.5z"/>
+                        </svg>
+                        Continue with {{ provider.label }}
+                    </button>
+                </template>
 
                 <p v-if="hasEnterpriseModule" class="signup-prompt">
                     Don't have an account?
@@ -654,6 +723,42 @@ const handleVerifyAndResetPassword = async () => {
 }
 
 .auth-submit:hover:not(:disabled) { opacity: 0.88; }
+
+.auth-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--muted);
+    font-size: 13px;
+}
+.auth-divider::before,
+.auth-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--o12);
+}
+
+.sso-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 13px 15px;
+    background: var(--o04);
+    border: 1px solid var(--o12);
+    border-radius: 12px;
+    color: var(--text);
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background 0.18s;
+}
+.sso-btn:hover:not(:disabled) { background: var(--o06); }
+.sso-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.sso-logo { width: 18px; height: 18px; flex: none; }
 .auth-submit:disabled { opacity: 0.45; cursor: not-allowed; }
 
 .signup-prompt {

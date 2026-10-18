@@ -28,6 +28,17 @@ vi.mock('@/services/auth', () => ({
   }
 }))
 
+// SSO: no providers unless a test configures some
+const ssoProviders = vi.hoisted(() => ({ value: [] as { key: string; label: string }[] }))
+vi.mock('@/services/sso', () => ({
+  ssoService: {
+    listProviders: vi.fn(async () => ssoProviders.value),
+    startUrl: vi.fn((provider: string, next: string) => `http://api.test/api/v1/sso/${provider}/start?next=${encodeURIComponent(next)}`),
+    completeSignIn: vi.fn(),
+    errorMessage: vi.fn((code: string | null) => (code === 'no_account' ? 'No team account matches that e-mail address.' : 'Single sign-on failed.')),
+  },
+}))
+
 // The landing route is resolved from the real permission checks reading the
 // cached user, so this drives the user rather than mocking the checks away.
 const currentUser = vi.hoisted(() => ({ value: null as unknown }))
@@ -82,6 +93,7 @@ vi.mock('@/composables/useNotifications', () => ({
 
 // Import the mocked modules
 import { authService } from '@/services/auth'
+import { ssoService } from '@/services/sso'
 import { userWithPermissions } from '../fixtures/permissions'
 
 describe('LoginView', () => {
@@ -113,6 +125,7 @@ describe('LoginView', () => {
     
     // A user with no grants unless a test says otherwise
     currentUser.value = userWithPermissions([])
+    ssoProviders.value = []
     
     wrapper = mount(LoginView, {
       global: {
@@ -253,4 +266,57 @@ describe('LoginView', () => {
     
     expect(router.currentRoute.value.path).toBe('/settings/user')
   })
-}) 
+
+  // --- single sign-on -------------------------------------------------------
+
+  const remountAt = async (path: string) => {
+    wrapper.unmount()
+    await router.push(path)
+    wrapper = mount(LoginView, { global: { plugins: [router], stubs: { RouterView: true } } })
+    await flushPromises()
+  }
+
+  it('shows no SSO buttons when no provider is configured', async () => {
+    await flushPromises()
+    expect(wrapper.find('.sso-btn').exists()).toBe(false)
+    expect(wrapper.find('.auth-divider').exists()).toBe(false)
+  })
+
+  it('offers one button per configured provider and sends the browser to the backend', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }, { key: 'microsoft', label: 'Microsoft' }]
+    await remountAt('/?redirect=/conversations')
+    const buttons = wrapper.findAll('.sso-btn')
+    expect(buttons.map(b => b.text())).toEqual(['Continue with Google', 'Continue with Microsoft'])
+
+    const assign = vi.fn()
+    const original = window.location
+    Object.defineProperty(window, 'location', { value: { ...original, set href(url: string) { assign(url) } }, writable: true, configurable: true })
+    try {
+      await buttons[1].trigger('click')
+      expect(ssoService.startUrl).toHaveBeenCalledWith('microsoft', '/conversations')
+      expect(assign).toHaveBeenCalledWith('http://api.test/api/v1/sso/microsoft/start?next=%2Fconversations')
+    } finally {
+      Object.defineProperty(window, 'location', { value: original, writable: true, configurable: true })
+    }
+  })
+
+  it('completes a sign-in when the backend sends the browser back with sso=ok', async () => {
+    currentUser.value = userWithPermissions(['manage_agents'])
+    ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
+    await remountAt('/?sso=ok&next=%2F')
+    expect(ssoService.completeSignIn).toHaveBeenCalled()
+    expect(router.currentRoute.value.path).toBe('/ai-agents')
+  })
+
+  it('lands on the requested page after a sign-in that started with ?redirect=', async () => {
+    ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
+    await remountAt('/?sso=ok&next=%2Fconversations')
+    expect(router.currentRoute.value.path).toBe('/conversations')
+  })
+
+  it('explains an sso_error instead of signing in', async () => {
+    await remountAt('/?sso_error=no_account')
+    expect(ssoService.completeSignIn).not.toHaveBeenCalled()
+    expect(wrapper.find('.auth-error').text()).toContain('No team account matches')
+  })
+})
