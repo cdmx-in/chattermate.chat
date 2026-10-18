@@ -236,7 +236,7 @@ services:
       - chattermate-network
 
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     ports:
       - "9310:9000"
       - "9311:9001"
