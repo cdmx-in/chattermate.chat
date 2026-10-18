@@ -25,35 +25,58 @@ import pytest
 from agno.agent import Agent
 from agno.run.response import RunResponse
 
+import app  # noqa: F401 — app/__init__.py, which every process imports first, applies the switches
 from app.core import agno_telemetry
+from app.core.config import Settings, settings
 
 
 @pytest.fixture
-def unset_switches(monkeypatch):
-    for name in agno_telemetry.AGNO_SWITCHES:
+def configured(monkeypatch):
+    """Set the switches as an operator would, and restore the process env after."""
+    for name in (*agno_telemetry.AGNO_SWITCHES, agno_telemetry.AGNO_API_SWITCH):
         monkeypatch.delenv(name, raising=False)
 
+    def configure(**switches):
+        for name in agno_telemetry.AGNO_SWITCHES:
+            monkeypatch.setattr(settings, name, switches.get(name, False))
+        agno_telemetry.apply()
 
-def test_apply_turns_telemetry_and_monitoring_off(unset_switches):
-    agno_telemetry.apply()
+    return configure
+
+
+def test_off_by_default():
+    assert Settings.model_fields["AGNO_TELEMETRY"].default is False
+    assert Settings.model_fields["AGNO_MONITOR"].default is False
+
+
+def test_apply_turns_agnos_reporting_off(configured):
+    configured()
 
     assert os.environ["AGNO_TELEMETRY"] == "false"
     assert os.environ["AGNO_MONITOR"] == "false"
+    assert os.environ["AGNO_API_ENABLED"] == "false"
 
 
-def test_apply_keeps_an_operators_choice(monkeypatch):
-    monkeypatch.setenv("AGNO_TELEMETRY", "true")
+@pytest.mark.parametrize("switch", agno_telemetry.AGNO_SWITCHES)
+def test_an_operator_can_opt_in(configured, switch):
+    configured(**{switch: True})
 
-    agno_telemetry.apply()
+    assert os.environ[switch] == "true"
+    # Their opt-in must still reach agno's API.
+    assert agno_telemetry.AGNO_API_SWITCH not in os.environ
 
-    assert os.environ["AGNO_TELEMETRY"] == "true"
+
+@pytest.mark.parametrize("value, expected", [("true", True), ("TRUE", True), ("false", False), ("0", False)])
+def test_the_setting_comes_from_the_environment_or_env_file(monkeypatch, value, expected):
+    # backend/.env reaches the environment before Settings reads it (config.py's load_dotenv).
+    monkeypatch.setenv("AGNO_TELEMETRY", value)
+
+    assert Settings().AGNO_TELEMETRY is expected
 
 
-def test_the_app_applies_it_on_import():
-    import app  # noqa: F401 — app/__init__.py is what every process imports first
-
-    assert os.environ.get("AGNO_TELEMETRY") == "false"
-    assert os.environ.get("AGNO_MONITOR") == "false"
+def test_the_app_applied_it_on_import():
+    for name in agno_telemetry.AGNO_SWITCHES:
+        assert os.environ[name] == ("true" if getattr(settings, name) else "false")
 
 
 def _finished_agent() -> Agent:
@@ -72,10 +95,10 @@ async def _reports_sent(agent: Agent) -> int:
 
 
 @pytest.mark.asyncio
-async def test_an_agent_built_with_agnos_defaults_reports_nothing(unset_switches):
+async def test_an_agent_built_with_agnos_defaults_reports_nothing(configured):
     """Guards the env names against an agno upgrade: Agent() still defaults to
     telemetry=True, and only these variables switch it off at run time."""
-    agno_telemetry.apply()
+    configured()
     agent = _finished_agent()
     assert agent.telemetry is True  # agno's own default, overridden per run
 
@@ -83,10 +106,9 @@ async def test_an_agent_built_with_agnos_defaults_reports_nothing(unset_switches
 
 
 @pytest.mark.asyncio
-async def test_an_operator_can_still_turn_it_on(monkeypatch):
+async def test_an_opted_in_agent_does_report(configured):
     """The other half of the guard: with telemetry on, the report does go out -
     so a zero above means switched off, not a test that can't see it."""
-    monkeypatch.setenv("AGNO_TELEMETRY", "true")
-    agno_telemetry.apply()
+    configured(AGNO_TELEMETRY=True)
 
     assert await _reports_sent(_finished_agent()) == 2

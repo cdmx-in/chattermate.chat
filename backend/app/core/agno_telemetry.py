@@ -19,20 +19,31 @@ limitations under the License.
 # the run outlives AGENT_RUN_TIMEOUT and the visitor gets an apology instead of
 # an answer - for a report nobody here reads, sent from every install.
 #
-# Off by default. agno re-reads these variables on every run, so setting them
-# once per process covers each Agent, Team and Workflow, wherever it is built.
-# An operator who wants agno's telemetry or monitoring can still set them.
+# Off by default (settings.AGNO_TELEMETRY / AGNO_MONITOR, from the environment
+# or backend/.env). agno reads these variables before each run report, so
+# setting them once per process covers every agent, wherever it is built. With
+# both off, AGNO_API_ENABLED=false also stops agno's other calls to its API
+# (session logging, playground, evals), which ChatterMate never uses.
 #
-# An env var rather than Agent(telemetry=False) because agents are built in
-# many places (chat, transfer, tickets, FAQs, summaries, help center) and in
-# separate worker processes - app/__init__.py calls apply() first thing.
+# Environment variables rather than Agent(telemetry=False) because agents are
+# built in many places (chat, transfer, tickets, FAQs, summaries, help center)
+# and in separate worker processes - app/__init__.py calls apply() first thing.
 
 import os
 
+from app.core.config import settings
+
 AGNO_SWITCHES = ("AGNO_TELEMETRY", "AGNO_MONITOR")
+AGNO_API_SWITCH = "AGNO_API_ENABLED"
+
+
+def _env_flag(enabled: bool) -> str:
+    return "true" if enabled else "false"
 
 
 def apply() -> None:
-    """Turn agno's telemetry and monitoring off unless explicitly set (idempotent)."""
+    """Hand agno the configured telemetry and monitoring switches (idempotent)."""
     for name in AGNO_SWITCHES:
-        os.environ.setdefault(name, "false")
+        os.environ[name] = _env_flag(getattr(settings, name))
+    if not any(getattr(settings, name) for name in AGNO_SWITCHES):
+        os.environ[AGNO_API_SWITCH] = _env_flag(False)

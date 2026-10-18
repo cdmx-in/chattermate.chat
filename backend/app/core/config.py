@@ -179,6 +179,11 @@ class Settings(BaseSettings):
     # cancelled instead of hanging the chat handler forever (issue #269).
     AGENT_RUN_TIMEOUT: int = int(os.getenv("AGENT_RUN_TIMEOUT", "90"))
 
+    # agno's own run reporting to api.agno.com (see app.core.agno_telemetry).
+    # Off unless an operator opts in.
+    AGNO_TELEMETRY: bool = os.getenv("AGNO_TELEMETRY", "false").lower() == "true"
+    AGNO_MONITOR: bool = os.getenv("AGNO_MONITOR", "false").lower() == "true"
+
     # Tool calls allowed in a single turn before the agent must answer from what
     # it already has. Reaching this is no longer fatal — the agent answers without
     # further tools rather than returning nothing (see app.utils.agno_patches) —
