@@ -43,7 +43,7 @@ class TestCreateModel:
             mock_openai.assert_called_once_with(
                 api_key="test-api-key", 
                 id="gpt-4", 
-                max_tokens=2000,
+                max_completion_tokens=2000,
                 response_format={"type": "json_object"}
             )
             assert result == mock_model
@@ -63,7 +63,7 @@ class TestCreateModel:
             mock_openai.assert_called_once_with(
                 api_key="test-api-key", 
                 id="gpt-3.5-turbo", 
-                max_tokens=1000
+                max_completion_tokens=1000
             )
             assert result == mock_model
 
@@ -132,7 +132,7 @@ class TestCreateModel:
             mock_openai.assert_called_once_with(
                 api_key="test-api-key", 
                 id="chattermate-model", 
-                max_tokens=1000
+                max_completion_tokens=1000
             )
             assert result == mock_model
 
@@ -514,9 +514,21 @@ class TestEdgeCases:
             mock_openai.assert_called_once_with(
                 api_key="", 
                 id="", 
-                max_tokens=1000
+                max_completion_tokens=1000
             )
             assert result == mock_model
+
+    def test_create_model_gpt6_switches_reasoning_off_for_tools(self):
+        """gpt-6 ids refuse function tools on chat completions unless
+        reasoning_effort is "none"; older ids must not get the parameter."""
+        with patch('app.utils.agno_utils.OpenAIChat') as mock_openai:
+            agno_utils.create_model(model_type="OPENAI", api_key="k", model_name="gpt-6-luna")
+            mock_openai.assert_called_once_with(
+                api_key="k", id="gpt-6-luna", max_completion_tokens=1000, reasoning_effort="none"
+            )
+        with patch('app.utils.agno_utils.OpenAIChat') as mock_openai:
+            agno_utils.create_model(model_type="OPENAI", api_key="k", model_name="gpt-4o-mini")
+            assert "reasoning_effort" not in mock_openai.call_args.kwargs
 
     def test_create_model_custom_max_tokens(self):
         """Test create_model with custom max_tokens"""
@@ -534,7 +546,7 @@ class TestEdgeCases:
             mock_openai.assert_called_once_with(
                 api_key="test-key", 
                 id="gpt-4", 
-                max_tokens=4000
+                max_completion_tokens=4000
             )
             assert result == mock_model
 
@@ -554,7 +566,7 @@ class TestEdgeCases:
             mock_openai.assert_called_once_with(
                 api_key="test-key", 
                 id="gpt-4", 
-                max_tokens=0
+                max_completion_tokens=0
             )
             assert result == mock_model
 

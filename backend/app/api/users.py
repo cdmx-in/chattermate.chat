@@ -544,7 +544,11 @@ async def login(
             "email": user.email,
             "full_name": user.full_name,
             "organization_id": str(user.organization_id),
-            "role": role.to_dict() if role else None
+            # Compact on purpose: the full role (every permission with its description)
+            # pushed this cookie past the 4 KB response-header buffer of the proxies in
+            # front of the API. Nothing reads the permission list from here; the
+            # dashboard keeps the user from the response body.
+            "role": {"id": str(role.id), "name": role.name} if role else None
         }, default=str)
         response.set_cookie(
             key="user_info",
@@ -722,7 +726,11 @@ async def refresh_token(
             "email": user.email,
             "full_name": user.full_name,
             "organization_id": str(user.organization_id),
-            "role": role.to_dict() if role else None
+            # Compact on purpose: the full role (every permission with its description)
+            # pushed this cookie past the 4 KB response-header buffer of the proxies in
+            # front of the API. Nothing reads the permission list from here; the
+            # dashboard keeps the user from the response body.
+            "role": {"id": str(role.id), "name": role.name} if role else None
         }, default=str)
         response.set_cookie(
             key="user_info",

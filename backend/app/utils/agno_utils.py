@@ -50,6 +50,11 @@ class PinnedOpenAIChat(OpenAIChat):
                               "http_client": guarded_async_http_client(follow_redirects=True)})
 
 
+# ponytail: OpenAI model ids that need reasoning_effort="none" to accept function
+# tools on chat completions; extend as OpenAI ships more reasoning-by-default ids.
+_NO_REASONING_WITH_TOOLS = ("gpt-6",)
+
+
 def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int = 1000, response_format: Optional[Dict[str, Any]] = None, base_url: Optional[str] = None) -> Any:
     """
     Create and return the specified model based on model_type.
@@ -73,9 +78,17 @@ def create_model(model_type: str, api_key: str, model_name: str, max_tokens: int
     try:
         if model_type == 'OPENAI' or model_type == 'CHATTERMATE': # own model for enterprise customers
             if response_format:
-                return OpenAIChat(api_key=api_key, id=model_name, max_tokens=max_tokens, response_format=response_format)
+                # max_completion_tokens: gpt-5/gpt-6 era models reject the legacy
+                # max_tokens parameter outright; the older ones accept both.
+                kwargs = dict(api_key=api_key, id=model_name, max_completion_tokens=max_tokens, response_format=response_format)
             else:
-                return OpenAIChat(api_key=api_key, id=model_name, max_tokens=max_tokens)
+                kwargs = dict(api_key=api_key, id=model_name, max_completion_tokens=max_tokens)
+            if model_name.lower().startswith(_NO_REASONING_WITH_TOOLS):
+                # Reasoning models refuse function tools on /v1/chat/completions
+                # unless reasoning is switched off ("use /v1/responses or set
+                # reasoning_effort to none"). The agents rely on tools, so off it is.
+                kwargs["reasoning_effort"] = "none"
+            return OpenAIChat(**kwargs)
         elif model_type == 'OPENAI_COMPATIBLE':
             if not base_url:
                 raise ValueError("base_url is required for OPENAI_COMPATIBLE")

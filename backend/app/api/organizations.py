@@ -187,7 +187,8 @@ async def create_organization(
                 "email": admin.email,
                 "full_name": admin.full_name,
                 "organization_id": str(organization.id),
-                "role": admin_role.to_dict()
+                # Compact: see the note on the user_info cookie in api/users.py.
+                "role": {"id": str(admin_role.id), "name": admin_role.name}
             }, default=str)),
             samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
             secure=True,  # Required when samesite="none"
