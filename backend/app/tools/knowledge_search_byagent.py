@@ -116,7 +116,7 @@ class KnowledgeSearchByAgent(Toolkit):
                         table_name=source.table_name,
                         db_url=settings.DATABASE_URL,
                         schema=source.schema,
-                        search_type=SearchType.vector,  # Changed from hybrid to vector for speed
+                        search_type=SearchType.hybrid,  # vector + full-text so exact tokens (status names, ids) match
                         embedder=get_embedder()
                     )
                     logger.debug(f"Vector db initialized: {source.table_name}")
