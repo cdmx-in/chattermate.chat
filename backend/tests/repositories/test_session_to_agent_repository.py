@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.models.user import User
+from app.services.conversation_token import VERIFIED_SCOPE
 from app.models.role import Role
 from app.models.permission import Permission, role_permissions
 from app.models.session_to_agent import SessionToAgent, SessionStatus, EndChatReasonType
@@ -468,13 +469,13 @@ class TestSessionQueries:
             organization_id=test_session.organization_id
         )
 
-        sessions = session_repo.get_customer_sessions(test_customer.id)
+        sessions = session_repo.get_customer_sessions(test_customer.id, SessionStatus.OPEN, VERIFIED_SCOPE)
         assert len(sessions) == 2
         # Note: get_customer_sessions returns tuples with user info
         assert all(s[0].customer_id == test_customer.id for s in sessions)
 
-    def test_get_active_customer_session(self, session_repo, test_session, test_customer):
-        """Test retrieving active session for a customer"""
+    def test_get_active_widget_session(self, session_repo, test_session, test_customer):
+        """Test retrieving the active session a vouched-for widget token resumes"""
         # Create another session and close it
         closed_session = session_repo.create_session(
             session_id=uuid4(),
@@ -484,7 +485,8 @@ class TestSessionQueries:
         )
         session_repo.close_session(closed_session.session_id)
 
-        session = session_repo.get_active_customer_session(test_customer.id, test_session.agent_id)
+        session = session_repo.get_active_widget_session(
+            test_customer.id, test_session.agent_id, VERIFIED_SCOPE)
         assert session is not None
         assert session.session_id == test_session.session_id
         assert session.status == SessionStatus.OPEN
@@ -518,7 +520,7 @@ class TestSessionQueries:
             organization_id=test_session.organization_id
         )
 
-        latest_session = session_repo.get_latest_customer_session(test_customer.id)
+        latest_session = session_repo.get_latest_customer_session(test_customer.id, VERIFIED_SCOPE)
         assert latest_session is not None
         # The latest session should be the newer one based on assigned_at timestamp
         # If timestamps are too close, either session could be returned, so check both are valid

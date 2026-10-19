@@ -47,7 +47,7 @@ from app.services.workflow_chat import WorkflowChatService
 from app.services.file_upload_service import FileUploadService
 from app.services.file_storage import resolve_public_url
 
-from app.models.session_to_agent import SessionStatus
+from app.models.session_to_agent import ACTIVE_STATUSES, SessionStatus
 from app.agents.transfer_agent import get_agent_availability_response
 from app.repositories.agent import AgentRepository
 from app.services.agent_rooms import is_org_inbox_room, may_join_org_inbox
@@ -59,6 +59,7 @@ from app.services.human_routing import (
     notify_customer,
 )
 from app.services.lead_capture import record_lead_from_response
+from app.services.widget_identity import can_act_as, may_stand_for
 from app.services.message_delivery import deliver_to_customer
 from app.repositories.rating import RatingRepository
 from app.services.ticket_csat import record_conversation_rating
@@ -205,6 +206,13 @@ def _refuse_connection(error: str, error_type: str):
     raise SocketRefused(error, {'error': error, 'type': error_type})
 
 
+def _own_session(session_repo: SessionToAgentRepository, session: dict, active_only: bool = True):
+    """The conversation this socket connected to, while it still belongs to it."""
+    return session_repo.get_widget_session(
+        session.get('session_id'), session.get('customer_id'),
+        session.get('conversation_scope'), active_only=active_only)
+
+
 @sio.on('connect', namespace='/widget')
 async def widget_connect(sid, environ, auth):
     db = None
@@ -224,12 +232,27 @@ async def widget_connect(sid, environ, auth):
         if not customer_id or customer_id == "None":
             _refuse_connection('Visitor not authorized yet', 'customer_required')
 
+        # The token's scope decides which conversations this socket may join, so
+        # an unverifiable token fails the connection instead of being shrugged off.
+        token_data = verify_conversation_token(conversation_token)
+        if not token_data:
+            raise ValueError("Conversation token could not be verified")
+        scope = conversation_token_service.conversation_scope(token_data)
+        source = token_data.get("source")
+        is_identified = conversation_token_service.is_identified(token_data)
+
         # Get widget and verify it exists
         db = next(get_db())
         widget_repo = WidgetRepository(db)
         widget = widget_repo.get_widget(widget_id)
         if not widget:
             raise ValueError("Invalid widget ID")
+
+        # A widget-issued token may not stand for a person the embedding app has
+        # since signed in. Refused like an unbound token, so the widget authorizes
+        # again - and GET /widgets/{id} swaps it for a customer of its own.
+        if not may_stand_for(CustomerRepository(db).get_by_id(customer_id), scope):
+            _refuse_connection('Visitor not authorized yet', 'customer_required')
 
         # Get AI config for widget's organization
         ai_config_repo = AIConfigRepository(db)
@@ -246,12 +269,13 @@ async def widget_connect(sid, environ, auth):
         
         session_repo = SessionToAgentRepository(db)
                 
-        # Try to get existing active session
-        active_session = session_repo.get_active_customer_session(
+        # Resume only a conversation this token's scope created
+        active_session = session_repo.get_active_widget_session(
             customer_id=customer_id,
-            agent_id=widget.agent_id
+            agent_id=widget.agent_id,
+            scope=scope
         )
-              
+
         session_created = active_session is None
         if active_session:
             session_id = str(active_session.session_id)
@@ -270,7 +294,8 @@ async def widget_connect(sid, environ, auth):
                 agent_id=widget.agent_id,
                 customer_id=customer_id,
                 organization_id=org_id,
-                channel='shopify' if shopify_config and shopify_config.enabled else 'web'
+                channel='shopify' if shopify_config and shopify_config.enabled else 'web',
+                conversation_key=conversation_token_service.session_key_for_scope(scope)
             )
             session_id = new_session_id
             logger.debug(f"New session: {session_id}")
@@ -286,18 +311,6 @@ async def widget_connect(sid, environ, auth):
         enable_rate_limiting = agent.enable_rate_limiting if agent else False
         overall_limit_per_ip = agent.overall_limit_per_ip if agent else 100
         requests_per_sec = agent.requests_per_sec if agent else 1.0
-        
-        # Source (Explore flow) and whether the embedding app vouched for this
-        # visitor - both live in the conversation token, so no extra query.
-        source = None
-        is_identified = False
-        try:
-            token_data = verify_conversation_token(conversation_token)
-            if token_data:
-                source = token_data.get("source")
-                is_identified = bool(token_data.get("customer_email") or token_data.get("email"))
-        except Exception:
-            pass
         
         # Snapshot only the fields the rest of the app reads from session['ai_config']
         # (encrypted_api_key/model_name/model_type) into a plain, DB-independent object.
@@ -319,6 +332,9 @@ async def widget_connect(sid, environ, auth):
             'session_id': session_id,
             'ai_config': ai_config_snapshot,
             'conversation_token': conversation_token,
+            # Which of the customer's conversations this socket may act on (see
+            # conversation_token.conversation_scope). Read by _own_session.
+            'conversation_scope': scope,
             # Add rate limiting settings
             'enable_rate_limiting': enable_rate_limiting,
             'overall_limit_per_ip': overall_limit_per_ip,
@@ -478,11 +494,8 @@ async def handle_widget_chat(sid, data):
         db = next(get_db())
         session_repo = SessionToAgentRepository(db)
                 
-        # Try to get existing active session
-        active_session = session_repo.get_active_customer_session(
-            customer_id=customer_id,
-            agent_id=session['agent_id']
-        )
+        own_session = _own_session(session_repo, session, active_only=False)
+        active_session = own_session if own_session and own_session.status in ACTIVE_STATUSES else None
 
         # Check message limit from session
         if HAS_ENTERPRISE and session.get('message_limit_reached') and active_session and active_session.user_id is None:
@@ -494,11 +507,15 @@ async def handle_widget_chat(sid, data):
             return
 
         if not active_session:
-            # Check if there's a closed session that can be reopened
+            # Reopen this socket's own closed session - unless the visitor has
+            # since started a newer one, which is where they should be. Only
+            # sessions in this token's scope count: anyone else's newer session
+            # must not be able to lock the visitor out.
             latest_session = session_repo.get_latest_customer_session(
-                customer_id=customer_id
-            )
-            
+                customer_id=customer_id,
+                scope=session['conversation_scope']
+            ) if own_session else None
+
             if latest_session and latest_session.status == SessionStatus.CLOSED:
                 # Reopen the closed session if it matches the current session ID
                 if str(latest_session.session_id) == session_id:
@@ -877,6 +894,7 @@ async def handle_widget_chat(sid, data):
                     customer_id=customer_id,
                     session_id=session_id,
                     page_url=session.get('page_url'),
+                    scope=session.get('conversation_scope'),
                 )
                 # If the capture merged this anonymous visitor into an existing
                 # customer (email already known), repoint the live socket session
@@ -935,12 +953,9 @@ async def get_widget_chat_history(sid):
 
         db = next(get_db())
         
-        # Get active session using new repository
+        # History of this socket's own conversation only
         session_repo = SessionToAgentRepository(db)
-        active_session = session_repo.get_active_customer_session(
-            customer_id=customer_id,
-            agent_id=session['agent_id']
-        )
+        active_session = _own_session(session_repo, session)
 
         if not active_session:
             logger.info("No active session found, returning empty history")
@@ -1031,6 +1046,14 @@ async def handle_refresh_token(sid, data):
         # another customer, which would hand this socket someone else's conversation.
         if str(state.payload.get('sub')) != str(session.get('customer_id')):
             logger.warning(f"Rejected token refresh for sid {sid}: customer mismatch")
+            return
+        # Nor to another scope: the socket's conversations were chosen by it.
+        try:
+            same_scope = conversation_token_service.conversation_scope(state.payload) == session.get('conversation_scope')
+        except ValueError:
+            same_scope = False
+        if not same_scope:
+            logger.warning(f"Rejected token refresh for sid {sid}: conversation scope mismatch")
             return
 
         session['conversation_token'] = token
@@ -1557,11 +1580,8 @@ async def handle_get_workflow_state(sid):
         session_repo = SessionToAgentRepository(db)
         chat_repo = ChatRepository(db)
         
-        # Get active session
-        active_session = session_repo.get_active_customer_session(
-            customer_id=customer_id
-        )
-        
+        active_session = _own_session(session_repo, session)
+
         if not active_session:
             raise ValueError("No active session found")
 
@@ -1831,10 +1851,7 @@ async def handle_proceed_workflow(sid, data):
         session_repo = SessionToAgentRepository(db)
         chat_repo = ChatRepository(db)
         
-        # Get active session
-        active_session = session_repo.get_active_customer_session(
-            customer_id=customer_id
-        )
+        active_session = _own_session(session_repo, session)
 
         if not active_session or not active_session.workflow_id:
             raise ValueError("No active workflow session found")
@@ -1988,6 +2005,17 @@ async def handle_proceed_workflow(sid, data):
             db.close()
 
 
+async def _confirm_contact(session_id: str, message: str) -> None:
+    """Tell the visitor their contact details were received, as a bot message."""
+    await sio.emit('chat_response', {
+        'message': message,
+        'type': 'chat_response',
+        'session_id': session_id,
+        'transfer_to_human': False,
+        'end_chat': False,
+    }, room=session_id, namespace='/widget')
+
+
 @sio.on('submit_contact_info', namespace='/widget')
 @socket_rate_limit(namespace='/widget')
 async def handle_contact_info(sid, data):
@@ -2023,6 +2051,15 @@ async def handle_contact_info(sid, data):
 
         db = next(get_db())
         customer_repo = CustomerRepository(db)
+        # A visitor bound to a known customer by an email they only typed must
+        # not rename that person, nor leave an address on their record for the
+        # team to follow up at.
+        if not can_act_as(db, customer_repo.get_by_id(customer_id), session.get('conversation_scope')):
+            logger.info(f"Contact details from sid {sid} not stored: the visitor does not own customer {customer_id}")
+            # Silence would read as the form having failed. The team can still
+            # follow up here, in the conversation they see in the inbox.
+            await _confirm_contact(session_id, "Thanks — a teammate will follow up here.")
+            return
         result = customer_repo.update_contact(customer_id, email=email or None, full_name=name or None)
 
         # The customer row can refuse the address — another customer in the org
@@ -2043,13 +2080,7 @@ async def handle_contact_info(sid, data):
             elif email_retained:
                 confirm += f" at {email}"
             confirm += "."
-            await sio.emit('chat_response', {
-                'message': confirm,
-                'type': 'chat_response',
-                'session_id': session_id,
-                'transfer_to_human': False,
-                'end_chat': False,
-            }, room=session_id, namespace='/widget')
+            await _confirm_contact(session_id, confirm)
     except Exception as e:
         logger.error(f"Error handling contact info for sid {sid}: {str(e)}")
     finally:
@@ -2083,10 +2114,7 @@ async def handle_form_submission(sid, data):
         db = next(get_db())
         session_repo = SessionToAgentRepository(db)
         
-        # Get active session
-        active_session = session_repo.get_active_customer_session(
-            customer_id=customer_id
-        )
+        active_session = _own_session(session_repo, session)
 
         if not active_session or not active_session.workflow_id:
             raise ValueError("No active workflow session found")
@@ -2147,9 +2175,10 @@ async def handle_form_submission(sid, data):
                 if submitted_email:  # Only process if email is not empty
                     customer_repo = CustomerRepository(db)
                     customer = customer_repo.get_by_id(customer_id)
-                    
-                    if customer and customer.email and '@noemail.com' in customer.email:
-                        # Customer has a generated @noemail.com email, update it with the real email
+
+                    if customer and CustomerRepository.is_placeholder_email(customer.email) \
+                            and can_act_as(db, customer, session.get('conversation_scope')):
+                        # Customer has a generated placeholder email, update it with the real one
                         try:
                             # Check if the new email already exists for another customer in the same organization
                             existing_customer = customer_repo.get_customer_by_email(submitted_email, org_id)

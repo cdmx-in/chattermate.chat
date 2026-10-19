@@ -56,6 +56,10 @@ class Customer(Base):
     # Arbitrary integrator-supplied fields (e.g. student_name, center_name) passed via
     # POST /generate-token's `custom_data` and surfaced to agents in the chat inbox.
     meta_data = Column(JSON, nullable=True)
+    # Widget conversation key of the browser that created this customer (see
+    # conversation_token.conversation_scope). A widget token the embedding app
+    # did not vouch for may only edit or merge a customer its own scope created.
+    conversation_key = Column(String(64), nullable=True)
     # True when the embedding app identified this person via POST /generate-token with a
     # known identity (customer_email) — an existing/authenticated customer of the business,
     # not an organic lead the agent captured. Used to exclude them from the People/leads

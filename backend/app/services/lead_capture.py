@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.models.lead_capture import LeadCaptureConfig, LeadCaptureResponse
 from app.repositories.customer import CustomerRepository
+from app.services.widget_identity import can_act_as
 from app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -53,6 +54,8 @@ def record_lead_capture(
     consent: bool,
     page_url: Optional[str] = None,
     channel: str = "widget",
+    *,
+    scope: Optional[str],
 ) -> Optional[LeadCaptureResponse]:
     """Persist an AI-captured lead (fields the agent extracted conversationally +
     an AI qualification summary). Returns None — recording nothing — when there is
@@ -66,6 +69,12 @@ def record_lead_capture(
     anonymous visitor is MERGED into that existing customer (history/sessions
     reassigned, visitor row marked merged) so People shows one entry. The returned
     response's customer_id is the final (possibly merged-into) customer.
+
+    `scope` is the conversation-token scope of the visitor (VERIFIED_SCOPE for
+    channels, whose identity the platform vouches for). A widget visitor may be
+    bound to a customer by an email they only typed, so a lead is only recorded
+    on a customer that visitor created (widget_identity.can_act_as), and only
+    merged into one it may also act as. Otherwise nothing is recorded.
 
     A recorded lead is queued for CRM push (post-commit, best-effort) when the
     agent has a crm_sync_target configured. Slack/assignment routing remains
@@ -113,6 +122,21 @@ def record_lead_capture(
         )
         .first()
     )
+    # A visitor bound to this customer by an email they only typed records
+    # nothing against them: no lead, no contact details, no CRM push - and the
+    # real customer is still asked for their details next time.
+    if not can_act_as(db, customer, scope):
+        logger.info(f"Lead capture: not recording for customer {customer_id}; the visitor does not own it")
+        return None
+
+    # Merging moves everything of one customer onto another, so the visitor must
+    # be able to act as both. For a widget visitor that rules out merging into
+    # anyone who already existed - an email they typed proves nothing - and the
+    # lead stays on their own row.
+    if existing is not None and not can_act_as(db, existing, scope):
+        logger.info(f"Lead capture: not merging customer {customer_id}; the visitor does not own both")
+        existing = None
+
     # Merge (reassigning history across rows), the new response row, the contact
     # update, and the promotion must all commit together — roll back on any failure
     # so a mid-merge error can never leave a half-merged customer.
@@ -250,6 +274,8 @@ def record_lead_from_response(
     session_id,
     page_url: Optional[str] = None,
     channel: str = "widget",
+    *,
+    scope: Optional[str],
 ) -> Optional[LeadCaptureResponse]:
     """Persist a lead from a ChatResponse whose request_lead_capture is set.
 
@@ -289,6 +315,7 @@ def record_lead_from_response(
             consent=getattr(response, 'lead_consent', False),
             page_url=page_url,
             channel=channel,
+            scope=scope,
         )
     except Exception as e:
         # Lead capture must never break the conversation flow.
