@@ -1,3 +1,4 @@
+import type { APIRequestContext } from '@playwright/test'
 import { test, expect, env, seedOrg, seedUsers } from '@e2e'
 
 // The dashboard's live-chat socket signs in with the sign-in cookies, which
@@ -14,7 +15,7 @@ const SOCKET = `${env.backendUrl}/socket.io/?EIO=4`
 type Outcome = 'signed in' | 'refused'
 
 /** The sign-in cookies, as a Cookie header a browser would attach. */
-async function signInCookies(playwright: { request: { newContext(): Promise<import('@playwright/test').APIRequestContext> } }): Promise<string> {
+async function signInCookies(playwright: { request: { newContext(): Promise<APIRequestContext> } }): Promise<string> {
   const context = await playwright.request.newContext()
   const response = await context.post(`${env.apiUrl}/users/login`, {
     form: { username: seedUsers.admin.email, password: seedUsers.admin.password },
@@ -25,20 +26,25 @@ async function signInCookies(playwright: { request: { newContext(): Promise<impo
   return cookies.filter((c) => ['access_token', 'refresh_token'].includes(c.name)).map((c) => `${c.name}=${c.value}`).join('; ')
 }
 
-/** Open the /agent namespace over a WebSocket, as the dashboard does. */
+/**
+ * Open the /agent namespace over a WebSocket, as the dashboard does. Only the
+ * namespace's own answer counts: a handshake refused before it (the origin not
+ * allowed at all) fails the test rather than passing as a refusal.
+ */
 function overWebSocket(origin: string, cookie: string): Promise<Outcome> {
   return new Promise((resolve, reject) => {
     // Node's WebSocket takes headers, which a page can't set but a browser sends for it
     const ws = new WebSocket(`${SOCKET.replace(/^http/, 'ws')}&transport=websocket`, { headers: { Origin: origin, Cookie: cookie } } as never)
-    const timer = setTimeout(() => { ws.close(); reject(new Error('no answer to the namespace connect')) }, 10_000)
+    const fail = (why: string) => { clearTimeout(timer); ws.close(); reject(new Error(`${origin}: ${why}`)) }
+    const timer = setTimeout(() => fail('no answer to the namespace connect'), 10_000)
     ws.onmessage = ({ data }) => {
       const packet = String(data)
       if (packet.startsWith('0')) ws.send('40/agent,')
       else if (packet.startsWith('40/agent')) settle('signed in')
       else if (packet.startsWith('44/agent')) settle('refused')
     }
-    ws.onerror = () => settle('refused')
-    function settle(outcome: Outcome) { clearTimeout(timer); ws.close(); resolve(outcome) }
+    ws.onerror = () => fail('the socket handshake was refused before the namespace answered')
+    function settle(outcome: Outcome) { clearTimeout(timer); ws.onerror = null; ws.close(); resolve(outcome) }
   })
 }
 

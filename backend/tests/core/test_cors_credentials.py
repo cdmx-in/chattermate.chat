@@ -26,7 +26,9 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+import app.main  # noqa: F401 - the CORS middleware is added on import
 from app.core import auth_utils, cors
+from app.core.application import app as api
 
 DASHBOARD = "https://app.example.com"
 OPERATOR_LISTED = "https://admin.example.com"
@@ -35,10 +37,18 @@ HELP_CENTER = "https://acme.help.example.com"
 API_HOST = "api.example.com"
 
 
+def configure(monkeypatch, frontend_url=DASHBOARD, cors_origins=(OPERATOR_LISTED, DASHBOARD + "/")):
+    monkeypatch.setattr(cors.settings, "FRONTEND_URL", frontend_url)
+    monkeypatch.setattr(cors, "BASE_CORS_ORIGINS", list(cors_origins))
+    cors.first_party_origins.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def first_party(monkeypatch):
-    monkeypatch.setattr(cors.settings, "FRONTEND_URL", DASHBOARD)
-    monkeypatch.setattr(cors, "BASE_CORS_ORIGINS", [OPERATOR_LISTED, DASHBOARD + "/"])
+    configure(monkeypatch)
+    yield
+    # Don't leave this module's origins cached for other tests
+    cors.first_party_origins.cache_clear()
 
 
 def cors_app(allow_origins=(DASHBOARD, OPERATOR_LISTED, ORG_SITE)):
@@ -87,17 +97,17 @@ class TestFirstPartyOrigins:
         ("https://app.example.com:8443", "https://app.example.com:8443"),
     ])
     def test_frontend_url_is_read_the_way_browsers_send_origin(self, monkeypatch, frontend_url, expected):
-        monkeypatch.setattr(cors.settings, "FRONTEND_URL", frontend_url)
+        configure(monkeypatch, frontend_url=frontend_url)
         assert expected in cors.first_party_origins()
 
     def test_a_frontend_url_without_a_scheme_is_reported(self, monkeypatch, caplog):
-        monkeypatch.setattr(cors.settings, "FRONTEND_URL", "app.example.com")
+        configure(monkeypatch, frontend_url="app.example.com")
         with caplog.at_level(logging.ERROR):
             assert cors.first_party_origins() == {OPERATOR_LISTED, DASHBOARD}
         assert "FRONTEND_URL" in caplog.text
 
     def test_a_wildcard_in_cors_origins_trusts_no_one(self, monkeypatch):
-        monkeypatch.setattr(cors, "BASE_CORS_ORIGINS", ["*"])
+        configure(monkeypatch, cors_origins=["*"])
         assert cors.first_party_origins() == {DASHBOARD}
         assert not cors.is_first_party_origin(ORG_SITE)
 
@@ -194,9 +204,6 @@ class TestRefreshKeepsTheSplit:
 
 
 def test_the_app_is_wired_with_the_first_party_middleware():
-    import app.main  # noqa: F401 - the middleware is added on import
-    from app.core.application import app as api
-
     layers = cors_layers(api)
     assert len(layers) == 1
     assert layers[0].cls is cors.FirstPartyCredentialsCORSMiddleware
@@ -222,8 +229,11 @@ class TestCookieSockets:
         handshake(origin=DASHBOARD + ":443"),
         handshake(origin=OPERATOR_LISTED),
         handshake(origin=f"https://{API_HOST}"),
+        handshake(origin=f"https://{API_HOST}:443"),
+        handshake(origin="http://127.0.0.1:8000", host="127.0.0.1:8000"),
         handshake(fetch_site="same-origin"),
-    ], ids=["dashboard", "dashboard-default-port", "operator-listed", "the-api-itself", "same-origin-no-origin"])
+    ], ids=["dashboard", "dashboard-default-port", "operator-listed", "the-api-itself", "the-api-default-port",
+            "the-api-on-a-port", "same-origin-no-origin"])
     def test_our_own_pages_may_use_the_cookies(self, environ):
         assert auth_utils.cookie_socket_allowed(environ)
 
@@ -238,8 +248,9 @@ class TestCookieSockets:
         handshake(query="EIO=4&transport=polling&j=0", fetch_site="same-origin"),
         handshake(origin=DASHBOARD, query="EIO=4&transport=polling&j=0"),
         handshake(origin=ORG_SITE, host="signed-up-domain.example:8443"),
+        handshake(origin=f"https://{API_HOST}", host=""),
     ], ids=["org-site", "help-centre", "opaque", "no-origin", "cross-site-no-origin", "same-site-no-origin",
-            "jsonp", "jsonp-same-origin", "jsonp-from-dashboard", "org-site-other-port"])
+            "jsonp", "jsonp-same-origin", "jsonp-from-dashboard", "org-site-other-port", "no-host"])
     def test_anything_else_may_not(self, environ):
         assert not auth_utils.cookie_socket_allowed(environ)
 

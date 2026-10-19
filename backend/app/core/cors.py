@@ -38,8 +38,6 @@ logger = get_logger(__name__)
 BASE_CORS_ORIGINS: list = settings.CORS_ORIGINS
 
 _CREDENTIALS_HEADER = "access-control-allow-credentials"
-
-
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
@@ -57,13 +55,15 @@ def origin_of(url: Optional[str]) -> Optional[str]:
     return f"{parsed.scheme}://{netloc}".lower()
 
 
+@lru_cache(maxsize=1)
 def first_party_origins() -> Set[str]:
     """Origins that may use the dashboard's sign-in cookies: the dashboard
     (FRONTEND_URL) and what the operator listed in CORS_ORIGINS.
 
     Never an org's domain or a help centre. An org domain is whatever someone
     typed at signup, unverified, so trusting it with credentials would let a
-    page on any signed-up domain read a signed-in user's account.
+    page on any signed-up domain read a signed-in user's account. Read from
+    settings once: every /agent socket connect asks.
     """
     dashboard = origin_of(settings.FRONTEND_URL)
     if not dashboard:
@@ -118,6 +118,7 @@ class FirstPartyCredentialsCORSMiddleware(CORSMiddleware):
             await send(outgoing)
 
         await super().send(message, without_credentials, request_headers)
+
 
 @lru_cache(maxsize=1)
 def get_cors_origins() -> Set[str]:

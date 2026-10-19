@@ -23,7 +23,7 @@ from app.core.logger import get_logger
 from app.database import get_db, SessionLocal
 from app.models.user import User
 from sqlalchemy.orm import Session
-from app.core.cors import is_first_party_origin
+from app.core.cors import is_first_party_origin, origin_of
 from app.models.widget import Widget
 from app.repositories.customer import CustomerRepository
 from app.services.auth_sessions import ACCESS, REFRESH, issue_tokens, live_payload
@@ -60,6 +60,12 @@ async def refresh_access_token(refresh_token: str, db: Session) -> str | None:
         return None
 
 
+def _is_own_origin(origin: str, host: str) -> bool:
+    """Whether Origin is the API's own origin (the host the request was sent to)."""
+    own = origin_of(origin)
+    return bool(own and host) and own == origin_of(f"{urlparse(origin).scheme}://{host}")
+
+
 def cookie_socket_allowed(environ: dict) -> bool:
     """Whether a socket handshake may sign in with the dashboard's cookies.
 
@@ -77,7 +83,7 @@ def cookie_socket_allowed(environ: dict) -> bool:
         return False
     origin = environ.get("HTTP_ORIGIN")
     if origin:
-        return is_first_party_origin(origin) or urlparse(origin).netloc.lower() == environ.get("HTTP_HOST", "").lower()
+        return is_first_party_origin(origin) or _is_own_origin(origin, environ.get("HTTP_HOST", ""))
     return environ.get("HTTP_SEC_FETCH_SITE") == "same-origin"
 
 
