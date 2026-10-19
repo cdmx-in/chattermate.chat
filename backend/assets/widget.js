@@ -7060,7 +7060,7 @@ function Zl() {
 }
 const qs = {
   get API_URL() {
-    return Zl().API_URL || "https://api.chattermate.chat/api/v1";
+    return Zl().API_URL || "https://chm.c-dev.in/api/v1";
   },
   get WS_URL() {
     return Zl().WS_URL || "wss://chm.c-dev.in";

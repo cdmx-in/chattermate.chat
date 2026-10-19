@@ -1082,7 +1082,7 @@ const handleInitiationClick = () => {
     background: var(--error-color);
 }
 
-/* Presence dot + text colour come from the shared widget-surface.css (accent). */
+/* Presence dot + text colour come from the shared widget-surface.css (green when online, accent/muted otherwise). */
 
 /* Add styles for markdown content */
 :deep(.message-bubble) {

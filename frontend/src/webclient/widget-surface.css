@@ -44,9 +44,16 @@
     color: var(--cm-presence, var(--cm-accent));
     font-size: 11.5px;
 }
+/* Online is a status, not a brand colour: dot and text stay green whatever the
+   accent (a red accent made "Online" read as an error). Away/offline keep the
+   accent/muted colour from --cm-presence. */
 .chat-container.cm-surface .status-indicator.online {
-    background: var(--cm-presence, var(--cm-accent));
+    background: var(--success-color, #22c55e);
     box-shadow: none;
+}
+.chat-container.cm-surface .status-indicator.online + .cm-presence,
+.chat-container.cm-surface .status-indicator.online + .status-text {
+    color: var(--success-color, #22c55e);
 }
 
 /* ===== Avatars — circle by default, rounded-square on mono (Terminal); no ring ===== */
