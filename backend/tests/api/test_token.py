@@ -948,3 +948,75 @@ class TestTokenCustomData:
             assert "ttl_seconds must be between" in response.json()["detail"]
 
         app.dependency_overrides.clear()
+
+
+class TestRevokeByEmail:
+    """Fork-only /revoke-by-email: org-scoped session revocation by customer email."""
+
+    def _client(self, mock_db, mock_widget_app, widget_ids):
+        def override_get_db():
+            yield mock_db
+        app.dependency_overrides[get_db] = override_get_db
+        mock_db.query.return_value.filter.return_value.all.return_value = [(w,) for w in widget_ids]
+        mock_db.query.return_value.filter.return_value.filter.return_value.all.return_value = [(w,) for w in widget_ids]
+        return TestClient(app)
+
+    def test_revoke_by_email_with_widget(self, mock_db, mock_widget_app, valid_api_key):
+        client = self._client(mock_db, mock_widget_app, ["widget-123"])
+        with patch('app.api.token.WidgetAppRepository') as MockRepo, \
+             patch('app.api.token.security_get_user_active_sessions', return_value=["jti1", "jti2"]), \
+             patch('app.api.token.security_revoke_user_sessions_by_widget') as mock_revoke:
+            MockRepo.return_value.validate_api_key.return_value = mock_widget_app
+            response = client.post(
+                "/api/v1/revoke-by-email",
+                json={"email": "Test@Example.com", "widget_id": "widget-123", "reason": "Removed"},
+                headers={"Authorization": f"Bearer {valid_api_key}"}
+            )
+            assert response.status_code == 200
+            assert response.json()["revoked_count"] == 2
+            mock_revoke.assert_called_once_with("test@example.com", "widget-123")
+        app.dependency_overrides.clear()
+
+    def test_revoke_by_email_all_org_widgets(self, mock_db, mock_widget_app, valid_api_key):
+        client = self._client(mock_db, mock_widget_app, ["w1", "w2"])
+        with patch('app.api.token.WidgetAppRepository') as MockRepo, \
+             patch('app.api.token.security_get_user_active_sessions', return_value=["jti"]), \
+             patch('app.api.token.security_revoke_user_sessions_by_widget') as mock_revoke:
+            MockRepo.return_value.validate_api_key.return_value = mock_widget_app
+            response = client.post(
+                "/api/v1/revoke-by-email",
+                json={"email": "test@example.com"},
+                headers={"Authorization": f"Bearer {valid_api_key}"}
+            )
+            assert response.status_code == 200
+            assert response.json()["revoked_count"] == 2
+            assert mock_revoke.call_count == 2
+        app.dependency_overrides.clear()
+
+    def test_revoke_by_email_foreign_widget_rejected(self, mock_db, mock_widget_app, valid_api_key):
+        """A widget outside the API key's organisation is not found, not revoked."""
+        client = self._client(mock_db, mock_widget_app, [])
+        with patch('app.api.token.WidgetAppRepository') as MockRepo, \
+             patch('app.api.token.security_revoke_user_sessions_by_widget') as mock_revoke:
+            MockRepo.return_value.validate_api_key.return_value = mock_widget_app
+            response = client.post(
+                "/api/v1/revoke-by-email",
+                json={"email": "test@example.com", "widget_id": "other-org-widget"},
+                headers={"Authorization": f"Bearer {valid_api_key}"}
+            )
+            assert response.status_code == 404
+            mock_revoke.assert_not_called()
+        app.dependency_overrides.clear()
+
+    def test_revoke_by_email_invalid_format(self, mock_db, mock_widget_app, valid_api_key):
+        client = self._client(mock_db, mock_widget_app, ["w1"])
+        with patch('app.api.token.WidgetAppRepository') as MockRepo:
+            MockRepo.return_value.validate_api_key.return_value = mock_widget_app
+            response = client.post(
+                "/api/v1/revoke-by-email",
+                json={"email": "invalid-email"},
+                headers={"Authorization": f"Bearer {valid_api_key}"}
+            )
+            assert response.status_code == 400
+            assert "Invalid email format" in response.json()["detail"]
+        app.dependency_overrides.clear()

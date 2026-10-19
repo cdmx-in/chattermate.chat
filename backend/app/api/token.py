@@ -29,6 +29,8 @@ from app.core.security import (
     verify_conversation_token,
     get_existing_valid_token_jti,
     revoke_token as security_revoke_token,
+    revoke_user_sessions_by_widget as security_revoke_user_sessions_by_widget,
+    get_user_active_sessions as security_get_user_active_sessions,
 )
 from app.services import conversation_token
 from app.repositories.widget_app import WidgetAppRepository
@@ -81,6 +83,19 @@ class RevokeTokenResponse(BaseModel):
     """Response for token revocation"""
     success: bool
     message: str
+    revoked_at: Optional[str] = None
+
+class RevokeByEmailRequest(BaseModel):
+    """Request to revoke a customer's sessions by email"""
+    email: str
+    widget_id: Optional[str] = None  # one widget of the API key's org; omitted = every widget of that org
+    reason: Optional[str] = None
+
+class RevokeByEmailResponse(BaseModel):
+    """Response for revoking sessions by email"""
+    success: bool
+    message: str
+    revoked_count: int
     revoked_at: Optional[str] = None
 
 class TokenData(BaseModel):
@@ -526,3 +541,78 @@ async def revoke_widget_token(
             detail="Failed to revoke token"
         )
 
+
+# Fork-only (cdmx-in): upstream removed /revoke-by-email in fca4195 because it
+# revoked across every organisation with only a widget API key
+# (GHSA-2q9h-mpj4-wq96). The Astra portal's "CHAT - REVOKE - API" integration
+# calls it on chat removal, so it is kept here scoped to the widgets owned by
+# the organisation the API key belongs to.
+@router.post("/revoke-by-email", response_model=RevokeByEmailResponse, status_code=status.HTTP_200_OK)
+async def revoke_user_sessions(
+    body: RevokeByEmailRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    api_key: str = Depends(validate_api_key)
+):
+    """
+    Revoke a customer's widget sessions by email, limited to the API key's organisation.
+
+    With widget_id: that widget must belong to the same organisation as the API key.
+    Without widget_id: sessions in every widget of that organisation are revoked.
+    Sessions the customer holds in other organisations' widgets are never touched.
+
+    Example:
+        POST /api/v1/revoke-by-email
+        Authorization: Bearer YOUR_API_KEY
+        {"email": "user@example.com", "widget_id": "widget-123", "reason": "Removed from portal"}
+    """
+    try:
+        email = body.email.strip().lower()
+        reason = body.reason or "Revoked by administrator"
+
+        if not email or "@" not in email:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid email format"
+            )
+
+        widget_app = request.state.widget_app
+        query = db.query(Widget.id).filter(Widget.organization_id == widget_app.organization_id)
+        if body.widget_id:
+            query = query.filter(Widget.id == body.widget_id.strip())
+        widget_ids = [str(row[0]) for row in query.all()]
+
+        if body.widget_id and not widget_ids:
+            logger.error(f"Widget not found or access denied: {body.widget_id}")
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Widget '{body.widget_id}' not found"
+            )
+
+        revoked_count = 0
+        for widget_id in widget_ids:
+            revoked_count += len(security_get_user_active_sessions(email, widget_id=widget_id))
+            security_revoke_user_sessions_by_widget(email, widget_id)
+
+        scope_message = f"in widget '{widget_ids[0]}'" if body.widget_id else f"across {len(widget_ids)} widget(s)"
+        revoked_at = datetime.utcnow()
+
+        logger.info(
+            f"Sessions revoked for user: {email} {scope_message} count={revoked_count} reason={reason}"
+        )
+
+        return RevokeByEmailResponse(
+            success=True,
+            message=f"All {revoked_count} session(s) revoked for user {scope_message}. Reason: {reason}",
+            revoked_count=revoked_count,
+            revoked_at=revoked_at.isoformat()
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Error revoking sessions by email: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to revoke sessions"
+        )
