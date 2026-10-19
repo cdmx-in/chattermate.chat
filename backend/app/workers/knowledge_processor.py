@@ -24,8 +24,10 @@ from app.services import knowledge_vector_links
 from app.models.knowledge_queue import QueueStatus, ProcessingStage
 from app.core.logger import get_logger
 import os
+from app.core.config import settings
 from app.core.processor import PROCESSOR_STATUS
-from datetime import datetime
+from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause
+from datetime import datetime, timedelta, timezone
 from app.models.notification import Notification, NotificationType
 from app.services.user import send_fcm_notification
 from urllib.parse import urlparse, unquote
@@ -197,11 +199,47 @@ async def process_queue_item(queue_item_id: int):
                 db.rollback()
                 logger.error(f"Could not mark queue item {queue_item_id} failed: {status_err}")
             else:
-                user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
-                await _notify(db, queue_item, NotificationType.KNOWLEDGE_FAILED,
-                              "Knowledge Processing Failed", f"Failed to process {user_friendly_name}: {str(e)}")
+                await _tell_failed(db, queue_item)
 
             raise
+
+
+async def _tell_failed(db, queue_item) -> None:
+    user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
+    await _notify(db, queue_item, NotificationType.KNOWLEDGE_FAILED,
+                  "Knowledge Processing Failed", f"Failed to process {user_friendly_name}: {queue_item.error}")
+
+
+# A source still 'processing' with no progress for this long was abandoned:
+# its worker died partway (out of memory, a restart) and nothing will pick it
+# up again, so it would spin in the dashboard for good. Longer than a live
+# run can go without progress (websites stop at their time limit; files are
+# size-capped and take about a minute), so it never fails one another
+# process is still reading.
+ABANDONED_AFTER = timedelta(seconds=settings.KB_SOURCE_TIME_LIMIT_SECONDS) + timedelta(minutes=15)
+
+
+def _shown_as(queue_item) -> str:
+    """A website by its address, as every other failure names it; a file by
+    its name, not the path it was uploaded to on our server."""
+    if queue_item.source_type in ('website', 'sitemap'):
+        return queue_item.source
+    return get_user_friendly_filename(queue_item.source, queue_item.source_type)
+
+
+async def fail_abandoned_items() -> None:
+    """Fail sources left 'processing' by a worker that died, and tell whoever
+    added them."""
+    with SessionLocal() as db:
+        cutoff = datetime.now(timezone.utc) - ABANDONED_AFTER
+        abandoned = KnowledgeQueueRepository(db).get_abandoned(cutoff)
+        for item in abandoned:
+            item.status = QueueStatus.FAILED
+            item.error = FAILURE_ADVICE[FailureCause.INTERRUPTED].format(url=_shown_as(item))
+        db.commit()
+        for item in abandoned:
+            logger.warning(f"Queue item {item.id} was abandoned mid-run; marked failed")
+            await _tell_failed(db, item)
 
 
 async def run_processor():
@@ -209,6 +247,12 @@ async def run_processor():
     try:
         PROCESSOR_STATUS["is_running"] = True
         PROCESSOR_STATUS["error"] = None
+
+        try:
+            await fail_abandoned_items()
+        except Exception as e:
+            # Never at the cost of processing what is pending
+            logger.error(f"Could not check for abandoned queue items: {e}")
 
         # Get pending items with proper connection handling
         with SessionLocal() as db:

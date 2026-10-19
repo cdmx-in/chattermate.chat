@@ -31,6 +31,7 @@ from app.models.knowledge_queue import ProcessingStage, QueueStatus
 from pydantic import model_validator
 
 from app.knowledge.crawl_scope import DEFAULT_CRAWL_SCOPE
+from app.knowledge.deadline import Deadline, SourceTimedOut
 from app.knowledge.enhanced_website_reader import (
     EnhancedWebsiteReader,
     BotProtectionError,
@@ -66,6 +67,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     _embedding_executor = None
     _embedding_results = None
     _embedding_lock = None
+    _deadline = None
     
     @property
     def queue_item(self):
@@ -156,6 +158,11 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                 if document is None:  # Sentinel value to stop worker
                     self._embedding_queue.task_done()
                     break
+
+                # Out of time: drain the queue without the work; the run fails.
+                if self._out_of_time:
+                    self._embedding_queue.task_done()
+                    continue
                 
                 # Process the document
                 if hasattr(document, 'embedding') and document.embedding is None:
@@ -342,6 +349,19 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
 
         raise EmptyCrawlError(self._failure_message())
 
+    @property
+    def _out_of_time(self) -> bool:
+        return self._deadline is not None and self._deadline.expired
+
+    def _raise_if_out_of_time(self) -> None:
+        """Fail a source that ran past its time limit, before anything of it
+        is stored: a partial copy would make adding it again skip the crawl
+        ("already loaded")."""
+        if self._out_of_time:
+            raise SourceTimedOut(
+                FAILURE_ADVICE[FailureCause.TOO_LONG].format(url=self._source_label())
+            )
+
     def _source_label(self) -> str:
         return self.urls[0] if self.urls else 'this source'
 
@@ -400,6 +420,10 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
             self.vector_db.create()
 
         logger.info(f"Starting knowledge base loading - {len(self.urls)} URLs")
+
+        self._deadline = Deadline(settings.KB_SOURCE_TIME_LIMIT_SECONDS)
+        if hasattr(self.reader, 'deadline'):
+            self.reader.deadline = self._deadline
 
         # Initialize the embedding system
         self._init_embedding_system()
@@ -503,6 +527,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
         self._shutdown_embedding_system()
         
         logger.info(f"Embedding completed - {embedded_count} documents embedded")
+        self._raise_if_out_of_time()
         
         # Update embedding progress
         if self.queue_item and self.queue_repo:
@@ -521,6 +546,8 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                 # Embed remaining documents immediately without parallel processing
                 # to avoid multiple model loading
                 for doc in all_documents:
+                    if self._out_of_time:
+                        break
                     if doc.embedding is None:
                         try:
                             doc.embed(embedder=self.vector_db.embedder)
@@ -528,6 +555,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                             logger.error(f"Error embedding document {doc.id}: {str(e)}")
             else:
                 logger.error(f"Cannot embed {unembedded_count} documents - no embedder available")
+            self._raise_if_out_of_time()
         
         # Process all documents in optimally sized batches
         if all_documents and upsert:

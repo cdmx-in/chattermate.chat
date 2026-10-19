@@ -28,6 +28,20 @@ export async function uploadKnowledgePdf(
   })
 }
 
+/**
+ * The agent's sources the knowledge worker has not finished: pending or still
+ * processing, and any that failed (with why). Empty once everything is indexed.
+ */
+export async function unfinishedKnowledge(
+  api: ApiClient,
+  agentId: string,
+): Promise<{ source: string; status: string; error: string | null }[]> {
+  const body = await api.get<{ queue_items: { source: string; status: string; error: string | null }[] }>(
+    `/knowledge/queue/agent/${agentId}`,
+  )
+  return body.queue_items.map(({ source, status, error }) => ({ source, status, error }))
+}
+
 export async function deleteKnowledge(api: ApiClient, knowledgeId: number): Promise<void> {
   await api.delete(`/knowledge/${knowledgeId}`)
 }

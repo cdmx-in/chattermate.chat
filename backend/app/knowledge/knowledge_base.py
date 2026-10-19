@@ -27,6 +27,7 @@ from app.knowledge.chunking import PageChunking
 from app.knowledge.enhanced_pdf_kb import EnhancedPDFKnowledgeBase
 from app.core.s3 import delete_file_from_s3, owned_s3_key
 from app.knowledge.pdf_download import download_pdf
+from app.knowledge.pdf_limits import PdfRefused, check_page_count
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
@@ -67,6 +68,12 @@ def _pdf_name_from_url(url: str) -> str:
     name = os.path.basename(unquote(parsed.path.rstrip("/").split("/")[-1]))
     name = os.path.splitext(name)[0].strip(". ")
     return (name or parsed.hostname or "document")[:_MAX_PDF_NAME_CHARS]
+
+
+def _raise_unless(success: bool) -> None:
+    """Fail the source before anything marks it completed."""
+    if not success:
+        raise Exception("Failed to process knowledge source")
 
 
 class KnowledgeManager:
@@ -149,6 +156,8 @@ class KnowledgeManager:
                 finally:
                     shutil.rmtree(temp_dir, ignore_errors=True)
             return True
+        except PdfRefused:
+            raise  # its message is the reason shown on the source
         except Exception as e:
             logger.error(f"Error adding PDF URLs: {str(e)}")
             return False
@@ -227,6 +236,8 @@ class KnowledgeManager:
                     raise FileNotFoundError(f"PDF file not found: {path_to_use}")
 
                 logger.info(f"Processing PDF file: {path_to_use} (size: {os.path.getsize(path_to_use)} bytes)")
+                # Before any page is read: past the limit, reading is the cost
+                check_page_count(path_to_use)
 
                 try:
                     # First try with regular PDFReader
@@ -287,6 +298,8 @@ class KnowledgeManager:
                         os.unlink(temp_file.name)
                         
             return True
+        except PdfRefused:
+            raise  # its message is the reason shown on the source
         except Exception as e:
             logger.error(f"Error adding PDF files: {str(e)}")
             return False
@@ -332,8 +345,14 @@ class KnowledgeManager:
                     )
                     
                     # Process the PDF (already async, but contains blocking operations)
-                    success = await self.add_pdf_files([queue_item.source])
-                    
+                    try:
+                        success = await self.add_pdf_files([queue_item.source])
+                        _raise_unless(success)
+                    finally:
+                        # The uploaded copy goes either way, refused PDFs too
+                        if not queue_item.source.startswith('http') and os.path.exists(queue_item.source):
+                            os.remove(queue_item.source)
+
                     # Update to embedding/training stage
                     queue_repo.update_progress(
                         queue_item.id, 
@@ -342,10 +361,6 @@ class KnowledgeManager:
                         processed_items=1,
                         force_stage_update=True
                     )
-                    
-                    # Clean up temp file after processing if it's a local file
-                    if not queue_item.source.startswith('http') and os.path.exists(queue_item.source):
-                        os.remove(queue_item.source)
                     
                     # Mark as completed
                     queue_repo.update_status(
@@ -365,6 +380,7 @@ class KnowledgeManager:
                     
                     # Process the PDF URL (already async, but contains blocking operations)
                     success = await self.add_pdf_urls([queue_item.source])
+                    _raise_unless(success)
                     
                     # Update to embedding/training stage
                     queue_repo.update_progress(
@@ -501,8 +517,7 @@ class KnowledgeManager:
                     raise ValueError(f"Unsupported source type: {
                                      queue_item.source_type}")
 
-                if not success:
-                    raise Exception("Failed to process knowledge source")
+                _raise_unless(success)
 
                 return success
 

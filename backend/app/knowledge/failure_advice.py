@@ -38,10 +38,15 @@ class FailureCause:
     EMPTY_RESPONSE = "empty_response"
     THIN_CONTENT = "thin_content"
     BLOCKED_HOST = "blocked_host"
+    NOT_A_PAGE = "not_a_page"
     # Something that is not a transport failure at all — most likely a bug of
     # ours. Deliberately has no entry in FAILURE_ADVICE: we fall back to the
     # generic message rather than blame the customer's site for our crash.
     UNKNOWN = "unknown"
+    # The source as a whole, not one page: it ran past its time limit, or its
+    # worker died partway (the queue item was left 'processing').
+    TOO_LONG = "too_long"
+    INTERRUPTED = "interrupted"
 
 
 # What to tell the user for each cause. Phrased as "what happened, what to do".
@@ -78,6 +83,18 @@ FAILURE_ADVICE = {
     FailureCause.BLOCKED_HOST: (
         "{url} redirected to an address we are not allowed to fetch. Use the "
         "site's public URL."
+    ),
+    FailureCause.NOT_A_PAGE: (
+        "{url} is a file, not a web page. Add a PDF with Upload PDF, or add "
+        "the page that links to it."
+    ),
+    FailureCause.TOO_LONG: (
+        "{url} took too long to read. Add specific pages instead of the whole "
+        "site, or add the content with Upload PDF or Paste text."
+    ),
+    FailureCause.INTERRUPTED: (
+        "{url} could not be read to the end: our reader stopped partway. Add "
+        "it again to retry, or add specific pages instead of the whole site."
     ),
 }
 
