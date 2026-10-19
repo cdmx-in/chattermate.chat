@@ -57,7 +57,6 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     max_retries: int = settings.KB_MAX_RETRIES
     max_workers: int = settings.KB_MAX_WORKERS
     batch_size: int = settings.KB_BATCH_SIZE
-    optimize_on: Optional[int] = settings.KB_OPTIMIZE_ON
     crawl_scope: str = DEFAULT_CRAWL_SCOPE
     
     # These are not part of the model schema, but added as instance attributes
@@ -559,13 +558,12 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                         processed_items=processed_docs
                     )
             
-        # Optimize vector db if needed
-        if self.optimize_on is not None and total_documents > self.optimize_on and hasattr(self.vector_db, 'optimize'):
-            logger.info("Optimizing vector database...")
-            try:
-                self.vector_db.optimize()
-            except Exception as e:
-                logger.error(f"Vector DB optimization failed: {str(e)}")
+        # No approximate (HNSW/IVFFlat) index on purpose: every agent search
+        # filters by agent_id, and an approximate index applies that filter
+        # after picking candidates, so it can return fewer results than asked.
+        # Exact search over a knowledge table (a few thousand rows) is fast.
+        # (agno's optimize() also failed outright: it binds index parameters,
+        # which Postgres refuses in DDL under psycopg 3.)
 
         total_end_time = time.time()
         total_duration = total_end_time - total_start_time
