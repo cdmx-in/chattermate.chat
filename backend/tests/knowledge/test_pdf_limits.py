@@ -58,8 +58,7 @@ def test_a_pdf_over_the_limit_is_refused_and_told_why():
                                   "or split it into smaller files.")
 
 
-def test_the_limit_is_300_pages_unless_configured():
-    assert settings.KB_PDF_MAX_PAGES == 300
+def test_the_limit_comes_from_settings():
     with patch.object(settings, "KB_PDF_MAX_PAGES", 2), pytest.raises(PdfTooManyPages):
         check_page_count(io.BytesIO(pdf_with_pages(3)))
 

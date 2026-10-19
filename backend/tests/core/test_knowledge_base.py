@@ -325,3 +325,16 @@ async def test_a_refused_upload_is_reported_and_its_copy_removed(knowledge_manag
 
     assert not path.exists()
     queue_repo.return_value.update_status.assert_not_called()  # never reported as completed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_type,method", [("pdf_file", "add_pdf_files"), ("pdf_url", "add_pdf_urls")])
+async def test_a_pdf_that_fails_is_never_marked_completed_first(knowledge_manager, source_type, method):
+    queue_item = MagicMock(id=123, source_type=source_type, source="https://example.com/x.pdf")
+
+    with patch.object(knowledge_manager, method, AsyncMock(return_value=False)), \
+         patch('app.knowledge.knowledge_base.KnowledgeQueueRepository') as queue_repo, \
+         pytest.raises(Exception, match="Failed to process knowledge source"):
+        await knowledge_manager.process_knowledge(queue_item)
+
+    queue_repo.return_value.update_status.assert_not_called()

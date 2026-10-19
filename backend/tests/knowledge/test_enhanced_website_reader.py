@@ -742,3 +742,39 @@ class TestTheCrawlStopsAtItsDeadline(unittest.TestCase):
         with serving(vpn_site), patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback'):
             result = reader.crawl("https://ian-vpn.site")
         self.assertEqual(len(result), 2)
+
+
+class TestASeedThatIsNotAPage(unittest.TestCase):
+    """A file given as a website must say so, not blame JavaScript."""
+
+    def setUp(self):
+        dns_patcher = patch('app.knowledge.url_safety.socket.getaddrinfo',
+                            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))])
+        self.addCleanup(dns_patcher.stop)
+        dns_patcher.start()
+
+    def crawl(self, response):
+        reader = EnhancedWebsiteReader(max_depth=2, max_links=10, min_content_length=50)
+        with serving(lambda request: response), \
+             patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback'):
+            return reader, reader.crawl("https://example.com/brochure.pdf")
+
+    def test_a_file_given_as_the_website_is_named_as_one(self):
+        reader, result = self.crawl(httpx.Response(200, headers={"content-type": "application/pdf"},
+                                                   content=b"%PDF-1.4"))
+        self.assertEqual(result, {})
+        self.assertEqual(reader.dominant_failure_cause(), FailureCause.NOT_A_PAGE)
+        self.assertTrue(FAILURE_ADVICE[FailureCause.NOT_A_PAGE].startswith("{url} is a file"))
+
+    def test_an_oversized_page_is_not_called_a_file(self):
+        reader, _ = self.crawl(httpx.Response(200, headers={"content-type": "text/html",
+                                                            "content-length": str(50 * 1024 * 1024)},
+                                              content=b""))
+        self.assertIsNone(reader.dominant_failure_cause())
+
+    def test_linked_downloads_are_never_a_cause(self):
+        """Only the address given: a site's installer links say nothing about it."""
+        reader = EnhancedWebsiteReader(max_depth=2, max_links=10, min_content_length=50)
+        with serving(vpn_site), patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback'):
+            reader.crawl("https://ian-vpn.site")
+        self.assertEqual(reader._failure_causes, {})

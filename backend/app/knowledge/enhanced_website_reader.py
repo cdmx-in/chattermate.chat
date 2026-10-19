@@ -907,6 +907,10 @@ class EnhancedWebsiteReader(WebsiteReader):
                 # A download the page linked to (an installer, an archive): not
                 # content, and not the site failing. Never worth the browser.
                 logger.info(f"Skipping {current_url}: {e}")
+                if e.download and current_depth == 1:
+                    # The address the user gave (or a sitemap listed): if
+                    # nothing else is read, this is why.
+                    self._record_failure(FailureCause.NOT_A_PAGE)
                 return None
             except BlockedHostError as e:
                 # A redirect pointed at an internal host — abort, don't retry or

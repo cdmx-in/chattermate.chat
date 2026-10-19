@@ -261,7 +261,8 @@ async def upload_pdf_files(
                 label="PDF",
             )
             try:
-                check_page_count(io.BytesIO(content))
+                # pypdf on an untrusted upload: off the event loop
+                await asyncio.to_thread(check_page_count, io.BytesIO(content))
             except PdfRefused as e:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{file.filename}: {e}")
             # Sanitize the filename (strip path components, add a UUID prefix)

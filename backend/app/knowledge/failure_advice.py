@@ -38,6 +38,7 @@ class FailureCause:
     EMPTY_RESPONSE = "empty_response"
     THIN_CONTENT = "thin_content"
     BLOCKED_HOST = "blocked_host"
+    NOT_A_PAGE = "not_a_page"
     # Something that is not a transport failure at all — most likely a bug of
     # ours. Deliberately has no entry in FAILURE_ADVICE: we fall back to the
     # generic message rather than blame the customer's site for our crash.
@@ -82,6 +83,10 @@ FAILURE_ADVICE = {
     FailureCause.BLOCKED_HOST: (
         "{url} redirected to an address we are not allowed to fetch. Use the "
         "site's public URL."
+    ),
+    FailureCause.NOT_A_PAGE: (
+        "{url} is a file, not a web page. Add a PDF with Upload PDF, or add "
+        "the page that links to it."
     ),
     FailureCause.TOO_LONG: (
         "{url} took too long to read. Add specific pages instead of the whole "

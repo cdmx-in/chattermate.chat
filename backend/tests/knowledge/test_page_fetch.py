@@ -113,3 +113,25 @@ def test_the_declared_charset_is_used():
 def test_an_error_answer_is_still_an_error():
     with pytest.raises(httpx.HTTPStatusError):
         fetch(httpx.Response(404, html="<p>Not found</p>"))
+
+
+def test_a_utf16_page_is_read_not_taken_for_a_binary():
+    page = "<p>Hello from a UTF-16 page</p>"
+    assert fetch(httpx.Response(200, headers={"content-type": "text/html; charset=utf-16"},
+                                content=page.encode("utf-16"))) == page
+
+
+@pytest.mark.parametrize("kind", ["application/xml", "text/xml"])
+def test_xhtml_served_as_xml_is_a_page(kind):
+    assert "Docs" in fetch(httpx.Response(200, headers={"content-type": kind},
+                                          content=b"<html><body><p>Docs</p></body></html>"))
+
+
+def test_only_a_download_is_called_one():
+    with pytest.raises(NotAPage) as download:
+        fetch(httpx.Response(200, headers={"content-type": "application/pdf"}, stream=Unread()))
+    big = httpx.Response(200, headers={"content-type": "text/html", "content-length": str(MAX_PAGE_BYTES + 1)},
+                         stream=Unread())
+    with pytest.raises(NotAPage) as too_big:
+        fetch(big)
+    assert (download.value.download, too_big.value.download) == (True, False)

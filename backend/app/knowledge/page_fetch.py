@@ -24,21 +24,28 @@ say what a link is, so a download is skipped before its body is fetched.
 from app.knowledge.url_safety import safe_stream
 
 # What a crawl reads. Anything else (archives, installers, images, PDFs -
-# those have their own source type) is a download, not a page.
-PAGE_TYPES = frozenset({"text/html", "application/xhtml+xml", "text/plain"})
+# those have their own source type) is a download, not a page. XML is in
+# because some sites serve their XHTML pages as plain XML.
+PAGE_TYPES = frozenset({
+    "text/html", "application/xhtml+xml", "text/plain", "application/xml", "text/xml",
+})
 
 # Far beyond any real page; reading stops here so a mislabelled file cannot
 # fill memory. Counted after decompression, so a small gzip bomb stops too.
 MAX_PAGE_BYTES = 5 * 1024 * 1024
 
-# A server that sends no type, or the wrong one, still gives a binary file
-# away in its first bytes.
+# A server that sends no type still gives a binary file away in its first
+# bytes. Only then: a declared page may be UTF-16, which is full of NULs.
 _SNIFF_BYTES = 1024
 
 
 class NotAPage(Exception):
     """The link is a download or too large to be a page. The crawl skips it;
     it is not a failure of the site."""
+
+    def __init__(self, message: str, download: bool = True):
+        super().__init__(message)
+        self.download = download
 
 
 def media_type(content_type: str) -> str:
@@ -59,14 +66,14 @@ def fetch_page_text(client, url: str, max_bytes: int = MAX_PAGE_BYTES) -> str:
 
         declared = response.headers.get("content-length", "")
         if declared.isdigit() and int(declared) > max_bytes:
-            raise NotAPage(f"{url} is larger than {max_bytes} bytes")
+            raise NotAPage(f"{url} is larger than {max_bytes} bytes", download=False)
 
         body = bytearray()
         for chunk in response.iter_bytes():
-            if not body and b"\x00" in chunk[:_SNIFF_BYTES]:
+            if not kind and not body and b"\x00" in chunk[:_SNIFF_BYTES]:
                 raise NotAPage(f"{url} is a binary file, not a page")
             body.extend(chunk)
             if len(body) > max_bytes:
-                raise NotAPage(f"{url} is larger than {max_bytes} bytes")
+                raise NotAPage(f"{url} is larger than {max_bytes} bytes", download=False)
 
         return body.decode(response.encoding or "utf-8", errors="replace")

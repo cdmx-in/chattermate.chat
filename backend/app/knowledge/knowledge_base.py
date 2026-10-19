@@ -70,6 +70,12 @@ def _pdf_name_from_url(url: str) -> str:
     return (name or parsed.hostname or "document")[:_MAX_PDF_NAME_CHARS]
 
 
+def _raise_unless(success: bool) -> None:
+    """Fail the source before anything marks it completed."""
+    if not success:
+        raise Exception("Failed to process knowledge source")
+
+
 class KnowledgeManager:
     def __init__(self, org_id: UUID, agent_id: Optional[str] = None):
         self.org_id = org_id
@@ -341,6 +347,7 @@ class KnowledgeManager:
                     # Process the PDF (already async, but contains blocking operations)
                     try:
                         success = await self.add_pdf_files([queue_item.source])
+                        _raise_unless(success)
                     finally:
                         # The uploaded copy goes either way, refused PDFs too
                         if not queue_item.source.startswith('http') and os.path.exists(queue_item.source):
@@ -373,6 +380,7 @@ class KnowledgeManager:
                     
                     # Process the PDF URL (already async, but contains blocking operations)
                     success = await self.add_pdf_urls([queue_item.source])
+                    _raise_unless(success)
                     
                     # Update to embedding/training stage
                     queue_repo.update_progress(
@@ -509,8 +517,7 @@ class KnowledgeManager:
                     raise ValueError(f"Unsupported source type: {
                                      queue_item.source_type}")
 
-                if not success:
-                    raise Exception("Failed to process knowledge source")
+                _raise_unless(success)
 
                 return success
 
