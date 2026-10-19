@@ -29,6 +29,18 @@ from app.knowledge.enhanced_website_reader import (
 )
 
 
+_RealClient = httpx.Client
+
+
+def serving(handler):
+    """The reader's HTTP client, answering every request with `handler(request)`:
+    real httpx responses, headers and streaming included."""
+    return patch(
+        'app.knowledge.enhanced_website_reader.httpx.Client',
+        side_effect=lambda **kwargs: _RealClient(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+
 class TestEnhancedWebsiteReader(unittest.TestCase):
     """Test cases for EnhancedWebsiteReader"""
 
@@ -376,85 +388,47 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         self.assertEqual(self.reader._get_primary_domain('https://www.site.com:8443/x'), 'site.com')
         self.assertEqual(self.reader._get_primary_domain('https://a.b.example.co.uk/x'), 'example.co.uk')
 
-    @patch('httpx.Client')
-    def test_crawl_with_successful_request(self, mock_client):
+    def test_crawl_with_successful_request(self):
         """Test crawling with successful HTTP requests"""
-        # Mock HTTP client response
-        mock_response = MagicMock()
-        mock_response.text = self.test_html
-        mock_response.is_redirect = False
-        mock_response.raise_for_status = MagicMock()
+        requests = []
 
-        # Setup mock client
-        mock_client_instance = MagicMock()
-        mock_client_instance.get.return_value = mock_response
-        mock_client.return_value.__enter__.return_value = mock_client_instance
+        def site(request):
+            requests.append(request)
+            return httpx.Response(200, html=self.test_html)
 
-        # Test crawling
-        result = self.reader.crawl('https://example.com')
-        
-        # Verify that httpx client was called (may be multiple times due to parallel processing)
-        self.assertTrue(mock_client.called)
-        self.assertTrue(mock_client_instance.get.called)
-        
-        # Verify result contains the expected content
+        with serving(site):
+            result = self.reader.crawl('https://example.com')
+
+        self.assertTrue(requests)
         self.assertIn('https://example.com', result)
         self.assertIn("Main Content", result['https://example.com'])
-        
-    @patch('httpx.Client')
+
     @patch('time.sleep', return_value=None)  # Skip actual sleeping
-    def test_crawl_with_retries(self, mock_sleep, mock_client):
+    def test_crawl_with_retries(self, mock_sleep):
         """Test crawling with retries on failed requests"""
-        # Mock HTTP errors for the first two attempts, then success
-        mock_response_error = MagicMock()
-        mock_response_error.is_redirect = False
-        mock_response_error.raise_for_status.side_effect = httpx.HTTPStatusError("Error", request=MagicMock(), response=MagicMock(status_code=500))
+        attempts = []
 
-        mock_response_request_error = MagicMock(
-            is_redirect=False,
-            raise_for_status=MagicMock(side_effect=httpx.RequestError("Timeout", request=MagicMock())),
-        )
+        def flaky_home(request):
+            if request.url.path != "/":
+                return httpx.Response(404)
+            attempts.append(request)
+            if len(attempts) == 1:
+                return httpx.Response(500)  # HTTP error
+            if len(attempts) == 2:
+                raise httpx.ReadTimeout("slow", request=request)  # transport error
+            return httpx.Response(200, html=self.test_html)
 
-        mock_response_success = MagicMock()
-        mock_response_success.text = self.test_html
-        mock_response_success.is_redirect = False
-        mock_response_success.raise_for_status = MagicMock()
+        with serving(flaky_home):
+            result = self.reader.crawl('https://example.com')
 
-        # Setup mock client - the parallel processing may create multiple client instances
-        mock_client_instance = MagicMock()
-        mock_client_instance.get.side_effect = [
-            mock_response_error,  # First attempt fails with HTTP error
-            mock_response_request_error,  # Second attempt fails with request error
-            mock_response_success  # Third attempt succeeds
-        ]
-        mock_client.return_value.__enter__.return_value = mock_client_instance
-        
-        # Test crawling with retries
-        result = self.reader.crawl('https://example.com')
-        
-        # Verify that retries happened (at least 3 calls should have been made)
-        self.assertGreaterEqual(mock_client_instance.get.call_count, 3)
-        
-        # Verify result contains the expected content after successful retry
+        self.assertEqual(len(attempts), 3)
         self.assertIn('https://example.com', result)
         self.assertIn("Main Content", result['https://example.com'])
-        
-    @patch('httpx.Client')
-    def test_read_method(self, mock_client):
+
+    def test_read_method(self):
         """Test the read method to ensure it returns proper Document objects"""
-        # Mock HTTP response
-        mock_response = MagicMock()
-        mock_response.text = self.test_html
-        mock_response.is_redirect = False
-        mock_response.raise_for_status = MagicMock()
-
-        # Setup mock client
-        mock_client_instance = MagicMock()
-        mock_client_instance.get.return_value = mock_response
-        mock_client.return_value.__enter__.return_value = mock_client_instance
-
-        # Test read method
-        documents = self.reader.read('https://example.com')
+        with serving(lambda request: httpx.Response(200, html=self.test_html)):
+            documents = self.reader.read('https://example.com')
         
         # Verify documents are created correctly
         self.assertTrue(len(documents) > 0)
@@ -499,11 +473,11 @@ class TestUnreachableHostsFailFast(unittest.TestCase):
         with patch('app.knowledge.enhanced_website_reader.httpx.Client') as client, \
              patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback') as browser, \
              patch('app.knowledge.enhanced_website_reader.time.sleep') as sleep:
-            client.return_value.__enter__.return_value.get.side_effect = error
+            client.return_value.__enter__.return_value.stream.side_effect = error
             browser.return_value.is_available = True
             browser.return_value.fetch_with_browser.return_value = (None, None, None)
             result = self.reader._process_url(("https://example.com", 1), scope)
-        return result, client.return_value.__enter__.return_value.get, browser, sleep
+        return result, client.return_value.__enter__.return_value.stream, browser, sleep
 
 
     def test_a_domain_that_does_not_resolve_is_tried_once(self):
@@ -680,3 +654,91 @@ class TestWwwApexFallback(unittest.TestCase):
         """Otherwise the fallback would fetch one page and refuse every link."""
         scope = CrawlScope.for_seed("https://www.utsabzone.store", DEFAULT_CRAWL_SCOPE)
         self.assertTrue(scope.allows("https://utsabzone.store/products"))
+
+
+INSTALLERS = [
+    "/downloads/linux/amd64/installer/ian-vpn.tar.gz",
+    "/downloads/linux/amd64/installer/ian-vpn.deb",
+    "/downloads/linux/amd64/installer/ian-vpn.rpm",
+]
+TEXT = " ".join(["Our VPN keeps your connection private on every network."] * 5)
+
+
+def vpn_site(request):
+    """A home page that links to a FAQ and to its installers, as ian-vpn.site does."""
+    path = request.url.path
+    if path == "/":
+        links = "".join(f'<a href="{href}">Download</a>' for href in ["/faqs", *INSTALLERS])
+        return httpx.Response(200, html=f"<main><h1>IAN VPN</h1><p>{TEXT}</p>{links}</main>")
+    if path == "/faqs":
+        return httpx.Response(200, html=f"<main><h1>FAQs</h1><p>{TEXT}</p></main>")
+    if path in INSTALLERS:
+        return httpx.Response(200, headers={"content-type": "application/octet-stream"},
+                              content=b"\x7fELF\x00\x00" * 100_000)
+    return httpx.Response(404)
+
+
+class TestDownloadsAreNotPages(unittest.TestCase):
+    """Seen in production: ten links on ian-vpn.site became 149,500 chunks,
+    almost all of them its installers read as text."""
+
+    def setUp(self):
+        dns_patcher = patch('app.knowledge.url_safety.socket.getaddrinfo',
+                            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))])
+        self.addCleanup(dns_patcher.stop)
+        dns_patcher.start()
+
+    def test_the_pages_are_read_and_the_installers_skipped(self):
+        reader = EnhancedWebsiteReader(max_depth=2, max_links=10, min_content_length=50)
+        with serving(vpn_site), \
+             patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback') as browser:
+            result = reader.crawl("https://ian-vpn.site")
+
+        self.assertEqual(sorted(result), ["https://ian-vpn.site", "https://ian-vpn.site/faqs"])
+        browser.return_value.fetch_with_browser.assert_not_called()
+        # Skipped, not failed: they say nothing about whether the site works
+        self.assertEqual(reader._failure_causes, {})
+        self.assertEqual(reader._failed_crawls, 0)
+
+    def test_the_documents_come_from_the_pages_only(self):
+        reader = EnhancedWebsiteReader(max_depth=2, max_links=10, min_content_length=50)
+        with serving(vpn_site), patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback'):
+            documents = reader.read("https://ian-vpn.site")
+
+        self.assertEqual({d.meta_data['url'] for d in documents},
+                         {"https://ian-vpn.site", "https://ian-vpn.site/faqs"})
+        self.assertLess(len(documents), 10)
+
+
+class FakeDeadline:
+    expired = False
+
+
+class TestTheCrawlStopsAtItsDeadline(unittest.TestCase):
+    def setUp(self):
+        dns_patcher = patch('app.knowledge.url_safety.socket.getaddrinfo',
+                            return_value=[(2, 1, 6, "", ("93.184.216.34", 0))])
+        self.addCleanup(dns_patcher.stop)
+        dns_patcher.start()
+
+    def test_no_new_page_is_read_once_time_is_up(self):
+        deadline = FakeDeadline()
+        requested = []
+
+        def site(request):
+            requested.append(request.url.path)
+            deadline.expired = True  # the home page used the last of the time
+            return vpn_site(request)
+
+        reader = EnhancedWebsiteReader(max_depth=2, max_links=10, min_content_length=50, deadline=deadline)
+        with serving(site), patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback'):
+            result = reader.crawl("https://ian-vpn.site")
+
+        self.assertEqual(requested, ["/"])
+        self.assertEqual(list(result), ["https://ian-vpn.site"])
+
+    def test_without_a_deadline_the_crawl_runs_to_its_link_limit(self):
+        reader = EnhancedWebsiteReader(max_depth=2, max_links=10, min_content_length=50)
+        with serving(vpn_site), patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback'):
+            result = reader.crawl("https://ian-vpn.site")
+        self.assertEqual(len(result), 2)

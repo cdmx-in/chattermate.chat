@@ -42,6 +42,10 @@ class FailureCause:
     # ours. Deliberately has no entry in FAILURE_ADVICE: we fall back to the
     # generic message rather than blame the customer's site for our crash.
     UNKNOWN = "unknown"
+    # The source as a whole, not one page: it ran past its time limit, or its
+    # worker died partway (the queue item was left 'processing').
+    TOO_LONG = "too_long"
+    INTERRUPTED = "interrupted"
 
 
 # What to tell the user for each cause. Phrased as "what happened, what to do".
@@ -78,6 +82,14 @@ FAILURE_ADVICE = {
     FailureCause.BLOCKED_HOST: (
         "{url} redirected to an address we are not allowed to fetch. Use the "
         "site's public URL."
+    ),
+    FailureCause.TOO_LONG: (
+        "{url} took too long to read. Add specific pages instead of the whole "
+        "site, or add the content with Upload PDF or Paste text."
+    ),
+    FailureCause.INTERRUPTED: (
+        "{url} could not be read to the end: our reader stopped partway. Add "
+        "it again to retry, or add specific pages instead of the whole site."
     ),
 }
 

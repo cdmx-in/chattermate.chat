@@ -4,3 +4,6 @@
  * gives up on surfaces as its fallback message rather than as a test timeout.
  */
 export const AI_REPLY = { timeout: 30_000 } as const
+
+/** How long a test waits for the knowledge worker to index a small source. */
+export const KNOWLEDGE_INDEXED = { timeout: 60_000 } as const

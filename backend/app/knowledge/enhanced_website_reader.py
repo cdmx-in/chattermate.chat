@@ -25,7 +25,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Set, Tuple, Optional, Callable
 from urllib.parse import urljoin, urlparse, urldefrag, urlunparse
 from app.knowledge.crawler_identity import CRAWLER_USER_AGENT
-from app.knowledge.url_safety import safe_get, BlockedHostError
+from app.knowledge.url_safety import BlockedHostError
+from app.knowledge.deadline import Deadline
+from app.knowledge.page_fetch import NotAPage, fetch_page_text
 import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -133,6 +135,9 @@ class EnhancedWebsiteReader(WebsiteReader):
     # back" loses increments when two of them fail at once.
     _failure_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _current_url: str = None  # Track current URL being processed for link resolution
+    # Set by the knowledge base for the source being read: no new pages are
+    # fetched once it passes (see app/knowledge/deadline.py).
+    deadline: Optional[Deadline] = None
     
     @staticmethod
     def _classify_transport_error(error: Exception) -> Tuple[str, bool, bool]:
@@ -172,6 +177,10 @@ class EnhancedWebsiteReader(WebsiteReader):
         # Not a transport failure: a bug in our own parsing, most likely. Retry
         # and let the browser try, but do not tell the user their site is down.
         return FailureCause.UNKNOWN, True, True
+
+    @property
+    def out_of_time(self) -> bool:
+        return self.deadline is not None and self.deadline.expired
 
     def _record_failure(self, cause: str) -> None:
         """Remember why a page failed so the queue item can be specific."""
@@ -714,17 +723,14 @@ class EnhancedWebsiteReader(WebsiteReader):
                     verify=self.verify_ssl
                 ) as client:
                     logger.debug(f"Making HTTP GET request to {current_url}")
-                    # Follows redirects manually, re-validating each hop's host (SSRF).
-                    response = safe_get(client, current_url)
-                    logger.info(f"Received response: status={response.status_code}, url={response.url}")
-                    response.raise_for_status()
-                    
+                    # Follows redirects manually, re-validating each hop's host
+                    # (SSRF), and reads the body only if it is a page.
+                    html = fetch_page_text(client, current_url)
+
                 # Parse HTML with BeautifulSoup
-                soup = BeautifulSoup(response.text, 'html.parser')
-                
-                # Log HTML response info for debugging
-                logger.info(f"Response status: {response.status_code}, Content-Type: {response.headers.get('content-type', 'unknown')}")
-                logger.info(f"HTML length: {len(response.text)} characters")
+                soup = BeautifulSoup(html, 'html.parser')
+
+                logger.info(f"HTML length: {len(html)} characters")
                 
                 # Check if the page is JavaScript-heavy
                 # Modern sites use many external scripts, so count both inline and external
@@ -752,8 +758,8 @@ class EnhancedWebsiteReader(WebsiteReader):
                 # 1. High ratio of inline script content (>30% of HTML)
                 # 2. Many external script files (>15 scripts typically indicates a JS framework)
                 # 3. High script tag density (>10 scripts per 10KB of HTML)
-                script_content_ratio = inline_script_length / len(response.text) if response.text else 0
-                html_size_kb = len(response.text) / 10000  # Convert to 10KB units
+                script_content_ratio = inline_script_length / len(html) if html else 0
+                html_size_kb = len(html) / 10000  # Convert to 10KB units
                 script_density = len(script_tags) / max(html_size_kb, 1)  # Scripts per 10KB
 
                 is_javascript_heavy = (
@@ -833,7 +839,7 @@ class EnhancedWebsiteReader(WebsiteReader):
                     if content:
                         logger.warning(f"Content preview: {content[:200]}...")
                     else:
-                        logger.warning(f"Content is None or empty. HTML preview: {response.text[:500]}...")
+                        logger.warning(f"Content is None or empty. HTML preview: {html[:500]}...")
                     
                     # Try to extract any text as last resort
                     fallback_content = soup.get_text(strip=True, separator=" ")
@@ -881,7 +887,7 @@ class EnhancedWebsiteReader(WebsiteReader):
                             logger.error(f"All extraction strategies failed for {current_url}. Final content: {len(content) if content else 0} chars")
                             self._failed_crawls += 1
                             self._record_failure(
-                                FailureCause.EMPTY_RESPONSE if not response.text
+                                FailureCause.EMPTY_RESPONSE if not html
                                 else FailureCause.THIN_CONTENT
                             )
                             return None
@@ -897,6 +903,11 @@ class EnhancedWebsiteReader(WebsiteReader):
                     new_links = [(link, next_depth) for link in links 
                                 if link not in self._visited]
                     
+            except NotAPage as e:
+                # A download the page linked to (an installer, an archive): not
+                # content, and not the site failing. Never worth the browser.
+                logger.info(f"Skipping {current_url}: {e}")
+                return None
             except BlockedHostError as e:
                 # A redirect pointed at an internal host — abort, don't retry or
                 # fall back to the browser (which would also reach it).
@@ -1096,6 +1107,9 @@ class EnhancedWebsiteReader(WebsiteReader):
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             # Process URLs in batches until no more URLs or max_links reached
             while urls_to_process and len(crawler_result) < self.max_links:
+                if self.out_of_time:
+                    logger.warning(f"Out of time: stopping with {len(urls_to_process)} link(s) not read")
+                    break
                 # Take a batch of URLs to process
                 batch_size = min(self.max_workers, len(urls_to_process))
                 current_batch = urls_to_process[:batch_size]
