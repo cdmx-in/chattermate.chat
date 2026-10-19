@@ -176,6 +176,9 @@ class Settings(BaseSettings):
     # A website source that has not finished reading in this long fails rather
     # than running on (one hit the worker's memory limit after three hours).
     KB_SOURCE_TIME_LIMIT_SECONDS: int = int(os.getenv("KB_SOURCE_TIME_LIMIT_SECONDS", "1800"))
+    # Pages a PDF may have (app/knowledge/pdf_limits.py): every page is
+    # embedded, and a scanned one OCR'd, so bytes alone don't bound the work.
+    KB_PDF_MAX_PAGES: int = int(os.getenv("KB_PDF_MAX_PAGES", "300"))
 
     # Hard ceiling on a single agent run (model + tool calls). A stuck run is
     # cancelled instead of hanging the chat handler forever (issue #269).

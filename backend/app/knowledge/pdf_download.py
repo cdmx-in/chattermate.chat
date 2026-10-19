@@ -19,6 +19,7 @@ limitations under the License.
 import httpx
 
 from app.core.config import settings
+from app.knowledge.pdf_limits import PdfRefused
 from app.knowledge.url_safety import safe_stream
 
 # Same ceiling as a directly uploaded PDF, so a URL is no way around it.
@@ -26,8 +27,15 @@ MAX_PDF_SIZE = 25 * 1024 * 1024
 _CHUNK_SIZE = 8192
 
 
-class PdfTooLargeError(ValueError):
+class PdfTooLargeError(PdfRefused):
     """The remote file is larger than the allowed PDF size."""
+
+    def __init__(self, max_bytes: int):
+        # Shown on the failed source: no URL (an upload's is a signed S3 link)
+        super().__init__(
+            f"This PDF is larger than {max_bytes // (1024 * 1024)} MB. Upload a "
+            "smaller file, or split it into parts."
+        )
 
 
 def download_pdf(url: str, dest_path: str, max_bytes: int = MAX_PDF_SIZE) -> str:
@@ -44,12 +52,12 @@ def download_pdf(url: str, dest_path: str, max_bytes: int = MAX_PDF_SIZE) -> str
         response.raise_for_status()
         declared = response.headers.get("content-length", "")
         if declared.isdigit() and int(declared) > max_bytes:
-            raise PdfTooLargeError(f"PDF is larger than {max_bytes} bytes: {url}")
+            raise PdfTooLargeError(max_bytes)
         written = 0
         with open(dest_path, "wb") as f:
             for chunk in response.iter_bytes(_CHUNK_SIZE):
                 written += len(chunk)
                 if written > max_bytes:
-                    raise PdfTooLargeError(f"PDF is larger than {max_bytes} bytes: {url}")
+                    raise PdfTooLargeError(max_bytes)
                 f.write(chunk)
     return dest_path

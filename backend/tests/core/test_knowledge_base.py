@@ -280,3 +280,48 @@ async def test_process_knowledge_unsupported_type(knowledge_manager):
     # Execute and Assert
     with pytest.raises(ValueError, match="Unsupported source type: unsupported_type"):
         await knowledge_manager.process_knowledge(queue_item) 
+
+# ---- PDFs over a limit: refused with the reason, not "failed to process" ----
+
+from app.knowledge.pdf_download import PdfTooLargeError  # noqa: E402
+from app.knowledge.pdf_limits import PdfTooManyPages  # noqa: E402
+from tests.knowledge.test_pdf_limits import pdf_with_pages  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_over_the_page_limit_is_refused_before_it_is_read(knowledge_manager, tmp_path):
+    path = tmp_path / "catalogue.pdf"
+    path.write_bytes(pdf_with_pages(4))
+
+    with patch('app.core.config.settings.KB_PDF_MAX_PAGES', 3), \
+         patch('app.knowledge.knowledge_base.EnhancedPDFKnowledgeBase') as reader, \
+         pytest.raises(PdfTooManyPages, match="4 pages; the limit is 3"):
+        await knowledge_manager.add_pdf_files([str(path)])
+
+    reader.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_link_over_the_size_limit_says_so_without_the_link(knowledge_manager):
+    signed = "https://bucket.s3.amazonaws.com/knowledge/x/big.pdf?X-Amz-Signature=secret"
+    with patch('app.knowledge.knowledge_base.download_pdf', side_effect=PdfTooLargeError(25 * 1024 * 1024)), \
+         pytest.raises(PdfTooLargeError) as refused:
+        await knowledge_manager.add_pdf_urls([signed])
+
+    assert "25 MB" in str(refused.value)
+    assert "amazonaws" not in str(refused.value)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_upload_is_reported_and_its_copy_removed(knowledge_manager, tmp_path):
+    path = tmp_path / "0e9f_catalogue.pdf"
+    path.write_bytes(pdf_with_pages(4))
+    queue_item = MagicMock(id=123, source_type="pdf_file", source=str(path))
+
+    with patch('app.core.config.settings.KB_PDF_MAX_PAGES', 3), \
+         patch('app.knowledge.knowledge_base.KnowledgeQueueRepository') as queue_repo, \
+         pytest.raises(PdfTooManyPages):
+        await knowledge_manager.process_knowledge(queue_item)
+
+    assert not path.exists()
+    queue_repo.return_value.update_status.assert_not_called()  # never reported as completed
