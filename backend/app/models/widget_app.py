@@ -35,6 +35,7 @@ class WidgetApp(Base):
     description = Column(Text, nullable=True)  # Optional description
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False, index=True)
     api_key_hash = Column(String, nullable=False)  # bcrypt hash of the API key (one-way)
+    api_key_lookup = Column(String(64), nullable=True, unique=True, index=True)  # SHA-256 of the key; NULL for keys issued before it
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)  # Audit trail
     is_active = Column(Boolean, default=True, index=True)  # Soft delete support
     created_at = Column(DateTime(timezone=True), server_default=func.now())

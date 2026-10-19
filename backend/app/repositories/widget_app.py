@@ -20,8 +20,7 @@ from app.core.security import (
     generate_widget_api_key,
     hash_widget_api_key,
     verify_widget_api_key,
-    cache_widget_api_key,
-    get_cached_widget_api_key
+    widget_api_key_lookup,
 )
 from typing import Optional, List
 from uuid import UUID
@@ -51,14 +50,14 @@ class WidgetAppRepository:
         try:
             # Generate new API key
             plain_key = generate_widget_api_key()
-            hashed_key = hash_widget_api_key(plain_key)
 
             app = WidgetApp(
                 name=name,
                 description=description,
                 organization_id=organization_id,
                 created_by=created_by,
-                api_key_hash=hashed_key,
+                api_key_hash=hash_widget_api_key(plain_key),
+                api_key_lookup=widget_api_key_lookup(plain_key),
                 is_active=True
             )
 
@@ -102,8 +101,9 @@ class WidgetAppRepository:
         """
         Validate API key and return associated app if valid.
 
-        This is the critical path for authentication - uses Redis cache for performance.
-        Checks ALL active apps and compares hashes (bcrypt is designed for this).
+        One indexed query on the key's SHA-256. Keys issued before that column
+        existed are bcrypt-checked against the apps that still have none (about
+        100ms each), then get their lookup filled in, so it happens once per key.
 
         Args:
             api_key: Plain text API key from Authorization header
@@ -111,30 +111,23 @@ class WidgetAppRepository:
         Returns:
             WidgetApp if valid, None otherwise
         """
-        # Try cache first (fast path)
-        cached_data = get_cached_widget_api_key(api_key)
-        if cached_data:
-            # Cache hit - get app from database by ID
-            app = self.db.query(WidgetApp).filter(
-                WidgetApp.id == cached_data["app_id"],
-                WidgetApp.is_active == True
-            ).first()
-            if app:
-                logger.debug(f"Valid API key from cache for app: {app.id}")
-                return app
+        lookup = widget_api_key_lookup(api_key)
+        app = self.db.query(WidgetApp).filter(
+            WidgetApp.api_key_lookup == lookup,
+            WidgetApp.is_active == True
+        ).first()
+        if app:
+            return app
 
-        # Cache miss - do full validation (slow path)
-        active_apps = self.db.query(WidgetApp).filter(
+        unindexed_apps = self.db.query(WidgetApp).filter(
+            WidgetApp.api_key_lookup.is_(None),
             WidgetApp.is_active == True
         ).all()
-
-        # Check each app's hashed key
-        # bcrypt.verify is fast enough for this (~100ms per check)
-        for app in active_apps:
+        for app in unindexed_apps:
             if verify_widget_api_key(api_key, app.api_key_hash):
-                # Valid key - cache it for future requests
-                cache_widget_api_key(api_key, str(app.id), str(app.organization_id))
-                logger.info(f"Valid API key for app: {app.id}")
+                app.api_key_lookup = lookup
+                self.db.commit()
+                logger.info(f"Valid API key for app: {app.id}; indexed its lookup")
                 return app
 
         logger.warning("Invalid API key attempt")
@@ -195,10 +188,10 @@ class WidgetAppRepository:
 
         # Generate new key
         new_plain_key = generate_widget_api_key()
-        new_hashed_key = hash_widget_api_key(new_plain_key)
 
-        # Update hash
-        app.api_key_hash = new_hashed_key
+        # The old key stops matching both ways at once
+        app.api_key_hash = hash_widget_api_key(new_plain_key)
+        app.api_key_lookup = widget_api_key_lookup(new_plain_key)
         self.db.commit()
         self.db.refresh(app)
 
