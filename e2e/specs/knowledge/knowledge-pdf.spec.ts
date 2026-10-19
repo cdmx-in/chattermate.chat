@@ -1,4 +1,4 @@
-import { test, expect, runWorkerOnce, textPdf, unique, uploadKnowledgePdf, AI_REPLY } from '@e2e'
+import { test, expect, runWorkerOnce, textPdf, unique, unfinishedKnowledge, uploadKnowledgePdf, AI_REPLY, KNOWLEDGE_INDEXED } from '@e2e'
 
 test('an uploaded PDF becomes knowledge the AI answers from @knowledge @workers', async ({ agent, widget, llm, adminApi, org }) => {
   const code = unique('WARRANTY')
@@ -8,6 +8,8 @@ test('an uploaded PDF becomes knowledge the AI answers from @knowledge @workers'
   })
   // Production indexes it on the knowledge worker's next poll; here, now.
   await runWorkerOnce('knowledge')
+  // Tests run in parallel: another test's pass may be the one indexing it.
+  await expect.poll(() => unfinishedKnowledge(adminApi, agent.id), KNOWLEDGE_INDEXED).toEqual([])
 
   await llm.script(agent, (s) => s
     .when(/warranty/i).callTool('search_knowledge_base', { query: 'warranty policy' })

@@ -17,6 +17,7 @@ limitations under the License.
 import pytest
 from sqlalchemy.orm import Session
 from app.models.user import User
+from app.services.conversation_token import VERIFIED_SCOPE
 from app.models.role import Role
 from app.models.permission import Permission, role_permissions
 from app.models.session_to_agent import SessionToAgent, SessionStatus
@@ -246,12 +247,12 @@ def test_get_customer_sessions(session_repo, test_session, test_customer):
     )
 
     # Get customer sessions
-    sessions = session_repo.get_customer_sessions(test_customer.id)
+    sessions = session_repo.get_customer_sessions(test_customer.id, SessionStatus.OPEN, VERIFIED_SCOPE)
     assert len(sessions) == 2
     assert all(s[0].customer_id == test_customer.id for s in sessions)
 
-def test_get_active_customer_session(session_repo, test_session, test_customer):
-    """Test retrieving active session for a customer"""
+def test_get_active_widget_session(session_repo, test_session, test_customer):
+    """Test retrieving the active session a vouched-for widget token resumes"""
     # Create another session and close it
     closed_session = session_repo.create_session(
         session_id=uuid4(),
@@ -262,10 +263,16 @@ def test_get_active_customer_session(session_repo, test_session, test_customer):
     session_repo.close_session(closed_session.session_id)
 
     # Get active session
-    session = session_repo.get_active_customer_session(test_customer.id, test_session.agent_id)
+    session = session_repo.get_active_widget_session(test_customer.id, test_session.agent_id, VERIFIED_SCOPE)
     assert session is not None
     assert session.session_id == test_session.session_id
     assert session.status == SessionStatus.OPEN
+
+
+def test_an_active_widget_session_is_only_found_in_its_own_scope(session_repo, test_session, test_customer):
+    """A keyless session belongs to the vouched-for scope, not to any widget key."""
+    assert session_repo.get_active_widget_session(
+        test_customer.id, test_session.agent_id, "browser-a") is None
 
 def test_takeover_session(session_repo, test_session, test_user):
     """Test taking over a chat session"""

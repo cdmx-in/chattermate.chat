@@ -24,8 +24,10 @@ from app.services import knowledge_vector_links
 from app.models.knowledge_queue import QueueStatus, ProcessingStage
 from app.core.logger import get_logger
 import os
+from app.core.config import settings
 from app.core.processor import PROCESSOR_STATUS
-from datetime import datetime
+from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause
+from datetime import datetime, timedelta, timezone
 from app.models.notification import Notification, NotificationType
 from app.services.user import send_fcm_notification
 from urllib.parse import urlparse, unquote
@@ -109,9 +111,36 @@ def _sync_vector_agent_links(db, queue_item) -> None:
         )
 
 
+async def _notify(db, queue_item, kind: NotificationType, title: str, message: str) -> None:
+    """Tell whoever added the source, in the app and by push. Never fatal: the
+    source's own status must not depend on it. A source added without a user
+    (a Shopify install queues the shop's site) has no one to tell."""
+    if not queue_item.user_id:
+        logger.info(f"Queue item {queue_item.id} has no user to notify ({kind.value})")
+        return
+    try:
+        notification = Notification(
+            user_id=queue_item.user_id,
+            type=kind,
+            title=title,
+            message=message,
+            # The column is notification_metadata; the old metadata=
+            # kwarg silently shadowed Base.metadata and stored nothing.
+            notification_metadata={"queue_id": queue_item.id}
+        )
+        db.add(notification)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Could not create {kind.value} notification for queue item {queue_item.id}: {e}")
+        return
+    await send_fcm_notification(queue_item.user_id, notification, db)
+
+
 async def process_queue_item(queue_item_id: int):
     """Process a single queue item"""
     with SessionLocal() as db:
+        queue_item = None
         try:
             queue_repo = KnowledgeQueueRepository(db)
             queue_item = queue_repo.get_by_id(queue_item_id)
@@ -138,22 +167,9 @@ async def process_queue_item(queue_item_id: int):
 
                 _sync_vector_agent_links(db, queue_item)
 
-                # Create notification for successful processing
                 user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
-                notification = Notification(
-                    user_id=queue_item.user_id,
-                    type=NotificationType.KNOWLEDGE_PROCESSED,
-                    title="Knowledge Processing Complete",
-                    message=f"Successfully processed {user_friendly_name}",
-                    # The column is notification_metadata; the old metadata=
-                    # kwarg silently shadowed Base.metadata and stored nothing.
-                    notification_metadata={"queue_id": queue_item.id}
-                )
-                db.add(notification)
-                db.commit()
-
-                # Send FCM notification
-                await send_fcm_notification(queue_item.user_id, notification, db)
+                await _notify(db, queue_item, NotificationType.KNOWLEDGE_PROCESSED,
+                              "Knowledge Processing Complete", f"Successfully processed {user_friendly_name}")
 
                 # Auto-draft FAQs from the new source for orgs using the help
                 # center. Fully non-fatal — even an import failure of the FAQ
@@ -169,29 +185,61 @@ async def process_queue_item(queue_item_id: int):
 
         except Exception as e:
             logger.error(f"Error processing queue item {queue_item_id}: {str(e)}")
+            if queue_item is None:
+                raise
+            # The session may hold a failed flush: start clean, record the
+            # failure first, and only then tell anyone about it.
+            db.rollback()
             try:
                 queue_item.status = QueueStatus.FAILED
                 # Persist the reason so the UI can show why it failed.
                 queue_item.error = str(e)
-
-                # Create notification for failed processing
-                user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
-                notification = Notification(
-                    user_id=queue_item.user_id,
-                    type=NotificationType.KNOWLEDGE_FAILED,
-                    title="Knowledge Processing Failed",
-                    message=f"Failed to process {user_friendly_name}: {str(e)}",
-                    notification_metadata={"queue_id": queue_item.id}
-                )
-                db.add(notification)
                 db.commit()
-
-                # Send FCM notification for failure
-                await send_fcm_notification(queue_item.user_id, notification, db)
-            except Exception as notify_err:
-                logger.error(f"Error creating failure notification: {notify_err}")
+            except Exception as status_err:
+                db.rollback()
+                logger.error(f"Could not mark queue item {queue_item_id} failed: {status_err}")
+            else:
+                await _tell_failed(db, queue_item)
 
             raise
+
+
+async def _tell_failed(db, queue_item) -> None:
+    user_friendly_name = get_user_friendly_filename(queue_item.source, queue_item.source_type)
+    await _notify(db, queue_item, NotificationType.KNOWLEDGE_FAILED,
+                  "Knowledge Processing Failed", f"Failed to process {user_friendly_name}: {queue_item.error}")
+
+
+# A source still 'processing' with no progress for this long was abandoned:
+# its worker died partway (out of memory, a restart) and nothing will pick it
+# up again, so it would spin in the dashboard for good. Longer than a live
+# run can go without progress (websites stop at their time limit; files are
+# size-capped and take about a minute), so it never fails one another
+# process is still reading.
+ABANDONED_AFTER = timedelta(seconds=settings.KB_SOURCE_TIME_LIMIT_SECONDS) + timedelta(minutes=15)
+
+
+def _shown_as(queue_item) -> str:
+    """A website by its address, as every other failure names it; a file by
+    its name, not the path it was uploaded to on our server."""
+    if queue_item.source_type in ('website', 'sitemap'):
+        return queue_item.source
+    return get_user_friendly_filename(queue_item.source, queue_item.source_type)
+
+
+async def fail_abandoned_items() -> None:
+    """Fail sources left 'processing' by a worker that died, and tell whoever
+    added them."""
+    with SessionLocal() as db:
+        cutoff = datetime.now(timezone.utc) - ABANDONED_AFTER
+        abandoned = KnowledgeQueueRepository(db).get_abandoned(cutoff)
+        for item in abandoned:
+            item.status = QueueStatus.FAILED
+            item.error = FAILURE_ADVICE[FailureCause.INTERRUPTED].format(url=_shown_as(item))
+        db.commit()
+        for item in abandoned:
+            logger.warning(f"Queue item {item.id} was abandoned mid-run; marked failed")
+            await _tell_failed(db, item)
 
 
 async def run_processor():
@@ -199,6 +247,12 @@ async def run_processor():
     try:
         PROCESSOR_STATUS["is_running"] = True
         PROCESSOR_STATUS["error"] = None
+
+        try:
+            await fail_abandoned_items()
+        except Exception as e:
+            # Never at the cost of processing what is pending
+            logger.error(f"Could not check for abandoned queue items: {e}")
 
         # Get pending items with proper connection handling
         with SessionLocal() as db:
@@ -235,12 +289,20 @@ async def run_processor():
 IDLE_POLL_SECONDS = 10
 
 
-# Main entry point for running as a standalone service
-if __name__ == "__main__":
-    import time
-    
+def run_service():
+    """Run the knowledge and FAQ loops as a standalone service (what the
+    knowledge_processor container runs: python -m app.workers.knowledge_processor)."""
     logger.info("Starting knowledge processor service")
-    
+
+    # Pushes for processed sources go out from this process: without this the
+    # first one failed with "The default Firebase app does not exist"
+    # (run_knowledge_processor.py did it; this entry point, which prod runs, didn't).
+    from app.services.firebase import initialize_firebase
+    try:
+        initialize_firebase()
+    except Exception as e:
+        logger.error(f"Firebase unavailable, push notifications are off: {e}")
+
     async def processor_loop():
         while True:
             try:
@@ -264,6 +326,9 @@ if __name__ == "__main__":
             logger.error(f"FAQ processor unavailable, running knowledge only: {e}")
         await asyncio.gather(*tasks)
 
-    # Run both loops
     asyncio.run(main())
-    
+
+
+# Main entry point for running as a standalone service
+if __name__ == "__main__":
+    run_service()

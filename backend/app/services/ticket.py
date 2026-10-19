@@ -132,13 +132,18 @@ class TicketService:
         assignee_user_id: Optional[UUID] = None,
         group_id: Optional[UUID] = None,
         created_by_user_id: Optional[UUID] = None,
+        link_session_customer: bool = True,
     ) -> Tuple[Ticket, List[Tuple[Ticket, float]]]:
         """Create a ticket, link its session, mirror the legacy session
         columns, and enqueue triage. Returns (ticket, possible_duplicates).
         Caller commits.
 
         customer_email (manual tickets): resolved to an existing customer in
-        the org or a new record — the direct-email notification path."""
+        the org or a new record — the direct-email notification path.
+
+        link_session_customer=False keeps the session's customer off the
+        ticket: a widget visitor bound to a customer by an email they only
+        typed must not hand the investigator that customer's identity."""
         settings = self.settings_repo.get_or_create(organization_id)
 
         if customer_id is None and customer_email:
@@ -153,7 +158,7 @@ class TicketService:
             # customer, so a foreign session must be rejected, not ignored.
             if session_record is None or str(session_record.organization_id) != str(organization_id):
                 raise ValueError("Session not found in this organization")
-            if customer_id is None:
+            if customer_id is None and link_session_customer:
                 customer_id = session_record.customer_id
             if agent_id is None:
                 agent_id = session_record.agent_id

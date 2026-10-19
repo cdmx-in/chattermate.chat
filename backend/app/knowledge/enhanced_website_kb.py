@@ -31,6 +31,7 @@ from app.models.knowledge_queue import ProcessingStage, QueueStatus
 from pydantic import model_validator
 
 from app.knowledge.crawl_scope import DEFAULT_CRAWL_SCOPE
+from app.knowledge.deadline import Deadline, SourceTimedOut
 from app.knowledge.enhanced_website_reader import (
     EnhancedWebsiteReader,
     BotProtectionError,
@@ -57,7 +58,6 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     max_retries: int = settings.KB_MAX_RETRIES
     max_workers: int = settings.KB_MAX_WORKERS
     batch_size: int = settings.KB_BATCH_SIZE
-    optimize_on: Optional[int] = settings.KB_OPTIMIZE_ON
     crawl_scope: str = DEFAULT_CRAWL_SCOPE
     
     # These are not part of the model schema, but added as instance attributes
@@ -67,6 +67,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
     _embedding_executor = None
     _embedding_results = None
     _embedding_lock = None
+    _deadline = None
     
     @property
     def queue_item(self):
@@ -157,6 +158,11 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                 if document is None:  # Sentinel value to stop worker
                     self._embedding_queue.task_done()
                     break
+
+                # Out of time: drain the queue without the work; the run fails.
+                if self._out_of_time:
+                    self._embedding_queue.task_done()
+                    continue
                 
                 # Process the document
                 if hasattr(document, 'embedding') and document.embedding is None:
@@ -343,6 +349,19 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
 
         raise EmptyCrawlError(self._failure_message())
 
+    @property
+    def _out_of_time(self) -> bool:
+        return self._deadline is not None and self._deadline.expired
+
+    def _raise_if_out_of_time(self) -> None:
+        """Fail a source that ran past its time limit, before anything of it
+        is stored: a partial copy would make adding it again skip the crawl
+        ("already loaded")."""
+        if self._out_of_time:
+            raise SourceTimedOut(
+                FAILURE_ADVICE[FailureCause.TOO_LONG].format(url=self._source_label())
+            )
+
     def _source_label(self) -> str:
         return self.urls[0] if self.urls else 'this source'
 
@@ -401,6 +420,10 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
             self.vector_db.create()
 
         logger.info(f"Starting knowledge base loading - {len(self.urls)} URLs")
+
+        self._deadline = Deadline(settings.KB_SOURCE_TIME_LIMIT_SECONDS)
+        if hasattr(self.reader, 'deadline'):
+            self.reader.deadline = self._deadline
 
         # Initialize the embedding system
         self._init_embedding_system()
@@ -504,6 +527,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
         self._shutdown_embedding_system()
         
         logger.info(f"Embedding completed - {embedded_count} documents embedded")
+        self._raise_if_out_of_time()
         
         # Update embedding progress
         if self.queue_item and self.queue_repo:
@@ -522,6 +546,8 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                 # Embed remaining documents immediately without parallel processing
                 # to avoid multiple model loading
                 for doc in all_documents:
+                    if self._out_of_time:
+                        break
                     if doc.embedding is None:
                         try:
                             doc.embed(embedder=self.vector_db.embedder)
@@ -529,6 +555,7 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                             logger.error(f"Error embedding document {doc.id}: {str(e)}")
             else:
                 logger.error(f"Cannot embed {unembedded_count} documents - no embedder available")
+            self._raise_if_out_of_time()
         
         # Process all documents in optimally sized batches
         if all_documents and upsert:
@@ -559,13 +586,12 @@ class EnhancedWebsiteKnowledgeBase(AgentKnowledge):
                         processed_items=processed_docs
                     )
             
-        # Optimize vector db if needed
-        if self.optimize_on is not None and total_documents > self.optimize_on and hasattr(self.vector_db, 'optimize'):
-            logger.info("Optimizing vector database...")
-            try:
-                self.vector_db.optimize()
-            except Exception as e:
-                logger.error(f"Vector DB optimization failed: {str(e)}")
+        # No approximate (HNSW/IVFFlat) index on purpose: every agent search
+        # filters by agent_id, and an approximate index applies that filter
+        # after picking candidates, so it can return fewer results than asked.
+        # Exact search over a knowledge table (a few thousand rows) is fast.
+        # (agno's optimize() also failed outright: it binds index parameters,
+        # which Postgres refuses in DDL under psycopg 3.)
 
         total_end_time = time.time()
         total_duration = total_end_time - total_start_time
