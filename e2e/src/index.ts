@@ -37,6 +37,7 @@ export {
 } from './channels/meta'
 export { installSlackWorkspace, slackSignature } from './channels/slack'
 export { login, signedInClient } from './api/auth'
+export { agentSocketOverPolling, agentSocketOverWebSocket, signInCookies, type SocketOutcome } from './api/agent-socket'
 export { prepareOrg, type PreparedOrg } from './org-setup'
 export { readOrgState, writeOrgState, storageStatePath, type OrgState } from './org-state'
 export { AgentsPage } from './pages/agents.page'

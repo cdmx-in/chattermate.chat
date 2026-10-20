@@ -67,6 +67,6 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Performance | Loader/widget size budgets; reply-time budget | `specs/perf` | P2 | ✅ |
 | Security basics | HttpOnly/Secure sign-in cookies; no CORS for other origins | `specs/security` | P2 | ✅ |
 | Org website and API access | Changing the org's website allows the new site and revokes the old one; it never gets the sign-in cookies | `specs/security/org-domain-cors.org.spec.ts` | P2 | ✅ |
-| Live-chat socket origin | The dashboard's socket signs in with its cookies; an org's website, or a `<script>`-tag (JSONP) handshake, never does | `specs/security/agent-socket-origin.spec.ts` | P2 | ✅ |
+| Live-chat socket origin | The dashboard's socket signs in with its cookies; an org's website, or a `<script>`-tag (JSONP) handshake, never does (JSONP case `@one-worker`) | `specs/security/agent-socket-origin.spec.ts` | P2 | ✅ |
 
 Enterprise journeys are tracked privately in `enterprise_frontend/e2e/FEATURES.md`.
