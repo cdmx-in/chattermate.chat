@@ -69,14 +69,38 @@ def test_public_pages_that_merely_mention_one(url):
 
 def test_a_store_that_isnt_open_yet_is_a_login_wall():
     text = page(SHOPIFY_NOT_OPEN).get_text(" ", strip=True)
-    assert looks_like_login_wall("https://shop.myshopify.com", page(SHOPIFY_NOT_OPEN), text)
+    assert looks_like_login_wall("https://shop.myshopify.com", text, page(SHOPIFY_NOT_OPEN))
+
+
+# Shopify's current theme (Horizon): the password box sits in a dialog, and the
+# form carries the hidden form_type marker. Trimmed from a live store.
+SHOPIFY_HORIZON_NOT_OPEN = """
+<main><h1>My Store 3</h1><p>Opening soon</p><p>Be the first to know when we launch.</p></main>
+<footer><form action="/contact#contact_form"><input type="email" name="contact[email]"></form></footer>
+<form method="post" action="/password" id="login_form" class="storefront-password-form">
+  <input type="hidden" name="form_type" value="storefront_password" />
+  <dialog-component id="password-form"><dialog class="password-dialog">
+    <input type="password" name="password" id="Password">
+  </dialog></dialog-component>
+</form>
+"""
+
+
+def test_a_store_that_isnt_open_yet_in_any_theme_is_a_login_wall():
+    # Even with plenty of text: the marker only appears on this page
+    assert looks_like_login_wall("https://shop.myshopify.com", "Opening soon. " * 200, page(SHOPIFY_HORIZON_NOT_OPEN))
+
+
+def test_the_served_page_counts_when_the_rendered_copy_lost_its_forms():
+    rendered = page("<main><h1>My Store 3</h1><p>Opening soon</p></main>")
+    assert looks_like_login_wall("https://shop.myshopify.com", "My Store 3 Opening soon", page(SHOPIFY_HORIZON_NOT_OPEN), rendered)
 
 
 def test_a_real_page_with_a_login_box_in_its_header_is_kept():
     html = '<header><input type="PASSWORD"></header><main>' + "Real content. " * 100 + "</main>"
     text = "Real content. " * 100
     assert len(text) > MAX_TEXT_ON_A_LOGIN_PAGE
-    assert not looks_like_login_wall("https://site.com", page(html), text)
+    assert not looks_like_login_wall("https://site.com", text, page(html))
 
 
 @pytest.mark.parametrize("chrome", [
@@ -90,12 +114,12 @@ def test_a_short_page_with_the_sites_login_box_in_its_chrome_is_kept(chrome):
     # Shops and forums put a login dropdown on every page, short ones included
     box = '<form><input type="password"></form>'
     html = chrome.format(box=box) + "<main><h1>Contact</h1><p>Call us on 0123.</p></main>"
-    assert not looks_like_login_wall("https://shop.com/contact", page(html), "Contact Call us on 0123.")
+    assert not looks_like_login_wall("https://shop.com/contact", "Contact Call us on 0123.", page(html))
 
 
 def test_a_short_page_without_a_password_box_is_not_a_login_wall():
-    assert not looks_like_login_wall("https://site.com/contact", page("<p>Call us</p>"), "Call us")
+    assert not looks_like_login_wall("https://site.com/contact", "Call us", page("<p>Call us</p>"))
 
 
 def test_an_admin_url_is_a_login_wall_whatever_it_shows():
-    assert looks_like_login_wall("https://shop.myshopify.com/admin", page("<p>Redirecting…</p>"), "Redirecting…")
+    assert looks_like_login_wall("https://shop.myshopify.com/admin", "Redirecting…", page("<p>Redirecting…</p>"))

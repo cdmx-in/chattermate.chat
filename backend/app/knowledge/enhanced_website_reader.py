@@ -735,6 +735,7 @@ class EnhancedWebsiteReader(WebsiteReader):
 
                 # Parse HTML with BeautifulSoup
                 soup = BeautifulSoup(html, 'html.parser')
+                served_soup = soup
 
                 logger.info(f"HTML length: {len(html)} characters")
                 
@@ -839,9 +840,10 @@ class EnhancedWebsiteReader(WebsiteReader):
                     self._record_failure(FailureCause.BOT_BLOCKED)
                     return None
 
-                # Judged on the page as finally rendered: a JS page's static
-                # HTML is short by nature, and some login forms only render in JS
-                if looks_like_login_wall(current_url, soup, content):
+                # Judged on the text as finally rendered (a JS page's static HTML
+                # is short by nature), against both the page as served and as
+                # rendered: the browser's copy comes back without its forms
+                if looks_like_login_wall(current_url, content, served_soup, soup):
                     logger.warning(f"Skipping {current_url}: it asks for a password (sign-in, admin, or a store not open yet)")
                     self._failed_crawls += 1
                     self._record_failure(FailureCause.LOGIN_REQUIRED)

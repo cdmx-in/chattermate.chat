@@ -304,6 +304,26 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         self.assertEqual(self.reader.dominant_failure_cause(), FailureCause.LOGIN_REQUIRED)
         browser.return_value.fetch_with_browser.assert_not_called()
 
+    def test_a_store_not_open_yet_is_caught_even_through_the_browser(self):
+        """A JS-heavy page goes through the browser, whose copy comes back
+        without forms; Shopify's marker is still read from the page as served."""
+        scripts = ''.join(f'<script src="/s{i}.js"></script>' for i in range(20))
+        html = (
+            f'<html><head>{scripts}</head><body><h1>My Store</h1><p>Opening soon.</p>'
+            '<form action="/password"><input type="hidden" name="form_type" value="storefront_password">'
+            '<dialog><input type="password" name="password"></dialog></form></body></html>'
+        )
+        rendered = BeautifulSoup('<main><h1>My Store</h1><p>Opening soon. Sign up for news.</p></main>', 'html.parser')
+        with serving(lambda request: httpx.Response(200, html=html)), \
+             patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback') as browser:
+            browser.return_value.is_available = True
+            browser.return_value.fetch_with_browser.return_value = ("My Store Opening soon. Sign up for our newsletter to hear first.", rendered, None)
+            result = self.reader.crawl('https://shop.myshopify.com')
+
+        browser.return_value.fetch_with_browser.assert_called()
+        self.assertEqual(result, {})
+        self.assertEqual(self.reader.dominant_failure_cause(), FailureCause.LOGIN_REQUIRED)
+
     def test_a_short_page_with_a_header_login_box_is_kept(self):
         html = (
             '<html><body><header><form><input type="password" name="pw"></form></header>'

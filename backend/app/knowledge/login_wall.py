@@ -42,6 +42,11 @@ AUTH_PATHS = (
 EXACT_AUTH_PATHS = ("admin", "auth")
 SHOPIFY_STORE_SUFFIX = ".myshopify.com"
 
+# Shopify's "store isn't open yet" page, in any theme: its password form carries
+# this hidden field (current themes put the password box itself in a dialog,
+# which would otherwise read as a site's login modal)
+SHOPIFY_STOREFRONT_PASSWORD = {"name": "form_type", "value": "storefront_password"}
+
 # Where sites keep a login box on every page; one there says nothing about the
 # page's own content
 SITE_CHROME = ("header", "nav", "footer", "dialog", "aside")
@@ -82,10 +87,19 @@ def asks_for_a_password(soup: BeautifulSoup) -> bool:
     return any(not _in_site_chrome(box) for box in boxes)
 
 
-def looks_like_login_wall(url: str, soup: BeautifulSoup, text: Optional[str]) -> bool:
+def is_shopify_password_page(soup: BeautifulSoup) -> bool:
+    """Whether this is a Shopify store's "isn't open yet" password page."""
+    return soup.find("input", attrs=SHOPIFY_STOREFRONT_PASSWORD) is not None
+
+
+def looks_like_login_wall(url: str, text: Optional[str], *pages: BeautifulSoup) -> bool:
     """Whether the page asks for a password instead of showing content. The
     URL alone can't tell when a site redirects there (a Shopify store that
-    isn't open sends its homepage to /password), so the page is checked too."""
+    isn't open sends its homepage to /password), so the page is checked too:
+    every version of it given, since a browser-rendered copy comes back
+    cleaned of its forms."""
     if is_auth_path(url):
         return True
-    return asks_for_a_password(soup) and len(text or "") < MAX_TEXT_ON_A_LOGIN_PAGE
+    if any(is_shopify_password_page(page) for page in pages):
+        return True
+    return any(asks_for_a_password(page) for page in pages) and len(text or "") < MAX_TEXT_ON_A_LOGIN_PAGE
