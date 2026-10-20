@@ -179,6 +179,12 @@ class TestRefreshKeepsTheSplit:
         assert "access-control-allow-credentials" not in client.get("/me", headers={"Origin": ORG_SITE}).headers
         assert client.get("/me", headers={"Origin": DASHBOARD}).headers["access-control-allow-credentials"] == "true"
 
+    def test_the_apis_own_origin_is_always_allowed(self, monkeypatch):
+        # The iframe snippet and path-mode help centres are pages on the API
+        monkeypatch.setattr(cors.settings, "BACKEND_URL", "https://api.example.com/")
+        assert "https://api.example.com" in cors.with_configured_origins([ORG_SITE])
+        assert not cors.is_first_party_origin("https://api.example.com")
+
     def test_a_cached_list_from_an_older_config_never_drops_the_dashboard(self, client):
         # Redis keeps the list across restarts; it may predate the current env
         cors.update_local_cors(client.app, [ORG_SITE])

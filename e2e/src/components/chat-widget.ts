@@ -10,6 +10,8 @@ export interface EmbedOptions {
   token?: string
   /** Put a `[data-chattermate-open]` button on the page. */
   withTriggerButton?: boolean
+  /** The dashboard's iframe snippet instead of the script: the chat is already open. */
+  snippet?: 'script' | 'iframe'
 }
 
 type JsApiMethod = 'open' | 'close' | 'toggle' | 'isOpen' | 'showLauncher' | 'hideLauncher' | 'identify'
@@ -65,6 +67,7 @@ export class ChatWidget {
       if (options.config) params.set('config', JSON.stringify(options.config))
       if (options.token) params.set('token', options.token)
       if (options.withTriggerButton) params.set('trigger', '1')
+      if (options.snippet) params.set('snippet', options.snippet)
       await this.page.goto(`${env.customerSiteUrl}/?${params}`)
     })
   }

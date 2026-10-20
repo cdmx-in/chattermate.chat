@@ -16,6 +16,7 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Team | The Agent role is refused every admin API; sees channels without secrets; assigned-only sees just its group's handovers | `specs/team/permissions.spec.ts` | P1 | ✅ |
 | Widget chat | Customer gets the AI answer | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | History survives a reload | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
+| Widget chat | The dashboard's iframe snippet chats (its socket comes from the API's own origin) | `specs/widget/iframe-snippet.spec.ts` | P1 | ✅ |
 | Widget chat | First authorization answer lost (socket gets the anonymous token) → widget authorizes again and chats | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | Email-first agent (gate → chat, person recorded), Ask anything panel, lead capture with no email asked — each also with the first authorization lost | `specs/widget/chat-styles.spec.ts` | P1 | ✅ |
 | Widget chat | Agent wraps up → customer rates the chat → rating stored against the agent | `specs/widget/rating.spec.ts` | P1 | ✅ |

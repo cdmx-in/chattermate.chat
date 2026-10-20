@@ -77,9 +77,12 @@ def is_first_party_origin(origin: Optional[str]) -> bool:
 
 
 def with_configured_origins(origins: Iterable[str]) -> List[str]:
-    """The given origins plus the operator's own, sorted. A cached list from
-    Redis was built from an earlier config, and must never drop the dashboard."""
-    return sorted(set(origins) | set(BASE_CORS_ORIGINS) | first_party_origins())
+    """The given origins plus the operator's own and the API's, sorted. A
+    cached list from Redis was built from an earlier config, and must never drop
+    the dashboard. The API's own origin is where the widget's iframe snippet and
+    path-mode help centres run, and their sockets send it as Origin."""
+    own = {origin_of(settings.BACKEND_URL)} - {None}
+    return sorted(set(origins) | set(BASE_CORS_ORIGINS) | first_party_origins() | own)
 
 
 class FirstPartyCredentialsCORSMiddleware(CORSMiddleware):
