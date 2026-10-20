@@ -39,6 +39,7 @@ from app.repositories.widget import WidgetRepository
 from app.services.shopify import ShopifyService
 from app.services.shopify_auth_service import ShopifyAuthService
 from app.services.shopify_helper_service import ShopifyHelperService
+from app.services.shopify_links import owned_by_another_org, use_shop_domain_if_unset
 from app.services.shopify_session import require_shopify_session
 from app.services.shopify_urls import shopify_admin_url, shopify_oauth_token_url
 from app.repositories.knowledge import KnowledgeRepository
@@ -214,7 +215,7 @@ async def link_shop_to_org(
         # could re-point another tenant's installed shop (and its stored
         # access token) at their own org, and drag that shop's domain onto
         # their organization record in the process.
-        if db_shop.organization_id and str(db_shop.organization_id) != org_id_str:
+        if owned_by_another_org(db_shop, org_id_str):
             raise HTTPException(
                 status_code=404,
                 detail="Shop not found"
@@ -224,31 +225,15 @@ async def link_shop_to_org(
         shop_update = ShopifyShopUpdate(organization_id=org_id_str)
         shop_repo.update_shop(shop_id, shop_update)
 
-        # Update organization domain with shop domain
         try:
-            from app.repositories.organization import OrganizationRepository
-            org_repo = OrganizationRepository(db)
-            organization = org_repo.get_organization(org_id_str)
-
-            if organization and db_shop.shop_domain:
-                # Only update if domain is different
-                if organization.domain != db_shop.shop_domain:
-                    # Check if domain is already used by another organization
-                    existing_org = org_repo.get_organization_by_domain(db_shop.shop_domain)
-                    if not existing_org or str(existing_org.id) == str(organization.id):
-                        # Update organization domain to shop domain
-                        organization.domain = db_shop.shop_domain
-                        db.add(organization)
-                        logger.info(f"Updated organization {org_id_str} domain to {db_shop.shop_domain}")
-                    else:
-                        logger.warning(f"Domain {db_shop.shop_domain} is already used by organization {existing_org.id}, skipping update")
+            use_shop_domain_if_unset(db, org_id_str, db_shop.shop_domain)
         except Exception as domain_error:
             logger.error(f"Error updating organization domain: {str(domain_error)}")
             # Don't fail the linking if domain update fails
 
         db.commit()
 
-        # Update CORS middleware to include new domain
+        # The store's domain is now allowed for the widget
         try:
             update_cors_middleware(app)
             logger.info("Updated CORS middleware after linking shop to organization")

@@ -45,16 +45,23 @@ function shopifySessionToken(shopDomain: string): string {
 }
 
 /**
+ * The app opened inside `shopDomain`'s admin, before anyone links it to an
+ * account: the session token is traded for an offline token. Returns the shop's
+ * id and a client calling as the embedded app (session token, no sign-in).
+ */
+export async function openShopifyApp(api: ApiClient, shopDomain: string): Promise<{ shopId: string; embedded: ApiClient }> {
+  const embedded = api.withToken(shopifySessionToken(shopDomain))
+  const { shop_id: shopId } = await embedded.post<{ shop_id: string }>('/shopify/exchange-token')
+  return { shopId, embedded }
+}
+
+/**
  * Installs the app on `shopDomain` (*.myshopify.com) and links the shop to the
- * admin's org, as the embedded app does: the session token is traded for an
- * offline token, then the signed-in admin claims the shop. Linking also sets the
- * org's domain to the shop's — restore it with `uninstallShopify`.
+ * admin's org, as the embedded app does: the app is opened, then the signed-in
+ * admin claims the shop. Remove it with `uninstallShopify`.
  */
 export async function installShopify(api: ApiClient, shopDomain: string): Promise<string> {
-  const { shop_id: shopId } = await api.post<{ shop_id: string }>('/shopify/exchange-token', {
-    // The session token stands in for the admin's: this is the embedded app calling.
-    headers: { Authorization: `Bearer ${shopifySessionToken(shopDomain)}` },
-  })
+  const { shopId } = await openShopifyApp(api, shopDomain)
   await api.post('/shopify/link-organization', { data: { shop_id: shopId } })
   return shopId
 }

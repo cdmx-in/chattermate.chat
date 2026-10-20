@@ -1,7 +1,7 @@
-import { test, expect, installShopify, uninstallShopify, useShopForAgent, FakeExternals, seedOrg, unique, AI_REPLY } from '@e2e'
+import { test, expect, installShopify, openShopifyApp, orgDomain, uninstallShopify, useShopForAgent, ApiClient, FakeExternals, seedOrg, unique, AI_REPLY } from '@e2e'
 
-// Linking a shop sets the org's domain, so this runs in the serial `org` project and
-// uninstalls (restoring the domain) afterwards.
+// Linking a shop changes which sites may call the API, so this runs in the serial
+// `org` project and uninstalls afterwards.
 
 test.describe('Shopify', () => {
   let shop: string
@@ -58,5 +58,33 @@ test.describe('Shopify', () => {
     expect(await externals.calls('shopify', 'graphql.json', { contains: shop })).toHaveLength(0)
     const toolResults = (await llm.requests(agent)).flatMap((r) => r.toolResults).join('\n')
     expect(toolResults).toContain('requires_user_input')
+  })
+})
+
+test.describe('connecting a Shopify store', () => {
+  test('keeps the org\'s own website and lets the storefront run the widget @integrations', async ({ adminApi, org, request }) => {
+    const website = await orgDomain(adminApi, org.orgId)
+    const shop = `${unique('e2e-shop')}.myshopify.com`
+    const shopId = await installShopify(adminApi, shop)
+    try {
+      // It used to be replaced by the store's domain, cutting the widget off from the website
+      expect(await orgDomain(adminApi, org.orgId)).toBe(website)
+      const allowed = async (origin: string) =>
+        (await new ApiClient(request).raw('GET', '/organizations/setup-status', { headers: { Origin: origin } })).headers()['access-control-allow-origin']
+      await expect.poll(() => allowed(`https://${shop}`)).toBe(`https://${shop}`)
+      await expect.poll(() => allowed(`https://${website}`)).toBe(`https://${website}`)
+    } finally {
+      await uninstallShopify(adminApi, shopId, org.orgId, website)
+    }
+  })
+
+  test('a store not linked to an account yet is told to connect, not signed out @integrations', async ({ adminApi }) => {
+    // Shopify's reviewers install before they connect: the app shows its
+    // Connect prompt, and a 401 would have sent the iframe to the login page
+    const { embedded } = await openShopifyApp(adminApi, `${unique('e2e-review')}.myshopify.com`)
+
+    const inbox = await embedded.raw('GET', '/chats/recent/shopify')
+    expect(inbox.status()).toBe(403)
+    expect((await inbox.json()).detail).toBe('Connect your ChatterMate account to this store first.')
   })
 })

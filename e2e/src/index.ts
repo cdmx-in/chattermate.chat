@@ -9,7 +9,7 @@ export { chatMessages, chatsWithAgent, type ChatMessage, type ChatOverview } fro
 export { findPerson, type Person } from './api/people'
 export { customizeAgent } from './api/customization'
 export { connectCrm, disconnectCrm, syncPersonToCrm, type CrmProvider } from './api/crm'
-export { connectJira, disconnectJira, fakeJira, installShopify, routeTicketsToJira, uninstallShopify, useShopForAgent } from './api/integrations'
+export { connectJira, disconnectJira, fakeJira, installShopify, openShopifyApp, routeTicketsToJira, uninstallShopify, useShopForAgent } from './api/integrations'
 export { publishWorkflow, type WorkflowGraph } from './api/workflows'
 export { createArticle, enableHelpCenter, setArticleStatus, type Article } from './api/help-center'
 export { connectEmail, listChannelAccounts } from './api/channels'

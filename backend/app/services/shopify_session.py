@@ -25,6 +25,8 @@ from app.database import get_db
 
 logger = get_logger(__name__)
 
+SHOP_NOT_LINKED = "Connect your ChatterMate account to this store first."
+
 
 class ShopifySessionService:
     """Service for handling Shopify session token validation"""
@@ -194,7 +196,8 @@ async def require_shopify_or_jwt_auth(
     
     # First try Shopify session token
     session_token = ShopifySessionService.get_session_token_from_request(request)
-    
+    unlinked_shop = None
+
     if session_token:
         try:
             # Validate and decode the session token
@@ -219,6 +222,8 @@ async def require_shopify_or_jwt_auth(
                         'decoded_token': decoded,
                         'user_id': None  # No user_id for session token auth
                     }
+                if db_shop and db_shop.is_installed:
+                    unlinked_shop = shop_domain
         except Exception as e:
             logger.debug(f"Shopify session token validation failed, trying JWT: {str(e)}")
     
@@ -233,7 +238,12 @@ async def require_shopify_or_jwt_auth(
             'current_user': current_user
         }
     except Exception as e:
-        logger.error(f"Both Shopify session token and JWT authentication failed: {str(e)}")
+        # A store that installed the app but isn't linked to an account yet is
+        # a step in onboarding, not a failure: the app shows its Connect prompt
+        if unlinked_shop:
+            logger.info(f"Shop {unlinked_shop} is not linked to an organization yet")
+            raise HTTPException(status_code=403, detail=SHOP_NOT_LINKED)
+        logger.warning(f"Both Shopify session token and JWT authentication failed: {str(e)}")
         raise HTTPException(
             status_code=401,
             detail="Authentication required"

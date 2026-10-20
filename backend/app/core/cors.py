@@ -172,6 +172,12 @@ def get_cors_origins() -> Set[str]:
         for domain in hc_repo.list_verified_domains():
             all_origins.add(f"https://{domain}")
             all_origins.add(f"http://{domain}")
+
+        # A linked store's storefront runs its organization's widget, whatever
+        # that organization's own website is
+        from app.repositories.shopify_shop_repository import ShopifyShopRepository
+        for domain in ShopifyShopRepository(db).list_linked_domains():
+            all_origins.add(f"https://{domain}")
     except Exception as e:
         logger.error(f"Error fetching organization domains: {e}")
     finally:
