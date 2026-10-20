@@ -10,6 +10,8 @@ export const env = {
   edition: (process.env.E2E_EDITION ?? 'oss') as 'oss' | 'enterprise',
   /** The stack runs with Redis (scripts/stack.sh E2E_REDIS_URL): dedupe and rate limits are live. */
   redis: Boolean(process.env.E2E_REDIS_URL),
+  /** The backend runs several workers (stack.sh E2E_BACKEND_WORKERS); socket.io polling isn't sticky across them. */
+  multiWorker: Boolean(process.env.E2E_BACKEND_WORKERS),
   frontendUrl: 'http://127.0.0.1:15173',
   backendUrl,
   apiUrl: `${backendUrl}/api/v1`,

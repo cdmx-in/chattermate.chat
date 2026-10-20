@@ -88,10 +88,11 @@ def socket_db(db):
 
 
 def _socket_environ(**cookies):
+    # A same-origin handshake: only our own pages may sign in with the cookies
     jar = http.cookies.SimpleCookie()
     for name, value in cookies.items():
         jar[name] = value
-    return {'HTTP_COOKIE': jar.output(header='', sep=';')}
+    return {'HTTP_COOKIE': jar.output(header='', sep=';'), 'HTTP_SEC_FETCH_SITE': 'same-origin'}
 
 
 @pytest.mark.asyncio
@@ -175,16 +176,12 @@ async def test_authenticate_socket_with_refresh(socket_db, live_user):
     _, refresh_token = issue_tokens(socket_db, live_user.id, live_user.organization_id)
     socket_db.commit()
 
-    with patch('app.core.socketio.sio.emit') as mock_emit:
-        result_token, result_user_id, result_org_id = await authenticate_socket(
-            sid, _socket_environ(refresh_token=refresh_token))
+    result_token, result_user_id, result_org_id = await authenticate_socket(
+        sid, _socket_environ(refresh_token=refresh_token))
 
     assert verify_token(result_token)["type"] == "access"
     assert result_user_id == str(live_user.id)
     assert result_org_id == str(live_user.organization_id)
-    mock_emit.assert_called_once_with('cookie_set', {
-        'access_token': result_token
-    }, to=sid)
 
 
 @pytest.mark.asyncio
@@ -365,9 +362,7 @@ async def test_authenticate_socket_invalid_token_format(mock_db):
     access_token = "invalid_format_token"
     
     # Create mock environ with cookies
-    cookies = http.cookies.SimpleCookie()
-    cookies['access_token'] = access_token
-    environ = {'HTTP_COOKIE': cookies.output(header='', sep=';')}
+    environ = _socket_environ(access_token=access_token)
     
     with patch('app.core.auth_utils.live_payload') as mock_verify:
         mock_verify.side_effect = Exception("Invalid token format")

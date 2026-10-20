@@ -47,20 +47,6 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
 
 
-def get_cors_headers(request: Request) -> dict:
-    """
-    Get CORS headers for responses with credentials support
-    """
-    origin = request.headers.get('origin', '*')
-    return {
-        'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Conversation-Token',
-        'Access-Control-Max-Age': '3600'
-    }
-
-
 async def get_current_user_or_widget(
     request: Request,
     db: Session = Depends(get_db),

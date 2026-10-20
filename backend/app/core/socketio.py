@@ -36,7 +36,9 @@ def needs_elasticache_tls(redis_url: str | None) -> bool:
         return False
     return (urlparse(redis_url).hostname or "").endswith(ELASTICACHE_HOST_SUFFIX)
 
-# Initialize Socket.IO server with basic config
+# Initialize Socket.IO server with basic config. engine.io answers every
+# allowed origin with credentials allowed; the cookie-authenticated /agent
+# namespace refuses other sites itself (auth_utils.cookie_socket_allowed).
 sio: AsyncServer = socketio.AsyncServer(
     async_mode='asgi',
     logger=True,

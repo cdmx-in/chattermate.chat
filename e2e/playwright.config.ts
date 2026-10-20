@@ -14,8 +14,9 @@ if (enterprise && !existsSync(env.enterpriseSpecDir)) {
 
 const signedInAsAdmin = { ...devices['Desktop Chrome'], storageState: storageStatePath('admin') }
 const ORG_WIDE = /\.org\.spec\.ts$/
-// Tests that need a capability the default stack leaves off.
-const needsRedis = env.redis ? undefined : /@redis/
+// Tests that need a capability the stack they run on leaves off: Redis, or a
+// single backend worker (socket.io polling isn't sticky across several).
+const unsupported = [env.redis ? null : /@redis/, env.multiWorker ? /@one-worker/ : null].filter((tag): tag is RegExp => tag !== null)
 // Screenshot baselines are Linux-only (generated in CI); they run in their own project.
 const VISUAL = /visual\/.*\.spec\.ts$/
 const NOT_DEFAULT = [ORG_WIDE, VISUAL]
@@ -35,7 +36,7 @@ const otherBrowsers: PlaywrightTestConfig['projects'] = process.env.E2E_MORE_BRO
       dependencies: ['setup'],
       testIgnore: NOT_DEFAULT,
       grep: /@widget/,
-      grepInvert: needsRedis,
+      grepInvert: unsupported,
       use: { ...(device as object), storageState: storageStatePath('admin') },
     }))
   : []
@@ -48,7 +49,7 @@ const projects: PlaywrightTestConfig['projects'] = [
   enterprise
     ? { name: 'setup', testDir: env.enterpriseSpecDir, testMatch: /.*\.setup\.ts/ }
     : { name: 'setup', testMatch: /.*\.setup\.ts/ },
-  { name: 'chromium', dependencies: ['setup'], testIgnore: NOT_DEFAULT, grepInvert: needsRedis, use: signedInAsAdmin },
+  { name: 'chromium', dependencies: ['setup'], testIgnore: NOT_DEFAULT, grepInvert: unsupported, use: signedInAsAdmin },
   // Specs that change org-wide settings (AI config, business hours, …). Run them in a
   // separate invocation with --workers=1 (see package.json "test") so they never race
   // the parallel suite, and are not skipped when an unrelated parallel test fails.

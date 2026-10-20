@@ -29,7 +29,6 @@ from app.api import webhooks as channel_webhooks
 # Import widget_chat to register socket.io event handlers for /widget namespace
 from app.api import widget_chat  # noqa: F401 - imported for side effects (socket.io handlers registration)
 from fastapi import FastAPI, BackgroundTasks
-from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings, verify_secret_configuration
 from app.core.encryption import verify_encryption_key
 from app.services.file_storage import PUBLIC_UPLOAD_FOLDERS
@@ -41,7 +40,13 @@ from contextlib import asynccontextmanager
 import os
 from app.channels.app_hooks import load_extensions
 from app.core.socketio import socket_app, configure_socketio, sio
-from app.core.cors import get_cors_origins, get_cors_origin_regex
+from app.core.cors import (
+    FirstPartyCredentialsCORSMiddleware,
+    first_party_origins,
+    get_cors_origin_regex,
+    get_cors_origins,
+    with_configured_origins,
+)
 from app.core.application import app, initialize_cors_listener
 from app.core.crawler_policy import install_crawler_policy
 
@@ -70,7 +75,7 @@ async def lifespan(app: FastAPI):
     pass
 
 # Move the CORS setup before app instantiation
-cors_origins = get_cors_origins()
+cors_origins = with_configured_origins(get_cors_origins())
 logger.debug(f"CORS origins: {cors_origins}")
 
 # Update the FastAPI app to use the lifespan function
@@ -79,11 +84,12 @@ app.router.lifespan_context = lifespan
 # Add CORS middleware to FastAPI app. The regex covers every help-center
 # subdomain (*.chattermate.help) so a newly-created slug is allowed without a
 # cache refresh; explicit origins still cover org domains + custom domains.
+# Only first-party origins (the dashboard) may send credentials.
 app.add_middleware(
-    CORSMiddleware,
-    allow_origins=list(cors_origins),
+    FirstPartyCredentialsCORSMiddleware,
+    credentialed_origins=first_party_origins(),
+    allow_origins=cors_origins,
     allow_origin_regex=get_cors_origin_regex(),
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
