@@ -47,7 +47,7 @@ from app.knowledge.crawl_scope import (
     url_scheme,
 )
 from app.knowledge.domains import registrable_domain
-from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause
+from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause, SourceUnreadable
 from app.knowledge.login_wall import is_auth_path, looks_like_login_wall
 from app.knowledge.main_content import select_main_node
 
@@ -55,13 +55,13 @@ from app.knowledge.main_content import select_main_node
 logger = get_logger(__name__)
 
 
-class BotProtectionError(Exception):
+class BotProtectionError(SourceUnreadable):
     """Raised when a crawl produced no content because the site's bot protection
     (Cloudflare / WordPress.com "Checking your browser…" interstitial) blocked the
     automated browser. Signals the user should add the content manually."""
 
 
-class EmptyCrawlError(Exception):
+class EmptyCrawlError(SourceUnreadable):
     """Raised when a crawl stored no pages for a reason other than bot protection.
 
     A run that indexes nothing is a failure, not a success: without this the queue

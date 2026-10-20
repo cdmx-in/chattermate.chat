@@ -19,6 +19,7 @@ from app.database import SessionLocal
 from app.repositories.knowledge_queue import KnowledgeQueueRepository
 from app.repositories.knowledge import KnowledgeRepository
 from app.knowledge.knowledge_base import KnowledgeManager
+from app.knowledge.failure_advice import SourceUnreadable
 from app.knowledge import page_editor
 from app.services import knowledge_vector_links
 from app.models.knowledge_queue import QueueStatus, ProcessingStage
@@ -184,7 +185,9 @@ async def process_queue_item(queue_item_id: int):
             db.commit()
 
         except Exception as e:
-            logger.error(f"Error processing queue item {queue_item_id}: {str(e)}")
+            unreadable = isinstance(e, SourceUnreadable)
+            log = logger.warning if unreadable else logger.error
+            log(f"Error processing queue item {queue_item_id}: {str(e)}")
             if queue_item is None:
                 raise
             # The session may hold a failed flush: start clean, record the
@@ -201,7 +204,10 @@ async def process_queue_item(queue_item_id: int):
             else:
                 await _tell_failed(db, queue_item)
 
-            raise
+            # The user has been told what to do about their site; only our
+            # own failures go on up to be logged as errors
+            if not unreadable:
+                raise
 
 
 async def _tell_failed(db, queue_item) -> None:

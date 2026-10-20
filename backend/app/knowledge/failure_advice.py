@@ -21,6 +21,12 @@ the words doesn't import the crawling stack.
 from typing import Optional
 
 
+class SourceUnreadable(Exception):
+    """The source itself couldn't be read: the customer's site, not a bug of
+    ours. Its message is the advice the user sees, so it's reported to them and
+    logged as a warning, not counted as an application error."""
+
+
 class FailureCause:
     """Why a page could not be read.
 

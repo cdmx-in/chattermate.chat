@@ -28,6 +28,7 @@ from app.knowledge.enhanced_pdf_kb import EnhancedPDFKnowledgeBase
 from app.core.s3 import delete_file_from_s3, owned_s3_key
 from app.knowledge.pdf_download import download_pdf
 from app.knowledge.pdf_limits import PdfRefused, check_page_count
+from app.knowledge.failure_advice import SourceUnreadable
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_to_agent import KnowledgeToAgent
 from app.models.knowledge_queue import ProcessingStage, QueueStatus
@@ -521,6 +522,8 @@ class KnowledgeManager:
 
                 return success
 
+        except SourceUnreadable:
+            raise  # the user's advice, reported by the worker
         except Exception as e:
             logger.error(f"Error processing knowledge: {str(e)}")
             raise
