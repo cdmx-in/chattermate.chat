@@ -288,6 +288,35 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         self.assertFalse(f(""))
         self.assertFalse(f(None))
 
+    def test_a_store_that_isnt_open_yet_is_not_stored(self):
+        """Its homepage is a password form: storing it would teach the agent
+        "Opening soon", so the source fails with advice to use the public site."""
+        html = (
+            '<html><body><h1>My Store</h1><p>Opening soon. Sign up for our newsletter to hear when we launch.</p>'
+            '<form action="/password"><input type="password" name="password"></form>'
+            '<a href="/admin">Log in</a></body></html>'
+        )
+        with serving(lambda request: httpx.Response(200, html=html)), \
+             patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback') as browser:
+            result = self.reader.crawl('https://shop.myshopify.com')
+
+        self.assertEqual(result, {})
+        self.assertEqual(self.reader.dominant_failure_cause(), FailureCause.LOGIN_REQUIRED)
+        browser.return_value.fetch_with_browser.assert_not_called()
+
+    def test_extract_links_never_follows_sign_in_or_admin_pages(self):
+        html = """
+        <html><body>
+          <a href="https://site.com/about">About</a>
+          <a href="https://site.com/admin">Admin</a>
+          <a href="https://site.com/account/login">Log in</a>
+          <a href="https://site.com/password">Store password</a>
+          <a href="https://site.com/wp-login.php">WP</a>
+        </body></html>
+        """
+        links = self.reader._extract_links(BeautifulSoup(html, 'html.parser'), 'https://site.com')
+        self.assertEqual(links, ['https://site.com/about'])
+
     def test_extract_links_dedupes_page_variants(self):
         """The homepage linked via #anchors and trailing slash yields one link."""
         html = """

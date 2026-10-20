@@ -48,6 +48,7 @@ from app.knowledge.crawl_scope import (
 )
 from app.knowledge.domains import registrable_domain
 from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause
+from app.knowledge.login_wall import is_auth_path, looks_like_login_wall
 from app.knowledge.main_content import select_main_node
 
 # Initialize logger for this module
@@ -782,6 +783,12 @@ class EnhancedWebsiteReader(WebsiteReader):
                 self._current_url = current_url
                 content = self._extract_main_content(soup)
 
+                if looks_like_login_wall(current_url, soup, content):
+                    logger.warning(f"Skipping {current_url}: it asks for a password (sign-in, admin, or a store not open yet)")
+                    self._failed_crawls += 1
+                    self._record_failure(FailureCause.LOGIN_REQUIRED)
+                    return None
+
                 # Log extracted content length for debugging
                 logger.info(f"Extracted content length: {len(content) if content else 0} characters from {current_url}")
 
@@ -1214,6 +1221,7 @@ class EnhancedWebsiteReader(WebsiteReader):
 
             if (
                 scope.allows(full_url)
+                and not is_auth_path(full_url)
                 and not any(parsed_url.path.endswith(ext) for ext in [
                     ".pdf", ".jpg", ".png", ".gif", ".zip", ".mp3", ".mp4", ".exe", ".dll"
                 ])

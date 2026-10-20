@@ -25,6 +25,7 @@ from app.models.permission import Permission, role_permissions
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from app.models.knowledge_to_agent import KnowledgeToAgent
+from app.knowledge.login_wall import AUTH_URL_MESSAGE
 from app.models.agent import Agent, AgentType
 from uuid import UUID, uuid4
 from app.api import knowledge as knowledge_router
@@ -244,6 +245,18 @@ def test_add_urls_fails_a_domain_that_does_not_exist_at_once(client: TestClient,
     failed = db.query(KnowledgeQueue).filter(KnowledgeQueue.source == "https://teeckbox.com").one()
     # The same words the crawler would have stored, so the reason reads the same
     assert knowledge_router._serialize_queue_item(failed)["reason"].startswith("This site could not be found")
+
+
+@pytest.mark.parametrize("url", ["https://ekhyzy-0i.myshopify.com/admin", "https://site.com/wp-admin"])
+def test_add_urls_refuses_a_sign_in_or_admin_page_at_once(client: TestClient, test_organization, db, url):
+    response = client.post("/api/v1/knowledge/add/urls", json={
+        "org_id": str(test_organization.id),
+        "websites": [url],
+    })
+
+    assert response.status_code == 422
+    assert AUTH_URL_MESSAGE in response.json()["detail"][0]["msg"]
+    assert db.query(KnowledgeQueue).filter(KnowledgeQueue.source == url).count() == 0
 
 
 def test_add_urls(client: TestClient, test_organization):
