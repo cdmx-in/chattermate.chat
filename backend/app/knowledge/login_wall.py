@@ -22,14 +22,12 @@ into them only reaches more of the same.
 from typing import Optional
 from urllib.parse import urlparse
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
-# Leading path segments that are sign-in or admin areas, not public content
+# Paths that are sign-in or admin areas, with everything under them
 AUTH_PATHS = (
-    "admin",
     "account/login",
     "account/register",
-    "auth",
     "log-in",
     "login",
     "password",
@@ -39,6 +37,14 @@ AUTH_PATHS = (
     "wp-admin",
     "wp-login.php",
 )
+# Sign-in or admin only as the whole path: docs.x.com/admin/configure-sso is a
+# public page. On a Shopify store everything under /admin is the admin.
+EXACT_AUTH_PATHS = ("admin", "auth")
+SHOPIFY_STORE_SUFFIX = ".myshopify.com"
+
+# Where sites keep a login box on every page; one there says nothing about the
+# page's own content
+SITE_CHROME = ("header", "nav", "footer", "dialog", "aside")
 
 # Said when someone adds one, so they can fix it right away
 AUTH_URL_MESSAGE = (
@@ -53,8 +59,27 @@ MAX_TEXT_ON_A_LOGIN_PAGE = 1000
 
 def is_auth_path(url: str) -> bool:
     """Whether the URL is a sign-in or admin area (by its path)."""
-    path = urlparse(url).path.strip("/").lower()
-    return any(path == auth or path.startswith(f"{auth}/") for auth in AUTH_PATHS)
+    parsed = urlparse(url)
+    path = parsed.path.strip("/").lower()
+    if any(path == auth or path.startswith(f"{auth}/") for auth in AUTH_PATHS):
+        return True
+    if (parsed.hostname or "").endswith(SHOPIFY_STORE_SUFFIX):
+        return any(path == auth or path.startswith(f"{auth}/") for auth in EXACT_AUTH_PATHS)
+    return path in EXACT_AUTH_PATHS
+
+
+def _in_site_chrome(tag: Tag) -> bool:
+    """Inside the header/nav/footer/a dialog, or hidden: a login box every page has."""
+    return any(
+        parent.name in SITE_CHROME or parent.has_attr("hidden") or parent.get("aria-hidden") == "true"
+        for parent in [tag, *tag.parents] if isinstance(parent, Tag)
+    )
+
+
+def asks_for_a_password(soup: BeautifulSoup) -> bool:
+    """Whether the page's own content (not its header login box) has a password field."""
+    boxes = soup.find_all("input", attrs={"type": lambda kind: (kind or "").lower() == "password"})
+    return any(not _in_site_chrome(box) for box in boxes)
 
 
 def looks_like_login_wall(url: str, soup: BeautifulSoup, text: Optional[str]) -> bool:
@@ -63,5 +88,4 @@ def looks_like_login_wall(url: str, soup: BeautifulSoup, text: Optional[str]) ->
     isn't open sends its homepage to /password), so the page is checked too."""
     if is_auth_path(url):
         return True
-    has_password_box = soup.find("input", attrs={"type": lambda kind: (kind or "").lower() == "password"})
-    return bool(has_password_box) and len(text or "") < MAX_TEXT_ON_A_LOGIN_PAGE
+    return asks_for_a_password(soup) and len(text or "") < MAX_TEXT_ON_A_LOGIN_PAGE

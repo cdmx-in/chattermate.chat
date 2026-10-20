@@ -173,8 +173,8 @@ def get_cors_origins() -> Set[str]:
             all_origins.add(f"https://{domain}")
             all_origins.add(f"http://{domain}")
 
-        # A linked store's storefront runs its organization's widget, whatever
-        # that organization's own website is
+        # A linked store's myshopify storefront runs its organization's widget,
+        # whatever that organization's own website is
         from app.repositories.shopify_shop_repository import ShopifyShopRepository
         for domain in ShopifyShopRepository(db).list_linked_domains():
             all_origins.add(f"https://{domain}")

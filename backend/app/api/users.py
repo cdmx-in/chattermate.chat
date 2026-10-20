@@ -45,10 +45,8 @@ from app.core.s3 import get_s3_signed_url, sign_s3_url, upload_file_to_s3, delet
 from app.core.config import settings
 from app.services.file_storage import local_upload_path
 from app.repositories.shopify_shop_repository import ShopifyShopRepository
-from app.services.shopify_links import owned_by_another_org, use_shop_domain_if_unset
+from app.services.shopify_links import owned_by_another_org, refresh_allowed_storefronts, use_shop_domain_if_unset
 from app.models.schemas.shopify.shopify_shop import ShopifyShopUpdate
-from app.core.cors import update_cors_middleware
-from app.core.application import app
 from app.core.params import MAX_DB_INT
 # Try to import enterprise modules
 try:
@@ -562,9 +560,9 @@ async def login(
                 shop_repository = ShopifyShopRepository(db)
                 db_shop = shop_repository.get_shop(shop_id)
 
-                # Only a store nobody owns yet, as /shopify/link-organization
-                # requires: otherwise signing in with another tenant's shop_id
-                # would take over their store
+                # Only a store nobody else owns yet (the same rule as
+                # /shopify/link-organization): otherwise signing in with another
+                # tenant's shop_id would take over their store
                 if db_shop and owned_by_another_org(db_shop, user.organization_id):
                     logger.warning(f"Shop {db_shop.id} belongs to another organization; not linking it at login")
                 elif db_shop:
@@ -582,13 +580,7 @@ async def login(
 
                     db.commit()
 
-                    # The store's domain is now allowed for the widget
-                    try:
-                        update_cors_middleware(app)
-                        logger.info("Updated CORS middleware after linking shop during login")
-                    except Exception as cors_error:
-                        logger.error(f"Error updating CORS middleware: {str(cors_error)}")
-                        # Don't fail login if CORS update fails
+                    refresh_allowed_storefronts()
 
                     logger.info(f"Updated shop {db_shop.shop_domain} with organization_id {user.organization_id} after login")
                 else:

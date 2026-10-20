@@ -687,6 +687,11 @@ class EnhancedWebsiteReader(WebsiteReader):
 
         if current_depth > self.max_depth:
             return None
+
+        # A sign-in or admin page is never worth a request
+        if is_auth_path(current_url):
+            self._record_failure(FailureCause.LOGIN_REQUIRED)
+            return None
         
         # Mark as visited before processing
         self._visited.add(current_url)
@@ -783,12 +788,6 @@ class EnhancedWebsiteReader(WebsiteReader):
                 self._current_url = current_url
                 content = self._extract_main_content(soup)
 
-                if looks_like_login_wall(current_url, soup, content):
-                    logger.warning(f"Skipping {current_url}: it asks for a password (sign-in, admin, or a store not open yet)")
-                    self._failed_crawls += 1
-                    self._record_failure(FailureCause.LOGIN_REQUIRED)
-                    return None
-
                 # Log extracted content length for debugging
                 logger.info(f"Extracted content length: {len(content) if content else 0} characters from {current_url}")
 
@@ -838,6 +837,14 @@ class EnhancedWebsiteReader(WebsiteReader):
                     self._failed_crawls += 1
                     self._challenge_blocked += 1
                     self._record_failure(FailureCause.BOT_BLOCKED)
+                    return None
+
+                # Judged on the page as finally rendered: a JS page's static
+                # HTML is short by nature, and some login forms only render in JS
+                if looks_like_login_wall(current_url, soup, content):
+                    logger.warning(f"Skipping {current_url}: it asks for a password (sign-in, admin, or a store not open yet)")
+                    self._failed_crawls += 1
+                    self._record_failure(FailureCause.LOGIN_REQUIRED)
                     return None
 
                 # Check content quality

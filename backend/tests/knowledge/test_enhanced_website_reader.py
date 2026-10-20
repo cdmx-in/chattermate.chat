@@ -304,6 +304,27 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         self.assertEqual(self.reader.dominant_failure_cause(), FailureCause.LOGIN_REQUIRED)
         browser.return_value.fetch_with_browser.assert_not_called()
 
+    def test_a_short_page_with_a_header_login_box_is_kept(self):
+        html = (
+            '<html><body><header><form><input type="password" name="pw"></form></header>'
+            '<main><h1>Contact us</h1><p>Call 0123 456 789 between nine and five, Monday to Friday.</p></main>'
+            '</body></html>'
+        )
+        with serving(lambda request: httpx.Response(200, html=html)):
+            result = self.reader.crawl('https://shop.com/contact')
+
+        self.assertIn('https://shop.com/contact', result)
+        self.assertIn('Call 0123', result['https://shop.com/contact'])
+
+    def test_an_admin_url_is_never_fetched(self):
+        requests = []
+        with serving(lambda request: requests.append(request) or httpx.Response(200, html=self.test_html)):
+            result = self.reader.crawl('https://shop.myshopify.com/admin')
+
+        self.assertEqual(result, {})
+        self.assertEqual(requests, [])
+        self.assertEqual(self.reader.dominant_failure_cause(), FailureCause.LOGIN_REQUIRED)
+
     def test_extract_links_never_follows_sign_in_or_admin_pages(self):
         html = """
         <html><body>

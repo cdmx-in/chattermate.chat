@@ -39,6 +39,8 @@ def page(html):
 @pytest.mark.parametrize("url", [
     "https://shop.myshopify.com/admin",
     "https://shop.myshopify.com/admin/products/1",
+    "https://site.com/admin",
+    "https://site.com/auth/",
     "https://site.com/account/login",
     "https://site.com/login",
     "https://site.com/password",
@@ -57,6 +59,9 @@ def test_sign_in_and_admin_paths(url):
     "https://site.com/blog/how-to-login-faster",
     "https://site.com/authors",
     "https://site.com/products/password-manager",
+    # Public docs that happen to live under /admin or /auth
+    "https://docs.site.com/admin/configure-sso",
+    "https://docs.site.com/auth/oauth-guide",
 ])
 def test_public_pages_that_merely_mention_one(url):
     assert not is_auth_path(url)
@@ -72,6 +77,20 @@ def test_a_real_page_with_a_login_box_in_its_header_is_kept():
     text = "Real content. " * 100
     assert len(text) > MAX_TEXT_ON_A_LOGIN_PAGE
     assert not looks_like_login_wall("https://site.com", page(html), text)
+
+
+@pytest.mark.parametrize("chrome", [
+    "<header>{box}</header>",
+    "<nav>{box}</nav>",
+    "<dialog>{box}</dialog>",
+    '<div hidden>{box}</div>',
+    '<div aria-hidden="true">{box}</div>',
+])
+def test_a_short_page_with_the_sites_login_box_in_its_chrome_is_kept(chrome):
+    # Shops and forums put a login dropdown on every page, short ones included
+    box = '<form><input type="password"></form>'
+    html = chrome.format(box=box) + "<main><h1>Contact</h1><p>Call us on 0123.</p></main>"
+    assert not looks_like_login_wall("https://shop.com/contact", page(html), "Contact Call us on 0123.")
 
 
 def test_a_short_page_without_a_password_box_is_not_a_login_wall():

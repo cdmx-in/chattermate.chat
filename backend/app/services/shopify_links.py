@@ -21,6 +21,8 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.core.application import app
+from app.core.cors import update_cors_middleware
 from app.core.logger import get_logger
 from app.models.shopify.shopify_shop import ShopifyShop
 from app.repositories.organization import OrganizationRepository
@@ -49,3 +51,13 @@ def use_shop_domain_if_unset(db: Session, organization_id: Union[str, UUID], sho
     organization.domain = shop_domain
     db.add(organization)
     logger.info(f"Organization {organization_id} had no website; using its store's domain {shop_domain}")
+
+
+def refresh_allowed_storefronts() -> None:
+    """Rebuild the CORS list after a store is linked, unlinked or removed: a
+    linked store's storefront runs the widget. Best effort, so it never fails
+    the request that changed the store."""
+    try:
+        update_cors_middleware(app)
+    except Exception as cors_error:
+        logger.error(f"Error updating CORS middleware: {str(cors_error)}")

@@ -39,7 +39,7 @@ from app.repositories.widget import WidgetRepository
 from app.services.shopify import ShopifyService
 from app.services.shopify_auth_service import ShopifyAuthService
 from app.services.shopify_helper_service import ShopifyHelperService
-from app.services.shopify_links import owned_by_another_org, use_shop_domain_if_unset
+from app.services.shopify_links import owned_by_another_org, refresh_allowed_storefronts, use_shop_domain_if_unset
 from app.services.shopify_session import require_shopify_session
 from app.services.shopify_urls import shopify_admin_url, shopify_oauth_token_url
 from app.repositories.knowledge import KnowledgeRepository
@@ -233,13 +233,7 @@ async def link_shop_to_org(
 
         db.commit()
 
-        # The store's domain is now allowed for the widget
-        try:
-            update_cors_middleware(app)
-            logger.info("Updated CORS middleware after linking shop to organization")
-        except Exception as cors_error:
-            logger.error(f"Error updating CORS middleware: {str(cors_error)}")
-            # Don't fail the linking if CORS update fails
+        refresh_allowed_storefronts()
 
         logger.info(f"Successfully linked shop {shop_id} to organization {org_id_str}")
 
@@ -393,6 +387,7 @@ async def delete_shop(
     success = shop_repository.delete_shop(shop_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete shop")
+    refresh_allowed_storefronts()
     
     return {"status": "success", "message": "Shop successfully disconnected"}
 
@@ -420,6 +415,7 @@ async def link_shop_to_organization(
             shop_update = ShopifyShopUpdate(organization_id=org_id_str)
             db_shop = shop_repository.update_shop(shop_id, shop_update)
             db.commit()
+            refresh_allowed_storefronts()
             logger.info(f"Linked shop {shop_id} to organization {org_id_str}")
         
         return {
@@ -925,6 +921,7 @@ async def shopify_app_uninstalled_webhook(
         
         # Commit the changes
         db.commit()
+        refresh_allowed_storefronts()
         
         logger.info(f"Successfully processed uninstall for {shop_domain}. Deleted shop and {deleted_configs} agent config(s)")
         
