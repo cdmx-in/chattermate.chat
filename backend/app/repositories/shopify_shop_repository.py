@@ -40,6 +40,15 @@ class ShopifyShopRepository:
         """
         return self.db.query(ShopifyShop).filter(ShopifyShop.shop_domain == shop_domain).first()
     
+    def list_linked_domains(self) -> List[str]:
+        """Domains of the stores that have the app installed and are linked to an
+        organization: their storefronts run that organization's widget."""
+        rows = self.db.query(ShopifyShop.shop_domain).filter(
+            ShopifyShop.is_installed.is_(True),
+            ShopifyShop.organization_id.isnot(None),
+        ).all()
+        return [domain for (domain,) in rows if domain]
+
     def get_shops(self, skip: int = 0, limit: int = 100) -> List[ShopifyShop]:
         """
         Get all shops

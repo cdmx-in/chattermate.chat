@@ -276,13 +276,33 @@ async def test_empty_crawl_fails_the_queue_item(mock_dependencies, mock_queue_it
         "No content could be read from https://example.com."
     )
 
-    with pytest.raises(EmptyCrawlError):
-        await process_queue_item(mock_queue_item.id)
+    # The user is told; it doesn't go on up the worker loop as an app error
+    await process_queue_item(mock_queue_item.id)
 
     assert mock_queue_item.status == QueueStatus.FAILED
     notification = mock_dependencies['db'].add.call_args[0][0]
     assert notification.type == NotificationType.KNOWLEDGE_FAILED
     assert "No content could be read" in notification.message
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_site_is_a_warning_and_our_own_bugs_stay_errors(mock_dependencies, mock_queue_item):
+    """The daily report counts ERROR lines: a customer's site that needs a
+    password isn't one of ours."""
+    from app.knowledge.enhanced_website_reader import EmptyCrawlError
+
+    manager = mock_dependencies['knowledge_manager']
+    manager.process_knowledge.side_effect = EmptyCrawlError("https://shop.example asks for a password")
+    with patch('app.workers.knowledge_processor.logger') as log:
+        await process_queue_item(mock_queue_item.id)
+    log.warning.assert_called_once()
+    log.error.assert_not_called()
+
+    manager.process_knowledge.side_effect = KeyError("our bug")
+    mock_queue_item.status = QueueStatus.PENDING
+    with patch('app.workers.knowledge_processor.logger') as log, pytest.raises(KeyError):
+        await process_queue_item(mock_queue_item.id)
+    log.error.assert_called()
 
 
 @pytest.mark.asyncio

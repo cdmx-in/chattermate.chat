@@ -25,7 +25,8 @@ from sqlalchemy.orm import Session
 from app.services.shopify_session import (
     ShopifySessionService,
     require_shopify_session,
-    require_shopify_or_jwt_auth
+    require_shopify_or_jwt_auth,
+    SHOP_NOT_LINKED,
 )
 
 
@@ -497,6 +498,47 @@ class TestRequireShopifyOrJwtAuth:
         
         assert exc_info.value.status_code == 401
         assert "Authentication required" in str(exc_info.value.detail)
+
+    @staticmethod
+    def _unlinked_shop(mock_get_token, mock_validate_token, mock_shop_repo):
+        """A valid session token from a store that installed the app but isn't linked yet."""
+        mock_get_token.return_value = "valid_token"
+        mock_validate_token.return_value = {'dest': 'https://new-shop.myshopify.com', 'aud': 'test_key'}
+        shop = MagicMock(id=str(uuid.uuid4()), organization_id=None, is_installed=True)
+        mock_shop_repo.return_value.get_shop_by_domain.return_value = shop
+
+    @pytest.mark.asyncio
+    @patch('app.core.auth.get_current_user')
+    @patch('app.repositories.shopify_shop_repository.ShopifyShopRepository')
+    @patch('app.services.shopify_session.ShopifySessionService.validate_session_token')
+    @patch('app.services.shopify_session.ShopifySessionService.get_session_token_from_request')
+    async def test_an_unlinked_store_is_told_to_connect_not_unauthenticated(
+        self, mock_get_token, mock_validate_token, mock_shop_repo, mock_get_current_user
+    ):
+        self._unlinked_shop(mock_get_token, mock_validate_token, mock_shop_repo)
+        mock_get_current_user.side_effect = HTTPException(status_code=401, detail="Not authenticated")
+
+        with pytest.raises(HTTPException) as exc_info:
+            await require_shopify_or_jwt_auth(MagicMock(spec=Request), MagicMock(spec=Session))
+
+        # 403, not 401: the app shows its Connect prompt and the dashboard doesn't sign out
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == SHOP_NOT_LINKED
+
+    @pytest.mark.asyncio
+    @patch('app.core.auth.get_current_user')
+    @patch('app.repositories.shopify_shop_repository.ShopifyShopRepository')
+    @patch('app.services.shopify_session.ShopifySessionService.validate_session_token')
+    @patch('app.services.shopify_session.ShopifySessionService.get_session_token_from_request')
+    async def test_an_unlinked_store_still_lets_a_signed_in_user_through(
+        self, mock_get_token, mock_validate_token, mock_shop_repo, mock_get_current_user
+    ):
+        self._unlinked_shop(mock_get_token, mock_validate_token, mock_shop_repo)
+        mock_get_current_user.return_value = MagicMock(id=str(uuid.uuid4()), organization_id=str(uuid.uuid4()))
+
+        result = await require_shopify_or_jwt_auth(MagicMock(spec=Request), MagicMock(spec=Session))
+
+        assert result['auth_type'] == 'jwt'
 
     @pytest.mark.asyncio
     @patch('app.repositories.shopify_shop_repository.ShopifyShopRepository')

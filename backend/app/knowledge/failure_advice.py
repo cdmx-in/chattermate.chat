@@ -21,6 +21,12 @@ the words doesn't import the crawling stack.
 from typing import Optional
 
 
+class SourceUnreadable(Exception):
+    """The source itself couldn't be read: the customer's site, not a bug of
+    ours. Its message is the advice the user sees, so it's reported to them and
+    logged as a warning, not counted as an application error."""
+
+
 class FailureCause:
     """Why a page could not be read.
 
@@ -39,6 +45,8 @@ class FailureCause:
     THIN_CONTENT = "thin_content"
     BLOCKED_HOST = "blocked_host"
     NOT_A_PAGE = "not_a_page"
+    # A sign-in or admin page, or a store that isn't open to visitors yet
+    LOGIN_REQUIRED = "login_required"
     # Something that is not a transport failure at all — most likely a bug of
     # ours. Deliberately has no entry in FAILURE_ADVICE: we fall back to the
     # generic message rather than blame the customer's site for our crash.
@@ -87,6 +95,11 @@ FAILURE_ADVICE = {
     FailureCause.NOT_A_PAGE: (
         "{url} is a file, not a web page. Add a PDF with Upload PDF, or add "
         "the page that links to it."
+    ),
+    FailureCause.LOGIN_REQUIRED: (
+        "{url} asks for a password: it's a sign-in or admin page, or a store "
+        "that isn't open to visitors yet. Add your site's public address "
+        "instead, like yourstore.com."
     ),
     FailureCause.TOO_LONG: (
         "{url} took too long to read. Add specific pages instead of the whole "

@@ -288,6 +288,76 @@ class TestEnhancedWebsiteReader(unittest.TestCase):
         self.assertFalse(f(""))
         self.assertFalse(f(None))
 
+    def test_a_store_that_isnt_open_yet_is_not_stored(self):
+        """Its homepage is a password form: storing it would teach the agent
+        "Opening soon", so the source fails with advice to use the public site."""
+        html = (
+            '<html><body><h1>My Store</h1><p>Opening soon. Sign up for our newsletter to hear when we launch.</p>'
+            '<form action="/password"><input type="password" name="password"></form>'
+            '<a href="/admin">Log in</a></body></html>'
+        )
+        with serving(lambda request: httpx.Response(200, html=html)), \
+             patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback') as browser:
+            result = self.reader.crawl('https://shop.myshopify.com')
+
+        self.assertEqual(result, {})
+        self.assertEqual(self.reader.dominant_failure_cause(), FailureCause.LOGIN_REQUIRED)
+        browser.return_value.fetch_with_browser.assert_not_called()
+
+    def test_a_store_not_open_yet_is_caught_even_through_the_browser(self):
+        """A JS-heavy page goes through the browser, whose copy comes back
+        without forms; Shopify's marker is still read from the page as served."""
+        scripts = ''.join(f'<script src="/s{i}.js"></script>' for i in range(20))
+        html = (
+            f'<html><head>{scripts}</head><body><h1>My Store</h1><p>Opening soon.</p>'
+            '<form action="/password"><input type="hidden" name="form_type" value="storefront_password">'
+            '<dialog><input type="password" name="password"></dialog></form></body></html>'
+        )
+        rendered = BeautifulSoup('<main><h1>My Store</h1><p>Opening soon. Sign up for news.</p></main>', 'html.parser')
+        with serving(lambda request: httpx.Response(200, html=html)), \
+             patch('app.knowledge.enhanced_website_reader.get_crawl4ai_fallback') as browser:
+            browser.return_value.is_available = True
+            browser.return_value.fetch_with_browser.return_value = ("My Store Opening soon. Sign up for our newsletter to hear first.", rendered, None)
+            result = self.reader.crawl('https://shop.myshopify.com')
+
+        browser.return_value.fetch_with_browser.assert_called()
+        self.assertEqual(result, {})
+        self.assertEqual(self.reader.dominant_failure_cause(), FailureCause.LOGIN_REQUIRED)
+
+    def test_a_short_page_with_a_header_login_box_is_kept(self):
+        html = (
+            '<html><body><header><form><input type="password" name="pw"></form></header>'
+            '<main><h1>Contact us</h1><p>Call 0123 456 789 between nine and five, Monday to Friday.</p></main>'
+            '</body></html>'
+        )
+        with serving(lambda request: httpx.Response(200, html=html)):
+            result = self.reader.crawl('https://shop.com/contact')
+
+        self.assertIn('https://shop.com/contact', result)
+        self.assertIn('Call 0123', result['https://shop.com/contact'])
+
+    def test_an_admin_url_is_never_fetched(self):
+        requests = []
+        with serving(lambda request: requests.append(request) or httpx.Response(200, html=self.test_html)):
+            result = self.reader.crawl('https://shop.myshopify.com/admin')
+
+        self.assertEqual(result, {})
+        self.assertEqual(requests, [])
+        self.assertEqual(self.reader.dominant_failure_cause(), FailureCause.LOGIN_REQUIRED)
+
+    def test_extract_links_never_follows_sign_in_or_admin_pages(self):
+        html = """
+        <html><body>
+          <a href="https://site.com/about">About</a>
+          <a href="https://site.com/admin">Admin</a>
+          <a href="https://site.com/account/login">Log in</a>
+          <a href="https://site.com/password">Store password</a>
+          <a href="https://site.com/wp-login.php">WP</a>
+        </body></html>
+        """
+        links = self.reader._extract_links(BeautifulSoup(html, 'html.parser'), 'https://site.com')
+        self.assertEqual(links, ['https://site.com/about'])
+
     def test_extract_links_dedupes_page_variants(self):
         """The homepage linked via #anchors and trailing slash yields one link."""
         html = """
