@@ -106,6 +106,13 @@ class TestFirstPartyOrigins:
             assert cors.first_party_origins() == {OPERATOR_LISTED, DASHBOARD}
         assert "FRONTEND_URL" in caplog.text
 
+    def test_the_widget_frame_host_is_never_first_party(self, monkeypatch):
+        # Even listed in CORS_ORIGINS: the widget's host stays cookieless
+        monkeypatch.setattr(cors.settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        configure(monkeypatch, cors_origins=[OPERATOR_LISTED, "https://widget.example.com"])
+        assert cors.first_party_origins() == {DASHBOARD, OPERATOR_LISTED}
+        assert not cors.is_first_party_origin("https://widget.example.com")
+
     def test_a_wildcard_in_cors_origins_trusts_no_one(self, monkeypatch):
         configure(monkeypatch, cors_origins=["*"])
         assert cors.first_party_origins() == {DASHBOARD}
