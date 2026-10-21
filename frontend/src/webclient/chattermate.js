@@ -227,6 +227,9 @@ window.chattermateConfig;
   // A fresher token for the same visitor, given while the frame was still starting:
   // handed over as soon as the widget mounts.
   let pendingIdentity = null
+  // The last load failed in a way that may have passed (a server error, a frame
+  // that never answered): the next time the visitor opens the chat, try again.
+  let retryOnOpen = false
   // Set while the frame closes an outgoing visitor's session; called on END_CHAT_DONE.
   let endChatDone = null
   let endChatTimer = null
@@ -1496,6 +1499,10 @@ window.chattermateConfig;
       if (isOpen) {
         config.hasOpened = true
         config.unreadCount = 0
+        if (retryOnOpen) {
+          teardownFrame()
+          prefetchWidget()
+        }
       }
       // Tell the iframe whether it's visible so it can track unread messages.
       postToFrame({ type: 'WIDGET_VISIBILITY', open: isOpen })
@@ -1573,6 +1580,7 @@ window.chattermateConfig;
       pendingIdentity = null
       widgetMounted = false
       frameOrigin = null
+      retryOnOpen = false
       clearFrameTimer()
       // A rebuild already under way supersedes the one a pending END_CHAT would do
       cancelEndChat()
@@ -1736,6 +1744,11 @@ window.chattermateConfig;
       revealButton()
     }
 
+    function showUnavailable() {
+      showLoadError('Chat is unavailable right now. Please try again later.')
+      retryOnOpen = true
+    }
+
     function frameDidNotStart() {
       const host = window.location.hostname || 'this site'
       showLoadError('Chat couldn’t load on “' + host + '”. If the widget is limited to certain domains, add this one in its settings; otherwise check the widget ID.')
@@ -1823,7 +1836,7 @@ window.chattermateConfig;
         showLoadError('This chat widget is not currently configured. Please contact the website administrator to enable chat support.')
         return
       }
-      showLoadError('Chat is unavailable right now. Please try again later.')
+      showUnavailable()
     }
 
     // Leads record the page they came from; tell the frame when a single-page app moves on.
@@ -1846,9 +1859,7 @@ window.chattermateConfig;
         widgetMounted = false
         button.classList.add('loading')
         clearFrameTimer()
-        frameTimer = setTimeout(function () {
-          showLoadError('Chat is unavailable right now. Please try again later.')
-        }, FRAME_LOAD_MS)
+        frameTimer = setTimeout(showUnavailable, FRAME_LOAD_MS)
         postToFrame({ type: 'HOST_INIT', token: getStoredToken(), pageUrl: window.location.href })
         pendingIdentity = null // HOST_INIT carried the newest token
         return

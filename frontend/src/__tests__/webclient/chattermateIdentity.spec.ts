@@ -204,6 +204,31 @@ describe('ChatterMate identity continuity', () => {
 
       expect(document.querySelector('.chattermate-error-ui')?.textContent).toContain('Chat is unavailable right now')
     })
+
+    it('tries again when the visitor opens the chat after it was unavailable', async () => {
+      await loadLoader()
+      handshake()
+      fromFrame({ type: 'WIDGET_ERROR', code: 'unavailable' })
+      expect(frames()).toHaveLength(0)
+
+      api().open()
+
+      expect(document.querySelector('.chattermate-error-ui')).toBeNull()
+      expect(frames()).toHaveLength(1)
+    })
+
+    it('tries only once per failure, and not after a configuration error', async () => {
+      await loadLoader()
+      handshake()
+      fromFrame({ type: 'WIDGET_ERROR', code: 'token_required' })
+
+      api().open()
+      api().close()
+      api().open()
+
+      expect(document.querySelector('.chattermate-error-ui')?.textContent).toContain('not currently configured')
+      expect(frames()).toHaveLength(0)
+    })
   })
 
   describe('switching visitor', () => {

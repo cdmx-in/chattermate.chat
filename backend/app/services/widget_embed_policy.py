@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 import idna
+import tldextract
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -56,6 +57,22 @@ class InvalidAllowedDomain(ValueError):
     """An allowed-domains entry that isn't a host name we can put in a header."""
 
 
+# The bundled public suffix list (private section included, so github.io and
+# myshopify.com count): no network fetch, no cache directory
+_suffixes = tldextract.TLDExtract(suffix_list_urls=(), cache_dir=None, include_psl_private_domains=True)
+
+
+def _shown(entry: object) -> str:
+    """An entry as quoted back in an error: short, whatever was pasted."""
+    text = str(entry)
+    return repr(text if len(text) <= 60 else text[:57] + "...")
+
+
+def _is_public_suffix(host: str) -> bool:
+    """co.uk, com, github.io: names under which anyone can register a site."""
+    return not _suffixes(host).domain
+
+
 def _to_ascii(host: str) -> str:
     """Punycode an internationalised name the way browsers do (UTS #46, so
     `ß` stays `ß` rather than becoming `ss`); leave a leading `*.` alone."""
@@ -65,31 +82,33 @@ def _to_ascii(host: str) -> str:
     try:
         return prefix + idna.encode(name, uts46=True, transitional=False).decode("ascii")
     except idna.IDNAError as exc:
-        raise InvalidAllowedDomain(f"{host} isn't a valid domain") from exc
+        raise InvalidAllowedDomain(f"{_shown(host)} isn't a valid domain") from exc
 
 
 def normalize_allowed_domain(entry: object) -> str:
     """`host[:port]` for one entry, accepting a pasted URL (scheme and path dropped)."""
-    if not isinstance(entry, str) or len(entry) > _MAX_DOMAIN_LENGTH + 64:
-        raise InvalidAllowedDomain(f"{str(entry)[:80]!r} isn't a valid domain")
+    if not isinstance(entry, str):
+        raise InvalidAllowedDomain(f"{_shown(entry)} isn't a valid domain")
+    if len(entry) > _MAX_DOMAIN_LENGTH + 64:
+        raise InvalidAllowedDomain(f"{_shown(entry)} is too long for a domain")
     raw = entry.strip().lower()
     if "://" in raw:
         raw = raw.split("://", 1)[1]
     raw = re.split(r"[/?#]", raw, 1)[0]
     if not raw or _UNSAFE_IN_HEADER.search(raw):
-        raise InvalidAllowedDomain(f"{entry!r} isn't a valid domain")
+        raise InvalidAllowedDomain(f"{_shown(entry)} isn't a valid domain")
 
     host, _, port = raw.partition(":")
     host = _to_ascii(host)
     if len(host) > _MAX_DOMAIN_LENGTH or not _HOST_RE.match(host):
-        raise InvalidAllowedDomain(f"{entry!r} isn't a valid domain")
+        raise InvalidAllowedDomain(f"{_shown(entry)} isn't a valid domain")
     if "." not in host and host not in _LOCAL_HOSTS:
-        raise InvalidAllowedDomain(f"{entry!r} needs a full domain, like example.com")
-    if host.startswith("*.") and (host[2:] in _LOCAL_HOSTS or "." not in host[2:]):
-        # *.com would allow every site, which is what an empty list is for
-        raise InvalidAllowedDomain(f"{entry!r} is too broad for a wildcard")
+        raise InvalidAllowedDomain(f"{_shown(entry)} needs a full domain, like example.com")
+    if host.startswith("*.") and (host[2:] in _LOCAL_HOSTS or _is_public_suffix(host[2:])):
+        # *.com or *.co.uk would allow every site there, which is what an empty list is for
+        raise InvalidAllowedDomain(f"{_shown(entry)} is too broad for a wildcard")
     if port and not (_PORT_RE.match(port) and 0 < int(port) < 65536):
-        raise InvalidAllowedDomain(f"{entry!r} has an invalid port")
+        raise InvalidAllowedDomain(f"{_shown(entry)} has an invalid port")
 
     return f"{host}:{port}" if port else host
 

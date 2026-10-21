@@ -99,5 +99,7 @@ class WidgetEmbedSettings(BaseModel):
     """Where a widget may be embedded. Org-only: never part of the public
     WidgetResponse, which any visitor's widget can read. Entries are checked
     and normalised by app.services.widget_embed_policy; these bounds only keep
-    an oversized request from being processed at all."""
-    allowed_domains: List[Annotated[str, StringConstraints(max_length=320)]] = Field(default_factory=list, max_length=20)
+    an oversized request from being processed at all, well above the policy's
+    own limits, so a person over those gets its plain message instead."""
+    allowed_domains: List[Annotated[str, StringConstraints(max_length=2000)]] = Field(default_factory=list,
+                                                                                    max_length=200)

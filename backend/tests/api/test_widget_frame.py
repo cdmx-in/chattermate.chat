@@ -478,9 +478,15 @@ class TestEmbedSettings:
     def test_entries_that_could_break_the_header_are_refused_not_crashed_on(self, client, test_widget, entries):
         assert client.put(self.url(test_widget), json={"allowed_domains": entries}).status_code == 422
 
-    def test_too_many_domains_are_refused(self, client, test_widget):
+    def test_too_many_domains_are_refused_in_plain_words(self, client, test_widget):
         response = client.put(self.url(test_widget), json={"allowed_domains": [f"s{i}.com" for i in range(21)]})
         assert response.status_code == 422
+        assert response.json()["detail"] == "At most 20 domains"
+
+    def test_an_overlong_entry_is_refused_in_plain_words(self, client, test_widget):
+        response = client.put(self.url(test_widget), json={"allowed_domains": ["a" * 330]})
+        assert response.status_code == 422
+        assert "is too long for a domain" in response.json()["detail"]
 
     def test_another_orgs_widget_is_not_found(self, client, db, test_agent):
         other_org = Organization(name="Other", domain="other.example", timezone="UTC")

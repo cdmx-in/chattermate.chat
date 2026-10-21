@@ -129,3 +129,4 @@ pymysql>=1.1
 sshtunnel>=0.4.0
 paramiko>=3.4,<4
 idna>=3.7  # UTS #46 host names for widget allowed domains (app/services/widget_embed_policy.py)
+tldextract==5.3.0  # public suffix list (bundled, read offline) for allowed-domain wildcards

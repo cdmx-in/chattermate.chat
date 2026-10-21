@@ -33,7 +33,10 @@ export function useWidgetAllowedDomains(widgetId: Ref<string | undefined>) {
 
   const messageFrom = (err: any, fallback: string): string => {
     const detail = err?.response?.data?.detail
-    return typeof detail === 'string' ? detail : fallback
+    if (typeof detail === 'string') return detail
+    // A request-shape refusal (a list of field errors): its first message
+    const first = Array.isArray(detail) ? detail[0]?.msg : undefined
+    return typeof first === 'string' ? first : fallback
   }
 
   const load = async () => {

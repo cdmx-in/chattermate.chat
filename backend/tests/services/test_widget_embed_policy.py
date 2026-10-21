@@ -38,6 +38,8 @@ class TestNormalize:
         ("https://www.acme.com/pricing?x=1#top", "www.acme.com"),
         ("shop.acme.co.uk:8443", "shop.acme.co.uk:8443"),
         ("*.acme.com", "*.acme.com"),
+        ("*.acme.co.uk", "*.acme.co.uk"),
+        ("*.acme.github.io", "*.acme.github.io"),
         ("localhost", "localhost"),
         ("http://localhost:3000/", "localhost:3000"),
         ("127.0.0.1:5173", "127.0.0.1:5173"),
@@ -66,6 +68,10 @@ class TestNormalize:
         "*",
         "*.*.acme.com",
         "*.com",
+        "*.co.uk",       # public suffixes: every site registered under them
+        "*.com.au",
+        "*.github.io",
+        "*.myshopify.com",
         "acme.com:\uff18\uff10",
         "acme.com:\u00b2",
         "a" * 300 + ".com",
@@ -73,6 +79,17 @@ class TestNormalize:
     def test_refuses(self, typed):
         with pytest.raises(InvalidAllowedDomain):
             policy.normalize_allowed_domain(typed)
+
+    @pytest.mark.parametrize("typed, message", [
+        ("*.co.uk", "is too broad for a wildcard"),
+        ("a" * 400 + ".com", "is too long for a domain"),
+        ("x " * 100, "isn't a valid domain"),
+    ])
+    def test_errors_quote_the_entry_briefly(self, typed, message):
+        with pytest.raises(InvalidAllowedDomain) as refused:
+            policy.normalize_allowed_domain(typed)
+        assert message in str(refused.value)
+        assert len(str(refused.value)) < 120
 
     def test_list_is_deduplicated_in_order(self):
         assert policy.normalize_allowed_domains(["B.com", "a.com", "https://b.com/"]) == ["b.com", "a.com"]
