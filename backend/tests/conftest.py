@@ -20,6 +20,9 @@ import os
 # key, and a fixed key keeps encrypted fixtures reproducible across runs. This key
 # is for tests only — deployments generate their own (see backend/.env.example).
 os.environ.setdefault("ENVIRONMENT", "test")
+# Not the developer's backend/.env: its bucket, Redis and keys made results
+# differ between a laptop and CI. Point ENV_FILE at a real file to opt back in.
+os.environ.setdefault("ENV_FILE", os.devnull)
 os.environ.setdefault(
     "ENCRYPTION_KEY", "QmFTbXc5RWQ4czRfQWpqSnhqZjhraGtYSGFYaXZ4SkRNS2kxZFB1Y2NrMD0=")
 
