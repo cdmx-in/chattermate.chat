@@ -16,6 +16,7 @@ limitations under the License.
 
 import traceback
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
 from app.core.config import settings
@@ -689,7 +690,7 @@ async def get_agent_shopify_config(
         logger.info(f"GET agent-config using session token for org: {org_id}")
     except HTTPException:
         # Fall back to JWT auth (for dashboard)
-        current_user = await get_current_user(request=request, db=db)
+        current_user = await run_in_threadpool(get_current_user, request, None, db)
         if not check_permissions(current_user, ["manage_organization"]):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         org_id = current_user.organization_id
@@ -735,7 +736,7 @@ async def save_agent_shopify_config(
         logger.info(f"POST agent-config using session token for org: {org_id_str}")
     except HTTPException:
         # Fall back to JWT auth (for dashboard)
-        current_user = await get_current_user(request=request, db=db)
+        current_user = await run_in_threadpool(get_current_user, request, None, db)
         if not check_permissions(current_user, ["manage_organization"]):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         if not current_user.organization_id:

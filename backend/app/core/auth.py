@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 from fastapi import Depends, HTTPException, status, Cookie, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from typing import Callable, Iterable, Optional, List
@@ -90,7 +91,7 @@ def require_grantable(current_user: User, permission_names: Iterable[str]) -> No
 
 def require_permissions(*required_permissions: str):
     """Dependency to check user permissions"""
-    async def permission_checker(
+    def permission_checker(
         current_user: User = Depends(get_current_user)
     ) -> User:
         if not check_permissions(current_user, list(required_permissions)):
@@ -155,7 +156,7 @@ def has_any_permission(user: User, permissions: Iterable[str]) -> bool:
 
 def require_any_permission(*permissions: str):
     """Dependency: the user needs any one of `permissions`."""
-    async def permission_checker(
+    def permission_checker(
         current_user: User = Depends(get_current_user)
     ) -> User:
         if not has_any_permission(current_user, permissions):
@@ -211,7 +212,21 @@ def _jwt_user(access_token: str, db: Session) -> User:
     return user
 
 
-async def get_current_user(
+def _loaded_user(resolve: Callable[[str, Session], Optional[User]], token: str, db: Session) -> Optional[User]:
+    """A user resolved with its role's permissions loaded, for a coroutine to
+    run in the threadpool: both are queries that must not block the event loop."""
+    user = resolve(token, db)
+    if user is not None and user.role is not None:
+        user.role.permissions  # noqa: B018 - loads the relationship here, not later on the loop
+    return user
+
+
+# The user dependencies are plain functions on purpose: they query the database
+# (role permissions load lazily too), and FastAPI runs a plain dependency in its
+# threadpool. As coroutines they ran on the event loop, so once the connection
+# pool ran dry every request froze waiting for a connection that the requests
+# already holding one could no longer return.
+def get_current_user(
     request: Request,
     access_token: Optional[str] = Cookie(None),
     db: Session = Depends(get_db)
@@ -246,7 +261,7 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-async def get_current_organization(
+def get_current_organization(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ) -> Organization:
@@ -272,7 +287,7 @@ async def get_current_organization(
 
 def require_permission(permission: str):
     """Dependency for checking if user has specific permission"""
-    async def permission_dependency(
+    def permission_dependency(
         current_user: User = Depends(get_current_user)
     ) -> User:
         if not current_user.role or not current_user.role.has_permission(permission):
@@ -340,7 +355,7 @@ async def get_unified_auth(request: Request, db: Session = Depends(get_db)) -> d
 
                 # Enterprise: a Personal Access Token resolves directly to its owning user.
                 if access_token.startswith(PAT_TOKEN_PREFIX):
-                    current_user = _resolve_pat_user(access_token, db)
+                    current_user = await run_in_threadpool(_loaded_user, _resolve_pat_user, access_token, db)
                     if current_user is None or not current_user.is_active:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -354,7 +369,7 @@ async def get_unified_auth(request: Request, db: Session = Depends(get_db)) -> d
                         "current_user": current_user
                     }
 
-                current_user = _jwt_user(access_token, db)
+                current_user = await run_in_threadpool(_loaded_user, _jwt_user, access_token, db)
 
                 return {
                     "auth_type": "jwt",
@@ -451,7 +466,7 @@ async def get_unified_chat_auth(request: Request, db: Session = Depends(get_db))
 
                 # Enterprise: a Personal Access Token resolves directly to its owning user.
                 if access_token.startswith(PAT_TOKEN_PREFIX):
-                    current_user = _resolve_pat_user(access_token, db)
+                    current_user = await run_in_threadpool(_loaded_user, _resolve_pat_user, access_token, db)
                     if current_user is None or not current_user.is_active:
                         raise HTTPException(
                             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -475,7 +490,7 @@ async def get_unified_chat_auth(request: Request, db: Session = Depends(get_db))
                         "can_view_unassigned": pat_can_view_unassigned
                     }
 
-                current_user = _jwt_user(access_token, db)
+                current_user = await run_in_threadpool(_loaded_user, _jwt_user, access_token, db)
 
                 # Check chat permissions
                 user_permissions = {p.name for p in current_user.role.permissions}

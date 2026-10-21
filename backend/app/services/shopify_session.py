@@ -18,6 +18,7 @@ import jwt
 import time
 from typing import Optional, Dict, Any
 from fastapi import Request, HTTPException, Depends
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logger import get_logger
@@ -229,7 +230,7 @@ async def require_shopify_or_jwt_auth(
     
     # Fall back to JWT authentication
     try:
-        current_user = await get_current_user(request=request, db=db)
+        current_user = await run_in_threadpool(get_current_user, request, None, db)
         logger.info(f"Using JWT auth for user: {current_user.id}")
         return {
             'auth_type': 'jwt',
