@@ -12,6 +12,11 @@ export const env = {
   redis: Boolean(process.env.E2E_REDIS_URL),
   /** The backend runs several workers (stack.sh E2E_BACKEND_WORKERS); socket.io polling isn't sticky across them. */
   multiWorker: Boolean(process.env.E2E_BACKEND_WORKERS),
+  /**
+   * The cookieless host the widget frame is served from (stack.sh E2E_WIDGET_FRAME_URL), or
+   * null when it is framed on the API's own origin, as a self-host without one runs.
+   */
+  widgetFrameUrl: (process.env.E2E_WIDGET_FRAME_URL ?? 'http://localhost:18000') || null,
   frontendUrl: 'http://127.0.0.1:15173',
   backendUrl,
   apiUrl: `${backendUrl}/api/v1`,
@@ -26,6 +31,11 @@ export const env = {
   customerSiteUrl: 'http://127.0.0.1:13000',
   /** The same pretend site under a second origin, for where-may-it-embed journeys. */
   customerSiteOtherUrl: 'http://localhost:13000',
+  /**
+   * The same site embedding the last release's loader (srcdoc + cross-origin /data),
+   * as a browser that cached it still runs. The only customer-site origin in CORS.
+   */
+  customerSiteLegacyUrl: 'http://127.0.0.1:13001',
   /** The throwaway database stack.sh manages (same E2E_PG_URL convention). */
   databaseUrl: `${(process.env.E2E_PG_URL ?? `postgresql://${process.env.USER}@127.0.0.1:5432`).replace(/\/$/, '')}/chattermate_e2e`,
   /** The private enterprise suite, present only where the enterprise_frontend submodule is checked out. */

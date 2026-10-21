@@ -47,3 +47,18 @@ export async function requestFrameFrom(api: ApiClient, widgetId: string, origin:
   })
   if (!response.ok()) throw new Error(`widget frame for ${origin} → ${response.status()}`)
 }
+
+/**
+ * A frame request already sent on to the frame host (`cm_hop=1`) that arrived on the
+ * API's own host instead, where the dashboard's sign-in cookies live: what a
+ * misrouted proxy, or someone crafting the URL, would get.
+ */
+export async function requestFrameAfterHop(api: ApiClient, widgetId: string): Promise<{ status: number; servesWidget: boolean }> {
+  const response = await api.raw('GET', `/widgets/${widgetId}/frame`, {
+    params: { host: 1, cm_hop: 1 },
+    headers: { 'Sec-Fetch-Dest': 'iframe' },
+    maxRedirects: 0,
+  })
+  const page = await response.text()
+  return { status: response.status(), servesWidget: page.includes('/assets/widget.js') || page.includes('__CM_FRAME__') }
+}

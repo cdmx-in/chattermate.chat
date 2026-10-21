@@ -18,6 +18,7 @@ import { InboxPage } from '../pages/inbox.page'
 import { LoginPage } from '../pages/login.page'
 import { PeoplePage } from '../pages/people.page'
 import { TicketsPage } from '../pages/tickets.page'
+import { WidgetAllowedDomainsPage } from '../pages/widget-allowed-domains.page'
 import { unique } from '../support/ids'
 import { blockThirdParty } from './network'
 
@@ -123,6 +124,8 @@ interface TestFixtures {
   ticketsPage: TicketsPage
   peoplePage: PeoplePage
   humanAgentsPage: HumanAgentsPage
+  /** The agent editor's Widget tab, where the widget's allowed domains are edited. */
+  allowedDomainsPage: WidgetAllowedDomainsPage
 }
 
 /**
@@ -136,6 +139,9 @@ async function newContext(browser: Browser, testInfo: TestInfo, options: Browser
     ...contextOptions,
     baseURL, serviceWorkers, timezoneId, locale, colorScheme, viewport, userAgent,
     deviceScaleFactor, isMobile, hasTouch,
+    // Explicitly empty: Playwright's browser fixture otherwise hands every new
+    // context the project's storageState, signing visitors in as the admin
+    storageState: { cookies: [], origins: [] },
     ...options,
   })
   await blockThirdParty(context)
@@ -269,6 +275,7 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
   ticketsPage: async ({ page }, use) => use(new TicketsPage(page)),
   peoplePage: async ({ page }, use) => use(new PeoplePage(page)),
   humanAgentsPage: async ({ page }, use) => use(new HumanAgentsPage(page)),
+  allowedDomainsPage: async ({ page }, use) => use(new WidgetAllowedDomainsPage(page)),
 })
 
 export { expect }
