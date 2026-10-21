@@ -110,6 +110,19 @@ class TestFramePage:
         assert 'src="https://api.example.com/assets/widget.js' in response.text
         assert 'href="https://api.example.com/assets/widget.css' in response.text
 
+    def test_scripts_run_only_from_the_bundle_folder(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+        csp = client.get(frame_url(test_widget)).headers["content-security-policy"]
+        assert "script-src https://api.example.com/assets/ 'nonce-" in csp
+
+    def test_builds_the_allowed_domains_once_per_load(self, client, restricted, monkeypatch):
+        from app.services import widget_embed_policy
+        calls = []
+        original = widget_embed_policy.frame_ancestors
+        monkeypatch.setattr(widget_embed_policy, "frame_ancestors", lambda *a: calls.append(a) or original(*a))
+        client.get(frame_url(restricted), headers={"Sec-Fetch-Dest": "iframe", "Referer": "https://elsewhere.example/"})
+        assert len(calls) == 1
+
     def test_inline_config_runs_only_with_the_csp_nonce(self, client, test_widget):
         response = client.get(frame_url(test_widget))
         csp = response.headers["content-security-policy"]
@@ -192,6 +205,30 @@ class TestFramePage:
         assert response.headers["location"] == (
             f"https://widget.example.com/api/v1/widgets/{test_widget.id}/frame?host=1&cm_hop=1"
         )
+
+    def test_the_redirect_is_cacheable(self, client, test_widget, monkeypatch):
+        # Same for every visitor: the browser keeps it instead of a round trip per page view
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        response = client.get(frame_url(test_widget), headers={"Host": "api.example.com"}, follow_redirects=False)
+        assert response.headers["cache-control"] == "public, max-age=3600"
+
+    @pytest.mark.parametrize("frame_url_setting,host", [
+        ("https://widget.example.com:443", "widget.example.com"),
+        ("https://widget.example.com", "widget.example.com:443"),
+        ("https://Widget.Example.com", "widget.example.com"),
+    ])
+    def test_a_default_port_or_case_still_names_the_frame_host(self, client, test_widget, monkeypatch,
+                                                              frame_url_setting, host):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", frame_url_setting)
+        response = client.get(frame_url(test_widget), headers={"Host": host}, follow_redirects=False)
+        assert response.status_code == 200
+
+    def test_a_hop_to_a_cookie_host_written_with_its_default_port_is_refused(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+        response = client.get(f"{frame_url(test_widget)}?cm_hop=1", headers={"Host": "api.example.com:443"},
+                              follow_redirects=False)
+        assert response.status_code == 421
 
     def test_any_other_cookie_carrying_host_is_sent_over_too(self, client, test_widget, monkeypatch):
         # e.g. a dashboard host that proxies /api/: its cookies must not reach the frame

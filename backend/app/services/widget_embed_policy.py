@@ -167,8 +167,9 @@ def _always_allowed(db: Session, organization_id: Optional[UUID]) -> List[str]:
 
     if organization_id:
         help_center = HelpCenterRepository(db).get_by_org(organization_id)
-        if help_center and help_center.domain_verified and not _UNSAFE_IN_HEADER.search(help_center.custom_domain):
-            sources += [f"https://{help_center.custom_domain}", f"http://{help_center.custom_domain}"]
+        domain = (help_center.custom_domain or "").lower() if help_center and help_center.domain_verified else ""
+        if domain and not domain.startswith("*.") and _HOST_RE.match(domain):
+            sources += [f"https://{domain}", f"http://{domain}"]
     return sources
 
 
@@ -215,7 +216,11 @@ def allows_embedder(db: Session, allowed_domains: Optional[List[str]], organizat
     For telling the org where its widget was refused; the header itself is the
     enforcement. Mirrors frame_ancestors().
     """
-    directive = frame_ancestors(db, allowed_domains, organization_id)
+    return directive_allows(frame_ancestors(db, allowed_domains, organization_id), embedder_origin)
+
+
+def directive_allows(directive: Optional[str], embedder_origin: str) -> bool:
+    """Whether a frame_ancestors() directive (None: anywhere) lets `embedder_origin` frame the widget."""
     if directive is None:
         return True
     try:
@@ -227,18 +232,23 @@ def allows_embedder(db: Session, allowed_domains: Optional[List[str]], organizat
     return any(_source_matches(s, scheme, host, port) for s in sources if "://" in s)
 
 
-def frame_document_csp(nonce: str, connect_origins: Iterable[str], ancestors: Optional[str]) -> str:
+def frame_document_csp(nonce: str, connect_origins: Iterable[str], ancestors: Optional[str],
+                       assets_url: Optional[str] = None) -> str:
     """Content-Security-Policy for the framed widget document.
 
-    The widget only talks to its own API and socket, loads its bundle from its
-    own /assets and fonts from Google; everything else a script could reach for
-    is closed. Styles stay inline-able for the theme and font loader.
+    The widget only talks to its own API and socket, loads its bundle from
+    `assets_url` (its /assets/ folder) and fonts from Google; everything else a
+    script could reach for is closed. Scripts are held to that folder rather
+    than the whole origin: without a separate frame host it is the API's own,
+    and nothing else served there may run as the widget. Styles stay
+    inline-able for the theme and font loader.
     """
     connect = " ".join(dict.fromkeys(o for o in connect_origins if o and not _UNSAFE_IN_HEADER.search(o)))
+    assets = assets_url if assets_url and not _UNSAFE_IN_HEADER.search(assets_url) else "'self'"
     directives = [
         "default-src 'self'",
-        f"script-src 'self' 'nonce-{nonce}'",
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+        f"script-src {assets} 'nonce-{nonce}'",
+        f"style-src {assets} 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' data: https://fonts.gstatic.com",
         "img-src * data: blob:",
         "media-src * data: blob:",

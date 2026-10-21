@@ -170,6 +170,19 @@ class TestFrameAncestors:
         db.commit()
         assert "support.acme.com" not in policy.frame_ancestors(db, ["acme.com"], test_organization.id)
 
+    @pytest.mark.parametrize("domain", [None, "", "support.acme.com evil.com", "*.acme.com"])
+    def test_a_verified_help_center_row_without_a_usable_domain_adds_nothing(self, db, own_origins,
+                                                                           test_organization, domain):
+        db.add(HelpCenterSettings(
+            organization_id=test_organization.id,
+            custom_domain=domain,
+            txt_record_verified=True,
+            cname_record_verified=True,
+        ))
+        db.commit()
+        directive = policy.frame_ancestors(db, ["acme.com"], test_organization.id)
+        assert "evil.com" not in directive and "*.acme.com" not in directive and "None" not in directive
+
     def test_a_hand_edited_bad_row_never_reaches_the_header(self, db, own_origins):
         directive = policy.frame_ancestors(db, ["acme.com; script-src *", "good.com"], None)
         assert ";" not in directive
@@ -228,6 +241,19 @@ class TestFrameDocumentCsp:
     def test_scripts_need_the_nonce(self):
         csp = policy.frame_document_csp("abc123", ["https://api.example.com"], None)
         assert "script-src 'self' 'nonce-abc123'" in csp
+
+    def test_scripts_and_styles_come_only_from_the_assets_folder(self):
+        # Without a frame host the page shares the API's origin: nothing else
+        # served there may run as the widget
+        csp = policy.frame_document_csp("n", [], None, assets_url="https://api.example.com/assets/")
+        assert "script-src https://api.example.com/assets/ 'nonce-n'" in csp
+        assert "style-src https://api.example.com/assets/ 'unsafe-inline'" in csp
+        assert "script-src 'self'" not in csp
+
+    def test_an_unsafe_assets_url_falls_back_to_self(self):
+        csp = policy.frame_document_csp("n", [], None, assets_url="https://api.example.com/assets/; script-src *")
+        assert "script-src 'self' 'nonce-n'" in csp
+        assert "script-src *" not in csp
         assert "object-src 'none'" in csp
         assert "base-uri 'none'" in csp
         assert "frame-ancestors" not in csp

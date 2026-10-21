@@ -336,7 +336,7 @@ const copyWidgetCode = () => {
 
 const copyIframeCode = () => {
     if (!widget.value?.id) return
-    const iframeCode = `<iframe src="${widgetUrl.value}/api/v1/widgets/${widget.value.id}/frame" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write"></iframe>`
+    const iframeCode = `<iframe src="${widgetUrl.value}/api/v1/widgets/${widget.value.id}/frame" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write *"></iframe>`
     navigator.clipboard.writeText(iframeCode).then(() => {
         // Could show a toast notification here
         console.log('Iframe code copied to clipboard')
@@ -1133,7 +1133,7 @@ onMounted(async () => {
                                         class="widget-preview"
                                         frameborder="0"
                                         title="Widget Preview"
-                                        allow="clipboard-write"
+                                        allow="clipboard-write *"
                                     ></iframe>
                                     <div v-else class="loading-preview">
                                         Loading widget preview...

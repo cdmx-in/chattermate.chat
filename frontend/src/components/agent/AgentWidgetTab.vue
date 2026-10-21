@@ -122,7 +122,7 @@ const iframeUrl = computed(() => {
 // Generate iframe embed code
 const iframeEmbedCode = computed(() => {
   if (!props.widget?.id) return ''
-  return `<iframe src="${iframeUrl.value}" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write"></iframe>`
+  return `<iframe src="${iframeUrl.value}" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write *"></iframe>`
 })
 </script>
 
@@ -319,7 +319,7 @@ const { data } = await response.json();
                 class="iframe-preview"
                 frameborder="0"
                 title="AI Assistant Preview"
-                allow="clipboard-write"
+                allow="clipboard-write *"
               ></iframe>
             </div>
           </div>

@@ -61,6 +61,9 @@ _NO_STORE = {"Cache-Control": "no-store"}
 # Set on the redirect to the frame host: a request that still doesn't arrive
 # there (a proxy forwarding an internal Host) is served rather than bounced again.
 _HOP_PARAM = "cm_hop"
+# The hop to the frame host is the same for every visitor: let the browser keep
+# it rather than pay a round trip on each page view
+_REDIRECT_CACHE = {"Cache-Control": "public, max-age=3600"}
 
 _warned_about_shared_origin = False
 
@@ -84,23 +87,34 @@ def _frame_host_redirect(request: Request) -> Optional[RedirectResponse]:
     Every other host can carry the dashboard's cookies (the API host, a dashboard
     host proxying /api/), which a page running in the frame must never get.
     """
-    frame_host = urlparse(settings.WIDGET_FRAME_URL).netloc if settings.WIDGET_FRAME_URL else ""
-    if not frame_host or request.headers.get("host", "") == frame_host:
+    host = request.headers.get("host", "")
+    if not settings.WIDGET_FRAME_URL or _names_host_of(host, settings.WIDGET_FRAME_URL):
         return None
     if request.query_params.get(_HOP_PARAM):
-        host = request.headers.get("host", "")
-        cookie_hosts = {urlparse(settings.BACKEND_URL).netloc, urlparse(settings.FRONTEND_URL).netloc}
-        if host in cookie_hosts:
+        if any(_names_host_of(host, url) for url in (settings.BACKEND_URL, settings.FRONTEND_URL)):
             # Never serve it where the dashboard's cookies live, hop or not
             return HTMLResponse("This chat can't load here.", status_code=status.HTTP_421_MISDIRECTED_REQUEST)
         logger.warning(
             "Widget frame redirected to %s but arrived on Host %s; serving it here. "
             "The frame host's proxy must pass the Host header through.",
-            frame_host, host,
+            urlparse(settings.WIDGET_FRAME_URL).netloc, host,
         )
         return None
     query = urlencode([*request.query_params.multi_items(), (_HOP_PARAM, "1")])
-    return RedirectResponse(f"{settings.WIDGET_FRAME_URL}{request.url.path}?{query}", status_code=status.HTTP_302_FOUND)
+    return RedirectResponse(f"{settings.WIDGET_FRAME_URL}{request.url.path}?{query}",
+                            status_code=status.HTTP_302_FOUND, headers=_REDIRECT_CACHE)
+
+
+def _names_host_of(host_header: str, url: str) -> bool:
+    """Whether a Host header names the host of `url`, a default port written or not."""
+    target = urlparse(url)
+    default = 443 if target.scheme == "https" else 80
+    try:
+        given = urlparse(f"//{host_header}")
+        return bool(target.hostname) and given.hostname == target.hostname.lower() \
+            and (given.port or default) == (target.port or default)
+    except ValueError:
+        return False
 
 
 def _warn_if_frame_shares_the_api_origin() -> None:
@@ -120,13 +134,14 @@ def _origin(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}"
 
 
-def _note_refused_embedder(db: Session, widget, request: Request, background_tasks: BackgroundTasks) -> None:
+def _note_refused_embedder(db: Session, widget, ancestors: Optional[str], request: Request,
+                           background_tasks: BackgroundTasks) -> None:
     """A site the widget's allowed domains refuse framing it: the browser only
     shows a blank frame, so tell the org where it was tried."""
     if not widget.allowed_domains or request.headers.get("sec-fetch-dest") != "iframe":
         return
     embedder = widget_embed_policy.origin_of(request.headers.get("referer") or "")
-    if embedder and not widget_embed_policy.allows_embedder(db, widget.allowed_domains, widget.organization_id, embedder):
+    if embedder and not widget_embed_policy.directive_allows(ancestors, embedder):
         note_install(db, widget, embedder, request, background_tasks, REFUSED)
 
 
@@ -139,11 +154,13 @@ async def get_widget_frame(widget_id: str, request: Request, background_tasks: B
     _warn_if_frame_shares_the_api_origin()
 
     widget = widget_bootstrap.find_widget(db, widget_id)
-    _note_refused_embedder(db, widget, request, background_tasks)
+    ancestors = frame_ancestors(db, widget)
+    _note_refused_embedder(db, widget, ancestors, request, background_tasks)
 
     config = _frame_config(request)
     # The bundle sits beside the API, under the same base (a path prefix included)
-    assets_base = html.escape(config["API_URL"].rsplit(settings.API_V1_STR, 1)[0], quote=True)
+    base = config["API_URL"].rsplit(settings.API_V1_STR, 1)[0]
+    assets_base = html.escape(base, quote=True)
     nonce = secrets.token_urlsafe(16)
     version = asset_version()
     asset_query = f"?v={version}" if version else ""
@@ -151,7 +168,8 @@ async def get_widget_frame(widget_id: str, request: Request, background_tasks: B
     csp = widget_embed_policy.frame_document_csp(
         nonce,
         [_origin(config["API_URL"]), _origin(config["WS_URL"])],
-        frame_ancestors(db, widget),
+        ancestors,
+        assets_url=f"{base}/assets/",
     )
 
     page = f"""<!DOCTYPE html>
