@@ -16,6 +16,7 @@ limitations under the License.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from app.api import widget_chat
 from app.models.widget import Widget
 from app.models.agent import Agent, AgentType
 from app.models.ai_config import AIConfig, AIModelType
@@ -137,6 +138,16 @@ def test_workflow_node(db, test_workflow) -> WorkflowNode:
     db.refresh(node)
     return node
 
+
+def _accept_conversation_token(monkeypatch):
+    """Connect verifies the token to read its scope; these tests pass a literal."""
+    monkeypatch.setattr(
+        widget_chat,
+        "verify_conversation_token",
+        lambda token: {"jti": "test-jti", "customer_email": "visitor@example.com"},
+    )
+
+
 @pytest.fixture
 def mock_sio():
     """Create a mock socket.io server"""
@@ -171,6 +182,7 @@ async def test_widget_connect(db, test_widget, test_ai_config, test_customer, mo
         "authenticate_socket_conversation_token",
         AsyncMock(return_value=mock_auth_result)
     )
+    _accept_conversation_token(monkeypatch)
     
     # Mock WidgetRepository.get_widget to return our test widget
     monkeypatch.setattr(
@@ -183,10 +195,10 @@ async def test_widget_connect(db, test_widget, test_ai_config, test_customer, mo
     mock_ai_config_repo.get_active_config.return_value = test_ai_config
     monkeypatch.setattr(widget_chat, "AIConfigRepository", lambda db: mock_ai_config_repo)
     
-    # Mock get_active_customer_session to return None
+    # No conversation to resume
     monkeypatch.setattr(
-        "app.repositories.session_to_agent.SessionToAgentRepository.get_active_customer_session",
-        lambda self, customer_id, agent_id=None: None
+        "app.repositories.session_to_agent.SessionToAgentRepository.get_active_widget_session",
+        lambda self, customer_id, agent_id, scope: None
     )
     
     # Mock create_session to handle UUID conversion
@@ -279,16 +291,16 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     # Mock get_environ to return empty dict
     mock_sio.get_environ.return_value = {}
     
-    # Mock get_active_customer_session
+    # The conversation this socket connected to
     mock_session = MagicMock()
     mock_session.session_id = session_id
     mock_session.status = SessionStatus.OPEN
     mock_session.user_id = None
     mock_session.workflow_id = None  # Explicitly set to None to avoid workflow path
     monkeypatch.setattr(
-        SessionToAgentRepository,
-        "get_active_customer_session",
-        lambda self, customer_id, agent_id=None: mock_session
+        widget_chat,
+        "_own_session",
+        lambda session_repo, session, active_only=True: mock_session
     )
     
     # Test chat message
@@ -406,9 +418,9 @@ async def test_human_only_agent_waits_instead_of_answering(
     mock_session.organization_id = test_widget.organization_id
     mock_session.customer_id = test_customer.id
     monkeypatch.setattr(
-        SessionToAgentRepository,
-        "get_active_customer_session",
-        lambda self, customer_id, agent_id=None: mock_session
+        widget_chat,
+        "_own_session",
+        lambda session_repo, session, active_only=True: mock_session
     )
 
     with patch("app.api.widget_chat.ChatAgent.create_async", AsyncMock()) as create_async, \
@@ -764,6 +776,7 @@ class TestWidgetConnectionErrors:
             "authenticate_socket_conversation_token",
             AsyncMock(return_value=mock_auth_result)
         )
+        _accept_conversation_token(monkeypatch)
         
         # Mock WidgetRepository
         monkeypatch.setattr(
@@ -1486,6 +1499,7 @@ class TestEnterpriseFeatures:
             "authenticate_socket_conversation_token",
             AsyncMock(return_value=mock_auth_result)
         )
+        _accept_conversation_token(monkeypatch)
         
         # Mock WidgetRepository
         monkeypatch.setattr(
@@ -1500,8 +1514,8 @@ class TestEnterpriseFeatures:
         
         # Mock other required components
         monkeypatch.setattr(
-            "app.repositories.session_to_agent.SessionToAgentRepository.get_active_customer_session",
-            lambda self, customer_id, agent_id=None: None
+            "app.repositories.session_to_agent.SessionToAgentRepository.get_active_widget_session",
+            lambda self, customer_id, agent_id, scope: None
         )
         
         def mock_create_session(self, session_id, agent_id, customer_id, organization_id, **kwargs):

@@ -81,6 +81,32 @@ def _presence(agent: Agent) -> dict:
     }
 
 
+def conversation_key(token_payload: Optional[dict]) -> str:
+    """Keep the browser's conversation key across re-mints, or start one.
+
+    Never an account key: only our backend mints those, for one signed-in
+    dashboard account, and every token the widget issues is unverified.
+    """
+    key = (token_payload or {}).get(conversation_token.CONVERSATION_KEY_CLAIM)
+    if key and not conversation_token.is_account_key(key):
+        return key
+    return conversation_token.new_conversation_key()
+
+
+def mint_widget_token(widget_id: str, conversation_key: str, customer_id: Optional[str] = None,
+                       source: Optional[str] = None, token_payload: Optional[dict] = None) -> str:
+    """A conversation token the widget issues itself - unverified, so always scoped.
+
+    Prefers a fresh `source` (first-visit Explore flow) over one the visitor's
+    earlier token carried.
+    """
+    extra_data = {conversation_token.CONVERSATION_KEY_CLAIM: conversation_key}
+    source = source or (token_payload or {}).get("source")
+    if widget_id == settings.EXPLORE_WIDGET_ID and source:
+        extra_data["source"] = source
+    return create_conversation_token(widget_id=widget_id, customer_id=customer_id, **extra_data)
+
+
 def open_session(db: Session, widget: Widget, token: Optional[str], source: Optional[str]) -> WidgetSession:
     """Validate the visitor's token, or mint an anonymous one.
 
@@ -92,9 +118,11 @@ def open_session(db: Session, widget: Widget, token: Optional[str], source: Opti
         raise HTTPException(status_code=404, detail="Agent not found")
 
     customer_id = None
+    token_payload = None
     if token:
         state = conversation_token.inspect(token, widget.id)
         if state.is_live:
+            token_payload = state.payload
             customer_id = state.payload.get("sub")
         elif state.identity_lost:
             # A lapsed token that named a customer is a signed-in visitor whose
@@ -109,8 +137,9 @@ def open_session(db: Session, widget: Widget, token: Optional[str], source: Opti
             logger.warning(f"Widget opened without a valid token but require_token_auth=true, widget_id={widget.id}")
             raise WidgetAccessDenied(TOKEN_REQUIRED_CODE)
     elif not (token and customer_id):
-        extra = {"source": source} if source and widget.id == settings.EXPLORE_WIDGET_ID else {}
-        token = create_conversation_token(widget_id=widget.id, **extra)
+        # Unverified, so always scoped to this browser: a live token that names
+        # no customer yet keeps its conversation key
+        token = mint_widget_token(widget.id, conversation_key(token_payload), source=source)
 
     return WidgetSession(widget=widget, agent=agent, customer_id=customer_id, token=token, presence=_presence(agent))
 

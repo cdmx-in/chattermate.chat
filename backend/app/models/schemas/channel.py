@@ -36,6 +36,9 @@ class ChannelAccountOut(BaseModel):
     # Meta accounts from the customer's own app): the exact webhook URL to
     # configure on their provider, and the verify token Meta asks for.
     webhook_url: Optional[str] = None
+    # The platform refused the account's credentials; replies fail until the
+    # account is reconnected
+    needs_reconnect: bool = False
     webhook_verify_token: Optional[str] = None
     # WhatsApp from the customer's own app: whether Meta took our per-number
     # callback (else the customer sets the URL and token by hand)

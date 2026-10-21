@@ -25,6 +25,7 @@ from app.core.config import  settings
 from app.core.encryption import CURRENT_KEY_ID, get_keys
 from app.core.logger import get_logger
 import base64
+import hashlib
 
 logger = get_logger(__name__)
 
@@ -477,84 +478,12 @@ def verify_widget_api_key(plain_key: str, hashed_key: str) -> bool:
     return verify_password(plain_key, hashed_key)
 
 
-# ============================================================================
-# WIDGET API KEY CACHING (Redis)
-# ============================================================================
-
-def cache_widget_api_key(api_key: str, app_id: str, organization_id: str, ttl: int = 3600) -> bool:
+def widget_api_key_lookup(api_key: str) -> str:
     """
-    Cache valid API key in Redis for fast lookup.
+    Indexed lookup value for a widget API key: its SHA-256.
 
-    Args:
-        api_key: Plain text API key (first 20 chars used as cache key)
-        app_id: Widget app UUID
-        organization_id: Organization UUID
-        ttl: Time to live in seconds (default 1 hour)
-
-    Returns:
-        bool: True if cached successfully, False otherwise
+    A fast hash is safe here because the key is 256 random bits, nothing to
+    brute-force; it lets a request find its app in one query instead of
+    bcrypt-checking every app.
     """
-    try:
-        from app.core.redis import redis_client
-
-        if redis_client:
-            # Use first 20 chars of key as cache key (enough to be unique)
-            cache_key = f"widget_api_key:{api_key[:20]}"
-            cache_value = json.dumps({
-                "app_id": str(app_id),
-                "organization_id": str(organization_id)
-            })
-            redis_client.setex(cache_key, ttl, cache_value)
-            logger.debug(f"Cached API key for app: {app_id}")
-            return True
-    except Exception as e:
-        logger.warning(f"Failed to cache API key: {str(e)}")
-    return False
-
-
-def get_cached_widget_api_key(api_key: str) -> Optional[dict]:
-    """
-    Get cached API key data from Redis.
-
-    Args:
-        api_key: Plain text API key
-
-    Returns:
-        dict: {"app_id": "...", "organization_id": "..."} or None
-    """
-    try:
-        from app.core.redis import redis_client
-
-        if redis_client:
-            cache_key = f"widget_api_key:{api_key[:20]}"
-            cached = redis_client.get(cache_key)
-            if cached:
-                logger.debug(f"Cache HIT for API key")
-                return json.loads(cached)
-    except Exception as e:
-        logger.debug(f"Cache miss or error: {str(e)}")
-    return None
-
-
-def invalidate_widget_api_key_cache(api_key_prefix: str) -> bool:
-    """
-    Invalidate cached API key (on regeneration/deactivation).
-
-    Args:
-        api_key_prefix: First 20 chars of the API key
-
-    Returns:
-        bool: True if invalidated successfully, False otherwise
-    """
-    try:
-        from app.core.redis import redis_client
-
-        if redis_client:
-            cache_key = f"widget_api_key:{api_key_prefix}"
-            redis_client.delete(cache_key)
-            logger.info(f"Invalidated API key cache: {cache_key}")
-            return True
-    except Exception as e:
-        logger.warning(f"Failed to invalidate cache: {str(e)}")
-    return False
-
+    return hashlib.sha256(api_key.encode()).hexdigest()

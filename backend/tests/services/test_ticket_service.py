@@ -76,6 +76,14 @@ def make_ticket(service, db, org, **overrides) -> Ticket:
 
 
 class TestTicketCreation:
+    def test_a_chat_ticket_can_leave_the_sessions_customer_off(self, service, db, test_organization, test_session):
+        """A visitor bound to a customer by an email they typed: the ticket must not
+        carry that customer's identity to the investigator."""
+        ticket = make_ticket(service, db, test_organization, session_id=test_session.session_id,
+                             source=TicketSource.CHAT_AI, link_session_customer=False)
+
+        assert ticket.customer_id is None
+
     def test_numbers_are_sequential_per_org(self, service, db, test_organization):
         first = make_ticket(service, db, test_organization)
         second = make_ticket(service, db, test_organization)

@@ -16,9 +16,12 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Team | The Agent role is refused every admin API; sees channels without secrets; assigned-only sees just its group's handovers | `specs/team/permissions.spec.ts` | P1 | ✅ |
 | Widget chat | Customer gets the AI answer | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | History survives a reload | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
+| Widget chat | The dashboard's iframe snippet chats (its socket comes from the API's own origin) | `specs/widget/iframe-snippet.spec.ts` | P1 | ✅ |
 | Widget chat | First authorization answer lost (socket gets the anonymous token) → widget authorizes again and chats | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | Email-first agent (gate → chat, person recorded), Ask anything panel, lead capture with no email asked — each also with the first authorization lost | `specs/widget/chat-styles.spec.ts` | P1 | ✅ |
 | Widget chat | Agent wraps up → customer rates the chat → rating stored against the agent | `specs/widget/rating.spec.ts` | P1 | ✅ |
+| Widget chat | A second browser that types a customer's email gets its own empty conversation (the owner keeps theirs), can't rename them or make them a lead, and an address claimed before its owner signs in yields none of their chats | `specs/widget/conversation-ownership.spec.ts` | P1 | ✅ |
+| Widget chat | Scoping keeps a visitor's own conversation: a second tab joins it; a visitor the site signed in finds it in another browser, and after `ChatterMate.identify()` | `specs/widget/conversation-ownership.spec.ts` | P1 | ✅ |
 | Widget chat | Provider error, provider timeout and malformed reply each end in an apology; the next message works | `specs/widget/ai-failures.spec.ts` | P1 | ✅ |
 | Human handover | AI hands over → contact form → agent takes over → two-way messages → the AI stays silent | `specs/handover/handover.spec.ts` | P1 | ✅ |
 | Human handover | After hours, or nobody online: the chat waits in the team's queue with a reply that says so | `specs/handover/after-hours.org.spec.ts`, `nobody-online.spec.ts` | P1 | ✅ |
@@ -54,16 +57,18 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Channels | A refused send is marked Not delivered; list and long-title buttons stay within WhatsApp's limits | `specs/channels/delivery.spec.ts` | P2 | ✅ |
 | Channels | A provider's retry gets one answer (`@redis`) | `specs/channels/retries.spec.ts` | P2 | ✅ |
 | Channels | A WhatsApp number or Messenger Page from the customer's own Meta app (manual credentials + app secret) receives messages at its own webhook address; a wrong secret is refused; the address never takes another app's number | `specs/channels/own-meta-app.spec.ts` | P2 | ✅ |
+| Channels | A WhatsApp number whose token Meta refuses is flagged, the Integrations card names it, and reconnecting or the next delivered reply clears it; a message-level refusal does not flag it | `specs/channels/needs-reconnect.spec.ts` | P2 | ✅ |
 | Channels | Media messages; disconnect | — | P2 | ⬜ |
 | Analytics | A conversation counts for its agent; the dashboard renders | `specs/analytics/analytics.spec.ts` | P2 | ✅ |
 | CRM | HubSpot install, manual sync and automatic push (worker) with the lead's details | `specs/crm/hubspot.org.spec.ts` | P2 | ✅ |
 | CRM | Pipedrive install (Basic-auth token exchange) and a captured lead pushed as organisation, person, lead and note | `specs/crm/pipedrive.org.spec.ts` | P2 | ✅ |
 | Integrations | Jira connect from Settings (real browser OAuth round trip) and the AI filing an issue in the agent's project | `specs/integrations/jira.org.spec.ts` | P2 | ✅ |
-| Integrations | Shopify install and link, order status answered from the shop, lookup refused without the customer's email | `specs/integrations/shopify.org.spec.ts` | P2 | ✅ |
+| Integrations | Shopify install and link (the org keeps its website, the storefront is allowed), a store not linked yet is told to connect, order status answered from the shop, lookup refused without the customer's email | `specs/integrations/shopify.org.spec.ts` | P2 | ✅ |
 | Visual and cross-browser widget | Widget on Firefox, WebKit, Android, iPhone; screenshots light/dark | `--project=widget-*`, `specs/visual` | P2 | ✅ (nightly) |
 | Accessibility | axe on key screens (dark and light themes) and the widget: no serious findings anywhere; a per-screen baseline catches regressions | `specs/a11y` | P2 | ✅ |
 | Performance | Loader/widget size budgets; reply-time budget | `specs/perf` | P2 | ✅ |
 | Security basics | HttpOnly/Secure sign-in cookies; no CORS for other origins | `specs/security` | P2 | ✅ |
-| Org website and API access | Changing the org's website allows the new site and revokes the old one | `specs/security/org-domain-cors.org.spec.ts` | P2 | ✅ |
+| Org website and API access | Changing the org's website allows the new site and revokes the old one; it never gets the sign-in cookies | `specs/security/org-domain-cors.org.spec.ts` | P2 | ✅ |
+| Live-chat socket origin | The dashboard's socket signs in with its cookies; an org's website, or a `<script>`-tag (JSONP) handshake, never does (JSONP case `@one-worker`) | `specs/security/agent-socket-origin.spec.ts` | P2 | ✅ |
 
 Enterprise journeys are tracked privately in `enterprise_frontend/e2e/FEATURES.md`.

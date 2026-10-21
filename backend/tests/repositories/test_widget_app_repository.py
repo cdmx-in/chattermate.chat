@@ -20,6 +20,8 @@ from unittest.mock import Mock, MagicMock, patch, PropertyMock
 from datetime import datetime
 
 from app.repositories.widget_app import WidgetAppRepository
+from app.core.security import widget_api_key_lookup
+from app.models.user import User
 from app.models.widget_app import WidgetApp
 
 
@@ -166,72 +168,58 @@ class TestWidgetAppCreation:
 
 
 class TestWidgetAppValidation:
-    """Tests for API key validation."""
+    """A key is found by one indexed lookup; bcrypt only ever runs for keys
+    issued before the lookup column, once each."""
 
-    @patch('app.repositories.widget_app.get_cached_widget_api_key')
-    @patch('app.repositories.widget_app.verify_widget_api_key')
-    @patch('app.repositories.widget_app.cache_widget_api_key')
-    def test_validate_api_key_success(
-        self, mock_cache, mock_verify, mock_get_cache,
-        widget_app_repo, mock_db, mock_widget_app
-    ):
-        """Test successful API key validation."""
-        mock_get_cache.return_value = None  # Cache miss
-        mock_verify.return_value = True
+    @pytest.fixture
+    def repo(self, db):
+        return WidgetAppRepository(db)
 
-        # Setup query chain
-        mock_query = MagicMock()
-        mock_filter = MagicMock()
-        mock_filter.all.return_value = [mock_widget_app]
-        mock_query.filter.return_value = mock_filter
-        mock_db.query.return_value = mock_query
+    @pytest.fixture
+    def admin(self, db, test_organization):
+        user = User(id=uuid4(), email="apps@example.com", hashed_password="x", is_active=True,
+                    organization_id=test_organization.id, full_name="Apps Admin")
+        db.add(user)
+        db.commit()
+        return user
 
-        validated_app = widget_app_repo.validate_api_key("wak_test_key")
+    @pytest.fixture
+    def new_app(self, repo, test_organization, admin):
+        return repo.create_app(organization_id=test_organization.id, created_by=admin.id, name="Site")
 
-        assert validated_app is not None
-        assert validated_app.id == mock_widget_app.id
-        mock_cache.assert_called_once()
+    @pytest.fixture
+    def no_bcrypt(self):
+        with patch('app.repositories.widget_app.verify_widget_api_key', side_effect=AssertionError("bcrypt ran")) as verify:
+            yield verify
 
-    @patch('app.repositories.widget_app.get_cached_widget_api_key')
-    @patch('app.repositories.widget_app.verify_widget_api_key')
-    def test_validate_api_key_invalid(
-        self, mock_verify, mock_get_cache, widget_app_repo, mock_db
-    ):
-        """Test invalid API key returns None."""
-        mock_get_cache.return_value = None
-        mock_verify.return_value = False
+    def test_a_new_key_is_one_lookup(self, repo, new_app, no_bcrypt):
+        app, key = new_app
+        assert repo.validate_api_key(key).id == app.id
 
-        mock_query = MagicMock()
-        mock_filter = MagicMock()
-        mock_filter.all.return_value = []
-        mock_query.filter.return_value = mock_filter
-        mock_db.query.return_value = mock_query
+    def test_a_wrong_key_never_runs_bcrypt_once_every_app_is_indexed(self, repo, new_app, no_bcrypt):
+        assert repo.validate_api_key("wak_" + "x" * 43) is None
 
-        validated_app = widget_app_repo.validate_api_key("wak_invalid_key_12345")
+    def test_a_key_issued_before_the_lookup_is_checked_once_then_indexed(self, db, repo, new_app):
+        app, key = new_app
+        app.api_key_lookup = None
+        db.commit()
 
-        assert validated_app is None
+        assert repo.validate_api_key(key).id == app.id
+        assert app.api_key_lookup == widget_api_key_lookup(key)
+        with patch('app.repositories.widget_app.verify_widget_api_key', side_effect=AssertionError("bcrypt ran")):
+            assert repo.validate_api_key(key).id == app.id
 
-    @patch('app.repositories.widget_app.get_cached_widget_api_key')
-    def test_validate_api_key_from_cache(
-        self, mock_get_cache, widget_app_repo, mock_db, mock_widget_app
-    ):
-        """Test API key validation from cache."""
-        mock_get_cache.return_value = {
-            "app_id": str(mock_widget_app.id),
-            "organization_id": str(mock_widget_app.organization_id)
-        }
+    def test_a_regenerated_key_replaces_the_old_one(self, repo, new_app, test_organization, no_bcrypt):
+        app, old_key = new_app
+        _, new_key = repo.regenerate_api_key(app.id, test_organization.id)
 
-        # Setup query chain for cache hit path
-        mock_query = MagicMock()
-        mock_filter = MagicMock()
-        mock_filter.first.return_value = mock_widget_app
-        mock_query.filter.return_value = mock_filter
-        mock_db.query.return_value = mock_query
+        assert repo.validate_api_key(old_key) is None
+        assert repo.validate_api_key(new_key).id == app.id
 
-        validated_app = widget_app_repo.validate_api_key("wak_cached_key")
-
-        assert validated_app is not None
-        assert validated_app.id == mock_widget_app.id
+    def test_a_deactivated_apps_key_is_refused(self, repo, new_app, test_organization, no_bcrypt):
+        app, key = new_app
+        repo.deactivate_app(app.id, test_organization.id)
+        assert repo.validate_api_key(key) is None
 
 
 class TestWidgetAppRetrieval:

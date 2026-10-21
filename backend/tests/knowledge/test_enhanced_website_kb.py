@@ -20,7 +20,9 @@ from unittest.mock import MagicMock, patch, call, ANY
 from agno.document.base import Document
 from app.core.config import settings
 from app.knowledge.crawl_scope import DEFAULT_CRAWL_SCOPE
+from app.knowledge.deadline import Deadline, SourceTimedOut
 from app.knowledge.enhanced_website_kb import EnhancedWebsiteKnowledgeBase
+from app.knowledge.failure_advice import FAILURE_ADVICE
 from app.knowledge.enhanced_website_reader import (
     BotProtectionError,
     EmptyCrawlError,
@@ -389,19 +391,15 @@ class TestEnhancedWebsiteKnowledgeBase:
         # When upsert is False, no upsert should be called
         mock_vector_db.upsert.assert_not_called()
     
-    def test_load_with_optimization(self, mock_vector_db, mock_reader):
-        """Test load method with optimization"""
-        kb = EnhancedWebsiteKnowledgeBase(
-            urls=TEST_URLS,
-            reader=mock_reader,
-            optimize_on=1  # Set low threshold to trigger optimization
-        )
+    def test_load_never_builds_an_approximate_index(self, mock_vector_db, mock_reader):
+        """Agent searches filter by agent_id; an HNSW/IVFFlat index would filter
+        after choosing candidates and could return fewer results. Exact search only."""
+        kb = EnhancedWebsiteKnowledgeBase(urls=TEST_URLS, reader=mock_reader)
         kb.vector_db = mock_vector_db
-        
+
         kb.load()
-        
-        # Should call optimize after inserting documents
-        mock_vector_db.optimize.assert_called_once()
+
+        mock_vector_db.optimize.assert_not_called()
     
     def test_load_with_error_handling(self, mock_vector_db, mock_reader):
         """Test load method error handling"""
@@ -426,3 +424,77 @@ class TestEnhancedWebsiteKnowledgeBase:
             
             # Should still have called upsert with the successful documents
             mock_vector_db.upsert.assert_called_once() 
+
+class ExpiringDeadline:
+    expired = False
+
+
+class CountingEmbedder:
+    def __init__(self):
+        self.calls = 0
+
+    def get_embedding_and_usage(self, text):
+        self.calls += 1
+        return [0.1, 0.2, 0.3], None
+
+
+class TestASourceThatRunsOutOfTime:
+    """Seen in production: one source ran for three hours until the worker hit
+    its memory limit. Past its time limit a source fails, and stores nothing:
+    a partial copy would make adding it again skip the crawl."""
+
+    def test_it_fails_with_advice_and_stores_nothing(self, mock_vector_db, mock_reader):
+        deadline = ExpiringDeadline()
+
+        def slow_read(**kwargs):
+            deadline.expired = True
+            return TEST_DOCUMENTS
+        mock_reader.read.side_effect = slow_read
+        kb = EnhancedWebsiteKnowledgeBase(urls=TEST_URLS[:1], reader=mock_reader)
+        kb.vector_db = mock_vector_db
+
+        with patch('app.knowledge.enhanced_website_kb.Deadline', return_value=deadline), \
+             pytest.raises(SourceTimedOut) as raised:
+            kb.load()
+
+        assert str(raised.value) == FAILURE_ADVICE[FailureCause.TOO_LONG].format(url=TEST_URLS[0])
+        mock_vector_db.upsert.assert_not_called()
+        assert mock_reader.deadline is deadline  # the crawl stops at the same time
+
+    def test_its_queued_chunks_are_not_embedded(self, mock_vector_db, mock_reader):
+        deadline = ExpiringDeadline()
+        embedder = CountingEmbedder()
+        mock_vector_db.embedder = embedder
+        chunks = [Document(content=f"chunk {i}", meta_data={"url": "https://example.com"}) for i in range(200)]
+
+        def slow_read(url, vector_db_callback=None, url_crawled_callback=None):
+            deadline.expired = True
+            for chunk in chunks:
+                vector_db_callback(chunk)
+            return chunks
+        mock_reader.read.side_effect = slow_read
+        kb = EnhancedWebsiteKnowledgeBase(urls=TEST_URLS[:1], reader=mock_reader)
+        kb.vector_db = mock_vector_db
+
+        with patch('app.knowledge.enhanced_website_kb.Deadline', return_value=deadline), \
+             pytest.raises(SourceTimedOut):
+            kb.load()
+
+        assert embedder.calls == 0
+
+    def test_a_source_read_in_time_is_stored(self, mock_vector_db, mock_reader):
+        mock_vector_db.embedder = CountingEmbedder()
+        kb = EnhancedWebsiteKnowledgeBase(urls=TEST_URLS[:1], reader=mock_reader)
+        kb.vector_db = mock_vector_db
+
+        kb.load()
+
+        mock_vector_db.upsert.assert_called_once()
+        assert isinstance(mock_reader.deadline, Deadline)
+
+    def test_the_limit_comes_from_settings(self, mock_vector_db, mock_reader):
+        kb = EnhancedWebsiteKnowledgeBase(urls=TEST_URLS[:1], reader=mock_reader)
+        kb.vector_db = mock_vector_db
+        with patch('app.knowledge.enhanced_website_kb.Deadline', wraps=Deadline) as made:
+            kb.load()
+        made.assert_called_once_with(settings.KB_SOURCE_TIME_LIMIT_SECONDS)

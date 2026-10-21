@@ -19,6 +19,7 @@ from typing import List, Optional
 from app.models.user import User
 from app.core.auth import get_current_user, require_any_permission, require_permissions
 from app.core.logger import get_logger
+import io
 import os
 import asyncio
 from pydantic import BaseModel, field_validator
@@ -32,7 +33,9 @@ from app.repositories.knowledge import KnowledgeRepository
 from app.knowledge import page_editor
 from app.knowledge.crawl_scope import CRAWL_SCOPES
 from app.knowledge.failure_advice import FAILURE_ADVICE, FailureCause, plain_reason
+from app.knowledge.login_wall import AUTH_URL_MESSAGE, is_auth_path
 from app.knowledge.pdf_download import MAX_PDF_SIZE
+from app.knowledge.pdf_limits import PdfRefused, check_page_count
 from app.repositories.knowledge_to_agent import KnowledgeToAgentRepository
 from app.repositories.agent import AgentRepository
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
@@ -144,6 +147,9 @@ class UrlsRequest(BaseModel):
             domain_only = domain_part.split('/')[0]  # Get just the domain part before any path
             if '.' not in domain_only:
                 raise ValueError('URL must contain a valid domain with TLD')
+
+            if is_auth_path(url):
+                raise ValueError(AUTH_URL_MESSAGE)
             
             validated_urls.append(url)
         
@@ -258,6 +264,11 @@ async def upload_pdf_files(
                 magic_prefix=PDF_MAGIC,
                 label="PDF",
             )
+            try:
+                # pypdf on an untrusted upload: off the event loop
+                await asyncio.to_thread(check_page_count, io.BytesIO(content))
+            except PdfRefused as e:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{file.filename}: {e}")
             # Sanitize the filename (strip path components, add a UUID prefix)
             # to prevent path traversal and overwrites.
             stored_name = safe_filename(file.filename)

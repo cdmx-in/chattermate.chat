@@ -303,6 +303,20 @@ async def test_delete_file_from_s3_exception():
         
         assert result is False
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("url", [
+    # The built-in avatars are inline images, not files
+    "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%2F%3E",
+    "https://cdn.example.com/photo.png",
+    "https://other-bucket.s3.us-east-1.amazonaws.com/photo.png",
+    "",
+])
+async def test_delete_file_from_s3_leaves_anything_not_ours_alone(url):
+    with patch('app.core.s3.get_s3_client') as mock_get_client:
+        assert await delete_file_from_s3(url) is False
+        mock_get_client.return_value.delete_object.assert_not_called()
+
 # ---------- is_s3_url ----------
 
 @pytest.mark.parametrize("url", [

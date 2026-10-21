@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from typing import List, Optional
@@ -45,6 +46,15 @@ class KnowledgeQueueRepository:
         return self.db.query(KnowledgeQueue)\
             .filter(KnowledgeQueue.status == QueueStatus.PENDING)\
             .order_by(KnowledgeQueue.priority.desc(), KnowledgeQueue.created_at.asc())\
+            .all()
+
+    def get_abandoned(self, last_progress_before: datetime) -> List[KnowledgeQueue]:
+        """Items still 'processing' with no progress since `last_progress_before`,
+        locked so two workers never handle the same one."""
+        return self.db.query(KnowledgeQueue)\
+            .filter(KnowledgeQueue.status == QueueStatus.PROCESSING,
+                    func.coalesce(KnowledgeQueue.updated_at, KnowledgeQueue.created_at) < last_progress_before)\
+            .with_for_update(skip_locked=True)\
             .all()
 
     def update_status(self, queue_id: int, status: QueueStatus, error: Optional[str] = None) -> bool:

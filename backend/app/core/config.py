@@ -179,11 +179,21 @@ class Settings(BaseSettings):
     KB_MAX_RETRIES: int = int(os.getenv("KB_MAX_RETRIES", "3"))
     KB_MAX_WORKERS: int = int(os.getenv("KB_MAX_WORKERS", "5"))
     KB_BATCH_SIZE: int = int(os.getenv("KB_BATCH_SIZE", "5"))
-    KB_OPTIMIZE_ON: int = int(os.getenv("KB_OPTIMIZE_ON", "1000"))
+    # A website source that has not finished reading in this long fails rather
+    # than running on (one hit the worker's memory limit after three hours).
+    KB_SOURCE_TIME_LIMIT_SECONDS: int = int(os.getenv("KB_SOURCE_TIME_LIMIT_SECONDS", "1800"))
+    # Pages a PDF may have (app/knowledge/pdf_limits.py): every page is
+    # embedded, and a scanned one OCR'd, so bytes alone don't bound the work.
+    KB_PDF_MAX_PAGES: int = int(os.getenv("KB_PDF_MAX_PAGES", "300"))
 
     # Hard ceiling on a single agent run (model + tool calls). A stuck run is
     # cancelled instead of hanging the chat handler forever (issue #269).
     AGENT_RUN_TIMEOUT: int = int(os.getenv("AGENT_RUN_TIMEOUT", "90"))
+
+    # agno's own run reporting to api.agno.com (see app.core.agno_telemetry).
+    # Off unless an operator opts in.
+    AGNO_TELEMETRY: bool = os.getenv("AGNO_TELEMETRY", "false").lower() == "true"
+    AGNO_MONITOR: bool = os.getenv("AGNO_MONITOR", "false").lower() == "true"
 
     # Tool calls allowed in a single turn before the agent must answer from what
     # it already has. Reaching this is no longer fatal — the agent answers without

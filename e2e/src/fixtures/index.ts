@@ -1,4 +1,4 @@
-import { test as base, expect, type APIRequestContext, type Browser, type BrowserContextOptions, type Page, type TestInfo } from '@playwright/test'
+import { test as base, expect, type APIRequestContext, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type TestInfo } from '@playwright/test'
 import { ApiClient } from '../api/client'
 import { signedInClient } from '../api/auth'
 import { createAgent, enableLeadCapture } from '../api/agents'
@@ -94,6 +94,11 @@ interface TestFixtures {
   customerPage: Page
   /** A widget for any agent id — e.g. one a test created through the UI. */
   makeWidget: (agentId: string) => Promise<ChatWidget>
+  /**
+   * Another visitor on `widget`'s site, in a browser of their own. Pass `customer`
+   * to have them claim someone's name and email.
+   */
+  makeVisitor: (customer?: { name: string; email: string }) => Promise<ChatWidget>
   /**
    * The team this test's agent hands over to (with transferToHuman): a member and
    * group of its own, so no other test's chats crowd its inbox or change its member.
@@ -226,6 +231,16 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
   }, { box: true }],
 
   widget: [async ({ agent, makeWidget }, use) => use(await makeWidget(agent.id)), { box: true }],
+
+  makeVisitor: [async ({ browser, widget }, use, testInfo) => {
+    const contexts: BrowserContext[] = []
+    await use(async (customer) => {
+      const context = await newContext(browser, testInfo)
+      contexts.push(context)
+      return new ChatWidget(await context.newPage(), widget.widgetId, customer)
+    })
+    await Promise.all(contexts.map((context) => context.close()))
+  }, { box: true }],
 
   inbox: [async ({ browser, handoverTeam }, use, testInfo) => {
     const { member } = await handoverTeam()

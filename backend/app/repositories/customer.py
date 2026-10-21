@@ -16,6 +16,7 @@ limitations under the License.
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from app.utils.uuids import as_uuid
 from app.models.customer import Customer
 from app.utils.phone import normalize_phone
 from uuid import UUID, uuid4
@@ -90,7 +91,8 @@ class CustomerRepository:
         organization_id: UUID,
         full_name: str = None,
         meta_data: dict = None,
-        phone: str = None
+        phone: str = None,
+        conversation_key: str = None
     ) -> Customer:
         """Create a new customer"""
         try:
@@ -98,6 +100,7 @@ class CustomerRepository:
                 email=email,
                 full_name=full_name,
                 meta_data=meta_data,
+                conversation_key=conversation_key,
                 organization_id=organization_id,
                 # Defensive normalize: the identity column only ever holds the
                 # canonical E.164 shape, whoever the caller is.
@@ -326,14 +329,29 @@ class CustomerRepository:
                 logger.warning(f"Could not backfill phone for customer {customer.id}: {e}")
         return customer
 
-    def get_by_id(self, customer_id: UUID) -> Customer | None:
+    def get_by_id(self, customer_id: UUID | str) -> Customer | None:
         """Get customer by ID"""
         try:
-            customer = self.db.query(Customer).filter(Customer.id == customer_id).first()
+            customer = self.db.query(Customer).filter(Customer.id == as_uuid(customer_id)).first()
             return customer
         except Exception as e:
             logger.error(f"Error getting customer by ID: {str(e)}")
             return None
+
+    def resolve_merged(self, customer_id: UUID | str) -> Customer | None:
+        """The customer `customer_id` names now, following lead-capture merges.
+
+        A device's token can still carry an anonymous customer that was since
+        merged into an identified one; everything acting for that device must
+        see the survivor.
+        """
+        customer = self.get_by_id(customer_id)
+        seen = set()
+        while customer is not None and customer.merged_into_customer_id and customer.id not in seen:
+            seen.add(customer.id)
+            logger.info(f"Customer {customer.id} was merged; continuing as {customer.merged_into_customer_id}")
+            customer = self.get_by_id(customer.merged_into_customer_id)
+        return customer
 
     def get_customer_email(self, customer_id: UUID) -> str | None:
         """Get customer email by ID"""

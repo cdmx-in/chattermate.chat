@@ -21,6 +21,8 @@ from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
 
+from app.models.agent import Agent
+from app.models.customer import Customer
 from app.models.widget import Widget
 from app.models.user import User
 
@@ -28,12 +30,14 @@ from app.core.auth import get_current_user
 from app.database import get_db
 from app.repositories.widget import WidgetRepository
 from app.repositories.agent import AgentRepository
-from app.core.security import create_conversation_token, verify_conversation_token
+from app.core.security import verify_conversation_token
 from app.services import conversation_token
 from app.repositories.customer import CustomerRepository
 from app.models.schemas.widget import WidgetCreate, WidgetResponse
 from app.core.logger import get_logger
-from app.repositories.session_to_agent import SessionToAgentRepository
+from app.repositories.session_to_agent import SessionToAgentRepository, session_in_scope
+from app.services.contact_capture import CONTACT_EMAIL_META_KEY
+from app.services.widget_identity import may_stand_for
 from app.models.session_to_agent import SessionStatus
 from app.core.config import settings
 from app.services import widget_bootstrap
@@ -183,15 +187,15 @@ def get_widget_html(data: dict, request: Optional[Request] = None) -> str:
         </html>
     """
 
-async def get_human_agent_session_info(db: Session, customer_id: str) -> dict:
-    """Get customer session info including human agent details if assigned"""
+async def get_human_agent_session_info(db: Session, customer_id: str, scope: str) -> dict:
+    """Human agent assigned to the customer's open conversation this token may reach"""
     human_agent_info = {}
     session_repo = SessionToAgentRepository(db)
-    sessions = session_repo.get_customer_sessions(customer_id, SessionStatus.OPEN)
-    
+    sessions = session_repo.get_customer_sessions(customer_id, SessionStatus.OPEN, scope=scope)
+
     if sessions and len(sessions) > 0:
         session_model,user_full_name, user_profile_pic = sessions[0]
-        
+
         if user_full_name:  # If there's a human agent assigned
             # HumanAgentResponse signs human_agent_profile_pic on serialization.
 
@@ -200,8 +204,42 @@ async def get_human_agent_session_info(db: Session, customer_id: str) -> dict:
                 "human_agent_name": user_full_name,
                 "human_agent_profile_pic": user_profile_pic,
             }
-    
+
     return human_agent_info
+
+
+def _anonymous_customer(customer_repo: CustomerRepository, widget: Widget, conversation_key: str,
+                        claimed_email: Optional[str] = None) -> Customer:
+    """A customer of the visitor's own. An address they gave that belongs to
+    someone they can't stand for is kept where the inbox shows it."""
+    meta_data = {CONTACT_EMAIL_META_KEY: claimed_email} if claimed_email else None
+    return customer_repo.create_customer(
+        CustomerRepository.anonymous_email(), widget.organization_id,
+        meta_data=meta_data, conversation_key=conversation_key)
+
+
+def _widget_data_response(widget: Widget, agent: Agent, customer_id: Optional[str], human_agent_info: dict,
+                          token: Optional[str] = None) -> dict:
+    """GET /widgets/{id}'s answer; `token` only when the visitor needs a new one."""
+    # photo_url is signed by AgentCustomizationResponse on serialization.
+    data = {
+        "id": widget.id,
+        "organization_id": widget.organization_id,
+        "customer_id": customer_id,
+        "human_agent": human_agent_info,
+        "agent": {
+            "id": agent.id,
+            "name": agent.name,
+            "display_name": agent.display_name,
+            "customization": agent.customization,
+            "workflow": bool(agent.use_workflow and agent.active_workflow_id),
+            "allow_attachments": agent.allow_attachments
+        }
+    }
+    if token:
+        data["token"] = token
+    return data
+
 
 @router.get("/{widget_id}", response_model=WidgetResponse)
 async def get_widget_data(
@@ -221,7 +259,7 @@ async def get_widget_data(
     widget = db.query(Widget).filter(Widget.id == widget_id).first()
     if not widget:
         raise HTTPException(status_code=404, detail="Widget not found")
-    
+
     agent_repo = AgentRepository(db)
     agent = agent_repo.get_by_id(widget.agent_id)
     if not agent:
@@ -230,15 +268,20 @@ async def get_widget_data(
     require_token_auth = getattr(agent, 'require_token_auth', False)
     customer_id = None
     token = None
-    old_token_source = None
+    token_payload = None
+    scope = None
 
     # Try to validate existing token if provided
     if authorization and authorization.startswith('Bearer '):
         token = authorization.split(' ')[1]
         state = conversation_token.inspect(token, widget_id)
         if state.is_live:
-            customer_id = state.payload.get("sub")
-            old_token_source = state.payload.get("source")
+            try:
+                scope = conversation_token.conversation_scope(state.payload)
+                token_payload = state.payload
+                customer_id = state.payload.get("sub")
+            except ValueError:
+                token = None
         elif state.identity_lost:
             # Identity ran out rather than never existing: minting a fresh anonymous
             # customer here is what used to turn a signed-in visitor into "Anonymous"
@@ -246,7 +289,7 @@ async def get_widget_data(
             raise _identity_expired()
         else:
             token = None
-    
+
     # SECURITY: If token auth required, must have valid token with customer_id
     if require_token_auth:
         if not token or customer_id is None:
@@ -254,7 +297,7 @@ async def get_widget_data(
 
     # Check if agent has workflow enabled
     agent_has_workflow = bool(agent.use_workflow and agent.active_workflow_id)
-    
+
     # Check if agent has ASK_ANYTHING chat style
     is_ask_anything_style = (agent.customization and
                            agent.customization.chat_style and
@@ -266,135 +309,59 @@ async def get_widget_data(
     # 401 check above, so token-protected widgets are unaffected.
     email_bypass = not bool(agent.customization and getattr(agent.customization, 'collect_email', False))
 
-    # For workflow agents, ASK_ANYTHING style, or email-optional agents, create a customer with a
-    # blank email if none exists. Only email-collecting regular agents require email up front.
-    should_create_customer = (customer_id == "None" or customer_id is None) and (email or agent_has_workflow or is_ask_anything_style or email_bypass)
-
-    logger.debug(f"should_create_customer={should_create_customer}, customer_id={customer_id}, require_token_auth={require_token_auth}")
-    
     customer_repo = CustomerRepository(db)
-    human_agent_info = {}
-    
-    # Flag to track if we generated a new token
-    token_was_generated = False
-    
-    if should_create_customer:
-        logger.debug(f"Creating new customer for email: {email}")
-        # Generate unique email if no email provided
-        if email:
-            customer_email = email
-        else:
-            customer_email = CustomerRepository.anonymous_email()
-        
-        # Try to get existing customer first (only if email is provided)
-        customer = None
-        if email:
-            customer = customer_repo.get_customer_by_email(email, widget.organization_id)
-        
-        if not customer:
-            # Create new customer if doesn't exist
-            customer = customer_repo.create_customer(customer_email, widget.organization_id)
-        
-        # Get session info for existing customer
-        if customer:
-            human_agent_info = await get_human_agent_session_info(db, str(customer.id))
-        
-        # Generate new token with customer_id and preserve source if applicable.
-        # Prefer the fresh `source` query param (first-visit Explore flow) and
-        # fall back to any source already captured in a prior token.
-        new_token_extra_data = {}
-        if widget_id == settings.EXPLORE_WIDGET_ID:
-            effective_source = source or old_token_source
-            if effective_source:
-                new_token_extra_data["source"] = effective_source
+    conversation_key = widget_bootstrap.conversation_key(token_payload)
+    # Judged on the customer the socket will act as - the merge survivor - or
+    # the widget would be told yes here and refused on every connect.
+    customer = customer_repo.resolve_merged(customer_id) if customer_id not in (None, "None") else None
 
-        new_token = create_conversation_token(
-            customer_id=str(customer.id),
-            widget_id=widget_id,
-            **new_token_extra_data
-        )
-        token_was_generated = True
-        
-        # photo_url is signed by AgentCustomizationResponse on serialization.
-        customization = agent.customization
+    if customer is not None:
+        # Once the embedding app signs this person in, a token the widget issued
+        # (from an email someone typed) may no longer name them - whoever claimed
+        # the address first would otherwise keep a token for the signed-in user.
+        # Hand that browser a customer of its own and keep the address it gave.
+        if not may_stand_for(customer, scope):
+            logger.info(f"Widget {widget_id}: unverified token names a signed-in customer; starting an anonymous one")
+            anonymous = _anonymous_customer(customer_repo, widget, conversation_key, claimed_email=customer.email)
+            new_token = widget_bootstrap.mint_widget_token(widget_id, conversation_key, customer_id=str(anonymous.id),
+                                           source=source, token_payload=token_payload)
+            return _widget_data_response(widget, agent, str(anonymous.id), {}, new_token)
 
-        return {
-            "id": widget.id,
-            "organization_id": widget.organization_id,
-            "customer_id": str(customer.id),
-            "human_agent": human_agent_info,
-            "agent": {
-                "id": agent.id,
-                "name": agent.name,
-                "display_name": agent.display_name,
-                "customization": customization,
-                "workflow": bool(agent.use_workflow and agent.active_workflow_id),
-                "allow_attachments": agent.allow_attachments
-            },
-            "token": new_token
-        }
-    else:
-        # If workflow / ASK_ANYTHING / email-optional and no customer_id, create anonymous customer
-        if (customer_id == "None" or customer_id is None) and (agent_has_workflow or is_ask_anything_style or email_bypass):
-            # Create anonymous customer for workflow or ASK_ANYTHING style
-            customer = customer_repo.create_customer(CustomerRepository.anonymous_email(), widget.organization_id)
-
-            # Generate new token with customer_id
-            new_token = create_conversation_token(
-                customer_id=str(customer.id),
-                widget_id=widget_id
-            )
-
-            # Create a copy of customization to modify photo_url
-            customization = agent.customization
-
-            # photo_url is signed by AgentCustomizationResponse on serialization.
-
-            return {
-                "id": widget.id,
-                "organization_id": widget.organization_id,
-                "customer_id": str(customer.id),
-                "human_agent": {},
-                "agent": {
-                    "id": agent.id,
-                    "name": agent.name,
-                    "display_name": agent.display_name,
-                    "customization": customization,
-                    "workflow": bool(agent.use_workflow and agent.active_workflow_id),
-                    "allow_attachments": agent.allow_attachments
-                },
-                "token": new_token
-            }
-        elif customer_id == "None" or customer_id is None:
-            # Regular agent without email/customer_id - return 401
-            raise HTTPException(
-                status_code=401,
-                detail="Unauthorized"
-            )
-
-        # Existing customer with valid token - get session info
         logger.debug(f"Using existing token for customer_id: {customer_id}")
-        human_agent_info = await get_human_agent_session_info(db, customer_id)
+        human_agent_info = await get_human_agent_session_info(db, str(customer.id), scope)
+        return _widget_data_response(widget, agent, customer_id, human_agent_info)
 
-    # Create a copy of customization to modify photo_url
-    customization = agent.customization
+    # A token-protected widget only ever runs on tokens its site issued: one whose
+    # customer is gone is no reason to issue a widget token of our own.
+    if require_token_auth:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized - Token required")
 
-    # photo_url is signed by AgentCustomizationResponse on serialization.
+    # No customer yet - or the token's one no longer exists, which would otherwise
+    # refuse every connect while this answer kept the token. For workflow agents,
+    # ASK_ANYTHING style, or email-optional agents, create one with a blank email.
+    # Only email-collecting regular agents require email up front.
+    if not (email or agent_has_workflow or is_ask_anything_style or email_bypass):
+        # Regular agent without email/customer_id - return 401
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
-    return {
-        "id": widget.id,
-        "organization_id": widget.organization_id,
-        "customer_id": customer_id,
-        "human_agent": human_agent_info,
-        "agent": {
-            "id": agent.id,
-            "name": agent.name,
-            "display_name": agent.display_name,
-            "customization": customization,
-            "workflow": bool(agent.use_workflow and agent.active_workflow_id),
-            "allow_attachments": agent.allow_attachments
-        }
-    }
+    # The email is only what the visitor typed. It may still name the existing
+    # customer - one person in the inbox - because the token minted below is
+    # scoped to this browser's conversations, not to theirs. Never a person the
+    # embedding app signed in, though: only its own token may stand for them.
+    existing = customer_repo.get_customer_by_email(email, widget.organization_id) if email else None
+    if existing is not None and not existing.is_authenticated:
+        customer = existing
+    elif existing is not None:
+        customer = _anonymous_customer(customer_repo, widget, conversation_key, claimed_email=email)
+    elif email:
+        customer = customer_repo.create_customer(email, widget.organization_id, conversation_key=conversation_key)
+    else:
+        customer = _anonymous_customer(customer_repo, widget, conversation_key)
+
+    human_agent_info = await get_human_agent_session_info(db, str(customer.id), conversation_key)
+    new_token = widget_bootstrap.mint_widget_token(widget_id, conversation_key, customer_id=str(customer.id),
+                                   source=source, token_payload=token_payload)
+    return _widget_data_response(widget, agent, str(customer.id), human_agent_info, new_token)
 
 
 @router.post("/{widget_id}/end-chat")
@@ -426,12 +393,17 @@ async def end_chat_acknowledgment(
         customer_id = token_data.get("sub")
         if token_data.get("widget_id") != widget_id:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Widget mismatch")
+        try:
+            scope = conversation_token.conversation_scope(token_data)
+        except ValueError:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
         # The token proves who the caller is, not that this session is theirs —
-        # without this any visitor could close another customer's conversation.
+        # without this any visitor could close another customer's conversation,
+        # or another browser's conversation of a customer it only claimed to be.
         session_repo = SessionToAgentRepository(db)
         session = session_repo.get_session(session_id)
-        if not session or str(session.customer_id) != str(customer_id):
+        if not session or str(session.customer_id) != str(customer_id) or not session_in_scope(session, scope):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
         success = session_repo.close_session(

@@ -29,6 +29,7 @@ from app.agents.encrypted_storage import EncryptedPostgresAgentStorage
 from app.agents.history_memory import BoundedHistoryMemory, run_with_overflow_recovery
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
+from app.services.widget_identity import trusts_identity_in_session
 from app.models.session_to_agent import SessionStatus
 from app.models.schemas.chat import ChannelChatResponse, ChatResponse, TransferReasonType, EndChatReasonType
 from app.core.config import settings
@@ -440,7 +441,7 @@ class ChatAgent(ChatAgentMCPMixin):
                 try:
                     from app.repositories.customer import CustomerRepository
                     cust = CustomerRepository(db).get_by_id(customer_id)
-                    if cust:
+                    if cust and trusts_identity_in_session(db, cust, session_id):
                         if not CustomerRepository.is_placeholder_email(cust.email):
                             self.known_customer_email = cust.email
                         if (cust.full_name or "").strip():

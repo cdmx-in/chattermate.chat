@@ -12,9 +12,11 @@ export interface EmbedOptions {
   withTriggerButton?: boolean
   /** Open the site under its second origin (env.customerSiteOtherUrl). */
   onOtherOrigin?: boolean
+  /** The dashboard's iframe snippet instead of the script: the chat is already open. */
+  snippet?: 'script' | 'iframe'
 }
 
-type JsApiMethod = 'open' | 'close' | 'toggle' | 'isOpen' | 'showLauncher' | 'hideLauncher'
+type JsApiMethod = 'open' | 'close' | 'toggle' | 'isOpen' | 'showLauncher' | 'hideLauncher' | 'identify'
 
 /**
  * The customer's view: a pretend website with the widget embedded exactly the way the
@@ -31,11 +33,12 @@ export class ChatWidget {
   readonly customer: { name: string; email: string }
   private readonly frame: FrameLocator
 
-  constructor(page: Page, widgetId: string) {
+  /** `customer` defaults to a new, unique visitor. */
+  constructor(page: Page, widgetId: string, customer?: { name: string; email: string }) {
     this.page = page
     this.widgetId = widgetId
     const id = unique('customer')
-    this.customer = { name: `Customer ${id}`, email: `${id}@example.com` }
+    this.customer = customer ?? { name: `Customer ${id}`, email: `${id}@example.com` }
     this.frame = page.frameLocator('iframe.chattermate-iframe')
   }
 
@@ -66,6 +69,7 @@ export class ChatWidget {
       if (options.config) params.set('config', JSON.stringify(options.config))
       if (options.token) params.set('token', options.token)
       if (options.withTriggerButton) params.set('trigger', '1')
+      if (options.snippet) params.set('snippet', options.snippet)
       const site = options.onOtherOrigin ? env.customerSiteOtherUrl : env.customerSiteUrl
       await this.page.goto(`${site}/?${params}`)
     })
@@ -153,6 +157,11 @@ export class ChatWidget {
       if (feedback) await this.frame.getByPlaceholder('Please share your feedback (optional)').fill(feedback)
       await this.frame.getByRole('button', { name: 'Submit Rating' }).click()
     })
+  }
+
+  /** The same visitor in another tab of the same browser: same site storage, same token. */
+  async inAnotherTab(): Promise<ChatWidget> {
+    return new ChatWidget(await this.page.context().newPage(), this.widgetId, this.customer)
   }
 
   /** Calls the public `window.ChatterMate` API the host page uses. */

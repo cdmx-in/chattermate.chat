@@ -23,6 +23,7 @@ from app.models.workflow_node import WorkflowNode, NodeType
 from app.models.organization import Organization
 from app.models.user import User
 from uuid import UUID, uuid4
+from app.services.conversation_token import VERIFIED_SCOPE
 
 
 @pytest.fixture
@@ -198,9 +199,6 @@ def one_message_session(db, test_workflow, test_agent, test_customer, test_ai_co
         organization_id=test_agent.organization_id,
     )
     assert active_session.workflow_id == test_workflow.id
-    # The handlers pass ids as strings, which SQLite cannot bind to a UUID column.
-    monkeypatch.setattr(SessionToAgentRepository, "get_active_customer_session",
-                        lambda self, customer_id, agent_id=None: active_session)
 
     sio = MagicMock()
     sio.emit = AsyncMock()
@@ -211,6 +209,8 @@ def one_message_session(db, test_workflow, test_agent, test_customer, test_ai_co
         "customer_id": str(test_customer.id),
         "session_id": str(session_id),
         "ai_config": test_ai_config,
+        # A keyless session is resumed by a token the embedding app vouched for.
+        "conversation_scope": VERIFIED_SCOPE,
     })
     monkeypatch.setattr(widget_chat, "sio", sio)
     monkeypatch.setattr(message_delivery, "sio", sio)

@@ -73,7 +73,9 @@ class SocketOriginPolicy:
 
 socket_origins = SocketOriginPolicy(get_cors_origins())
 
-# Initialize Socket.IO server with basic config
+# Initialize Socket.IO server with basic config. engine.io answers every
+# allowed origin with credentials allowed; the cookie-authenticated /agent
+# namespace refuses other sites itself (auth_utils.cookie_socket_allowed).
 sio: AsyncServer = socketio.AsyncServer(
     async_mode='asgi',
     logger=True,

@@ -222,6 +222,10 @@ const saveAgent = async () => {
 
       <!-- Step 2: route to an agent -->
       <div v-else class="meta-modal-body">
+        <div v-if="account.needs_reconnect" class="meta-reconnect">
+          <p class="meta-reconnect-text">Meta stopped accepting this account's access. Reconnect to resume replies.</p>
+          <button class="meta-btn meta-btn-primary" @click="account = null">Reconnect</button>
+        </div>
         <p class="meta-intro">
           <strong>{{ account.display_name }}</strong> is connected.
         </p>
@@ -281,6 +285,24 @@ const saveAgent = async () => {
   font-size: 22px;
   cursor: pointer;
   color: var(--muted);
+}
+
+.meta-reconnect {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding: 12px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--error-bg);
+}
+
+.meta-reconnect-text {
+  margin: 0;
+  flex: 1;
+  color: var(--error-color);
+  font-size: 14px;
+  line-height: 1.5;
 }
 
 .meta-intro {

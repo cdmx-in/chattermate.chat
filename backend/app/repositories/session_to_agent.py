@@ -16,7 +16,7 @@ limitations under the License.
 
 from sqlalchemy.orm import Session
 from typing import List, Optional
-from app.models.session_to_agent import SessionToAgent, SessionStatus, EndChatReasonType
+from app.models.session_to_agent import ACTIVE_STATUSES, SessionToAgent, SessionStatus, EndChatReasonType
 from uuid import UUID
 from datetime import datetime, timedelta
 from app.core.logger import get_logger
@@ -24,6 +24,8 @@ from sqlalchemy import or_, func
 
 from app.models.user import User
 from app.models.chat_history import ChatHistory
+from app.services.conversation_token import session_key_for_scope
+from app.utils.uuids import as_uuid
 
 logger = get_logger(__name__)
 
@@ -31,7 +33,7 @@ class SessionToAgentRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def create_session(self, session_id: UUID | str, agent_id: UUID | str = None, customer_id: UUID | str = None, user_id: UUID | str = None, organization_id: UUID | str = None, channel: str = 'web') -> SessionToAgent:
+    def create_session(self, session_id: UUID | str, agent_id: UUID | str = None, customer_id: UUID | str = None, user_id: UUID | str = None, organization_id: UUID | str = None, channel: str = 'web', conversation_key: Optional[str] = None) -> SessionToAgent:
         """Create a new session assignment"""
         try:
             # Convert string IDs to UUID objects
@@ -67,7 +69,8 @@ class SessionToAgentRepository:
                 organization_id=organization_id,
                 status=SessionStatus.OPEN,
                 workflow_id=workflow_id,
-                channel=channel
+                channel=channel,
+                conversation_key=conversation_key
             )
             self.db.add(session)
             self.db.commit()
@@ -166,8 +169,8 @@ class SessionToAgentRepository:
             logger.error(f"Error getting open sessions: {str(e)}")
             return []
 
-    def get_customer_sessions(self, customer_id: UUID | str, status: SessionStatus = None) -> List[SessionToAgent]:
-        """Get all sessions for a customer"""
+    def get_customer_sessions(self, customer_id: UUID | str, status: SessionStatus, scope: str) -> List[SessionToAgent]:
+        """A customer's sessions in `status` that a conversation-token scope reaches"""
         try:
             query = self.db.query(
                 SessionToAgent,
@@ -176,33 +179,63 @@ class SessionToAgentRepository:
             ).outerjoin(
                 User, SessionToAgent.user_id == User.id
             ).filter(
-                SessionToAgent.customer_id == customer_id
+                SessionToAgent.customer_id == as_uuid(customer_id)
             )
-            if status:
-                query = query.filter(SessionToAgent.status == status)
+            query = query.filter(SessionToAgent.status == status, _in_scope(scope))
 
             return query.order_by(SessionToAgent.assigned_at.desc()).all()
         except Exception as e:
             logger.error(f"Error getting customer sessions: {str(e)}")
             return []
 
-    def get_active_customer_session(self, customer_id: UUID | str, agent_id: UUID | str = None) -> Optional[SessionToAgent]:
-        """Get active session for a customer"""
+    def get_active_widget_session(self, customer_id: UUID | str, agent_id: UUID | str, scope: str) -> Optional[SessionToAgent]:
+        """The open session a widget conversation token may resume.
+
+        Never "the customer's open session": a widget token can name a customer
+        the visitor never proved to be, so it only reaches sessions created
+        under its own scope.
+        """
         try:
-            query = self.db.query(SessionToAgent).filter(
-                SessionToAgent.customer_id == customer_id,
-                or_(
-                    SessionToAgent.status == SessionStatus.OPEN,
-                    SessionToAgent.status == SessionStatus.TRANSFERRED
-                )
-            )
-            if agent_id:
-                query = query.filter(SessionToAgent.agent_id == agent_id)
-            
-            return query.order_by(SessionToAgent.assigned_at.desc()).first()
+            return self.db.query(SessionToAgent).filter(
+                SessionToAgent.customer_id == as_uuid(customer_id),
+                SessionToAgent.agent_id == as_uuid(agent_id),
+                SessionToAgent.status.in_(ACTIVE_STATUSES),
+                _in_scope(scope),
+            ).order_by(SessionToAgent.assigned_at.desc()).first()
         except Exception as e:
-            logger.error(f"Error getting active customer session: {str(e)}")
+            logger.error(f"Error getting active widget session: {str(e)}")
             return None
+
+    def get_widget_session(self, session_id: UUID | str, customer_id: UUID | str, scope: Optional[str],
+                           active_only: bool = True) -> Optional[SessionToAgent]:
+        """A widget socket's own conversation, while it still belongs to that socket.
+
+        Socket handlers act on this rather than on "the customer's open session":
+        a widget token may name a customer the visitor only claimed to be, and
+        must never reach a conversation outside its own scope.
+        """
+        own = self.get_session(session_id) if session_id else None
+        if own is None or str(own.customer_id) != str(customer_id):
+            return None
+        if not session_in_scope(own, scope):
+            return None
+        if active_only and own.status not in ACTIVE_STATUSES:
+            return None
+        return own
+
+    def customer_has_sessions_outside_scope(self, customer_id: UUID | str, scope: str) -> bool:
+        """True when the customer has a session this token scope did not create.
+
+        Fails closed: on error the customer is treated as shared.
+        """
+        try:
+            return self.db.query(SessionToAgent.session_id).filter(
+                SessionToAgent.customer_id == as_uuid(customer_id),
+                _outside_scope(scope),
+            ).first() is not None
+        except Exception as e:
+            logger.error(f"Error checking customer session scopes: {str(e)}")
+            return True
 
     def get_agent_customer_sessions(self, agent_id: UUID | str, customer_id: UUID | str, status: SessionStatus = None) -> List[SessionToAgent]:
         """Get all sessions between an agent and customer"""
@@ -236,14 +269,15 @@ class SessionToAgentRepository:
             self.db.rollback()
             return False
             
-    def get_latest_customer_session(self, customer_id: UUID | str, agent_id: UUID | str = None) -> Optional[SessionToAgent]:
-        """Get the latest session for a customer regardless of status"""
+    def get_latest_customer_session(self, customer_id: UUID | str, scope: str, agent_id: UUID | str = None) -> Optional[SessionToAgent]:
+        """The latest session a conversation-token scope reaches, whatever its status"""
         try:
             query = self.db.query(SessionToAgent).filter(
-                SessionToAgent.customer_id == customer_id
+                SessionToAgent.customer_id == as_uuid(customer_id)
             )
             if agent_id:
                 query = query.filter(SessionToAgent.agent_id == agent_id)
+            query = query.filter(_in_scope(scope))
             
             return query.order_by(SessionToAgent.assigned_at.desc()).first()
         except Exception as e:
@@ -516,3 +550,30 @@ class SessionToAgentRepository:
             logger.error(f"Error in auto_close_inactive_agent_chats: {str(e)}")
             self.db.rollback()
             return 0
+
+
+def _in_scope(scope: str):
+    """SQL condition: the session was created under this token scope."""
+    key = session_key_for_scope(scope)
+    if key is None:
+        return SessionToAgent.conversation_key.is_(None)
+    return SessionToAgent.conversation_key == key
+
+
+def _outside_scope(scope: str):
+    """SQL condition: the session was NOT created under this token scope.
+
+    Spelled out rather than ~_in_scope: NOT (key = 'x') is NULL, not true, for a
+    keyless session, which would hide every vouched-for conversation.
+    """
+    key = session_key_for_scope(scope)
+    if key is None:
+        return SessionToAgent.conversation_key.isnot(None)
+    return or_(SessionToAgent.conversation_key.is_(None), SessionToAgent.conversation_key != key)
+
+
+def session_in_scope(session: SessionToAgent, scope: Optional[str]) -> bool:
+    """Python twin of _in_scope for a session already loaded. No scope, no access."""
+    if not scope:
+        return False
+    return session.conversation_key == session_key_for_scope(scope)

@@ -6,6 +6,7 @@
 //     &config=<json>   → window.chattermateConfig (launcher, position, trigger, …)
 //     &token=<jwt>     → window.chattermateToken (token-authenticated widgets)
 //     &trigger=1       → adds a page button with data-chattermate-open
+//     &snippet=iframe  → the dashboard's iframe snippet instead of the script
 //
 // It has to be a real server on 127.0.0.1: Chrome's Local Network Access check
 // blocks a page Playwright fabricates (page.route) from loading the loader and
@@ -29,9 +30,26 @@ interface Embed {
   config: string | null
   token: string | null
   trigger: boolean
+  iframe: boolean
+}
+
+/** The dashboard's iframe snippet (AgentWidgetTab), classed so the page object finds it. */
+function iframeSnippet(widgetId: string): string {
+  const src = `${apiUrl}/widgets/${encodeURIComponent(widgetId)}/frame`
+  return `<iframe class="chattermate-iframe" src="${src}" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write"></iframe>`
 }
 
 function page(embed: Embed): string {
+  if (embed.iframe) {
+    return `<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Acme Store</title></head>
+  <body>
+    <h1>Acme Store</h1>
+    ${iframeSnippet(embed.widgetId)}
+  </body>
+</html>`
+  }
   const globals = [
     `window.chattermateId = ${JSON.stringify(embed.widgetId)};`,
     `window.chattermateBaseUrl = ${JSON.stringify(apiUrl)};`,
@@ -71,6 +89,7 @@ createServer((req, res) => {
       config: params.get('config'),
       token: params.get('token'),
       trigger: params.get('trigger') === '1',
+      iframe: params.get('snippet') === 'iframe',
     })
   } catch {
     res.writeHead(400, { 'content-type': 'text/plain' }).end('config is not valid JSON')

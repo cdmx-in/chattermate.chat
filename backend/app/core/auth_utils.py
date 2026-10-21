@@ -17,13 +17,15 @@ limitations under the License.
 from typing import Optional, Tuple
 from uuid import UUID
 import http.cookies
+from urllib.parse import parse_qs, urlparse
 from app.core.security import verify_conversation_token
 from app.core.logger import get_logger
 from app.database import get_db, SessionLocal
 from app.models.user import User
 from sqlalchemy.orm import Session
-from app.core.socketio import sio
+from app.core.cors import is_first_party_origin, origin_of
 from app.models.widget import Widget
+from app.repositories.customer import CustomerRepository
 from app.services.auth_sessions import ACCESS, REFRESH, issue_tokens, live_payload
 
 logger = get_logger(__name__)
@@ -58,11 +60,42 @@ async def refresh_access_token(refresh_token: str, db: Session) -> str | None:
         return None
 
 
+def _is_own_origin(origin: str, host: str) -> bool:
+    """Whether Origin is the API's own origin (the host the request was sent to)."""
+    own = origin_of(origin)
+    return bool(own and host) and own == origin_of(f"{urlparse(origin).scheme}://{host}")
+
+
+def cookie_socket_allowed(environ: dict) -> bool:
+    """Whether a socket handshake may sign in with the dashboard's cookies.
+
+    Sockets get no CORS check and the cookies are SameSite=None, so a page on
+    another site (an org's signup domain is unverified) could otherwise open
+    the socket as whoever is signed in. socket.io authenticates a namespace
+    with the headers of the first handshake request, so all of it must have
+    come from our own pages:
+    - never a JSONP handshake: a <script> tag sends the cookies without an Origin
+    - with an Origin, a first-party one or the API's own origin
+    - without one, only a same-origin request (browsers omit Origin on
+      same-origin GETs, e.g. polling behind a single-host proxy)
+    """
+    if "j" in parse_qs(environ.get("QUERY_STRING", "")):
+        return False
+    origin = environ.get("HTTP_ORIGIN")
+    if origin:
+        return is_first_party_origin(origin) or _is_own_origin(origin, environ.get("HTTP_HOST", ""))
+    return environ.get("HTTP_SEC_FETCH_SITE") == "same-origin"
+
+
 async def authenticate_socket(sid: str, environ: dict) -> Tuple[Optional[str], Optional[int], Optional[int]]:
     """
     Authenticate socket connection using cookies
     Returns: (access_token, user_id, org_id)
     """
+    if not cookie_socket_allowed(environ):
+        logger.warning(f"Refused cookie socket auth for sid {sid} from origin {environ.get('HTTP_ORIGIN')}")
+        return None, None, None
+
     try:
         # Extract cookies from environ
         cookie_str = environ.get('HTTP_COOKIE', environ.get('headers', {}).get('Cookie', ''))
@@ -81,12 +114,6 @@ async def authenticate_socket(sid: str, environ: dict) -> Tuple[Optional[str], O
                 refresh_token = cookies['refresh_token'].value
                 with SessionLocal() as db:
                     access_token = await refresh_access_token(refresh_token, db)
-
-                # Emit cookie_set event with the new token
-                await sio.emit('cookie_set', {
-                    'access_token': access_token
-                }, to=sid)
-                logger.info(f"New access token generated for sid {sid}")
 
         if not access_token:
             return None, None, None
@@ -162,18 +189,9 @@ async def authenticate_socket_conversation_token(sid: str, auth: dict) -> Tuple[
             # capture matched an existing email), continue as the merged target so
             # returning visitors keep their identity and history.
             if customer_id:
-                from app.models.customer import Customer
-                seen = set()
-                current = customer_id
-                while current and current not in seen:
-                    seen.add(current)
-                    merged_into = db.query(Customer.merged_into_customer_id).filter(
-                        Customer.id == current).scalar()
-                    if not merged_into:
-                        break
-                    logger.info(f"Customer {current} was merged; continuing as {merged_into}")
-                    current = str(merged_into)
-                customer_id = current
+                survivor = CustomerRepository(db).resolve_merged(customer_id)
+                if survivor is not None:
+                    customer_id = str(survivor.id)
         return widget_id, org_id, customer_id, conversation_token
 
     except Exception as e:
