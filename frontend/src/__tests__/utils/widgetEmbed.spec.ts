@@ -16,7 +16,7 @@ limitations under the License.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+import { buildWidgetCsp, buildWidgetEmbed } from '@/utils/widgetEmbed'
 // The snippet's exact text, pinned so other code that builds it can match it.
 import golden from '../fixtures/widget-snippet.txt?raw'
 
@@ -66,5 +66,16 @@ describe('buildWidgetEmbed', () => {
       .replace('{api_url}', API_URL)
       .replace('{loader_origin}', ORIGIN)
     expect(buildWidgetEmbed('w-123')).toBe(expected)
+  })
+})
+
+describe('buildWidgetCsp', () => {
+  it('names the loader and every host that frames the widget', () => {
+    expect(buildWidgetCsp(['https://api.example.com', 'https://widget.example.com'])).toBe(
+      `script-src ${window.location.origin};\nframe-src https://api.example.com https://widget.example.com;`)
+  })
+
+  it('leaves the script out for the iframe snippet, which loads no loader', () => {
+    expect(buildWidgetCsp(['https://api.example.com'], false)).toBe('frame-src https://api.example.com;')
   })
 })

@@ -15,10 +15,11 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, toRef } from 'vue'
 import { toast } from 'vue-sonner'
 import type { Agent } from '@/types/agent'
-import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+import { buildWidgetCsp, buildWidgetEmbed } from '@/utils/widgetEmbed'
+import { useWidgetFrameSources } from '@/composables/useWidgetFrameSources'
 import WidgetAllowedDomains from './WidgetAllowedDomains.vue'
 
 interface Widget {
@@ -55,6 +56,11 @@ const requiresTokenAuth = computed(() => {
 // The exact snippet the Copy button produces (see buildWidgetEmbed) — rendered
 // in the preview so what you see always matches what you copy.
 const embedCode = computed(() => buildWidgetEmbed(props.widget?.id ?? '', requiresTokenAuth.value))
+
+// For sites that set a Content-Security-Policy: without these the browser blocks the widget
+const { frameSources } = useWidgetFrameSources(toRef(() => props.widget?.id))
+const scriptCsp = computed(() => buildWidgetCsp(frameSources.value))
+const iframeCsp = computed(() => buildWidgetCsp(frameSources.value, false))
 
 const copyWidgetCode = () => {
   emit('copy-widget-code')
@@ -259,6 +265,21 @@ const { data } = await response.json();
               </div>
             </div>
           </template>
+
+          <div v-if="frameSources.length" class="csp-note">
+            <p class="code-description">
+              If your site sets a <strong>Content-Security-Policy</strong>, add these sources to it, or the browser blocks the chat:
+            </p>
+            <div class="code-block">
+              <pre><code>{{ scriptCsp }}</code></pre>
+              <button class="copy-button" @click="copyText(scriptCsp)" title="Copy CSP sources">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8 4V16C8 17.1046 8.89543 18 10 18H18C19.1046 18 20 17.1046 20 16V7.41421C20 6.88378 19.7893 6.37507 19.4142 6L16 2.58579C15.6249 2.21071 15.1162 2 14.5858 2H10C8.89543 2 8 2.89543 8 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M16 18V20C16 21.1046 15.1046 22 14 22H6C4.89543 22 4 21.1046 4 20V8C4 6.89543 4.89543 6 6 6H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -335,6 +356,21 @@ const { data } = await response.json();
             </button>
           </div>
 
+          <div v-if="frameSources.length" class="csp-note">
+            <p class="code-description">
+              If your site sets a <strong>Content-Security-Policy</strong>, add these sources to it, or the browser blocks the chat:
+            </p>
+            <div class="code-block">
+              <pre><code>{{ iframeCsp }}</code></pre>
+              <button class="copy-button" @click="copyText(iframeCsp)" title="Copy CSP sources">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8 4V16C8 17.1046 8.89543 18 10 18H18C19.1046 18 20 17.1046 20 16V7.41421C20 6.88378 19.7893 6.37507 19.4142 6L16 2.58579C15.6249 2.21071 15.1162 2 14.5858 2H10C8.89543 2 8 2.89543 8 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M16 18V20C16 21.1046 15.1046 22 14 22H6C4.89543 22 4 21.1046 4 20V8C4 6.89543 4.89543 6 6 6H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
           <div class="info-box">
             <div class="info-icon">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -352,6 +388,10 @@ const { data } = await response.json();
 </template>
 
 <style scoped>
+.csp-note {
+  margin-top: var(--space-md);
+}
+
 .widget-tab {
   max-width: 900px;
   margin: 0 auto;

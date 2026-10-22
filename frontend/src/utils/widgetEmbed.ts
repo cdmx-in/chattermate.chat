@@ -76,3 +76,15 @@ export function buildWidgetEmbed(widgetId: string, requireTokenAuth?: boolean): 
 <\/script>
 <script src="${loaderOrigin}/webclient/chattermate.min.js"><\/script>`
 }
+
+/**
+ * The Content-Security-Policy lines a site with a strict policy adds so the
+ * widget can load: the loader script (for the script snippet) and the hosts
+ * that frame the widget, which the browser checks across the redirect too.
+ */
+export function buildWidgetCsp(frameSources: string[], withLoaderScript = true): string {
+  const lines = []
+  if (withLoaderScript) lines.push(`script-src ${getLoaderOrigin()};`)
+  if (frameSources.length) lines.push(`frame-src ${frameSources.join(' ')};`)
+  return lines.join('\n')
+}

@@ -49,7 +49,7 @@ from app.core.auth import require_permissions
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.database import get_db
-from app.models.schemas.widget import WidgetEmbedSettings
+from app.models.schemas.widget import WidgetEmbedSettings, WidgetEmbedSettingsResponse
 from app.models.user import User
 from app.repositories.widget import WidgetRepository
 from app.services import conversation_token, widget_bootstrap, widget_embed_policy
@@ -239,14 +239,22 @@ def _own_widget(db: Session, widget_id: str, user: User):
     return widget
 
 
-@router.get("/{widget_id}/embed-settings", response_model=WidgetEmbedSettings)
+@router.get("/{widget_id}/embed-settings", response_model=WidgetEmbedSettingsResponse)
 async def get_embed_settings(
     widget_id: str,
     current_user: User = Depends(require_permissions("manage_agents")),
     db: Session = Depends(get_db),
 ):
     widget = _own_widget(db, widget_id, current_user)
-    return WidgetEmbedSettings(allowed_domains=widget.allowed_domains or [])
+    return WidgetEmbedSettingsResponse(allowed_domains=widget.allowed_domains or [], frame_sources=_frame_sources())
+
+
+def _frame_sources() -> list:
+    """What a site's frame-src must allow: the API the snippet points at, and
+    the frame host /frame redirects to (the browser checks the redirect too)."""
+    origins = [widget_embed_policy.origin_of(settings.BACKEND_URL),
+               widget_embed_policy.origin_of(settings.WIDGET_FRAME_URL)]
+    return list(dict.fromkeys(o for o in origins if o))
 
 
 @router.put("/{widget_id}/embed-settings", response_model=WidgetEmbedSettings)

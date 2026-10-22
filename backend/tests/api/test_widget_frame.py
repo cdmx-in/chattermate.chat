@@ -450,7 +450,19 @@ class TestEmbedSettings:
         return f"/api/v1/widgets/{widget.id}/embed-settings"
 
     def test_a_new_widget_allows_any_site(self, client, test_widget):
-        assert client.get(self.url(test_widget)).json() == {"allowed_domains": []}
+        assert client.get(self.url(test_widget)).json()["allowed_domains"] == []
+
+    def test_says_what_a_sites_frame_src_must_allow(self, client, test_widget, monkeypatch):
+        # The API the snippet points at, then the frame host its /frame redirects to
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
+        assert client.get(self.url(test_widget)).json()["frame_sources"] == [
+            "https://api.example.com", "https://widget.example.com"]
+
+    def test_without_a_frame_host_only_the_api_needs_framing(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "")
+        assert client.get(self.url(test_widget)).json()["frame_sources"] == ["https://api.example.com"]
 
     def test_saved_domains_are_normalised(self, client, db, test_widget):
         response = client.put(self.url(test_widget), json={"allowed_domains": ["https://ACME.com/", "localhost:3000", "acme.com"]})

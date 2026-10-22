@@ -9087,6 +9087,18 @@ export interface components {
             allowed_domains?: string[];
         };
         /**
+         * WidgetEmbedSettingsResponse
+         * @description The settings, plus the hosts a site's Content-Security-Policy must let
+         *     frame the widget (frame-src): the API, whose /frame redirects to the
+         *     widget's frame host when it has one.
+         */
+        WidgetEmbedSettingsResponse: {
+            /** Allowed Domains */
+            allowed_domains?: string[];
+            /** Frame Sources */
+            frame_sources?: string[];
+        };
+        /**
          * WidgetPosition
          * @enum {string}
          */
@@ -16100,7 +16112,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WidgetEmbedSettings"];
+                    "application/json": components["schemas"]["WidgetEmbedSettingsResponse"];
                 };
             };
             /** @description Validation Error */
