@@ -41,12 +41,10 @@ from app.repositories.fcm_token import FCMTokenRepository
 from pydantic import BaseModel
 from app.models.role import Role
 from app.services.chat_scope_roles import resolve_role
-from app.core.s3 import get_s3_signed_url, sign_s3_url, upload_file_to_s3, delete_file_from_s3
+from app.core.s3 import get_s3_signed_url, sign_s3_url, delete_file_from_s3
 from app.core.config import settings
-from app.services.file_storage import local_upload_path
-from app.repositories.shopify_shop_repository import ShopifyShopRepository
-from app.services.shopify_links import owned_by_another_org, refresh_allowed_storefronts, use_shop_domain_if_unset
-from app.models.schemas.shopify.shopify_shop import ShopifyShopUpdate
+from app.services.file_storage import local_upload_path, profile_pic_folder, store_upload
+from app.services.shopify_links import link_shop_at_sign_in
 from app.core.params import MAX_DB_INT
 # Try to import enterprise modules
 try:
@@ -75,7 +73,6 @@ router = APIRouter(
 
 security = HTTPBearer()
 
-UPLOAD_DIR = "uploads/user"
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif"}
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5MB
 
@@ -98,30 +95,10 @@ def get_file_extension(filename: str) -> str:
     return os.path.splitext(filename)[1].lower()
 
 async def save_upload_file(file: UploadFile, org_id: str, user_id: str) -> str:
-    """Save uploaded file and return the file path"""
-    # Generate unique filename
-    file_extension = get_file_extension(file.filename)
-    filename = f"profile{file_extension}"
-    
-    if settings.S3_FILE_STORAGE:
-        folder = f"users/{org_id}/{user_id}"
-        content = await file.read()
-        return await upload_file_to_s3(content, folder, filename, content_type=file.content_type)
-    else:
-        # Local storage
-        # Create upload directory if it doesn't exist
-        user_upload_dir = os.path.join(UPLOAD_DIR, org_id, user_id)
-        os.makedirs(user_upload_dir, exist_ok=True)
-        
-        file_path = os.path.join(user_upload_dir, filename)
-        
-        # Save file
-        with open(file_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-        
-        # Prefixed to match the {API_V1_STR}/uploads static mount, as store_upload does.
-        return f"{settings.API_V1_STR}/uploads/user/{org_id}/{user_id}/{filename}"
+    """Save an uploaded profile picture and return the URL to store"""
+    filename = f"profile{get_file_extension(file.filename)}"
+    content = await file.read()
+    return await store_upload(content, profile_pic_folder(org_id, user_id), filename, file.content_type)
 
 @router.post("", response_model=UserResponse)
 async def create_user(
@@ -526,41 +503,10 @@ async def login(
 
         set_session_cookies(response, user, role, access_token, refresh_token)
 
-        # Handle Shopify shop update if shop_id is provided in query params
+        # Link the Shopify store the merchant signed in from, if any
         shop_id = request.query_params.get('shop_id')
         if shop_id:
-            try:
-                shop_repository = ShopifyShopRepository(db)
-                db_shop = shop_repository.get_shop(shop_id)
-
-                # Only a store nobody else owns yet (the same rule as
-                # /shopify/link-organization): otherwise signing in with another
-                # tenant's shop_id would take over their store
-                if db_shop and owned_by_another_org(db_shop, user.organization_id):
-                    logger.warning(f"Shop {db_shop.id} belongs to another organization; not linking it at login")
-                elif db_shop:
-                    # Update shop with user's organization_id
-                    shop_update = ShopifyShopUpdate(
-                        organization_id=str(user.organization_id)
-                    )
-                    shop_repository.update_shop(db_shop.id, shop_update)
-
-                    try:
-                        use_shop_domain_if_unset(db, user.organization_id, db_shop.shop_domain)
-                    except Exception as domain_error:
-                        logger.error(f"Error updating organization domain during login: {str(domain_error)}")
-                        # Don't fail login if domain update fails
-
-                    db.commit()
-
-                    refresh_allowed_storefronts()
-
-                    logger.info(f"Updated shop {db_shop.shop_domain} with organization_id {user.organization_id} after login")
-                else:
-                    logger.warning(f"Shop {shop_id} not found during login")
-            except Exception as e:
-                logger.error(f"Error updating shopify shop during login: {str(e)}")
-                # Don't fail login if shop update fails
+            link_shop_at_sign_in(db, shop_id, user.organization_id)
 
         return {
             "access_token": access_token,

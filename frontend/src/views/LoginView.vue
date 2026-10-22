@@ -228,11 +228,10 @@ const handleLogin = async () => {
 }
 
 const startSso = (provider: SsoProvider) => {
-    // Keep the ?redirect= destination through the provider round trip.
-    const redirect = router.currentRoute.value.query.redirect
-    const next = typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') ? redirect : '/'
     ssoRedirecting.value = provider.key
-    window.location.href = ssoService.startUrl(provider.key, next)
+    // The backend carries the login page's own parameters (?redirect=, the
+    // Shopify flows) through the provider and hands them back with ?sso=ok.
+    window.location.href = ssoService.startUrl(provider.key, window.location.search)
 }
 
 // The SSO callback lands here with the cookies set and `?sso=ok` (or `?sso_error=`).
@@ -247,11 +246,6 @@ const finishSso = async () => {
         ssoCompleting.value = true
         await ssoService.completeSignIn()
         trackLogin('sso')
-        const next = typeof query.next === 'string' && query.next.startsWith('/') && !query.next.startsWith('//') ? query.next : '/'
-        if (next !== '/') {
-            router.push(next)
-            return
-        }
         continueAfterLogin()
     } catch (err) {
         console.error('SSO completion error:', err)
@@ -261,12 +255,14 @@ const finishSso = async () => {
     }
 }
 
-onMounted(async () => {
+const loadSsoConfig = async () => {
     const config = await ssoService.getConfig()
     ssoProviders.value = config.providers
     passwordLogin.value = config.passwordLogin
-    await finishSso()
-})
+}
+
+// Independent: finishing a sign-in needn't wait for the provider list.
+onMounted(() => Promise.all([loadSsoConfig(), finishSso()]))
 
 const navigateToSignup = () => {
     // Preserve embedded, shop_id, return_to, redirect query params if present
@@ -361,9 +357,10 @@ const handleVerifyAndResetPassword = async () => {
                     <span v-else>Sign In</span>
                 </button>
 
+                <p v-if="ssoCompleting" class="sso-status" role="status">Completing sign-in…</p>
+
                 <template v-if="ssoProviders.length">
                     <div v-if="showPasswordForm" class="auth-divider" aria-hidden="true"><span>or</span></div>
-                    <p v-if="ssoCompleting" class="sso-status" role="status">Completing sign-in…</p>
                     <button
                         v-for="provider in ssoProviders"
                         :key="provider.key"

@@ -113,11 +113,13 @@ class Settings(BaseSettings):
     MICROSOFT_SSO_CLIENT_ID: str = os.getenv("MICROSOFT_SSO_CLIENT_ID", "")
     MICROSOFT_SSO_CLIENT_SECRET: str = os.getenv("MICROSOFT_SSO_CLIENT_SECRET", "")
     # "common" accepts any Microsoft work, school or personal account that has an
-    # account here; a tenant id limits sign-in to that directory.
+    # account here (a work account links only with the xms_edov claim, see
+    # app.services.sso); a tenant id limits sign-in to that directory.
     MICROSOFT_SSO_TENANT: str = os.getenv("MICROSOFT_SSO_TENANT", "common")
     # false makes single sign-on the only way into the dashboard: the login page
     # hides the e-mail/password form and /users/login refuses. Ignored while no
     # provider is configured, so a misconfiguration can never lock everyone out.
+    # Install-wide, so meant for single-organization (self-hosted) deployments.
     PASSWORD_LOGIN_ENABLED: bool = os.getenv("PASSWORD_LOGIN_ENABLED", "true").lower() == "true"
 
     # Jira. Unlike the others the redirect URI IS configured, because it must

@@ -15,13 +15,15 @@ limitations under the License.
 
 The SSO endpoints end to end, with the provider itself replaced: the code
 exchange and ID-token verification are stubbed, everything on our side
-(state, user lookup, avatar sync, session cookies, redirects) is real.
+(state and its browser cookie, account linking, avatar, shop linking,
+session cookies, redirects) is real.
 """
 
 import json
 from unittest.mock import AsyncMock
 from urllib.parse import parse_qs, urlparse
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -36,7 +38,10 @@ from app.database import get_db
 app = FastAPI()
 app.include_router(sso_router, prefix="/api/v1/sso")
 from app.models.auth_session import AuthSession
+from app.models.organization import Organization
+from app.models.shopify.shopify_shop import ShopifyShop
 from app.models.user import User
+from app.models.user_identity import UserIdentity
 from app.services import sso as sso_service
 
 GOOGLE_DISCOVERY = {
@@ -74,30 +79,64 @@ def google_only(monkeypatch):
     sso_service.clear_caches()
 
 
-def _begin(client: TestClient, next_path: str = "/") -> dict:
-    """Start a sign-in and return the query the provider was sent (state, nonce...)."""
-    response = client.get(f"/api/v1/sso/google/start?next={next_path}", follow_redirects=False)
+@pytest.fixture
+def microsoft_common(monkeypatch):
+    """Microsoft open to every directory, the default tenant."""
+    monkeypatch.setattr(settings, "GOOGLE_SSO_CLIENT_ID", "")
+    monkeypatch.setattr(settings, "MICROSOFT_SSO_CLIENT_ID", "ms-client")
+    monkeypatch.setattr(settings, "MICROSOFT_SSO_CLIENT_SECRET", "ms-secret")
+    monkeypatch.setattr(settings, "MICROSOFT_SSO_TENANT", "common")
+    monkeypatch.setattr(settings, "FRONTEND_URL", "https://app.example.test")
+    monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.test")
+    monkeypatch.setattr(sso_service, "discovery", AsyncMock(return_value={
+        **GOOGLE_DISCOVERY, "authorization_endpoint": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+    }))
+
+
+SSO_OK = "https://app.example.test/login?sso=ok"
+
+
+def _begin(client: TestClient, query: str = "", provider: str = "google") -> dict:
+    """Start a sign-in and return the query the provider was sent (state, nonce...).
+    The client keeps the state cookie, as the browser would."""
+    response = client.get(f"/api/v1/sso/{provider}/start{query}", follow_redirects=False)
     assert response.status_code == 302
     return {k: v[0] for k, v in parse_qs(urlparse(response.headers["location"]).query).items()}
+
+
+def _callback(client: TestClient, query: dict, provider: str = "google"):
+    return client.get(f"/api/v1/sso/{provider}/callback?code=abc&state={query['state']}", follow_redirects=False)
 
 
 def _provider_says(monkeypatch, claims: dict, avatar=None, tokens=None):
     monkeypatch.setattr(sso_service, "exchange_code", AsyncMock(return_value=tokens or {"id_token": "id", "access_token": "at"}))
     verify = AsyncMock(return_value=claims)
     monkeypatch.setattr(sso_service, "verify_id_token", verify)
-    monkeypatch.setattr(sso_service, "fetch_avatar", AsyncMock(return_value=avatar))
+    fetch = AsyncMock(return_value=avatar)
+    monkeypatch.setattr(sso_service, "fetch_avatar", fetch)
     monkeypatch.setattr(sso_service, "store_avatar", AsyncMock(return_value="/api/v1/uploads/user/org/u/profile.png"))
-    return verify
+    return verify, fetch
 
 
-def _google_claims(email: str, **extra) -> dict:
-    return {"iss": "https://accounts.google.com", "sub": "g-1", "email": email, "email_verified": True,
+def _google_claims(email: str, sub: str = "g-1", **extra) -> dict:
+    return {"iss": "https://accounts.google.com", "sub": sub, "email": email, "email_verified": True,
             "name": "Someone From SSO", "picture": "https://lh3.googleusercontent.com/a/x=s96-c", **extra}
 
 
-def _error_of(response) -> str:
+def _query_of(response) -> dict:
     assert response.status_code == 302
-    return parse_qs(urlparse(response.headers["location"]).query).get("sso_error", [""])[0]
+    return {k: v[0] for k, v in parse_qs(urlparse(response.headers["location"]).query).items()}
+
+
+def _error_of(response) -> str:
+    return _query_of(response).get("sso_error", "")
+
+
+def _link(db, user: User, sub: str = "g-1") -> UserIdentity:
+    link = UserIdentity(user_id=user.id, provider="google", issuer="https://accounts.google.com", subject=sub, email=user.email)
+    db.add(link)
+    db.commit()
+    return link
 
 
 # --- config --------------------------------------------------------------------
@@ -134,7 +173,7 @@ def test_password_login_stays_on_without_a_provider(client: TestClient, monkeypa
 # --- start ---------------------------------------------------------------------
 
 def test_start_sends_the_browser_to_the_provider_with_a_one_time_state(client: TestClient, google_only):
-    response = client.get("/api/v1/sso/google/start?next=/conversations", follow_redirects=False)
+    response = client.get("/api/v1/sso/google/start", follow_redirects=False)
     assert response.status_code == 302
     location = response.headers["location"]
     assert location.startswith(GOOGLE_DISCOVERY["authorization_endpoint"] + "?")
@@ -145,13 +184,25 @@ def test_start_sends_the_browser_to_the_provider_with_a_one_time_state(client: T
     assert query["scope"] == "openid email profile"
     assert query["prompt"] == "select_account"
     stored = json.loads(oauth_state.pop_state("sso", query["state"]))
-    assert stored == {"provider": "google", "nonce": query["nonce"], "next": "/conversations"}
+    assert stored == {"provider": "google", "nonce": query["nonce"], "carry": {}}
 
 
-@pytest.mark.parametrize("next_path", ["https://evil.example/", "//evil.example/x", "/ok\\evil"])
-def test_start_only_keeps_a_dashboard_path_as_destination(client: TestClient, google_only, next_path):
-    query = _begin(client, next_path)
-    assert json.loads(oauth_state.pop_state("sso", query["state"]))["next"] == "/"
+def test_start_binds_the_state_to_this_browser(client: TestClient, google_only):
+    response = client.get("/api/v1/sso/google/start", follow_redirects=False)
+    query = _query_of(response)
+    header = response.headers["set-cookie"]
+    assert f"sso_state={query['state']}" in header
+    for attribute in ("HttpOnly", "Secure", "SameSite=lax", "Path=/api/v1/sso", "Max-Age=600"):
+        assert attribute.lower() in header.lower()
+
+
+def test_start_carries_only_the_login_page_parameters(client: TestClient, google_only):
+    query = _begin(client, "?redirect=%2Fconversations&shopify_flow=1&shop_id=7&shop=s.myshopify.com"
+                           "&host=aG9zdA&embedded=true&sso_error=x&evil=1&return_to=" + "h" * 3000)
+    carried = json.loads(oauth_state.pop_state("sso", query["state"]))["carry"]
+    # Unknown parameters and an oversized one stay behind.
+    assert carried == {"redirect": "/conversations", "shopify_flow": "1", "shop_id": "7", "shop": "s.myshopify.com",
+                       "host": "aG9zdA", "embedded": "true"}
 
 
 @pytest.mark.parametrize("provider", ["microsoft", "okta"])
@@ -159,21 +210,33 @@ def test_start_is_404_for_an_unconfigured_or_unknown_provider(client: TestClient
     assert client.get(f"/api/v1/sso/{provider}/start", follow_redirects=False).status_code == 404
 
 
+@pytest.mark.parametrize("failure", [httpx.ConnectError("down"), sso_service.SsoError("provider_error", "no authorization_endpoint")])
+def test_start_returns_to_the_login_page_when_the_provider_is_unreachable(client: TestClient, google_only, monkeypatch, failure):
+    monkeypatch.setattr(sso_service, "discovery", AsyncMock(side_effect=failure))
+    response = client.get("/api/v1/sso/google/start?shop_id=7", follow_redirects=False)
+    assert response.headers["location"] == "https://app.example.test/login?sso_error=provider_error&shop_id=7"
+    assert "sso_state" not in response.cookies
+
+
 # --- callback ------------------------------------------------------------------
 
-def test_callback_signs_in_an_existing_user_and_syncs_the_avatar(client: TestClient, db, test_user: User, google_only, monkeypatch):
-    query = _begin(client, "/conversations")
+def test_callback_links_and_signs_in_an_existing_user(client: TestClient, db, test_user: User, google_only, monkeypatch):
+    query = _begin(client)
     # Case must not matter: the provider's spelling of the address is theirs.
-    verify = _provider_says(monkeypatch, _google_claims(test_user.email.upper()), avatar=(b"\x89PNG", "image/png"))
+    verify, _ = _provider_says(monkeypatch, _google_claims(test_user.email.upper()), avatar=(b"\x89PNG", "image/png"))
 
-    response = client.get(f"/api/v1/sso/google/callback?code=abc&state={query['state']}", follow_redirects=False)
+    response = _callback(client, query)
 
-    assert response.status_code == 302
-    assert response.headers["location"] == "https://app.example.test/login?sso=ok&next=%2Fconversations"
+    assert response.headers["location"] == SSO_OK
     for cookie in ("access_token", "refresh_token", "user_info"):
         assert cookie in response.cookies
+    # The state cookie is spent with the state.
+    assert 'sso_state=""' in response.headers["set-cookie"] or "sso_state=;" in response.headers["set-cookie"]
     # The nonce issued at start is what the ID token had to echo.
     assert verify.call_args.args[2] == query["nonce"]
+    link = db.query(UserIdentity).one()
+    assert (link.user_id, link.provider, link.issuer, link.subject) == (test_user.id, "google", "https://accounts.google.com", "g-1")
+    assert link.email == test_user.email.lower()
     db.refresh(test_user)
     assert test_user.profile_pic == "/api/v1/uploads/user/org/u/profile.png"
     assert test_user.is_online is True
@@ -185,26 +248,94 @@ def test_callback_signs_in_an_existing_user_and_syncs_the_avatar(client: TestCli
     assert me.json()["email"] == test_user.email
 
     # A state is redeemed once; replaying the callback gets nothing.
-    replay = client.get(f"/api/v1/sso/google/callback?code=abc&state={query['state']}", follow_redirects=False)
-    assert _error_of(replay) == "invalid_state"
+    assert _error_of(_callback(client, query)) == "invalid_state"
 
 
-def test_callback_keeps_signing_in_when_there_is_no_photo(client: TestClient, db, test_user: User, google_only, monkeypatch):
+def test_callback_hands_the_login_page_parameters_back(client: TestClient, test_user: User, google_only, monkeypatch):
+    query = _begin(client, "?redirect=%2Fconversations&shopify_flow=1")
+    _provider_says(monkeypatch, _google_claims(test_user.email))
+    assert _query_of(_callback(client, query)) == {"sso": "ok", "redirect": "/conversations", "shopify_flow": "1"}
+
+
+def test_callback_refuses_a_link_started_in_another_browser(client: TestClient, test_user: User, google_only, monkeypatch):
+    """Login CSRF: someone else's callback link must not sign this browser in."""
+    query = _begin(client)
+    _provider_says(monkeypatch, _google_claims(test_user.email))
+    client.cookies.clear()
+    response = _callback(client, query)
+    assert _error_of(response) == "invalid_state"
+    assert "access_token" not in response.cookies
+
+
+def test_callback_refuses_a_state_cookie_from_another_sign_in(client: TestClient, test_user: User, google_only, monkeypatch):
+    first = _begin(client)
+    _begin(client)  # this browser's cookie now holds the second state
+    _provider_says(monkeypatch, _google_claims(test_user.email))
+    assert _error_of(_callback(client, first)) == "invalid_state"
+
+
+def test_linked_account_signs_in_whatever_address_it_now_carries(client: TestClient, db, test_user: User, google_only, monkeypatch):
+    _link(db, test_user)
+    query = _begin(client)
+    _provider_says(monkeypatch, _google_claims("renamed@elsewhere.test", email_verified=False))
+    response = _callback(client, query)
+    assert response.headers["location"] == SSO_OK
+    assert db.query(UserIdentity).one().last_login_at is not None
+
+
+def test_linked_account_of_a_deactivated_user_is_turned_away(client: TestClient, db, test_user: User, google_only, monkeypatch):
+    _link(db, test_user)
+    test_user.is_active = False
+    db.commit()
+    query = _begin(client)
+    _provider_says(monkeypatch, _google_claims(test_user.email))
+    assert _error_of(_callback(client, query)) == "no_account"
+
+
+def test_callback_keeps_a_picture_the_user_uploaded(client: TestClient, db, test_user: User, google_only, monkeypatch):
     test_user.profile_pic = "/api/v1/uploads/user/kept.png"
     db.commit()
     query = _begin(client)
-    _provider_says(monkeypatch, _google_claims(test_user.email), avatar=None)
-    response = client.get(f"/api/v1/sso/google/callback?code=abc&state={query['state']}", follow_redirects=False)
-    assert response.headers["location"].endswith("login?sso=ok&next=%2F")
+    _, fetch = _provider_says(monkeypatch, _google_claims(test_user.email), avatar=(b"\x89PNG", "image/png"))
+    assert _callback(client, query).headers["location"] == SSO_OK
+    fetch.assert_not_awaited()
     db.refresh(test_user)
     assert test_user.profile_pic == "/api/v1/uploads/user/kept.png"
 
 
-def test_callback_turns_away_an_address_without_an_account(client: TestClient, google_only, monkeypatch):
+def test_callback_keeps_signing_in_when_there_is_no_photo(client: TestClient, db, test_user: User, google_only, monkeypatch):
     query = _begin(client)
+    _provider_says(monkeypatch, _google_claims(test_user.email), avatar=None)
+    assert _callback(client, query).headers["location"] == SSO_OK
+    db.refresh(test_user)
+    assert test_user.profile_pic is None
+
+
+def test_callback_links_the_shopify_store_the_sign_in_started_from(client: TestClient, db, test_user: User, google_only, monkeypatch):
+    other = Organization(name="Other", domain="other.example", timezone="UTC")
+    db.add(other)
+    db.flush()
+    unclaimed = ShopifyShop(shop_domain="new.myshopify.com", is_installed=True)
+    theirs = ShopifyShop(shop_domain="theirs.myshopify.com", is_installed=True, organization_id=other.id)
+    db.add_all([unclaimed, theirs])
+    db.commit()
+    _provider_says(monkeypatch, _google_claims(test_user.email))
+
+    for shop in (unclaimed, theirs):
+        query = _begin(client, f"?shopify_flow=1&shop_id={shop.id}")
+        assert _query_of(_callback(client, query))["sso"] == "ok"
+
+    db.refresh(unclaimed)
+    db.refresh(theirs)
+    assert unclaimed.organization_id == test_user.organization_id
+    assert theirs.organization_id == other.id
+
+
+def test_callback_turns_away_an_address_without_an_account(client: TestClient, google_only, monkeypatch):
+    query = _begin(client, "?shop_id=7")
     _provider_says(monkeypatch, _google_claims("nobody@example.test"))
-    response = client.get(f"/api/v1/sso/google/callback?code=abc&state={query['state']}", follow_redirects=False)
-    assert _error_of(response) == "no_account"
+    response = _callback(client, query)
+    assert _query_of(response) == {"sso_error": "no_account", "shop_id": "7"}
     assert "access_token" not in response.cookies
 
 
@@ -213,24 +344,58 @@ def test_callback_turns_away_a_deactivated_user(client: TestClient, db, test_use
     db.commit()
     query = _begin(client)
     _provider_says(monkeypatch, _google_claims(test_user.email))
-    response = client.get(f"/api/v1/sso/google/callback?code=abc&state={query['state']}", follow_redirects=False)
-    assert _error_of(response) == "no_account"
+    assert _error_of(_callback(client, query)) == "no_account"
 
 
-def test_callback_requires_google_to_have_verified_the_address(client: TestClient, test_user: User, google_only, monkeypatch):
+def test_callback_refuses_an_address_two_users_share_in_different_case(client: TestClient, db, test_user: User, google_only, monkeypatch):
+    db.add(User(organization_id=test_user.organization_id, email=test_user.email.upper(), full_name="Twin",
+                hashed_password="x", is_active=True, role_id=test_user.role_id))
+    db.commit()
+    query = _begin(client)
+    _provider_says(monkeypatch, _google_claims(test_user.email))
+    assert _error_of(_callback(client, query)) == "ambiguous_account"
+    assert db.query(UserIdentity).count() == 0
+
+
+def test_callback_requires_google_to_have_verified_the_address(client: TestClient, db, test_user: User, google_only, monkeypatch):
     query = _begin(client)
     _provider_says(monkeypatch, _google_claims(test_user.email, email_verified=False))
-    response = client.get(f"/api/v1/sso/google/callback?code=abc&state={query['state']}", follow_redirects=False)
+    assert _error_of(_callback(client, query)) == "email_unverified"
+    assert db.query(UserIdentity).count() == 0
+
+
+def test_microsoft_directory_address_cannot_link_an_account(client: TestClient, db, test_user: User, microsoft_common, monkeypatch):
+    """nOAuth: any tenant's admin can give a user someone else's address."""
+    query = _begin(client, provider="microsoft")
+    _provider_says(monkeypatch, {"iss": "https://login.microsoftonline.com/attacker/v2.0", "tid": "attacker",
+                                 "sub": "ms-1", "email": test_user.email})
+    response = _callback(client, query, provider="microsoft")
     assert _error_of(response) == "email_unverified"
+    assert "access_token" not in response.cookies
+    assert db.query(UserIdentity).count() == 0
+
+
+def test_microsoft_verified_domain_links_an_account(client: TestClient, db, test_user: User, microsoft_common, monkeypatch):
+    query = _begin(client, provider="microsoft")
+    _provider_says(monkeypatch, {"iss": "https://login.microsoftonline.com/acme/v2.0", "tid": "acme",
+                                 "sub": "ms-1", "email": test_user.email, "xms_edov": True})
+    assert _callback(client, query, provider="microsoft").headers["location"] == SSO_OK
+    assert db.query(UserIdentity).one().provider == "microsoft"
 
 
 def test_callback_reports_a_bad_token_without_detail(client: TestClient, google_only, monkeypatch):
     query = _begin(client)
     monkeypatch.setattr(sso_service, "exchange_code", AsyncMock(return_value={"id_token": "forged"}))
     monkeypatch.setattr(sso_service, "verify_id_token", AsyncMock(side_effect=sso_service.SsoError("invalid_token", "signature")))
-    response = client.get(f"/api/v1/sso/google/callback?code=abc&state={query['state']}", follow_redirects=False)
+    response = _callback(client, query)
     assert _error_of(response) == "invalid_token"
     assert "signature" not in response.headers["location"]
+
+
+def test_callback_reports_an_unreachable_provider(client: TestClient, google_only, monkeypatch):
+    query = _begin(client, "?redirect=%2Fx")
+    monkeypatch.setattr(sso_service, "exchange_code", AsyncMock(side_effect=httpx.ConnectError("down")))
+    assert _query_of(_callback(client, query)) == {"sso_error": "provider_error", "redirect": "/x"}
 
 
 def test_callback_without_a_code_is_a_provider_error(client: TestClient, google_only):

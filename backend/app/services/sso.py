@@ -18,15 +18,15 @@ Single sign-on for the dashboard: Google and Microsoft over OpenID Connect
 
 /sso/{provider}/start sends the browser to the provider; it comes back to
 /sso/{provider}/callback with a code. The backend exchanges the code, checks
-the ID token against the provider's published signing keys, matches the
-address to an existing dashboard user and opens the same session a password
-login would. SSO never creates accounts: admins still decide who is on the
-team, SSO only decides how they sign in.
+the ID token against the provider's published signing keys, finds the
+dashboard user the account is linked to (app.services.sso_accounts) and opens
+the same session a password login would. SSO never creates accounts: admins
+still decide who is on the team, SSO only decides how they sign in.
 
 No client library: discovery documents and key sets are fetched with httpx
 and the token is verified with python-jose, which already signs the app's own
-JWTs. The avatar is refreshed on every sign-in from Google's picture URL or
-the Microsoft Graph photo, stored like a manually uploaded profile picture.
+JWTs. A user without a profile picture gets the provider's photo (Google's
+picture URL or the Microsoft Graph photo), stored like an uploaded one.
 """
 
 import re
@@ -41,7 +41,7 @@ from jose import JWTError, jwt
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.outbound_policy import OutboundTargetBlocked, check_outbound_target
-from app.services.file_storage import store_upload
+from app.services.file_storage import profile_pic_folder, store_upload
 
 logger = get_logger(__name__)
 
@@ -58,6 +58,11 @@ _AVATAR_EXTENSIONS = {
     "image/webp": ".webp",
 }
 MICROSOFT_GRAPH_PHOTO_URL = "https://graph.microsoft.com/v1.0/me/photo/$value"
+# MICROSOFT_SSO_TENANT values that accept accounts from any directory.
+_MICROSOFT_SHARED_TENANTS = {"common", "organizations", "consumers"}
+# The tenant personal Microsoft accounts sign in from. Microsoft verifies their
+# address itself, unlike a work directory, whose admin can type in any address.
+MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
 
 
 class SsoError(Exception):
@@ -81,6 +86,9 @@ class Provider:
     # Microsoft's multi-tenant endpoints publish an issuer *template*; the real
     # issuer carries the signing tenant's id, which the token names in `tid`.
     issuer_template: Optional[str] = None
+    # True when the operator pinned Microsoft to their own directory, whose
+    # addresses they manage and so may link accounts by.
+    trusts_directory_email: bool = False
 
 
 def password_login_enabled() -> bool:
@@ -112,6 +120,7 @@ def providers() -> Dict[str, Provider]:
             client_id=settings.MICROSOFT_SSO_CLIENT_ID,
             client_secret=settings.MICROSOFT_SSO_CLIENT_SECRET,
             issuer_template="https://login.microsoftonline.com/{tenantid}/v2.0",
+            trusts_directory_email=tenant.lower() not in _MICROSOFT_SHARED_TENANTS,
         )
     return out
 
@@ -138,11 +147,29 @@ def _client(**kwargs) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=settings.VERIFY_SSL_CERTIFICATES, **kwargs)
 
 
+def _json_of(response: httpx.Response, what: str) -> dict:
+    try:
+        body = response.json()
+    except ValueError:
+        raise SsoError("provider_error", f"{what} is not JSON: {response.text[:200]}")
+    if not isinstance(body, dict):
+        raise SsoError("provider_error", f"{what} is not a JSON object")
+    return body
+
+
+def _endpoint(doc: dict, name: str) -> str:
+    """A URL the discovery document must publish."""
+    url = doc.get(name)
+    if not isinstance(url, str) or not url:
+        raise SsoError("provider_error", f"discovery document has no {name}")
+    return url
+
+
 async def _get_json(url: str) -> dict:
     async with _client() as client:
         response = await client.get(url)
         response.raise_for_status()
-        return response.json()
+        return _json_of(response, url)
 
 
 def _fresh(entry: Optional[Tuple[dict, float]]) -> Optional[dict]:
@@ -162,7 +189,7 @@ async def discovery(provider: Provider) -> dict:
 async def jwks(provider: Provider, force: bool = False) -> dict:
     keys = None if force else _fresh(_jwks_cache.get(provider.key))
     if keys is None:
-        keys = await _get_json((await discovery(provider))["jwks_uri"])
+        keys = await _get_json(_endpoint(await discovery(provider), "jwks_uri"))
         _jwks_cache[provider.key] = (keys, time.time())
     return keys
 
@@ -189,7 +216,7 @@ async def authorize_url(provider: Provider, state: str, nonce: str) -> str:
         # sign in whoever Google/Microsoft remembers.
         "prompt": "select_account",
     }
-    return f"{doc['authorization_endpoint']}?{urlencode(params)}"
+    return f"{_endpoint(doc, 'authorization_endpoint')}?{urlencode(params)}"
 
 
 async def exchange_code(provider: Provider, code: str) -> dict:
@@ -198,7 +225,7 @@ async def exchange_code(provider: Provider, code: str) -> dict:
     doc = await discovery(provider)
     async with _client() as client:
         response = await client.post(
-            doc["token_endpoint"],
+            _endpoint(doc, "token_endpoint"),
             data={
                 "grant_type": "authorization_code",
                 "code": code,
@@ -209,7 +236,7 @@ async def exchange_code(provider: Provider, code: str) -> dict:
         )
     if response.status_code != 200:
         raise SsoError("provider_error", f"{provider.key} token endpoint answered {response.status_code}: {response.text[:200]}")
-    tokens = response.json()
+    tokens = _json_of(response, f"{provider.key} token response")
     if not tokens.get("id_token"):
         raise SsoError("provider_error", f"{provider.key} token response carries no id_token")
     return tokens
@@ -268,27 +295,59 @@ async def verify_id_token(provider: Provider, id_token: str, nonce: Optional[str
     return claims
 
 
-def identity_from_claims(provider: Provider, claims: dict) -> Tuple[str, str]:
-    """(e-mail, display name) to match against the team.
+@dataclass(frozen=True)
+class SsoIdentity:
+    """Who the provider says signed in. `issuer` + `subject` is the stable
+    account id; the e-mail is only good for linking when `email_trusted`."""
+    issuer: str
+    subject: str
+    email: str
+    email_trusted: bool
+    name: str
 
-    Google marks whether it has verified the address and we insist that it has.
-    Microsoft tokens carry the account's e-mail (or UPN for accounts without
-    one) as managed by the directory; restrict MICROSOFT_SSO_TENANT to your
-    own tenant if that directory should be the only one trusted.
+
+def _claim_true(value: Any) -> bool:
+    # Booleans arrive as JSON true, or as "true"/"1" in some optional claims.
+    return value is True or str(value).lower() in ("true", "1")
+
+
+def _email_trusted(provider: Provider, claims: dict) -> bool:
+    """Whether the provider vouches that the address belongs to this account.
+
+    Google says so in `email_verified`. In a Microsoft work directory the
+    admin sets the address, so a stranger's tenant could claim anyone's: it
+    counts only for a personal account, a domain Microsoft checked (the
+    optional `xms_edov` claim), or a tenant the operator pinned as their own.
     """
-    email = (claims.get("email") or "").strip().lower()
     if provider.key == GOOGLE:
-        if not email or not claims.get("email_verified"):
-            raise SsoError("email_unverified", "Google did not vouch for the address")
-    elif not email:
+        return _claim_true(claims.get("email_verified"))
+    return (
+        provider.trusts_directory_email
+        or claims.get("tid") == MICROSOFT_CONSUMER_TENANT_ID
+        or _claim_true(claims.get("xms_edov"))
+    )
+
+
+def identity_from_claims(provider: Provider, claims: dict) -> SsoIdentity:
+    """The account a verified ID token describes. Microsoft accounts without an
+    `email` claim fall back to the sign-in name when it is an address."""
+    subject = claims.get("sub")
+    if not subject:
+        raise SsoError("invalid_token", f"{provider.key} id_token carries no subject")
+    email = (claims.get("email") or "").strip().lower()
+    if not email and provider.key == MICROSOFT:
         upn = (claims.get("preferred_username") or "").strip().lower()
         email = upn if "@" in upn else ""
-        if not email:
-            raise SsoError("email_unverified", "Microsoft token carries no e-mail address")
     name = claims.get("name") or " ".join(
         part for part in (claims.get("given_name"), claims.get("family_name")) if part
     )
-    return email, (name or email)
+    return SsoIdentity(
+        issuer=claims.get("iss", ""),
+        subject=str(subject),
+        email=email,
+        email_trusted=bool(email) and _email_trusted(provider, claims),
+        name=name or email,
+    )
 
 
 def _google_picture_url(url: str) -> Optional[str]:
@@ -332,8 +391,7 @@ async def fetch_avatar(provider: Provider, claims: dict, access_token: Optional[
 
 async def store_avatar(user: Any, image: Tuple[bytes, str]) -> str:
     """Persist a fetched photo where uploaded profile pictures live and return
-    the URL to keep on the user. Same name every time, so a re-sync replaces
-    the previous photo instead of piling up files."""
+    the URL to keep on the user."""
     content, content_type = image
-    folder = f"user/{user.organization_id}/{user.id}"
+    folder = profile_pic_folder(user.organization_id, user.id)
     return await store_upload(content, folder, f"profile{_AVATAR_EXTENSIONS[content_type]}", content_type)

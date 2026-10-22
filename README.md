@@ -147,11 +147,14 @@ access, so the limits are enforced in code, not by prompting:
 Team members can sign in to the dashboard with **Google** or **Microsoft**
 (OpenID Connect) once an operator sets the provider's client id and secret
 (`GOOGLE_SSO_CLIENT_ID` / `MICROSOFT_SSO_CLIENT_ID` and secrets, see
-`backend/.env.example`). SSO signs in existing team members, matched by e-mail,
-and refreshes their profile picture from the provider on every sign-in; it never
-creates accounts. Register `{BACKEND_URL}/api/v1/sso/<provider>/callback` as the
-redirect URI with the provider. Once SSO works, `PASSWORD_LOGIN_ENABLED=false`
-makes it the only way in (the setting is ignored while no provider is configured).
+`backend/.env.example`). SSO signs in existing team members and never creates
+accounts: the first sign-in links the provider account to the team member with
+the same e-mail address, when the provider has verified that address, and later
+sign-ins use that link. A team member without a profile picture gets the
+provider's photo. Register `{BACKEND_URL}/api/v1/sso/<provider>/callback` as the
+redirect URI with the provider. On a single-organization install,
+`PASSWORD_LOGIN_ENABLED=false` makes SSO the only way in once it works (the
+setting is ignored while no provider is configured).
 
 ### Integrations
 

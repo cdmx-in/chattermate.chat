@@ -34,7 +34,7 @@ const passwordLogin = vi.hoisted(() => ({ value: true }))
 vi.mock('@/services/sso', () => ({
   ssoService: {
     getConfig: vi.fn(async () => ({ providers: ssoProviders.value, passwordLogin: passwordLogin.value })),
-    startUrl: vi.fn((provider: string, next: string) => `http://api.test/api/v1/sso/${provider}/start?next=${encodeURIComponent(next)}`),
+    startUrl: vi.fn((provider: string, search: string) => `http://api.test/api/v1/sso/${provider}/start${search}`),
     completeSignIn: vi.fn(),
     errorMessage: vi.fn((code: string | null) => (code === 'no_account' ? 'No team account matches that e-mail address.' : 'Single sign-on failed.')),
   },
@@ -113,7 +113,8 @@ describe('LoginView', () => {
         { path: '/settings/organization', name: 'org-settings', component: { template: '<div>Organization Settings</div>' } },
         { path: '/settings/ai-config', name: 'ai-config', component: { template: '<div>AI Config</div>' } },
         { path: '/settings/user', name: 'user-settings', component: { template: '<div>User Settings</div>' } },
-        { path: '/403', name: 'forbidden', component: { template: '<div>403</div>' } }
+        { path: '/403', name: 'forbidden', component: { template: '<div>403</div>' } },
+        { path: '/shopify/auth-complete', name: 'shopify-auth-complete', component: { template: '<div>Shopify</div>' } }
       ]
     })
 
@@ -295,8 +296,9 @@ describe('LoginView', () => {
     Object.defineProperty(window, 'location', { value: { ...original, set href(url: string) { assign(url) } }, writable: true, configurable: true })
     try {
       await buttons[1].trigger('click')
-      expect(ssoService.startUrl).toHaveBeenCalledWith('microsoft', '/conversations')
-      expect(assign).toHaveBeenCalledWith('http://api.test/api/v1/sso/microsoft/start?next=%2Fconversations')
+      // The login page's own query goes along; the backend hands it back.
+      expect(ssoService.startUrl).toHaveBeenCalledWith('microsoft', '?redirect=/conversations')
+      expect(assign).toHaveBeenCalledWith('http://api.test/api/v1/sso/microsoft/start?redirect=/conversations')
     } finally {
       Object.defineProperty(window, 'location', { value: original, writable: true, configurable: true })
     }
@@ -305,15 +307,44 @@ describe('LoginView', () => {
   it('completes a sign-in when the backend sends the browser back with sso=ok', async () => {
     currentUser.value = userWithPermissions(['manage_agents'])
     ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
-    await remountAt('/?sso=ok&next=%2F')
+    await remountAt('/?sso=ok')
     expect(ssoService.completeSignIn).toHaveBeenCalled()
     expect(router.currentRoute.value.path).toBe('/ai-agents')
   })
 
   it('lands on the requested page after a sign-in that started with ?redirect=', async () => {
     ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
-    await remountAt('/?sso=ok&next=%2Fconversations')
+    await remountAt('/?sso=ok&redirect=%2Fconversations')
     expect(router.currentRoute.value.path).toBe('/conversations')
+  })
+
+  it('finishes the Shopify install flow after a sign-in that started from it', async () => {
+    ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
+    await remountAt('/?sso=ok&shopify_flow=1&shop=s.myshopify.com&shop_id=7&host=aG9zdA')
+    expect(router.currentRoute.value.path).toBe('/shopify/auth-complete')
+    expect(router.currentRoute.value.query).toEqual({ shop: 's.myshopify.com', shop_id: '7', host: 'aG9zdA' })
+  })
+
+  it('completes a sign-in without waiting for the provider list', async () => {
+    ;(ssoService.getConfig as any).mockReturnValueOnce(new Promise(() => {}))
+    ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
+    await remountAt('/?sso=ok&redirect=%2Fconversations')
+    expect(router.currentRoute.value.path).toBe('/conversations')
+  })
+
+  it('says it is completing the sign-in even before the providers load', async () => {
+    ;(ssoService.getConfig as any).mockReturnValueOnce(new Promise(() => {}))
+    ;(ssoService.completeSignIn as any).mockReturnValueOnce(new Promise(() => {}))
+    await remountAt('/?sso=ok')
+    expect(wrapper.find('.sso-status').text()).toBe('Completing sign-in…')
+  })
+
+  it('reports a failed session pickup and stays on the login page', async () => {
+    ;(ssoService.completeSignIn as any).mockRejectedValueOnce(new Error('401'))
+    await remountAt('/?sso=ok')
+    expect(router.currentRoute.value.path).toBe('/')
+    expect(wrapper.find('.auth-error').text()).toContain('Single sign-on failed')
+    expect(wrapper.find('.sso-status').exists()).toBe(false)
   })
 
   it('explains an sso_error instead of signing in', async () => {

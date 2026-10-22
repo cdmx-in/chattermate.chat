@@ -40,8 +40,6 @@ from urllib.parse import quote
 
 from fastapi import Response
 
-from app.core.config import settings
-from app.core.s3 import sign_s3_url
 from app.core.security import create_access_token, create_refresh_token, verify_token
 from app.models.auth_session import AuthSession
 
@@ -139,8 +137,8 @@ REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60
 
 def set_session_cookies(response: Response, user, role, access_token: str, refresh_token: str) -> None:
     """Install a dashboard session on `response`: the two httpOnly JWT cookies
-    and the user_info blob the dashboard may read. One place for the three
-    sign-in paths (password login, token refresh, organization signup, SSO),
+    and the user_info blob the dashboard may read. One place for every
+    sign-in path (password login, token refresh, organization signup, SSO),
     so a cookie attribute cannot drift between them."""
     cookie = dict(secure=True, samesite="none")  # cross-site for the Shopify embedded app
     response.set_cookie("access_token", access_token, httponly=True, max_age=ACCESS_COOKIE_MAX_AGE, **cookie)
@@ -156,14 +154,14 @@ def set_session_cookies(response: Response, user, role, access_token: str, refre
 
 
 def session_user_payload(user, role) -> dict:
-    """The `user` object a sign-in answers with, with the profile picture
-    signed for delivery."""
+    """The `user` object a sign-in answers with. The profile picture stays as
+    stored: UserResponse signs it on the way out."""
     return {
         "id": user.id,
         "email": user.email,
         "full_name": user.full_name,
         "organization_id": user.organization_id,
-        "profile_pic": sign_s3_url(user.profile_pic) if settings.S3_FILE_STORAGE and user.profile_pic else user.profile_pic,
+        "profile_pic": user.profile_pic,
         "is_online": user.is_online,
         "last_seen": user.last_seen,
         "is_active": user.is_active,

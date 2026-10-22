@@ -1831,7 +1831,8 @@ export interface paths {
         /**
          * Start
          * @description Send the browser to the provider. The CSRF state is redeemed once by the
-         *     callback and also carries the nonce the ID token must echo back.
+         *     callback, only in the browser that started it, and also carries the nonce
+         *     the ID token must echo back and the login page's own parameters.
          */
         get: operations["start_api_v1_sso__provider_key__start_get"];
         put?: never;
@@ -12848,9 +12849,7 @@ export interface operations {
     };
     start_api_v1_sso__provider_key__start_get: {
         parameters: {
-            query?: {
-                next?: string | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 provider_key: string;
