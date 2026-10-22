@@ -51,6 +51,15 @@ export class WidgetAllowedDomainsPage {
     return this.section.getByText('Any site can show this widget.')
   }
 
+  /**
+   * The Content-Security-Policy lines shown beside each embed code: the script
+   * snippet's first, then the iframe snippet's. CSS: plain code blocks with no
+   * accessible name of their own.
+   */
+  get cspSources(): Locator {
+    return this.page.locator('.csp-note pre')
+  }
+
   private get input(): Locator {
     return this.section.getByLabel('Domain to allow')
   }

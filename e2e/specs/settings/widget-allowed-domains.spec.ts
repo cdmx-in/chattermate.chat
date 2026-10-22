@@ -1,4 +1,4 @@
-import { test, expect, setAllowedDomains } from '@e2e'
+import { test, expect, env, customizeAgent, setAllowedDomains } from '@e2e'
 
 // The Widget tab's allowed-domains editor. Every add and remove is saved at once,
 // and what it shows is what the server stored.
@@ -53,5 +53,25 @@ test.describe('widget allowed domains editor', () => {
     await allowedDomainsPage.remove('127.0.0.1')
     await expect(allowedDomainsPage.domains).toHaveCount(0)
     await expect(allowedDomainsPage.anySiteNotice).toBeVisible()
+  })
+
+  // The API the snippet points at, and the frame host its /frame redirects to
+  const frameSources = () => [env.backendUrl, env.widgetFrameUrl].filter(Boolean).join(' ')
+
+  test('the Widget tab says what a site\'s Content-Security-Policy must allow @settings', async ({ agent, allowedDomainsPage }) => {
+    await allowedDomainsPage.goto(agent.id)
+
+    await expect(allowedDomainsPage.cspSources).toHaveText([`script-src ${env.frontendUrl};\nframe-src ${frameSources()};`])
+  })
+
+  test('the iframe snippet\'s CSP note needs no loader script @settings', async ({ agent, adminApi, allowedDomainsPage }) => {
+    // Only Ask-anything agents offer the iframe snippet
+    await customizeAgent(adminApi, agent.id, { chat_style: 'ASK_ANYTHING' })
+    await allowedDomainsPage.goto(agent.id)
+
+    await expect(allowedDomainsPage.cspSources).toHaveText([
+      `script-src ${env.frontendUrl};\nframe-src ${frameSources()};`,
+      `frame-src ${frameSources()};`,
+    ])
   })
 })

@@ -103,3 +103,10 @@ class WidgetEmbedSettings(BaseModel):
     own limits, so a person over those gets its plain message instead."""
     allowed_domains: List[Annotated[str, StringConstraints(max_length=2000)]] = Field(default_factory=list,
                                                                                     max_length=200)
+
+
+class WidgetEmbedSettingsResponse(WidgetEmbedSettings):
+    """The settings, plus the widget's frame host (WIDGET_FRAME_URL's origin), which
+    the API's /frame redirects to: a strict site's frame-src needs it beside the API,
+    and only the backend knows it. None when the widget is framed on the API itself."""
+    frame_host: Optional[str] = None

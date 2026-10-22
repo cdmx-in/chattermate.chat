@@ -20,6 +20,13 @@ export interface EmbedOptions {
    */
   legacyLoader?: boolean
   /**
+   * A hardened site's Content-Security-Policy (default-src 'none'; our script and API
+   * allowed). `frameSrc` lists the origins it lets frame; without our frame host the
+   * widget falls back to running inside the page, which fetches the widget
+   * cross-origin, so that case runs on the CORS-listed legacy origin.
+   */
+  strictCsp?: { frameSrc: string[], onUnlistedOrigin?: boolean, nonceOnly?: boolean }
+  /**
    * The site's `tokenProvider`: what its server answers when the widget asks for a
    * fresh conversation token. Counted in tokenRequests.
    */
@@ -137,7 +144,16 @@ export class ChatWidget {
         params.set('tokenProvider', '1')
         await this.answerTokenRequests(options.tokenProvider)
       }
-      const site = options.legacyLoader ? env.customerSiteLegacyUrl
+      let inPageFallback = false
+      if (options.strictCsp) {
+        params.set('csp', options.strictCsp.nonceOnly ? 'nonce' : 'strict')
+        if (options.strictCsp.frameSrc.length) params.set('frameSrc', options.strictCsp.frameSrc.join(' '))
+        else if (!options.strictCsp.onUnlistedOrigin) {
+          inPageFallback = true
+          params.set('loader', 'current')
+        }
+      }
+      const site = options.legacyLoader || inPageFallback ? env.customerSiteLegacyUrl
         : options.onOtherOrigin ? env.customerSiteOtherUrl : env.customerSiteUrl
       await this.page.goto(`${site}/?${params}`)
     })
@@ -241,6 +257,11 @@ export class ChatWidget {
       const domain = c.domain.replace(/^\./, '')
       return hostname === domain || hostname.endsWith(`.${domain}`)
     }).map((c) => c.name)
+  }
+
+  /** Whether the widget was built inside the page (srcdoc) rather than framed from our origin. */
+  async runsInPage(): Promise<boolean> {
+    return (await this.page.locator('iframe.chattermate-iframe').getAttribute('srcdoc')) !== null
   }
 
   /** The origin the widget's frame runs on (the frame host, or the API's own origin). */

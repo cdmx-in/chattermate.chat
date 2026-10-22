@@ -1,4 +1,4 @@
-import { test, expect, setAllowedDomains, AI_REPLY } from '@e2e'
+import { test, expect, env, setAllowedDomains, AI_REPLY } from '@e2e'
 
 // Browsers keep the last release's loader cached for a while after an upgrade. It
 // fetches the widget cross-origin (/data) and renders it in a srcdoc frame on the
@@ -21,15 +21,18 @@ test.describe('the last release\'s cached loader', () => {
     await expect(widget.lastAgentMessage()).toHaveText('Hello from the old loader.')
   })
 
-  // By design: allowed domains are enforced by the browser on the framed widget
-  // (frame-ancestors), which the old loader never asks for
-  test('is not limited by the widget\'s allowed domains @widget', async ({ agent, widget, llm, adminApi }) => {
+  // The in-page widget runs on the page itself, out of frame-ancestors' reach: the
+  // server holds its origin to the widget's allowed domains instead
+  test('is held to the widget\'s allowed domains @widget', async ({ agent, widget, llm, adminApi }) => {
     await setAllowedDomains(adminApi, widget.widgetId, ['shop.example.com'])
-    await llm.script(agent, (s) => s.otherwise().reply('Still here.'))
+    await widget.embed({ legacyLoader: true })
+    await expect(widget.unavailableReason).toContainText('can’t load on')
 
+    await setAllowedDomains(adminApi, widget.widgetId, ['shop.example.com', new URL(env.customerSiteLegacyUrl).host])
+    await llm.script(agent, (s) => s.otherwise().reply('Allowed here.'))
     await widget.embed({ legacyLoader: true })
     await widget.open()
     await widget.send('Hi')
-    await expect(widget.lastAgentMessage()).toHaveText('Still here.', AI_REPLY)
+    await expect(widget.lastAgentMessage()).toHaveText('Allowed here.', AI_REPLY)
   })
 })
