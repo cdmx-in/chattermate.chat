@@ -48,6 +48,7 @@ from app.services.app_first_routing import announce_inbound, app_claims
 from app.services.chat_notifications import notify_new_channel_chat_once, team_not_yet_notified
 from app.services.human_routing import HUMAN_ONLY_ACK, notify_customer
 from app.services.lead_capture import record_lead_from_response
+from app.services.conversation_token import VERIFIED_SCOPE
 from app.services.agent_rooms import USER_MESSAGE, relay_stored_message
 from app.services.business_message import business_message_context
 from app.services.channel_replies import inbound_attributes, reply_text
@@ -192,6 +193,8 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
             customer_id=customer_id,
             session_id=session_id,
             channel=account.channel_type,
+            # The platform vouches for who is messaging.
+            scope=VERIFIED_SCOPE,
         )
 
         delivery = await _deliver(db, session_record, {

@@ -22,10 +22,12 @@
  * replaced by another site's document, the browser drops the message instead of
  * handing that site a live token.
  *
- * The widget runs in a srcdoc iframe, which inherits the embedder's origin, so the
- * host origin is normally readable. When it genuinely cannot be determined we fall
- * back to "*" - a widget that cannot talk to its loader is broken, and that is worse
- * than the broadcast we have always done.
+ * Framed on our own origin (/widgets/{id}/frame), the widget learns the host's origin
+ * from the browser itself: the `origin` of the loader's first message (setHostOrigin).
+ * A /data page injected as srcdoc inherits the embedder's origin, so it is readable
+ * directly. When it genuinely cannot be determined we fall back to "*" - a widget
+ * that cannot talk to its loader is broken, and that is worse than the broadcast we
+ * have always done.
  */
 
 const ANY_ORIGIN = '*'
@@ -87,6 +89,11 @@ export function hostOrigin(): string {
 
   resolved = originOf(document.referrer) || ANY_ORIGIN
   return resolved
+}
+
+/** Pin the host's origin, as the browser reported it on the loader's first message. */
+export function setHostOrigin(origin: string): void {
+  resolved = usable(origin) || resolved
 }
 
 /** Send a message to the embedding page, addressed to its origin. */

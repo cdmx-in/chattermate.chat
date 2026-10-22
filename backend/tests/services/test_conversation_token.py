@@ -242,3 +242,100 @@ def test_inspect_rejects_a_token_of_another_kind():
                        CONVERSATION_SECRET_KEY, algorithm=ALGORITHM)
 
     assert not conversation_token.inspect(other, WIDGET_ID).is_live
+
+
+# --- conversation scope: which of a customer's conversations a token reaches ---
+
+ANONYMOUS_CLAIMS = {"sub": CUSTOMER_ID, "widget_id": WIDGET_ID, "jti": "legacy-jti"}
+
+
+def test_a_widget_issued_token_is_scoped_to_its_browser():
+    claims = {**ANONYMOUS_CLAIMS, conversation_token.CONVERSATION_KEY_CLAIM: "browser-a"}
+
+    assert conversation_token.conversation_scope(claims) == "browser-a"
+
+
+def test_a_vouched_for_token_reaches_the_keyless_conversations():
+    assert conversation_token.conversation_scope(
+        {**IDENTIFIED_CLAIMS, "jti": "j"}) == conversation_token.VERIFIED_SCOPE
+
+
+def test_a_key_narrows_even_a_vouched_for_token():
+    claims = {**IDENTIFIED_CLAIMS, "jti": "j", conversation_token.CONVERSATION_KEY_CLAIM: "user:1"}
+
+    assert conversation_token.conversation_scope(claims) == "user:1"
+
+
+def test_a_token_from_before_keys_is_scoped_to_its_own_jti():
+    assert conversation_token.conversation_scope(ANONYMOUS_CLAIMS) == "jti:legacy-jti"
+
+
+def test_an_anonymous_token_without_a_jti_cannot_be_scoped():
+    with pytest.raises(ValueError):
+        conversation_token.conversation_scope({"sub": CUSTOMER_ID, "widget_id": WIDGET_ID})
+
+
+def test_only_the_vouched_for_scope_creates_keyless_sessions():
+    assert conversation_token.session_key_for_scope(conversation_token.VERIFIED_SCOPE) is None
+    assert conversation_token.session_key_for_scope("browser-a") == "browser-a"
+
+
+def test_rotation_keeps_the_conversation_key():
+    claims = {**ANONYMOUS_CLAIMS, conversation_token.CONVERSATION_KEY_CLAIM: "browser-a"}
+
+    rotated_token, _, _ = conversation_token.rotate(claims)
+
+    assert conversation_token.conversation_scope(_claims(rotated_token)) == "browser-a"
+
+
+def test_rotating_a_token_from_before_keys_keeps_its_conversations():
+    rotated_token, _, _ = conversation_token.rotate(ANONYMOUS_CLAIMS)
+
+    assert conversation_token.conversation_scope(_claims(rotated_token)) == "jti:legacy-jti"
+
+
+def test_rotation_keeps_a_vouched_for_token_keyless():
+    token, _, _ = conversation_token.mint(IDENTIFIED_CLAIMS, ttl_seconds=600)
+
+    rotated_token, _, _ = conversation_token.rotate(_claims(token))
+
+    assert conversation_token.CONVERSATION_KEY_CLAIM not in _claims(rotated_token)
+
+
+def test_an_account_key_is_verified_only_on_a_token_that_names_its_email():
+    key = conversation_token.account_conversation_key("user-1")
+    identified = {**IDENTIFIED_CLAIMS, "jti": "j", conversation_token.CONVERSATION_KEY_CLAIM: key}
+
+    assert conversation_token.conversation_scope(identified) == key
+    assert conversation_token.is_verified_scope(key)
+    with pytest.raises(ValueError):
+        conversation_token.conversation_scope({**ANONYMOUS_CLAIMS, conversation_token.CONVERSATION_KEY_CLAIM: key})
+
+
+def test_a_key_can_never_claim_the_vouched_for_scope():
+    claims = {**ANONYMOUS_CLAIMS, conversation_token.CONVERSATION_KEY_CLAIM: conversation_token.VERIFIED_SCOPE}
+
+    with pytest.raises(ValueError):
+        conversation_token.conversation_scope(claims)
+
+
+def test_a_widget_key_is_not_verified():
+    assert not conversation_token.is_verified_scope("browser-a")
+    assert not conversation_token.is_verified_scope(None)
+
+
+def test_no_scope_never_reads_as_keyless():
+    with pytest.raises(ValueError):
+        conversation_token.session_key_for_scope(None)
+    with pytest.raises(ValueError):
+        conversation_token.session_key_for_scope("")
+
+
+def test_rotation_keeps_an_account_key():
+    key = conversation_token.account_conversation_key("user-1")
+    token, _, _ = conversation_token.mint({**IDENTIFIED_CLAIMS, conversation_token.CONVERSATION_KEY_CLAIM: key},
+                                          ttl_seconds=600)
+
+    rotated_token, _, _ = conversation_token.rotate(_claims(token))
+
+    assert conversation_token.conversation_scope(_claims(rotated_token)) == key

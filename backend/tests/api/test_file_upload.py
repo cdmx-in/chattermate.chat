@@ -21,7 +21,7 @@ from fastapi.testclient import TestClient
 from fastapi import FastAPI, status
 from sqlalchemy.orm import Session
 
-from app.api.file_upload import router, get_cors_headers, get_current_user_or_widget
+from app.api.file_upload import router, get_current_user_or_widget
 from app.models.user import User
 from app.models.organization import Organization
 from app.core.config import settings
@@ -109,32 +109,6 @@ def mock_request():
     request = Mock()
     request.headers = {"origin": "https://example.com"}
     return request
-
-
-class TestCORSHeaders:
-    """Test CORS headers functionality"""
-    
-    def test_get_cors_headers_with_origin(self):
-        """Test CORS headers with origin"""
-        request = Mock()
-        request.headers = {"origin": "https://example.com"}
-        
-        headers = get_cors_headers(request)
-        
-        assert headers["Access-Control-Allow-Origin"] == "https://example.com"
-        assert headers["Access-Control-Allow-Credentials"] == "true"
-        assert headers["Access-Control-Allow-Methods"] == "GET, POST, PUT, DELETE, OPTIONS"
-        assert headers["Access-Control-Allow-Headers"] == "Content-Type, Authorization, X-Conversation-Token"
-        assert headers["Access-Control-Max-Age"] == "3600"
-    
-    def test_get_cors_headers_without_origin(self):
-        """Test CORS headers without origin"""
-        request = Mock()
-        request.headers = {}
-        
-        headers = get_cors_headers(request)
-        
-        assert headers["Access-Control-Allow-Origin"] == "*"
 
 
 class TestGetCurrentUserOrWidget:

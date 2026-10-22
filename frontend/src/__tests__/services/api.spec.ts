@@ -75,6 +75,13 @@ function adapterQueue(statuses: number[]) {
   return { adapter, seen }
 }
 
+/** The refresh call answered with `status`, as axios rejects it. */
+function refreshFailure(status: number) {
+  return new AxiosError(`Request failed with status code ${status}`, AxiosError.ERR_BAD_RESPONSE, {} as never, {}, {
+    data: {}, status, statusText: String(status), headers: {}, config: {} as never,
+  })
+}
+
 async function loadApi() {
   vi.resetModules()
   const [{ default: api }, axiosModule] = await Promise.all([
@@ -142,16 +149,63 @@ describe('api client', () => {
     expect(seen).toHaveLength(2)
   })
 
-  it('signs the user out when the refresh itself fails', async () => {
+  it('signs the user out when the refresh says the session is over', async () => {
     const { api, axios } = await loadApi()
-    vi.spyOn(axios, 'post').mockRejectedValue(new Error('refresh expired'))
+    vi.spyOn(axios, 'post').mockRejectedValue(refreshFailure(401))
     const { adapter } = adapterQueue([401])
 
-    await expect(api.get('/agents', { adapter })).rejects.toThrow('refresh expired')
+    await expect(api.get('/agents', { adapter })).rejects.toMatchObject({ response: { status: 401 } })
 
     expect(clearCurrentUser).toHaveBeenCalled()
     expect(push).toHaveBeenCalledWith('/login')
     expect(document.cookie).not.toContain('user_info=someone')
+  })
+
+  // Seen in production: a deploy's restart (502), the API rate limit (503) and
+  // a dropped connection each signed people out mid-session.
+  it.each([
+    ['the API restarting on a deploy', refreshFailure(502)],
+    ['the rate limit', refreshFailure(503)],
+    ['a dropped connection', new AxiosError('Network Error', AxiosError.ERR_NETWORK)],
+  ])('keeps the user signed in when the refresh fails from %s', async (_, failure) => {
+    const { api, axios } = await loadApi()
+    vi.spyOn(axios, 'post').mockRejectedValue(failure)
+    const { adapter } = adapterQueue([401])
+
+    await expect(api.get('/agents', { adapter })).rejects.toBe(failure)
+
+    expect(clearCurrentUser).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
+    expect(document.cookie).toContain('user_info=someone')
+  })
+
+  it('refreshes once for a burst of 401s, and replays every request', async () => {
+    const { api, axios } = await loadApi()
+    let finishRefresh: (value: unknown) => void = () => {}
+    const refresh = vi.spyOn(axios, 'post').mockImplementation(
+      () => new Promise((resolve) => { finishRefresh = resolve }) as never,
+    )
+    const { adapter, seen } = adapterQueue([401, 401, 401, 401, 401, 200, 200, 200, 200, 200])
+
+    const burst = Promise.all(Array.from({ length: 5 }, (_, i) => api.get(`/page-${i}`, { adapter })))
+    await vi.waitFor(() => expect(seen).toHaveLength(5))
+    finishRefresh({ data: {} })
+    const responses = await burst
+
+    expect(refresh).toHaveBeenCalledTimes(1)
+    expect(responses.map((r) => r.status)).toEqual([200, 200, 200, 200, 200])
+    expect(seen).toHaveLength(10)
+  })
+
+  it('refreshes again for a later 401, once the first refresh is over', async () => {
+    const { api, axios } = await loadApi()
+    const refresh = vi.spyOn(axios, 'post').mockResolvedValue({ data: {} } as never)
+    const { adapter } = adapterQueue([401, 200, 401, 200])
+
+    await api.get('/agents', { adapter })
+    await api.get('/agents', { adapter })
+
+    expect(refresh).toHaveBeenCalledTimes(2)
   })
 
   it('goes straight to login on a 401 when nobody is signed in', async () => {

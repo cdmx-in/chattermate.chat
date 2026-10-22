@@ -15,258 +15,484 @@ limitations under the License.
 */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  BASE_URL, FRAME_ORIGIN, WIDGET_ID,
+  api, bringUp, cleanupPage, flush, frame, frameWindow, frames, fromFrame, handshake,
+  loadLoader, resetPage, spyOnFrame,
+} from './loaderHarness'
 
 /**
- * The loader's identity and lifecycle API. A single-page app logs in, logs out and
- * unmounts without ever reloading the page, so the widget has to swap identities —
- * and disappear entirely — in place. The token is baked into the document the
- * backend renders, which means a new identity is always a new frame fetched with a
- * new Authorization header.
+ * The loader's frame and lifecycle API. The widget runs on our own origin, in a frame
+ * that takes the visitor's identity once, by handshake: so a single-page app that logs
+ * in, logs out and unmounts swaps frames in place, and nothing secret is ever sent to a
+ * frame before it has said who it is.
  */
-describe('ChatterMate identity and lifecycle API', () => {
-  const WIDGET_ID = 'w-123'
-  const BASE_URL = 'https://api.example.com/api/v1'
-
+describe('ChatterMate frame and lifecycle API', () => {
   let fetchMock: ReturnType<typeof vi.fn>
 
-  // The widget document the backend would render; its contents don't matter here.
-  const html = '<!DOCTYPE html><html><body>widget</body></html>'
-
-  function okResponse() {
-    return { ok: true, status: 200, text: () => Promise.resolve(html) }
-  }
-
-  // Let the loader's fetch().then() chain run to completion.
-  const flush = () => new Promise((resolve) => setTimeout(resolve, 0))
-
-  async function loadLoader() {
-    vi.resetModules()
-    await import('@/webclient/chattermate.js')
-    await flush()
-  }
-
-  function authHeaders(callIndex: number) {
-    return (fetchMock.mock.calls[callIndex][1] as RequestInit).headers as Record<string, string>
-  }
-
   beforeEach(() => {
-    document.body.innerHTML = ''
-    document.head.innerHTML = ''
-    localStorage.clear()
-    // @ts-expect-error loader globals set by the embed snippet
-    window.chattermateId = WIDGET_ID
-    // @ts-expect-error loader globals set by the embed snippet
-    window.chattermateBaseUrl = BASE_URL
-    // @ts-expect-error a previous test's identity must not leak in
-    window.chattermateToken = undefined
-    fetchMock = vi.fn(() => Promise.resolve(okResponse()))
+    resetPage()
+    fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
   })
 
-  afterEach(() => {
-    vi.unstubAllGlobals()
-    // @ts-expect-error cleanup loader globals
-    delete window.ChatterMate
-  })
+  afterEach(cleanupPage)
 
   it('exposes identify, logout, reload and destroy', async () => {
     await loadLoader()
-    const api = (window as any).ChatterMate
-    expect(typeof api.identify).toBe('function')
-    expect(typeof api.logout).toBe('function')
-    expect(typeof api.reload).toBe('function')
-    expect(typeof api.destroy).toBe('function')
+    for (const name of ['identify', 'logout', 'reload', 'destroy']) {
+      expect(typeof api()[name]).toBe('function')
+    }
   })
 
-  it('loads anonymously when no token is stored', async () => {
-    await loadLoader()
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(authHeaders(0).Authorization).toBeUndefined()
+  describe('loading', () => {
+    it('frames the widget page on our own origin, marked as loader-driven', async () => {
+      await loadLoader()
+      expect(frame().getAttribute('src')).toBe(`${BASE_URL}/widgets/${WIDGET_ID}/frame?host=1`)
+      expect(frame().title).toBe('Chat')
+      // '*': a bare feature name would only cover the URL's own origin, not the frame host it redirects to
+      expect(frame().getAttribute('allow')).toBe('clipboard-write *')
+    })
+
+    it('never calls the API from the host page', async () => {
+      await loadLoader()
+      bringUp()
+      expect(fetchMock).not.toHaveBeenCalled()
+    })
+
+    it('answers the frame\'s hello with the visitor, addressed to the frame\'s origin', async () => {
+      localStorage.setItem('ctid', 'tok-stored')
+      await loadLoader()
+
+      const init = handshake()
+
+      expect(init?.targetOrigin).toBe(FRAME_ORIGIN)
+      expect(init?.message).toEqual({ type: 'HOST_INIT', token: 'tok-stored', pageUrl: window.location.href })
+    })
+
+    it('loads anonymously when no token is stored', async () => {
+      await loadLoader()
+      expect(handshake()?.message.token).toBeNull()
+    })
+
+    it('prefers the token the page set over the stored one', async () => {
+      localStorage.setItem('ctid', 'tok-stored')
+      ;(window as any).chattermateToken = 'tok-page'
+      await loadLoader()
+      expect(handshake()?.message.token).toBe('tok-page')
+    })
+
+    it('sends nothing to the frame before it says hello', async () => {
+      await loadLoader()
+      const post = spyOnFrame()
+      api().open()
+      api().open({ message: 'hi' })
+      api().identify('tok-1')
+      // identify rebuilt the frame; check the one now on the page too
+      const later = spyOnFrame()
+      api().toggle()
+      expect(post).not.toHaveBeenCalled()
+      expect(later).not.toHaveBeenCalled()
+    })
+
+    it('follows the frame to wherever it was redirected', async () => {
+      await loadLoader()
+      const init = handshake({ origin: 'https://widget.example.com' })
+      expect(init?.targetOrigin).toBe('https://widget.example.com')
+
+      // …and from then on only that origin speaks for the frame
+      const unread = vi.fn()
+      api().on('unread', unread)
+      fromFrame({ type: 'UNREAD_COUNT', count: 3 }, { origin: FRAME_ORIGIN })
+      expect(unread).not.toHaveBeenCalled()
+      fromFrame({ type: 'UNREAD_COUNT', count: 3 }, { origin: 'https://widget.example.com' })
+      expect(unread).toHaveBeenCalledWith(3)
+    })
+
+    it('ignores a hello from an opaque origin', async () => {
+      await loadLoader()
+      expect(handshake({ origin: 'null' })).toBeNull()
+    })
+
+    it('answers again when the frame reloads itself, keeping the visitor', async () => {
+      localStorage.setItem('ctid', 'tok-1')
+      await loadLoader()
+      handshake()
+      expect(handshake()?.message.token).toBe('tok-1')
+    })
+
+    it('ignores messages from anything but the widget frame', async () => {
+      await loadLoader()
+      bringUp()
+      const stranger = document.createElement('iframe')
+      document.body.appendChild(stranger)
+
+      fromFrame({ type: 'TOKEN_UPDATE', token: 'tok-evil' }, { source: stranger.contentWindow as Window })
+      fromFrame({ type: 'TOKEN_UPDATE', token: 'tok-evil' }, { origin: 'https://evil.example' })
+
+      expect(localStorage.getItem('ctid')).toBeNull()
+    })
   })
 
-  it('identify() reloads the frame with the new token', async () => {
-    await loadLoader()
-    const first = document.querySelector('.chattermate-iframe')
-    expect(first).not.toBeNull()
+  describe('readiness', () => {
+    it('fires ready when the widget has mounted, not when the frame document loads', async () => {
+      await loadLoader()
+      const ready = vi.fn()
+      api().on('ready', ready)
 
-    ;(window as any).ChatterMate.identify('tok-1')
-    await flush()
+      frame().dispatchEvent(new Event('load'))
+      handshake()
+      expect(ready).not.toHaveBeenCalled()
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(authHeaders(1).Authorization).toBe('Bearer tok-1')
-    expect(localStorage.getItem('ctid')).toBe('tok-1')
-    // The old frame — the previous visitor's conversation — is gone, not hidden.
-    const frames = document.querySelectorAll('.chattermate-iframe')
-    expect(frames).toHaveLength(1)
-    expect(frames[0]).not.toBe(first)
+      fromFrame({ type: 'WIDGET_READY' })
+      expect(ready).toHaveBeenCalledTimes(1)
+    })
+
+    it('hands the mounted widget its display, visibility and any queued prefill', async () => {
+      await loadLoader()
+      api().open({ message: 'Where is my order?' })
+      handshake()
+      const post = spyOnFrame()
+
+      fromFrame({ type: 'WIDGET_READY' })
+
+      const sent = post.mock.calls.map(([message, target]) => [(message as any).type, target])
+      expect(sent).toEqual(expect.arrayContaining([
+        ['WIDGET_DISPLAY', FRAME_ORIGIN],
+        ['WIDGET_VISIBILITY', FRAME_ORIGIN],
+        ['PREFILL_MESSAGE', FRAME_ORIGIN],
+      ]))
+      expect(post.mock.calls.find(([m]) => (m as any).type === 'PREFILL_MESSAGE')?.[0])
+        .toEqual({ type: 'PREFILL_MESSAGE', text: 'Where is my order?' })
+    })
+
+    it('drops the loading state once the widget is ready', async () => {
+      await loadLoader()
+      const button = document.getElementById('chattermate-button')!
+      expect(button.classList.contains('loading')).toBe(true)
+      bringUp()
+      expect(button.classList.contains('loading')).toBe(false)
+    })
+
+    it('tells the frame the page it is on when the chat opens and on navigation', async () => {
+      await loadLoader()
+      bringUp()
+      const post = spyOnFrame()
+
+      api().open()
+      window.dispatchEvent(new PopStateEvent('popstate'))
+      window.dispatchEvent(new HashChangeEvent('hashchange'))
+
+      const pages = post.mock.calls.filter(([m]) => (m as any).type === 'HOST_PAGE')
+      expect(pages).toHaveLength(3)
+      expect(pages[0]).toEqual([{ type: 'HOST_PAGE', url: window.location.href }, FRAME_ORIGIN])
+    })
   })
 
-  it('identify() with the token already in use is a no-op', async () => {
-    await loadLoader()
-    ;(window as any).ChatterMate.identify('tok-1')
-    await flush()
-    ;(window as any).ChatterMate.identify('tok-1')
-    await flush()
+  describe('before and after hello', () => {
+    it('keeps talking to the frame after the page moves it', async () => {
+      await loadLoader()
+      const container = document.getElementById('chattermate-container')!
+      const moved = document.createElement('div')
+      document.body.appendChild(moved)
+      moved.appendChild(container)
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+      expect(handshake()?.targetOrigin).toBe(FRAME_ORIGIN)
+    })
+
+    it('still answers hello on a page whose storage is blocked (sandboxed)', async () => {
+      vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new DOMException('denied', 'SecurityError') })
+      await loadLoader()
+      expect(handshake()?.message.token).toBeNull()
+      vi.restoreAllMocks()
+    })
+
+    it('closes a drawer on Escape pressed inside the frame', async () => {
+      ;(window as any).chattermateConfig = { displayMode: 'sidebar-right' }
+      await loadLoader()
+      bringUp()
+      api().open()
+
+      fromFrame({ type: 'WIDGET_ESCAPE' })
+
+      expect(api().isOpen()).toBe(false)
+    })
+
+    it('leaves a floating chat open on Escape inside the frame', async () => {
+      await loadLoader()
+      bringUp()
+      api().open()
+
+      fromFrame({ type: 'WIDGET_ESCAPE' })
+
+      expect(api().isOpen()).toBe(true)
+    })
+
+    it('takes nothing but hello from the frame until it has said hello', async () => {
+      await loadLoader()
+      const unread = vi.fn()
+      api().on('unread', unread)
+
+      fromFrame({ type: 'TOKEN_UPDATE', token: 'tok-early' })
+      fromFrame({ type: 'UNREAD_COUNT', count: 2 })
+
+      expect(localStorage.getItem('ctid')).toBeNull()
+      expect(unread).not.toHaveBeenCalled()
+    })
+
+    it('holds a prefill again while a reloaded frame mounts', async () => {
+      await loadLoader()
+      bringUp()
+      handshake() // the frame reloaded itself
+      const post = spyOnFrame()
+
+      api().open({ message: 'Where is my order?' })
+      expect(post.mock.calls.some(([m]) => (m as any).type === 'PREFILL_MESSAGE')).toBe(false)
+
+      fromFrame({ type: 'WIDGET_READY' })
+      expect(post).toHaveBeenCalledWith({ type: 'PREFILL_MESSAGE', text: 'Where is my order?' }, FRAME_ORIGIN)
+    })
+
+    it('hands focus to the frame when the chat opens, once it is mounted', async () => {
+      await loadLoader()
+      const focus = vi.spyOn(frame(), 'focus')
+      api().open()
+      api().close()
+      expect(focus).not.toHaveBeenCalled()
+
+      bringUp()
+      api().open()
+      expect(focus).toHaveBeenCalled()
+    })
+
+    it('hands focus to the frame with a prefill', async () => {
+      await loadLoader()
+      bringUp()
+      const focus = vi.spyOn(frame(), 'focus')
+      api().open({ message: 'hi' })
+      expect(focus).toHaveBeenCalled()
+    })
   })
 
-  it('identify() ignores an empty or non-string token', async () => {
-    await loadLoader()
-    ;(window as any).ChatterMate.identify('')
-    ;(window as any).ChatterMate.identify('undefined')
-    ;(window as any).ChatterMate.identify(null)
-    await flush()
+  describe('a frame that cannot start', () => {
+    it('shows where it was blocked when the frame loads but never says hello', async () => {
+      vi.useFakeTimers()
+      await loadLoader({ fakeTimers: true })
+      frame().dispatchEvent(new Event('load'))
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(localStorage.getItem('ctid')).toBeNull()
+      await vi.advanceTimersByTimeAsync(3000)
+
+      const card = document.querySelector('.chattermate-error-ui')
+      expect(card?.textContent).toContain('If the widget is limited to certain domains, add this one in its settings; otherwise check the widget ID.')
+      expect(frames()).toHaveLength(0)
+    })
+
+    it('waits as long as it takes for a frame that loaded and mounted', async () => {
+      vi.useFakeTimers()
+      await loadLoader({ fakeTimers: true })
+      bringUp()
+      frame().dispatchEvent(new Event('load'))
+
+      await vi.advanceTimersByTimeAsync(60000)
+
+      expect(document.querySelector('.chattermate-error-ui')).toBeNull()
+      expect(frames()).toHaveLength(1)
+    })
+
+    it('gives up on a frame that never loads at all', async () => {
+      vi.useFakeTimers()
+      await loadLoader({ fakeTimers: true })
+      await vi.advanceTimersByTimeAsync(19000)
+      expect(document.querySelector('.chattermate-error-ui')).toBeNull()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(document.querySelector('.chattermate-error-ui')).not.toBeNull()
+    })
+
+    it('gives up on a frame that said hello but never mounted', async () => {
+      vi.useFakeTimers()
+      await loadLoader({ fakeTimers: true })
+      handshake()
+
+      await vi.advanceTimersByTimeAsync(19000)
+      expect(document.querySelector('.chattermate-error-ui')).toBeNull()
+
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(document.querySelector('.chattermate-error-ui')?.textContent).toContain('Chat is unavailable right now')
+    })
+
+    it('reveals the launcher so the card can be reached', async () => {
+      vi.useFakeTimers()
+      await loadLoader({ fakeTimers: true })
+      await vi.advanceTimersByTimeAsync(20000)
+      expect(document.getElementById('chattermate-button')?.classList.contains('chattermate-pending')).toBe(false)
+    })
   })
 
-  it('logout() clears the identity and reloads anonymously', async () => {
-    await loadLoader()
-    ;(window as any).ChatterMate.identify('tok-1')
-    await flush()
+  describe('identity', () => {
+    it('identify() starts a new frame for the new visitor', async () => {
+      await loadLoader()
+      bringUp()
+      const first = frame()
 
-    ;(window as any).ChatterMate.logout()
-    await flush()
+      api().identify('tok-1')
+      await flush()
 
-    expect(fetchMock).toHaveBeenCalledTimes(3)
-    expect(authHeaders(2).Authorization).toBeUndefined()
-    expect(localStorage.getItem('ctid')).toBeNull()
-    expect((window as any).chattermateToken).toBeNull()
+      expect(frames()).toHaveLength(1)
+      expect(frame()).not.toBe(first)
+      expect(localStorage.getItem('ctid')).toBe('tok-1')
+      expect(handshake()?.message.token).toBe('tok-1')
+    })
+
+    it('identify() with the token already in use is a no-op', async () => {
+      await loadLoader()
+      api().identify('tok-1')
+      await flush()
+      const current = frame()
+
+      api().identify('tok-1')
+      await flush()
+
+      expect(frame()).toBe(current)
+    })
+
+    it('identify() ignores an empty or non-string token', async () => {
+      await loadLoader()
+      const current = frame()
+      api().identify('')
+      api().identify('undefined')
+      api().identify(null)
+      await flush()
+
+      expect(frame()).toBe(current)
+      expect(localStorage.getItem('ctid')).toBeNull()
+    })
+
+    it('logout() clears the identity and starts anonymously', async () => {
+      await loadLoader()
+      api().identify('tok-1')
+      await flush()
+
+      api().logout()
+      await flush()
+
+      expect(localStorage.getItem('ctid')).toBeNull()
+      expect((window as any).chattermateToken).toBeNull()
+      expect(handshake()?.message.token).toBeNull()
+    })
+
+    it('closes an open widget when the identity changes', async () => {
+      await loadLoader()
+      api().open()
+      expect(api().isOpen()).toBe(true)
+
+      api().logout()
+      await flush()
+
+      expect(api().isOpen()).toBe(false)
+    })
+
+    it('stores a token the frame issued, and forgets one it dropped', async () => {
+      await loadLoader()
+      bringUp()
+
+      fromFrame({ type: 'TOKEN_UPDATE', token: 'tok-frame' })
+      expect(localStorage.getItem('ctid')).toBe('tok-frame')
+
+      fromFrame({ type: 'TOKEN_CLEAR' })
+      expect(localStorage.getItem('ctid')).toBeNull()
+    })
+
+    it('ignores a hello from a frame that was already replaced', async () => {
+      await loadLoader()
+      const old = frame()
+      api().identify('tok-1')
+      await flush()
+      const oldPost = vi.spyOn(old.contentWindow as Window, 'postMessage')
+
+      fromFrame({ type: 'FRAME_READY' }, { source: old.contentWindow as Window })
+
+      expect(oldPost).not.toHaveBeenCalled()
+    })
   })
 
-  it('closes an open widget when the identity changes', async () => {
-    await loadLoader()
-    const api = (window as any).ChatterMate
-    api.open()
-    expect(api.isOpen()).toBe(true)
+  describe('reload and destroy', () => {
+    it('reload() rebuilds the frame with the current token', async () => {
+      localStorage.setItem('ctid', 'tok-1')
+      await loadLoader()
+      const first = frame()
 
-    api.logout()
-    await flush()
+      api().reload()
+      await flush()
 
-    expect(api.isOpen()).toBe(false)
-  })
+      expect(frames()).toHaveLength(1)
+      expect(frame()).not.toBe(first)
+      expect(handshake()?.message.token).toBe('tok-1')
+    })
 
-  it('reload() rebuilds the frame with the current token', async () => {
-    await loadLoader()
-    ;(window as any).ChatterMate.reload()
-    await flush()
+    it('keeps a single frame message listener across reloads', async () => {
+      await loadLoader()
+      api().reload()
+      await flush()
+      const post = spyOnFrame()
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    expect(document.querySelectorAll('.chattermate-iframe')).toHaveLength(1)
-  })
+      fromFrame({ type: 'FRAME_READY' })
 
-  it('keeps a single frame message listener across reloads', async () => {
-    await loadLoader()
-    ;(window as any).ChatterMate.reload()
-    await flush()
+      // Registering the handler per load would answer the hello once per load.
+      expect(post.mock.calls.filter(([m]) => (m as any).type === 'HOST_INIT')).toHaveLength(1)
+    })
 
-    const frame = document.querySelector('.chattermate-iframe') as HTMLIFrameElement
-    const post = vi.spyOn(frame.contentWindow as Window, 'postMessage')
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: { type: 'TOKEN_UPDATE', token: 'tok-frame' },
-        source: frame.contentWindow,
-      })
-    )
+    it('destroy() leaves nothing of the widget on the page', async () => {
+      await loadLoader()
+      api().destroy()
 
-    // Registering the handler per load would confirm the token once per load.
-    expect(post).toHaveBeenCalledTimes(1)
-    expect(post.mock.calls[0][0]).toEqual({ type: 'TOKEN_RECEIVED', token: 'tok-frame' })
-    expect(localStorage.getItem('ctid')).toBe('tok-frame')
-  })
+      for (const id of ['chattermate-button', 'chattermate-container', 'chattermate-backdrop',
+        'chattermate-mobile-close', 'chattermate-mobile-topbar', 'chattermate-styles']) {
+        expect(document.getElementById(id)).toBeNull()
+      }
+      expect(frames()).toHaveLength(0)
+    })
 
-  it('destroy() leaves nothing of the widget on the page', async () => {
-    await loadLoader()
-    ;(window as any).ChatterMate.destroy()
+    it('ignores the destroyed frame and queues nothing after destroy()', async () => {
+      await loadLoader()
+      const destroyed = frameWindow()
+      api().destroy()
 
-    expect(document.getElementById('chattermate-button')).toBeNull()
-    expect(document.getElementById('chattermate-container')).toBeNull()
-    expect(document.getElementById('chattermate-backdrop')).toBeNull()
-    expect(document.getElementById('chattermate-mobile-close')).toBeNull()
-    expect(document.getElementById('chattermate-mobile-topbar')).toBeNull()
-    expect(document.getElementById('chattermate-styles')).toBeNull()
-    expect(document.querySelector('.chattermate-iframe')).toBeNull()
-  })
+      fromFrame({ type: 'TOKEN_UPDATE', token: 'tok-late' }, { source: destroyed })
+      api().open()
 
-  it('ignores the destroyed frame and queues nothing after destroy()', async () => {
-    await loadLoader()
-    const frame = document.querySelector('.chattermate-iframe') as HTMLIFrameElement
-    const frameWindow = frame.contentWindow
-    const api = (window as any).ChatterMate
+      expect(localStorage.getItem('ctid')).toBeNull()
+      expect(api().isOpen()).toBe(false)
+      api().reload()
+      await flush()
+      expect(api().isOpen()).toBe(false)
+    })
 
-    api.destroy()
-    // The frame is gone, so its late messages must not reach the loader.
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: { type: 'TOKEN_UPDATE', token: 'tok-late' },
-        source: frameWindow,
-      })
-    )
-    // Calls against a destroyed widget are dropped, not queued for a later rebuild.
-    api.open()
+    it('reload() brings a destroyed widget back, launcher hidden until styled', async () => {
+      await loadLoader()
+      api().destroy()
+      api().reload()
+      await flush()
 
-    expect(localStorage.getItem('ctid')).toBeNull()
-    expect(api.isOpen()).toBe(false)
+      const button = document.getElementById('chattermate-button')
+      expect(button).not.toBeNull()
+      expect(frames()).toHaveLength(1)
+      expect(button?.classList.contains('chattermate-pending')).toBe(true)
 
-    api.reload()
-    await flush()
-    expect(api.isOpen()).toBe(false)
-  })
+      handshake()
+      fromFrame({ type: 'CUSTOMIZATION_UPDATE', data: { chat_bubble_color: '#123456' } })
+      expect(button?.classList.contains('chattermate-pending')).toBe(false)
+    })
 
-  it('reload() brings a destroyed widget back', async () => {
-    await loadLoader()
-    ;(window as any).ChatterMate.destroy()
-    ;(window as any).ChatterMate.reload()
-    await flush()
+    it('identify() does not resurrect a destroyed widget', async () => {
+      await loadLoader()
+      api().destroy()
+      api().identify('tok-1')
+      await flush()
 
-    expect(fetchMock).toHaveBeenCalledTimes(2)
-    const button = document.getElementById('chattermate-button')
-    expect(button).not.toBeNull()
-    expect(document.querySelectorAll('.chattermate-iframe')).toHaveLength(1)
-
-    // The rebuilt launcher starts hidden and needs its own reveal — the reveal
-    // state has to be reset by destroy(), or it stays invisible forever.
-    expect(button?.classList.contains('chattermate-pending')).toBe(true)
-    const frame = document.querySelector('.chattermate-iframe') as HTMLIFrameElement
-    window.dispatchEvent(
-      new MessageEvent('message', {
-        data: { type: 'CUSTOMIZATION_UPDATE', data: { chat_bubble_color: '#123456' } },
-        source: frame.contentWindow,
-      })
-    )
-    expect(button?.classList.contains('chattermate-pending')).toBe(false)
-  })
-
-  it('identify() does not resurrect a destroyed widget', async () => {
-    await loadLoader()
-    ;(window as any).ChatterMate.destroy()
-    ;(window as any).ChatterMate.identify('tok-1')
-    await flush()
-
-    expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(document.getElementById('chattermate-button')).toBeNull()
-    // The identity is still recorded, so a later reload() runs as that visitor.
-    expect(localStorage.getItem('ctid')).toBe('tok-1')
-  })
-
-  it('drops a response that a later identity change superseded', async () => {
-    let resolveSlow: (value: unknown) => void = () => {}
-    fetchMock.mockImplementationOnce(() => new Promise((resolve) => { resolveSlow = resolve }))
-
-    await loadLoader()
-    expect(document.querySelector('.chattermate-iframe')).toBeNull()
-
-    ;(window as any).ChatterMate.identify('tok-1')
-    await flush()
-
-    // The anonymous load finally lands — it must not overwrite the identified frame.
-    resolveSlow(okResponse())
-    await flush()
-
-    const frames = document.querySelectorAll('.chattermate-iframe')
-    expect(frames).toHaveLength(1)
-    expect(authHeaders(1).Authorization).toBe('Bearer tok-1')
+      expect(document.getElementById('chattermate-button')).toBeNull()
+      // The identity is still recorded, so a later reload() runs as that visitor.
+      expect(localStorage.getItem('ctid')).toBe('tok-1')
+    })
   })
 })

@@ -27,6 +27,10 @@
 #                                the stack shares its cors:origins cache with anything else on it
 #   E2E_BACKEND_WORKERS          run the backend under gunicorn (--preload, as scripts/start.sh does)
 #                                with this many workers, instead of a single uvicorn process
+#   E2E_WIDGET_FRAME_URL         the widget frame's own cookieless host, as production runs it
+#                                (default http://localhost:18000: not the dashboard's 127.0.0.1, so
+#                                no dashboard cookies). Set it empty to frame the widget on the
+#                                API's own origin, as a self-host without WIDGET_FRAME_URL does
 #   FASTEMBED_CACHE_PATH         where the embedding model is cached (default e2e/.cache/fastembed;
 #                                fastembed's own default is the OS temp dir, which macOS purges)
 set -euo pipefail
@@ -50,6 +54,8 @@ FAKE_LLM_PORT=14010
 FAKE_EXTERNALS_PORT=14020
 FAKE_MCP_PORT=14030
 CUSTOMER_SITE_PORT=13000
+# The same site with the last release's loader; the only customer-site origin in CORS_ORIGINS
+CUSTOMER_SITE_LEGACY_PORT=13001
 MAIL_SMTP_PORT=11025
 MAIL_WEB_PORT=18025
 
@@ -75,6 +81,7 @@ db_url() { local base="${PG_URL#postgres://}"; base="${base#postgresql://}"; ech
 
 backend_env() {
   export ENV_FILE="$E2E_DIR/.env.e2e"
+  export WIDGET_FRAME_URL="${E2E_WIDGET_FRAME_URL-http://localhost:$BACKEND_PORT}"
   export DATABASE_URL; DATABASE_URL="$(db_url "$1")"
   if [[ "$EDITION" == oss ]]; then
     export NO_ENTERPRISE=1
@@ -248,7 +255,7 @@ run_fake_mcp() {
 
 run_customer_site() {
   cd "$E2E_DIR"
-  exec node services/customer-site/server.ts --port "$CUSTOMER_SITE_PORT" \
+  exec node services/customer-site/server.ts --port "$CUSTOMER_SITE_PORT" --legacy-port "$CUSTOMER_SITE_LEGACY_PORT" \
     --api "http://127.0.0.1:$BACKEND_PORT/api/v1" \
     --loader "http://127.0.0.1:$FRONTEND_PORT/webclient/chattermate.min.js"
 }
@@ -319,6 +326,7 @@ cmd_up() {
   wait_for fake-mcp "http://127.0.0.1:$FAKE_MCP_PORT/health" 30
   start_bg customer-site
   wait_for customer-site "http://127.0.0.1:$CUSTOMER_SITE_PORT/health" 30
+  wait_for customer-site "http://127.0.0.1:$CUSTOMER_SITE_LEGACY_PORT/health" 30
   start_bg mail
   wait_for mail "http://127.0.0.1:$MAIL_WEB_PORT/livez" 30
   start_bg backend

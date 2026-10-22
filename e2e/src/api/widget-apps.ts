@@ -20,3 +20,9 @@ export async function issueConversationToken(
   })
   return body.data.token
 }
+
+/** When a conversation token stops working (its `exp`), as the backend's clock reads it. */
+export function conversationTokenExpiry(token: string): Date {
+  const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) as { exp: number }
+  return new Date(claims.exp * 1000)
+}

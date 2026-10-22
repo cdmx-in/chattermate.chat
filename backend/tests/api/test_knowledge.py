@@ -25,6 +25,7 @@ from app.models.permission import Permission, role_permissions
 from app.models.knowledge import Knowledge, SourceType
 from app.models.knowledge_queue import KnowledgeQueue, QueueStatus
 from app.models.knowledge_to_agent import KnowledgeToAgent
+from app.knowledge.login_wall import AUTH_URL_MESSAGE
 from app.models.agent import Agent, AgentType
 from uuid import UUID, uuid4
 from app.api import knowledge as knowledge_router
@@ -244,6 +245,18 @@ def test_add_urls_fails_a_domain_that_does_not_exist_at_once(client: TestClient,
     failed = db.query(KnowledgeQueue).filter(KnowledgeQueue.source == "https://teeckbox.com").one()
     # The same words the crawler would have stored, so the reason reads the same
     assert knowledge_router._serialize_queue_item(failed)["reason"].startswith("This site could not be found")
+
+
+@pytest.mark.parametrize("url", ["https://ekhyzy-0i.myshopify.com/admin", "https://site.com/wp-admin"])
+def test_add_urls_refuses_a_sign_in_or_admin_page_at_once(client: TestClient, test_organization, db, url):
+    response = client.post("/api/v1/knowledge/add/urls", json={
+        "org_id": str(test_organization.id),
+        "websites": [url],
+    })
+
+    assert response.status_code == 422
+    assert AUTH_URL_MESSAGE in response.json()["detail"][0]["msg"]
+    assert db.query(KnowledgeQueue).filter(KnowledgeQueue.source == url).count() == 0
 
 
 def test_add_urls(client: TestClient, test_organization):
@@ -677,6 +690,35 @@ def test_upload_invalid_file(client: TestClient, test_organization):
 
     assert response.status_code == 400
     assert "unsupported content type" in response.json()["detail"]
+
+def test_a_pdf_over_the_page_limit_is_refused_at_upload(client: TestClient, test_organization, db):
+    from tests.knowledge.test_pdf_limits import pdf_with_pages
+    files = [("files", ("catalogue.pdf", io.BytesIO(pdf_with_pages(4)), "application/pdf"))]
+
+    with patch('app.core.config.settings.KB_PDF_MAX_PAGES', 3):
+        response = client.post("/api/v1/knowledge/upload/pdf", files=files,
+                               data={"org_id": str(test_organization.id)})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "catalogue.pdf: This PDF has 4 pages; the limit is 3. Upload the part you need, "
+        "or split it into smaller files.")
+    assert db.query(KnowledgeQueue).filter(KnowledgeQueue.organization_id == test_organization.id).count() == 0
+
+
+def test_a_pdf_within_the_page_limit_is_queued(client: TestClient, test_organization, tmp_path):
+    from tests.knowledge.test_pdf_limits import pdf_with_pages
+    files = [("files", ("catalogue.pdf", io.BytesIO(pdf_with_pages(3)), "application/pdf"))]
+
+    with patch('app.core.config.settings.KB_PDF_MAX_PAGES', 3), \
+         patch('app.core.config.settings.S3_FILE_STORAGE', False), \
+         patch.object(knowledge_router, 'TEMP_DIR', str(tmp_path)):
+        response = client.post("/api/v1/knowledge/upload/pdf", files=files,
+                               data={"org_id": str(test_organization.id)})
+
+    assert response.status_code == 200
+    assert len(response.json()["queue_items"]) == 1
+
 
 def test_upload_fake_pdf_rejected(client: TestClient, test_organization):
     """Test uploading a file with a PDF content type but non-PDF bytes is rejected"""

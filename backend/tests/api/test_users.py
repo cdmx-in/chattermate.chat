@@ -24,6 +24,7 @@ from fastapi import FastAPI, HTTPException
 from app.models.user import User, UserGroup
 from app.models.fcm_token import FCMToken
 from app.models.organization import Organization
+from app.models.shopify.shopify_shop import ShopifyShop
 from app.models.role import Role
 from app.models.permission import Permission, role_permissions
 from uuid import UUID, uuid4
@@ -347,6 +348,31 @@ def test_login_still_works_when_switched_off_without_a_provider(client: TestClie
     )
     assert response.status_code == 200
 
+
+def test_login_never_takes_another_orgs_store(client: TestClient, test_user: User, db: Session):
+    """Signing in with ?shop_id= links an unclaimed store; a store another
+    organization owns stays theirs (with its access token)."""
+    other = Organization(name="Other", domain="other.example", timezone="UTC")
+    db.add(other)
+    db.flush()
+    theirs = ShopifyShop(shop_domain="theirs.myshopify.com", is_installed=True, organization_id=other.id)
+    unclaimed = ShopifyShop(shop_domain="new.myshopify.com", is_installed=True)
+    db.add_all([theirs, unclaimed])
+    db.commit()
+
+    for shop in (theirs, unclaimed):
+        response = client.post(
+            f"/api/v1/users/login?shop_id={shop.id}",
+            data={"username": test_user.email, "password": "testpassword"},
+        )
+        assert response.status_code == 200
+
+    db.refresh(theirs)
+    db.refresh(unclaimed)
+    assert theirs.organization_id == other.id
+    assert unclaimed.organization_id == test_user.organization_id
+    # and connecting a store never replaced the org's own website
+    assert db.get(Organization, test_user.organization_id).domain != "new.myshopify.com"
 
 def test_login_invalid_credentials(client: TestClient):
     """Test login with invalid credentials"""

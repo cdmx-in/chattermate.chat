@@ -19,4 +19,9 @@ from .core import edition as _edition
 
 _edition.apply()
 
+# Before any agno agent runs (see app/core/agno_telemetry.py).
+from .core import agno_telemetry as _agno_telemetry  # noqa: E402
+
+_agno_telemetry.apply()
+
 from .main import app  # noqa: E402

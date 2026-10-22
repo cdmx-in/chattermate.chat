@@ -3446,7 +3446,12 @@ export interface paths {
         };
         /**
          * Get Widget Ui
-         * @description Get widget UI and handle customer authentication
+         * @description The widget page with its visitor's token baked in.
+         *
+         *     Fetched cross-origin by older embed loaders (and injected as srcdoc), or
+         *     framed directly by a raw <iframe> embed — which is why it carries the same
+         *     frame-ancestors as /frame: a CSP on a fetch() response is never applied, so
+         *     old loaders are unaffected, while a raw iframe can't dodge the list.
          */
         get: operations["get_widget_ui_api_v1_widgets__widget_id__data_get"];
         put?: never;
@@ -3514,6 +3519,68 @@ export interface paths {
          */
         get: operations["get_widgets_by_agent_api_v1_widgets_agent__agent_id__get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/widgets/{widget_id}/frame": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Widget Frame */
+        get: operations["get_widget_frame_api_v1_widgets__widget_id__frame_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/widgets/{widget_id}/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bootstrap Widget
+         * @description Everything the framed widget starts from, for the visitor in `authorization`.
+         *
+         *     401 `identity_expired`: the signed-in visitor's identity lapsed (the host
+         *     re-identifies and retries). 401 `token_required`: the agent only talks to
+         *     identified visitors.
+         */
+        post: operations["bootstrap_widget_api_v1_widgets__widget_id__bootstrap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/widgets/{widget_id}/embed-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Embed Settings */
+        get: operations["get_embed_settings_api_v1_widgets__widget_id__embed_settings_get"];
+        /**
+         * Update Embed Settings
+         * @description Replace the widget's allowed domains. An empty list allows any site.
+         */
+        put: operations["update_embed_settings_api_v1_widgets__widget_id__embed_settings_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -5576,6 +5643,13 @@ export interface components {
         Body_upload_profile_pic_api_v1_users_me_profile_pic_post: {
             /** File */
             file: string;
+        };
+        /** BootstrapRequest */
+        BootstrapRequest: {
+            /** Host Origin */
+            host_origin?: string | null;
+            /** Source */
+            source?: string | null;
         };
         /** BusinessHours */
         BusinessHours: {
@@ -9084,6 +9158,18 @@ export interface components {
             name: string;
             /** Agent Id */
             agent_id?: string | null;
+        };
+        /**
+         * WidgetEmbedSettings
+         * @description Where a widget may be embedded. Org-only: never part of the public
+         *     WidgetResponse, which any visitor's widget can read. Entries are checked
+         *     and normalised by app.services.widget_embed_policy; these bounds only keep
+         *     an oversized request from being processed at all, well above the policy's
+         *     own limits, so a person over those gets its plain message instead.
+         */
+        WidgetEmbedSettings: {
+            /** Allowed Domains */
+            allowed_domains?: string[];
         };
         /**
          * WidgetPosition
@@ -16118,6 +16204,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WidgetResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_widget_frame_api_v1_widgets__widget_id__frame_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                widget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bootstrap_widget_api_v1_widgets__widget_id__bootstrap_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                widget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BootstrapRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_embed_settings_api_v1_widgets__widget_id__embed_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                widget_id: string;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetEmbedSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_embed_settings_api_v1_widgets__widget_id__embed_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                widget_id: string;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetEmbedSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetEmbedSettings"];
                 };
             };
             /** @description Validation Error */

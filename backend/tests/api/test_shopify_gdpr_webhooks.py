@@ -21,6 +21,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.main  # noqa: F401 — registers the shopify router on the app
+from app.models.shopify.shopify_shop import ShopifyShop
 from app.core.application import app
 from app.database import get_db
 
@@ -101,3 +102,17 @@ class TestShopifyGdprWebhooks:
         # The AttributeError's text must not travel with it.
         assert "attribute" not in response.text
         assert "list" not in response.text
+
+
+def test_an_uninstalled_stores_storefront_stops_being_allowed(client, signed, db, test_organization):
+    """A linked store's storefront is allowed for the widget; once the app is
+    uninstalled the allowed sites are rebuilt without it."""
+    db.add(ShopifyShop(shop_domain="gone.myshopify.com", is_installed=True, organization_id=test_organization.id))
+    db.commit()
+
+    with patch("app.api.shopify.refresh_allowed_storefronts") as refresh:
+        response = client.post("/api/v1/shopify/webhooks/app-uninstalled", json={"domain": "gone.myshopify.com"})
+
+    assert response.status_code == 200
+    assert db.query(ShopifyShop).filter_by(shop_domain="gone.myshopify.com").count() == 0
+    refresh.assert_called_once()

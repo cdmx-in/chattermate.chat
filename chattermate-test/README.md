@@ -60,9 +60,9 @@ npm start
 
 ## Troubleshooting
 
-- **"Chat can't load on 'localhost'"** — the origin isn't in your organization's allowed
-  domains (Organization settings). The port matters: `localhost:3000` allowed does not
-  permit `localhost:3010`.
+- **"Chat couldn't load on 'localhost'"** — the widget has an Allowed domains list
+  (agent → Widget tab) and this site isn't on it. Add `localhost` (any port) or clear
+  the list; with no list the widget loads anywhere, localhost included.
 - **Dashboard placement settings not applying** — almost always a stale loader. Check the
   served file has the newer features: `curl -s <loader-url> | grep -c sidebar-left`.
 - **Buttons do nothing on the gallery pages** — the loader failed to load; the page shows

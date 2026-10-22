@@ -47,9 +47,11 @@ test.describe('token-authenticated widget', () => {
     test.slow()
     const { apiKey } = await createWidgetApp(adminApi, unique('acme-site'))
     const token = await issueConversationToken(adminApi, apiKey, widget.widgetId, widget.customer, 60)
-    // What the loader fetches to render the chat frame for this visitor.
+    // What the loader fetches to render the chat frame for this visitor. Each
+    // poll on a fresh connection: the backend drops a keep-alive connection
+    // idle for 5s, the poll interval, and a reused one can hang up mid-request.
     const visitor = new ApiClient(request, token)
-    const frame = () => visitor.raw('GET', `/widgets/${widget.widgetId}/data`)
+    const frame = () => visitor.raw('GET', `/widgets/${widget.widgetId}/data`, { headers: { Connection: 'close' } })
     expect((await frame()).status()).toBe(200)
 
     // The shortest lifetime the API allows; the backend's own clock decides.

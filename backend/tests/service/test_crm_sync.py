@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.crm.base import CrmPushResult, OAuthTokens
+from app.services.conversation_token import VERIFIED_SCOPE
 from app.crm.hubspot import HubSpotAdapter
 from app.models.crm import (
     CrmConnectionStatus, CrmCustomerSync, CrmSyncJob, CrmSyncJobStatus,
@@ -200,6 +201,7 @@ class TestLeadCaptureHook:
             session_id=None,
             lead_data={"email": "hooked@example.com"},
             summary="s", consent=True,
+            scope=VERIFIED_SCOPE,
         )
         assert response is not None
         jobs = db.query(CrmSyncJob).filter_by(lead_response_id=response.id).all()
@@ -218,6 +220,7 @@ class TestLeadCaptureHook:
             session_id=None,
             lead_data={"email": "hooked2@example.com"},
             summary="s", consent=True,
+            scope=VERIFIED_SCOPE,
         )
         assert response is not None  # lead recorded despite the CRM crash
 

@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from sqlalchemy import Column, String, ForeignKey, Integer
+from sqlalchemy import Column, String, ForeignKey, Integer, JSON
 from sqlalchemy.orm import relationship
 from uuid import  uuid4
 from sqlalchemy.dialects.postgresql import UUID
@@ -32,6 +32,11 @@ class Widget(Base):
     # Agent relationship
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id"))
     agent = relationship("Agent", back_populates="widgets")
+
+    # Sites this widget may be embedded on (host[:port], optional leading *.).
+    # Empty or NULL: anywhere. Enforced with frame-ancestors, see
+    # app.services.widget_embed_policy.
+    allowed_domains = Column(JSON, nullable=True)
 
     # Relationships
     organization = relationship("Organization", back_populates="widgets")

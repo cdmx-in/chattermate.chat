@@ -55,6 +55,13 @@ class WidgetRepository:
         return self.db.query(Widget).filter(Widget.agent_id == agent_id).all()
 
 
+    def set_allowed_domains(self, widget: Widget, allowed_domains: list[str]) -> Widget:
+        # A new list, so the JSON column registers the change
+        widget.allowed_domains = list(allowed_domains) or None
+        self.db.commit()
+        self.db.refresh(widget)
+        return widget
+
     def delete_widget(self, widget_id: str) -> None:
         self.db.query(Widget).filter(Widget.id == widget_id).delete()
         self.db.commit()

@@ -19,11 +19,6 @@ import { ref } from 'vue'
 import emitter from '@/utils/emitter'
 import { getWsUrl } from '@/config/api'
 
-// Utility function to set cookies
-function setCookie(name: string, value: string, maxAge: number = 1800) {
-  document.cookie = `${name}=${value}; path=/; max-age=${maxAge}; SameSite=Lax`
-}
-
 class SocketService {
   private socket: Socket | null = null
   private _isConnected = ref(false)
@@ -57,15 +52,6 @@ class SocketService {
       console.log('Socket connected')
       // Emit reconnection event for components to reattach listeners
       this.eventEmitter.emit('socket:reconnected')
-    })
-
-    this.socket.on('cookie_set', (data) => {
-      if (data.access_token) {
-        setCookie('access_token', data.access_token)
-        // Reconnect socket with new token
-        this.socket?.disconnect()
-        this.connect()
-      }
     })
 
     this.socket.on('connection_success', (data) => {
