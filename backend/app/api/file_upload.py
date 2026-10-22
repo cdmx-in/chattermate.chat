@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status, Header, Request, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from typing import Optional, Tuple
 import uuid
@@ -60,7 +61,7 @@ async def get_current_user_or_widget(
     # Try to get user from cookies or Authorization header (admin/agent users)
     try:
         # Call get_current_user with the request - it handles both cookies and headers
-        user = await get_current_user(request, None, db)
+        user = await run_in_threadpool(get_current_user, request, None, db)
         if user:
             return {
                 "type": "user",

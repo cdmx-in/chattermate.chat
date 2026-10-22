@@ -28,6 +28,7 @@ import { AI_DISCLAIMER_TEXT, shouldShowAiDisclaimer } from '../utils/aiDisclaime
 import { presenceLine } from '../utils/widgetPresence'
 import { widgetEnv, resolveWidgetUploadUrl } from './widget-env'
 import { postToHost } from './host-bridge'
+import { hostSharesIdentity, isFramed, setHostPageUrl, tokenStoreFor } from './frame-session'
 import { useWidgetStyles } from '../composables/useWidgetStyles'
 import { useWidgetFiles } from '../composables/useWidgetFiles'
 import { useWidgetSocket } from '../composables/useWidgetSocket'
@@ -318,7 +319,7 @@ const {
     ensureFresh: ensureFreshToken
 } = useConversationToken({
     onTokenChanged: (next) => {
-        postToHost({ type: 'TOKEN_UPDATE', token: next })
+        if (hostSharesIdentity()) postToHost({ type: 'TOKEN_UPDATE', token: next })
         // The open socket authenticated with the previous token and re-checks it on
         // later events; without this a conversation that outlives its token starts
         // failing authentication mid-chat.
@@ -326,7 +327,13 @@ const {
     },
     onIdentityExpired: () => {
         handleIdentityExpired()
-    }
+    },
+    // A framed widget holds the token only in memory: the host page keeps it, so
+    // it must hear when the widget lets it go.
+    onTokenCleared: () => {
+        if (isFramed() && hostSharesIdentity()) postToHost({ type: 'TOKEN_CLEAR' })
+    },
+    store: tokenStoreFor(widgetId.value || '')
 })
 const hasToken = computed(() => !!token.value)
 
@@ -796,21 +803,9 @@ const handleEndChat = async (message) => {
     // Call backend API to acknowledge end_chat and close the session
     try {
         if (message.session_id && token.value && widgetId.value) {
-            const url = new URL(`${widgetEnv.API_URL}/widgets/${widgetId.value}/end-chat`)
-            url.searchParams.append('session_id', message.session_id)
-            if (message.attributes?.end_chat_reason) {
-                url.searchParams.append('reason', message.attributes.end_chat_reason)
-            }
-            if (message.attributes?.end_chat_description) {
-                url.searchParams.append('description', message.attributes.end_chat_description)
-            }
-
-            const response = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${token.value}`,
-                    'Content-Type': 'application/json'
-                }
+            const response = await closeSessionOnServer(message.session_id, {
+                reason: message.attributes?.end_chat_reason,
+                description: message.attributes?.end_chat_description,
             })
 
             if (response.ok) {
@@ -1146,7 +1141,8 @@ const handleViewDetails = (product, shopDomain) => {
     // Open the product URL in new tab
     if (productUrl) {
         console.log('Opening product URL:', productUrl);
-        window.open(productUrl, '_blank');
+        // noopener: the opened page must not get a handle on the widget's window
+        window.open(productUrl, '_blank', 'noopener');
     }
 };
 
@@ -1254,12 +1250,56 @@ const handleUserInputSubmit = async (message: any) => {
 }
 
 /**
+ * Close a session on the backend. `keepalive` lets the request finish while the
+ * frame is being torn down (the host ending a chat before switching visitor).
+ */
+const closeSessionOnServer = (
+    sessionId: string,
+    { reason, description, keepalive = false }: { reason?: string; description?: string; keepalive?: boolean } = {}
+) => {
+    const url = new URL(`${widgetEnv.API_URL}/widgets/${widgetId.value}/end-chat`)
+    url.searchParams.append('session_id', sessionId)
+    if (reason) url.searchParams.append('reason', reason)
+    if (description) url.searchParams.append('description', description)
+    return fetch(url, {
+        method: 'POST',
+        keepalive,
+        headers: {
+            'Authorization': `Bearer ${token.value}`,
+            'Content-Type': 'application/json'
+        }
+    })
+}
+
+/**
+ * The host page is about to replace this visitor (identify() as someone else, or
+ * logout()): close their session first, then say so. Always answers, so the host
+ * never waits on a frame that had nothing to close.
+ */
+const endChatForHost = async (sessionId: unknown) => {
+    try {
+        if (typeof sessionId === 'string' && sessionId && token.value && widgetId.value) {
+            await closeSessionOnServer(sessionId, { reason: 'CUSTOMER_REQUEST', keepalive: true })
+        }
+    } catch {
+        /* the host carries on either way */
+    } finally {
+        postToHost({ type: 'END_CHAT_DONE' })
+    }
+}
+
+/**
  * The visitor's identity ran out and the widget cannot renew it on its own: only the
  * host page can mint a token (that needs the org's API key). Tell it, and let it
  * answer with TOKEN_REFRESH. Nothing is destroyed here - the conversation on screen
  * stays exactly where it is.
  */
 const handleIdentityExpired = () => {
+    // A page that can't share identity will never answer: carry on anonymously
+    if (!hostSharesIdentity()) {
+        void continueAnonymously()
+        return
+    }
     postToHost({ type: 'IDENTITY_EXPIRED' })
 }
 
@@ -1330,13 +1370,20 @@ window.addEventListener('message', (event) => {
     if (event.data.type === 'SCROLL_TO_BOTTOM') {
         scrollToBottom()
     }
-    if (event.data.type === 'IDENTITY_UNAVAILABLE') {
+    if (event.data.type === 'HOST_PAGE') {
+        // The embedding page navigated (SPA route change): leads record where they came from.
+        setHostPageUrl(event.data.url)
+    }
+    if (event.data.type === 'END_CHAT' && hostSharesIdentity()) {
+        void endChatForHost(event.data.sessionId)
+    }
+    if (event.data.type === 'IDENTITY_UNAVAILABLE' && hostSharesIdentity()) {
         // The host page has no replacement identity for us. Start over as an
         // anonymous visitor rather than leaving the chat stuck: they can still talk
         // to the agent, they are just no longer signed in.
         void continueAnonymously()
     }
-    if (event.data.type === 'TOKEN_REFRESH') {
+    if (event.data.type === 'TOKEN_REFRESH' && hostSharesIdentity()) {
         // The host page issued a replacement token (usually answering
         // IDENTITY_EXPIRED). Adopt it and re-authorize in place: rebuilding the frame
         // would throw away the conversation the visitor is looking at.
@@ -1368,6 +1415,13 @@ window.addEventListener('message', (event) => {
             input?.focus()
         })
     }
+})
+
+// Escape inside the frame never reaches the page's own key handlers, so the loader
+// is told (it closes a drawer on it). The Ask AI palette handles its own.
+window.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || event.defaultPrevented || !isFramed()) return
+    postToHost({ type: 'WIDGET_ESCAPE' })
 })
 
 // Setup event listeners and callbacks

@@ -19,7 +19,8 @@ import { io, Socket } from 'socket.io-client'
 import type { HumanAgent, SocketError } from '../types/widget'
 import { getErrorMessage } from '../types/widget'
 import { widgetEnv } from '../webclient/widget-env'
-import { readTokenClaims } from './useConversationToken'
+import { localTokenStore, readTokenClaims } from './useConversationToken'
+import { isFramed, reportedPageUrl } from '../webclient/frame-session'
 import type { Message } from '@/types/chat'
 
 type ConnectionStatus = 'connected' | 'connecting' | 'failed'
@@ -144,8 +145,9 @@ export function useWidgetSocket() {
 
     /** Auth payload for one connection attempt, read fresh each time. */
     const buildAuth = () => {
-        // Use passed token first, then stored token, then localStorage
-        const token = widgetToken || localStorage.getItem('ctid')
+        // Use passed token first, then the shared localStorage entry - except in a
+        // framed widget, whose own storage is not the host's (the host owns the token)
+        const token = widgetToken || (isFramed() ? null : localTokenStore().read())
 
         // Build auth object with token and widget_id
         const auth: any = {}
@@ -156,12 +158,13 @@ export function useWidgetSocket() {
             auth.widget_id = widgetIdAuth
         }
         // Host page embedding the widget, recorded server-side on lead capture
-        // (lead_source.page_url). The widget runs in a srcdoc iframe, so the parent
-        // page is same-origin when embedded via chattermate.js; fall back to referrer.
+        // (lead_source.page_url). A framed widget is told it by the loader; a srcdoc
+        // one (older loaders) can read its same-origin parent; else the referrer.
         try {
-            auth.page_url = (window.parent !== window && window.parent.location?.href)
-                ? window.parent.location.href
-                : (document.referrer || window.location.href)
+            auth.page_url = reportedPageUrl()
+                || ((window.parent !== window && window.parent.location?.href)
+                    ? window.parent.location.href
+                    : (document.referrer || window.location.href))
         } catch {
             auth.page_url = document.referrer || ''
         }

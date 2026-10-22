@@ -44,6 +44,18 @@ class WidgetService {
     await api.delete(`${this.baseUrl}/${id}`)
   }
 
+  /** Sites the widget may be embedded on; empty means any site. */
+  async getAllowedDomains(id: string): Promise<string[]> {
+    const response = await api.get(`${this.baseUrl}/${id}/embed-settings`)
+    return response.data.allowed_domains
+  }
+
+  /** Replace the list. Resolves with it as the server normalised it. */
+  async setAllowedDomains(id: string, allowedDomains: string[]): Promise<string[]> {
+    const response = await api.put(`${this.baseUrl}/${id}/embed-settings`, { allowed_domains: allowedDomains })
+    return response.data.allowed_domains
+  }
+
   async getWidgetDetails(id: string): Promise<Widget> {
     const response = await api.get(`${this.baseUrl}/${id}/details`)
     return response.data

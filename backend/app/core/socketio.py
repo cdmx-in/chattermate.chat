@@ -36,6 +36,43 @@ def needs_elasticache_tls(redis_url: str | None) -> bool:
         return False
     return (urlparse(redis_url).hostname or "").endswith(ELASTICACHE_HOST_SUFFIX)
 
+def _netloc(url: str) -> str:
+    return urlparse(url).netloc.lower() if url else ""
+
+
+class SocketOriginPolicy:
+    """Which origins may open a Socket.IO connection.
+
+    The CORS list, plus the host the request itself arrived on: the framed
+    widget is served by this backend, so its socket is same-origin. engineio
+    given a plain list doesn't allow same-origin by itself. Only the host is
+    compared - uvicorn runs without proxy headers, so behind TLS the request's
+    scheme reads http.
+
+    Deliberately not "any of our hosts": a socket from the cookieless widget
+    host to the API host would carry the dashboard's cookies, which is exactly
+    what serving the frame elsewhere keeps out of the widget's reach.
+    Installed once on the server; refreshes swap the list, never the policy.
+    """
+
+    def __init__(self, origins=()):
+        self.origins = frozenset(origins)
+
+    def update(self, origins) -> None:
+        self.origins = frozenset(origins)
+
+    def __call__(self, origin, environ=None) -> bool:
+        if not origin:
+            return False
+        # engineio's own list handling treats "*" as any origin; keep that
+        if "*" in self.origins or origin in self.origins:
+            return True
+        host = _netloc(origin)
+        return bool(host) and host == (environ or {}).get("HTTP_HOST", "").lower()
+
+
+socket_origins = SocketOriginPolicy(get_cors_origins())
+
 # Initialize Socket.IO server with basic config. engine.io answers every
 # allowed origin with credentials allowed; the cookie-authenticated /agent
 # namespace refuses other sites itself (auth_utils.cookie_socket_allowed).
@@ -47,7 +84,7 @@ sio: AsyncServer = socketio.AsyncServer(
     ping_timeout=60,
     ping_interval=25,
     max_http_buffer_size=15 * 1024 * 1024,  # 15MB to handle base64-encoded files (5MB image = ~6.7MB base64)
-    cors_allowed_origins=list(get_cors_origins())  # Use the same CORS origins as FastAPI
+    cors_allowed_origins=socket_origins,  # The same CORS origins as FastAPI, plus our own host
 )
 
 # Create ASGI app
@@ -77,8 +114,8 @@ def configure_socketio(cors_origins=None):
         # Convert set to list if needed and ensure all origins are strings
         cors_list = list(cors_origins) if isinstance(cors_origins, (set, list)) else [cors_origins]
         
-        # Set CORS origins for Socket.IO
-        sio.eio.cors_allowed_origins = cors_list
+        socket_origins.update(cors_list)
+        sio.eio.cors_allowed_origins = socket_origins
 
     if settings.REDIS_ENABLED:
         # Use rediss:// protocol if TLS is needed (ElastiCache)

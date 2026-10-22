@@ -152,7 +152,7 @@ async def test_get_current_user_with_cookie(mock_db, mock_user):
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
     
     with patch('app.core.auth.live_payload', return_value=payload):
-        result = await get_current_user(request, access_token, mock_db)
+        result = get_current_user(request, access_token, mock_db)
         assert result == mock_user
 
 
@@ -170,7 +170,7 @@ async def test_get_current_user_with_auth_header(mock_db, mock_user):
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
     
     with patch('app.core.auth.live_payload', return_value=payload):
-        result = await get_current_user(request, None, mock_db)
+        result = get_current_user(request, None, mock_db)
         assert result == mock_user
 
 
@@ -182,7 +182,7 @@ async def test_get_current_user_no_token(mock_db):
     request.headers.get.return_value = None
     
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(request, None, mock_db)
+        get_current_user(request, None, mock_db)
     
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Not authenticated"
@@ -198,7 +198,7 @@ async def test_get_current_user_invalid_token(mock_db):
     # Mock live_payload
     with patch('app.core.auth.live_payload', return_value=None):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(request, access_token, mock_db)
+            get_current_user(request, access_token, mock_db)
         
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Invalid authentication token"
@@ -216,7 +216,7 @@ async def test_get_current_user_invalid_payload(mock_db):
     
     with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(request, access_token, mock_db)
+            get_current_user(request, access_token, mock_db)
         
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Invalid token payload"
@@ -237,7 +237,7 @@ async def test_get_current_user_user_not_found(mock_db):
     
     with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(request, access_token, mock_db)
+            get_current_user(request, access_token, mock_db)
         
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "User not found"
@@ -261,7 +261,7 @@ async def test_get_current_user_inactive_user(mock_db, mock_user):
     
     with patch('app.core.auth.live_payload', return_value=payload):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(request, access_token, mock_db)
+            get_current_user(request, access_token, mock_db)
         
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "User is inactive"
@@ -277,7 +277,7 @@ async def test_get_current_user_exception(mock_db):
     # Mock live_payload to raise exception
     with patch('app.core.auth.live_payload', side_effect=Exception("Test exception")):
         with pytest.raises(HTTPException) as exc_info:
-            await get_current_user(request, access_token, mock_db)
+            get_current_user(request, access_token, mock_db)
         
         assert exc_info.value.status_code == 401
         assert exc_info.value.detail == "Could not validate credentials"
@@ -289,7 +289,7 @@ async def test_get_current_organization_success(mock_db, mock_user, mock_organiz
     # Mock db query
     mock_db.query.return_value.filter.return_value.first.return_value = mock_organization
     
-    result = await get_current_organization(mock_user, mock_db)
+    result = get_current_organization(mock_user, mock_db)
     assert result == mock_organization
 
 
@@ -306,7 +306,7 @@ async def test_get_current_organization_no_org_id(mock_db):
     )
     
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_organization(user, mock_db)
+        get_current_organization(user, mock_db)
     
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "User is not associated with any organization"
@@ -319,7 +319,7 @@ async def test_get_current_organization_not_found(mock_db, mock_user):
     mock_db.query.return_value.filter.return_value.first.return_value = None
     
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_organization(mock_user, mock_db)
+        get_current_organization(mock_user, mock_db)
     
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "Organization not found or inactive"
@@ -401,7 +401,7 @@ async def test_require_permissions_inner_function(mock_user):
     # Mock Depends to return our user
     with patch('fastapi.Depends', return_value=mock_user):
         # Call the inner function
-        result = await permission_checker(mock_user)
+        result = permission_checker(mock_user)
         assert result == mock_user
 
 
@@ -413,7 +413,7 @@ async def test_require_permissions_inner_function_forbidden(mock_user):
     
     # Call the inner function and expect an exception
     with pytest.raises(HTTPException) as exc_info:
-        await permission_checker(mock_user)
+        permission_checker(mock_user)
     
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "Not enough permissions"
@@ -429,7 +429,7 @@ async def test_require_permission_inner_function(mock_user):
     permission_dependency = require_permission("view_chats")
     
     # Call the inner function
-    result = await permission_dependency(mock_user)
+    result = permission_dependency(mock_user)
     assert result == mock_user
     mock_user.role.has_permission.assert_called_once_with("view_chats")
 
@@ -445,7 +445,7 @@ async def test_require_permission_inner_function_forbidden(mock_user):
     
     # Call the inner function and expect an exception
     with pytest.raises(HTTPException) as exc_info:
-        await permission_dependency(mock_user)
+        permission_dependency(mock_user)
     
     assert exc_info.value.status_code == 403
     assert exc_info.value.detail == "User does not have required permission: delete_organization"
@@ -876,5 +876,19 @@ async def test_get_current_user_from_cookie_directly(mock_db, mock_user):
     mock_db.query.return_value.filter.return_value.first.return_value = mock_user
 
     with patch('app.core.auth.live_payload', return_value=payload):
-        result = await get_current_user(request, None, mock_db)
+        result = get_current_user(request, None, mock_db)
         assert result == mock_user
+
+@pytest.mark.parametrize("dependency", [
+    get_current_user,
+    get_current_organization,
+    require_permissions("view_chats"),
+    require_permission("view_chats"),
+])
+def test_user_dependencies_run_off_the_event_loop(dependency):
+    """They query the database. As coroutines they ran on the event loop, and
+    once the connection pool ran dry the whole backend froze: every request
+    waited for a connection that the requests holding one could not return.
+    FastAPI runs plain dependencies in its threadpool."""
+    import inspect
+    assert not inspect.iscoroutinefunction(dependency)
