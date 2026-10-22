@@ -7,11 +7,17 @@
 //     &token=<jwt>     → window.chattermateToken (token-authenticated widgets)
 //     &trigger=1       → adds a page button with data-chattermate-open
 //     &snippet=iframe  → the dashboard's iframe snippet instead of the script
+//     &csp=strict      → a strict Content-Security-Policy (default-src 'none') that allows
+//                        our script and API, like a hardened merchant site; frames only
+//                        from &frameSrc=<space-separated origins>, none without it
+//     &csp=nonce       → the same, but scripts only by nonce ('strict-dynamic', no
+//                        'unsafe-inline'), as the most locked-down sites run
+//     &loader=current  → on the legacy port: the current loader, not the frozen one
 //     &tokenProvider=1 → chattermateConfig.tokenProvider asks the test for a fresh token
 //                        (window.chattermateE2eToken, which ChatWidget exposes)
 //
 // The same site also listens on --legacy-port (127.0.0.1:13001), where it embeds the
-// last release's loader (legacy-loader-*.min.js, as a browser's cache still serves it)
+// last release's loader (frontend/public/webclient/chattermate-legacy.min.js, as a browser's cache still serves it)
 // instead of the current one. That loader fetches the widget cross-origin, so only
 // this origin is in .env.e2e's CORS_ORIGINS: 13000 keeps proving the current loader
 // needs none.
@@ -22,6 +28,7 @@
 //
 // Run: node services/customer-site/server.ts --port 13000 --legacy-port 13001 --api <api url> --loader <loader url>
 
+import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 
@@ -35,7 +42,8 @@ const apiUrl = arg('api', 'http://127.0.0.1:18000/api/v1')
 const loaderUrl = arg('loader', 'http://127.0.0.1:15173/webclient/chattermate.min.js')
 const legacyPort = Number(arg('legacy-port', '13001'))
 const LEGACY_LOADER_PATH = '/legacy/chattermate.min.js'
-const legacyLoader = readFileSync(new URL('./legacy-loader-v1.0.27.min.js', import.meta.url))
+// The frozen last-release loader the dashboard serves for the in-page fallback
+const legacyLoader = readFileSync(new URL('../../../frontend/public/webclient/chattermate-legacy.min.js', import.meta.url))
 
 interface Embed {
   widgetId: string
@@ -46,6 +54,25 @@ interface Embed {
   tokenProvider: boolean
   /** Where the loader comes from: the current build, or the frozen last release. */
   loader: string
+  /** A strict Content-Security-Policy, framing only these origins ('' frames nothing); null for none. */
+  strictCspFrameSrc: string | null
+  /** Scripts by this nonce only (no 'unsafe-inline'); null allows inline scripts. */
+  scriptNonce: string | null
+}
+
+/** A hardened merchant's policy: our script and API allowed, frames only as given. */
+function strictCsp(loader: string, frameSrc: string, nonce: string | null): string {
+  const api = new URL(apiUrl).origin
+  const ws = api.replace(/^http/, 'ws')
+  // A loader on this site itself (the frozen one) is 'self'
+  const scripts = `${/^https?:/.test(loader) ? new URL(loader).origin : "'self'"} ${api}`
+  return [
+    "default-src 'none'", "base-uri 'none'", "object-src 'none'",
+    nonce ? `script-src 'nonce-${nonce}' 'strict-dynamic'` : `script-src 'unsafe-inline' ${scripts}`,
+    `style-src 'unsafe-inline' ${scripts}`,
+    `font-src ${api} data:`, 'img-src http: https: data: blob:', `connect-src ${api} ${ws}`,
+    ...(frameSrc ? [`frame-src ${frameSrc}`] : []),
+  ].join('; ')
 }
 
 /** The dashboard's iframe snippet (AgentWidgetTab), classed so the page object finds it. */
@@ -76,16 +103,19 @@ function page(embed: Embed): string {
       ? 'window.chattermateConfig = Object.assign({}, window.chattermateConfig, { tokenProvider: function () { return window.chattermateE2eToken() } });'
       : '',
   ].filter(Boolean).join('\n      ')
+  const csp = embed.strictCspFrameSrc === null ? ''
+    : `<meta http-equiv="Content-Security-Policy" content="${strictCsp(embed.loader, embed.strictCspFrameSrc, embed.scriptNonce)}">`
+  const nonce = embed.scriptNonce ? ` nonce="${embed.scriptNonce}"` : ''
   return `<!doctype html>
 <html lang="en">
-  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Acme Store</title></head>
+  <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">${csp}<title>Acme Store</title></head>
   <body>
     <h1>Acme Store</h1>
     ${embed.trigger ? '<button type="button" data-chattermate-open>Chat with us</button>' : ''}
-    <script>
+    <script${nonce}>
       ${globals}
     </script>
-    <script src="${embed.loader}"></script>
+    <script src="${embed.loader}"${nonce}></script>
   </body>
 </html>`
 }
@@ -115,7 +145,9 @@ function serve(listenPort: number, loader: string, legacy: boolean): void {
         trigger: params.get('trigger') === '1',
         iframe: params.get('snippet') === 'iframe',
         tokenProvider: params.get('tokenProvider') === '1',
-        loader,
+        loader: legacy && params.get('loader') === 'current' ? loaderUrl : loader,
+        strictCspFrameSrc: ['strict', 'nonce'].includes(params.get('csp') ?? '') ? (params.get('frameSrc') ?? '') : null,
+        scriptNonce: params.get('csp') === 'nonce' ? randomBytes(16).toString('base64') : null,
       })
     } catch {
       res.writeHead(400, { 'content-type': 'text/plain' }).end('config is not valid JSON')

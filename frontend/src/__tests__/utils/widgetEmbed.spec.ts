@@ -16,7 +16,7 @@ limitations under the License.
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+import { buildWidgetCsp, buildWidgetEmbed, widgetFrameSources } from '@/utils/widgetEmbed'
 // The snippet's exact text, pinned so other code that builds it can match it.
 import golden from '../fixtures/widget-snippet.txt?raw'
 
@@ -66,5 +66,37 @@ describe('buildWidgetEmbed', () => {
       .replace('{api_url}', API_URL)
       .replace('{loader_origin}', ORIGIN)
     expect(buildWidgetEmbed('w-123')).toBe(expected)
+  })
+})
+
+describe('buildWidgetCsp', () => {
+  it('names the loader and every host that frames the widget', () => {
+    expect(buildWidgetCsp(['https://api.example.com', 'https://widget.example.com'])).toBe(
+      `script-src ${window.location.origin};\nframe-src https://api.example.com https://widget.example.com;`)
+  })
+
+  it('leaves the script out for the iframe snippet, which loads no loader', () => {
+    expect(buildWidgetCsp(['https://api.example.com'], false)).toBe('frame-src https://api.example.com;')
+  })
+})
+
+describe('widgetFrameSources', () => {
+  // The API the snippet points the loader at, not wherever the backend thinks it is
+  beforeEach(() => {
+    // @ts-expect-error test shim for runtime config
+    window.APP_CONFIG = { API_URL: 'https://chat.example.com/api/v1', WS_URL: 'wss://chat.example.com' }
+  })
+
+  afterEach(() => {
+    // @ts-expect-error cleanup test shim
+    delete window.APP_CONFIG
+  })
+
+  it('starts from the API the snippet points at, then the frame host', () => {
+    expect(widgetFrameSources('https://widget.example.com')).toEqual(['https://chat.example.com', 'https://widget.example.com'])
+  })
+
+  it('is just the API when the widget is framed there', () => {
+    expect(widgetFrameSources(null)).toEqual(['https://chat.example.com'])
   })
 })

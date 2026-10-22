@@ -9087,6 +9087,18 @@ export interface components {
             allowed_domains?: string[];
         };
         /**
+         * WidgetEmbedSettingsResponse
+         * @description The settings, plus the widget's frame host (WIDGET_FRAME_URL's origin), which
+         *     the API's /frame redirects to: a strict site's frame-src needs it beside the API,
+         *     and only the backend knows it. None when the widget is framed on the API itself.
+         */
+        WidgetEmbedSettingsResponse: {
+            /** Allowed Domains */
+            allowed_domains?: string[];
+            /** Frame Host */
+            frame_host?: string | null;
+        };
+        /**
          * WidgetPosition
          * @enum {string}
          */
@@ -16100,7 +16112,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WidgetEmbedSettings"];
+                    "application/json": components["schemas"]["WidgetEmbedSettingsResponse"];
                 };
             };
             /** @description Validation Error */
