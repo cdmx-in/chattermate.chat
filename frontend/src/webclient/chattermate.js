@@ -230,6 +230,7 @@ window.chattermateConfig;
   // The last load failed in a way that may have passed (a server error, a frame
   // that never answered): the next time the visitor opens the chat, try again.
   let retryOnOpen = false
+  const NOT_CONFIGURED = 'This chat widget is not currently configured. Please contact the website administrator to enable chat support.'
   // Set while the frame closes an outgoing visitor's session; called on END_CHAT_DONE.
   let endChatDone = null
   let endChatTimer = null
@@ -1736,6 +1737,20 @@ window.chattermateConfig;
       }
     }
 
+    // The frame's address, under the API base the page configured. Only a web
+    // address becomes a frame: a javascript: or data: one would run in the page.
+    function frameUrl() {
+      let url
+      try {
+        url = new URL(config.baseUrl + '/widgets/' + encodeURIComponent(window.chattermateId) + '/frame', window.location.href)
+      } catch (e) {
+        return null
+      }
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') return null
+      url.searchParams.set('host', '1')
+      return url.href
+    }
+
     function showLoadError(message) {
       teardownFrame()
       container.appendChild(createErrorUI(message))
@@ -1759,6 +1774,11 @@ window.chattermateConfig;
     // the chat opens instantly.
     function prefetchWidget() {
       if (iframe) return
+      const src = frameUrl()
+      if (!src) {
+        showLoadError(NOT_CONFIGURED)
+        return
+      }
       button.classList.add('loading')
       const generation = loadGeneration
 
@@ -1770,7 +1790,7 @@ window.chattermateConfig;
       // '*': the frame may be redirected to the frame host, a different origin from
       // the URL set here, and a bare feature name only grants that first origin.
       iframe.setAttribute('allow', 'clipboard-write *')
-      iframe.src = config.baseUrl + '/widgets/' + encodeURIComponent(window.chattermateId) + '/frame?host=1'
+      iframe.src = src
       iframe.addEventListener('load', function () {
         if (generation !== loadGeneration || frameOrigin) return
         clearFrameTimer()
@@ -1833,7 +1853,7 @@ window.chattermateConfig;
       }
       if (code === 'token_required') {
         removeToken()
-        showLoadError('This chat widget is not currently configured. Please contact the website administrator to enable chat support.')
+        showLoadError(NOT_CONFIGURED)
         return
       }
       showUnavailable()

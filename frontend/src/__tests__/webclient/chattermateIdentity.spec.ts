@@ -16,7 +16,7 @@ limitations under the License.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
-  FRAME_ORIGIN,
+  BASE_URL, FRAME_ORIGIN, WIDGET_ID,
   api, bringUp, cleanupPage, flush, frame, frames, fromFrame, handshake,
   loadLoader, resetPage, spyOnFrame, tokenFor,
 } from './loaderHarness'
@@ -203,6 +203,21 @@ describe('ChatterMate identity continuity', () => {
       fromFrame({ type: 'WIDGET_ERROR', code: 'unavailable' })
 
       expect(document.querySelector('.chattermate-error-ui')?.textContent).toContain('Chat is unavailable right now')
+    })
+
+    it.each(['javascript:alert(1)//', 'data:text/html,<script>alert(1)</script>//'])(
+      'never frames an API base that isn\'t a web address (%s)', async (base) => {
+        ;(window as any).chattermateBaseUrl = base
+        await loadLoader()
+
+        expect(frames()).toHaveLength(0)
+        expect(document.querySelector('.chattermate-error-ui')?.textContent).toContain('not currently configured')
+      })
+
+    it('frames the widget under a web API base', async () => {
+      await loadLoader()
+
+      expect(frame().src).toBe(`${BASE_URL}/widgets/${WIDGET_ID}/frame?host=1`)
     })
 
     it('tries again when the visitor opens the chat after it was unavailable', async () => {
