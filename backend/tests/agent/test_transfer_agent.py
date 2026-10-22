@@ -335,6 +335,33 @@ async def test_get_transfer_response_timeout():
             assert response["transfer_to_human"] is False
 
 @pytest.mark.asyncio
+async def test_the_connection_is_released_before_the_transfer_model_call(
+        test_agent, test_user_group, test_user, test_chat_history):
+    test_agent.groups = [test_user_group]
+    mock_db = MagicMock()
+    mock_db.in_transaction.return_value = True
+    committed_first = []
+
+    async def model(**kwargs):
+        committed_first.append(mock_db.commit.called)
+        return {"message": "Connecting you now.", "transfer_to_human": True}
+    mock_transfer_agent = MagicMock()
+    mock_transfer_agent.get_transfer_response = AsyncMock(side_effect=model)
+    group_repo = MagicMock()
+    group_repo.get_group_with_users.return_value = test_user_group
+
+    with patch('app.agents.transfer_agent.CustomerRepository'), \
+         patch('app.agents.transfer_agent.GroupRepository', return_value=group_repo), \
+         patch('app.agents.transfer_agent.TransferResponseAgent', return_value=mock_transfer_agent):
+        await get_agent_availability_response(
+            agent=test_agent, customer_id="customer123", chat_history=test_chat_history, db=mock_db,
+            api_key="test_key", model_name="gpt-4", model_type="OPENAI", session_id="test_session_id",
+        )
+
+    assert committed_first == [True]
+
+
+@pytest.mark.asyncio
 async def test_get_agent_availability_response(test_agent, test_user_group, test_user, test_chat_history):
     """Test get_agent_availability_response function"""
     

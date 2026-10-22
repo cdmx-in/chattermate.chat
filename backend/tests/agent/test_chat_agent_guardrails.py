@@ -278,6 +278,30 @@ class TestInboundEnforcement:
         assert "injection.override_instructions" in user_row.attributes["guardrail"]["rules"]
 
     @pytest.mark.asyncio
+    async def test_no_connection_is_held_through_the_model_call(
+        self, test_organization_id, test_agent, mock_db_session, no_event_db
+    ):
+        # Storing the visitor's message re-reads the row, which leaves a
+        # transaction open; held through the model call, a few concurrent
+        # chats would use up the connection pool
+        chat_agent = build_chat_agent(test_organization_id, test_agent)
+        held = []
+
+        async def model(*args, **kwargs):
+            held.append(mock_db_session.in_transaction())
+            return bot_reply()
+        chat_agent.agent.arun = model
+
+        response = await chat_agent.get_response(
+            message="Where is my order?",
+            session_id=str(uuid4()),
+            org_id=str(test_organization_id),
+            agent_id=str(test_agent.id),
+        )
+        assert response.message == "Happy to help with that!"
+        assert held == [False]
+
+    @pytest.mark.asyncio
     async def test_benign_message_unaffected(
         self, test_organization_id, test_agent, mock_db_session, no_event_db
     ):

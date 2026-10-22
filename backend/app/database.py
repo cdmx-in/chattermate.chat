@@ -57,6 +57,16 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def release_connection(db) -> None:
+    """Give a session's connection back to the pool before a slow await (a
+    model call), instead of holding it idle in a transaction for the whole
+    wait: a few concurrent chats would otherwise use up the pool and stall
+    every other request. Commits what the session holds, so the objects it
+    loaded stay usable and reload on next access."""
+    if db is not None and db.in_transaction():
+        db.commit()
+
+
 def get_db():
     db = SessionLocal()
     try:

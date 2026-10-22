@@ -27,6 +27,7 @@ from app.tools.jira_toolkit import JiraTools
 from app.models.schemas.chat import ChatResponse
 from app.utils.response_parser import parse_response_content
 from app.core.config import settings
+from app.database import release_connection
 logger = get_logger(__name__)
 
 # Wording used when the model can't produce a handoff line in time. The routing
@@ -274,7 +275,8 @@ async def get_agent_availability_response(
         )
         transfer_agent.agent.tools = [jira_tools]
 
-    # Get contextual response
+    # Get contextual response, without holding the connection through the model call
+    release_connection(db)
     response = await transfer_agent.get_transfer_response(
         chat_history=chat_history or [],
         business_hours=business_hours,
