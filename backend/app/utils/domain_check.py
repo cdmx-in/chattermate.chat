@@ -43,6 +43,22 @@ CACHE_LIMIT = 1000
 _cache: Dict[str, Tuple[float, bool]] = {}
 
 
+LOCALHOST_DOMAIN_MESSAGE = "Localhost can't be used as your website. Use the site where you'll add the widget."
+LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
+
+
+def is_localhost_domain(domain: str) -> bool:
+    """Whether a website (bare host, host:port or URL) points at localhost. Org
+    websites still feed CORS for cached older loaders, which must never admit a
+    developer's machine for everyone."""
+    domain = domain.strip()
+    try:
+        host = urlparse(domain if "://" in domain else f"//{domain}").hostname
+    except ValueError:
+        return False
+    return (host or "") in LOCALHOST_HOSTS
+
+
 def bare_host(domain: str) -> str:
     """'https://Example.com/path' -> 'example.com'."""
     value = domain.strip()

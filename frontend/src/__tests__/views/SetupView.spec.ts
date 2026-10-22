@@ -146,7 +146,7 @@ describe('SetupView', () => {
     // Test invalid domain
     await domainInput.setValue('invalid')
     await domainInput.trigger('input')
-    expect(wrapper.find('.error-hint').text()).toContain('Please enter a valid domain')
+    expect(wrapper.find('.error-hint').text()).toContain('Please enter your website')
     
     // Test valid domain
     await domainInput.setValue('example.com')

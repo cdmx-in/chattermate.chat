@@ -142,7 +142,7 @@ const handleSubmit = async () => {
     }
 
     if (!isDomainValid.value) {
-        error.value = 'Please enter a valid domain'
+        error.value = 'Please enter your website, like yourwebsite.com'
         return
     }
 
@@ -232,12 +232,12 @@ const timeOptions = Array.from({ length: 24 * 4 }, (_, i) => {
                         </div>
 
                         <div class="form-group">
-                            <label class="form-label" for="domain">Domain</label>
+                            <label class="form-label" for="domain">Your website</label>
                             <input class="form-input" id="domain" v-model="orgData.domain"
                                 @input="handleDomainInput(orgData.domain)" type="text" required
-                                :class="{ 'invalid': domainTouched && !isDomainValid }" placeholder="yourdomain.com">
+                                :class="{ 'invalid': domainTouched && !isDomainValid }" placeholder="yourwebsite.com">
                             <p v-if="domainTouched && !isDomainValid" class="error-hint">
-                                Please enter a valid domain (e.g., example.com)
+                                Please enter your website, like yourwebsite.com
                             </p>
                         </div>
 

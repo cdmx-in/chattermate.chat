@@ -60,26 +60,10 @@ def test_get_organization(org_repo):
     assert retrieved_org.id == org.id
     assert retrieved_org.name == org.name
 
-def test_get_organization_by_domain(org_repo):
-    """Test retrieving an organization by domain"""
-    domain = "test.com"
-    org = org_repo.create_organization(
-        name="Test Organization",
-        domain=domain,
-        timezone="UTC"
-    )
-
-    retrieved_org = org_repo.get_organization_by_domain(domain)
-    assert retrieved_org.id == org.id
-    assert retrieved_org.domain == domain
-
-def test_is_domain_taken(org_repo):
-    """Domain clashes ignore case and the org being updated"""
-    org = org_repo.create_organization(name="Test Organization", domain="test.com", timezone="UTC")
-
-    assert org_repo.is_domain_taken("TEST.com") is True
-    assert org_repo.is_domain_taken("test.com", exclude_org_id=org.id) is False
-    assert org_repo.is_domain_taken("other.com") is False
+def test_two_organizations_can_share_a_website(org_repo):
+    first = org_repo.create_organization(name="Agency", domain="shop.example.com", timezone="UTC")
+    second = org_repo.create_organization(name="Client", domain="shop.example.com", timezone="UTC")
+    assert first.id != second.id and first.domain == second.domain
 
 def test_get_multi(org_repo):
     """Test retrieving multiple organizations with pagination"""

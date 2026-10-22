@@ -608,12 +608,6 @@ async def update_organization_domain(
         raise
     except Exception as e:
         logger.error(f"Error updating organization domain: {str(e)}")
-        # Check if it's a unique constraint violation
-        if "duplicate key" in str(e).lower() or "unique constraint" in str(e).lower():
-            raise HTTPException(
-                status_code=400,
-                detail="Domain is already connected to another organization"
-            )
         raise HTTPException(
             status_code=500,
             detail="Error updating organization domain"

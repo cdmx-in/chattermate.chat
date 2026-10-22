@@ -29,7 +29,9 @@ class Organization(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, index=True,default=uuid.uuid4)
     name = Column(String(100), nullable=False)
-    domain = Column(String(100), unique=True, nullable=False)
+    # The org's website. Not unique: the widget no longer depends on it (it is
+    # framed from our origin), so two orgs may run on the same site.
+    domain = Column(String(100), nullable=False, index=True)
     timezone = Column(String(50), nullable=False, default='UTC')
     business_hours = Column(JSON, default=lambda: {
         'monday': {'start': '09:00', 'end': '17:00', 'enabled': True},

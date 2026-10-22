@@ -458,31 +458,17 @@ def test_get_another_organizations_stats_is_not_found(client, other_organization
 
 
 @pytest.mark.parametrize("domain", ["other.example.com", "Other.Example.COM"])
-def test_update_organization_domain_taken_is_conflict(client, db, test_organization, other_organization, domain):
-    """A domain another org already uses is refused with 409, ignoring case"""
+def test_two_organizations_may_share_a_website(client, db, test_organization, other_organization, domain):
+    """The widget is framed from our origin, so an org's website needn't be its own:
+    an agency and its client, or two teams on one site, can both name it"""
     response = client.patch(
         f"/api/v1/organizations/{test_organization.id}",
         json={"domain": domain}
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == organizations_router.DOMAIN_TAKEN_MESSAGE
+    assert response.status_code == 200
     db.refresh(test_organization)
-    assert test_organization.domain == "test.com"
-
-
-def test_update_organization_domain_taken_race_is_conflict(client, db, test_organization, other_organization, monkeypatch):
-    """A unique violation at commit (domain claimed after the check) is a 409, not a 500"""
-    from app.repositories.organization import OrganizationRepository
-    monkeypatch.setattr(OrganizationRepository, "is_domain_taken", lambda *args, **kwargs: False)
-
-    response = client.patch(
-        f"/api/v1/organizations/{test_organization.id}",
-        json={"domain": other_organization.domain}
-    )
-
-    assert response.status_code == 409
-    assert response.json()["detail"] == organizations_router.DOMAIN_TAKEN_MESSAGE
+    assert test_organization.domain == domain
 
 
 def test_update_organization_keeps_own_domain(client, test_organization, other_organization):
