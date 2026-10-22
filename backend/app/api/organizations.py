@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 import json
 
-from app.utils.domain_check import LOCALHOST_DOMAIN_MESSAGE, is_localhost_domain
+from app.utils.domain_check import LOCALHOST_DOMAIN_MESSAGE, InvalidWebsite, validate_org_website
 from app.database import get_db
 from app.models.organization import Organization
 from app.models.user import User
@@ -334,12 +334,18 @@ async def update_organization(
                         detail=f"Invalid time format for {day}. Use HH:MM format (24-hour)"
                     )
 
-        new_domain = update_data.get('domain')
-        if new_domain and new_domain.lower() != (org.domain or '').lower() and is_localhost_domain(new_domain):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=LOCALHOST_DOMAIN_MESSAGE
-            )
+        # A changed website is checked and stored as its host; saving the form
+        # with the website as it already is never fails on an older value
+        if 'domain' in update_data:
+            new_domain = update_data['domain']
+            unchanged = isinstance(new_domain, str) and new_domain.strip().lower() == (org.domain or '').strip().lower()
+            if unchanged:
+                del update_data['domain']
+            else:
+                try:
+                    update_data['domain'] = validate_org_website(new_domain)
+                except InvalidWebsite as invalid:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(invalid))
 
         for field, value in update_data.items():
             setattr(org, field, value)

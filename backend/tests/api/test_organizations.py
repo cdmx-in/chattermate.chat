@@ -468,7 +468,7 @@ def test_two_organizations_may_share_a_website(client, db, test_organization, ot
 
     assert response.status_code == 200
     db.refresh(test_organization)
-    assert test_organization.domain == domain
+    assert test_organization.domain == "other.example.com"
 
 
 def test_update_organization_keeps_own_domain(client, test_organization, other_organization):
@@ -483,11 +483,10 @@ def test_update_organization_keeps_own_domain(client, test_organization, other_o
     assert response.json()["name"] == "Renamed"
 
 
-def test_update_organization_unique_domain(client, db, test_organization, other_organization):
-    """A domain nobody else uses is saved"""
+def test_a_new_website_is_stored_as_its_host(client, db, test_organization):
     response = client.patch(
         f"/api/v1/organizations/{test_organization.id}",
-        json={"domain": "fresh.example.com"}
+        json={"domain": "  https://Fresh.Example.com/pricing?x=1  "}
     )
 
     assert response.status_code == 200
@@ -496,7 +495,25 @@ def test_update_organization_unique_domain(client, db, test_organization, other_
     assert test_organization.domain == "fresh.example.com"
 
 
-@pytest.mark.parametrize("domain", ["localhost", "LocalHost", "localhost:3000", "http://localhost:5173", "127.0.0.1"])
+@pytest.mark.parametrize("website, detail", [
+    ("", "Your website is required"),
+    ("   ", "Your website is required"),
+    (None, "Your website is required"),
+    ("a]b.com", "Please enter your website, like yourwebsite.com"),
+    ("intranet", "Please enter your website, like yourwebsite.com"),
+    ("a" * 120 + ".com", "Please enter your website, like yourwebsite.com"),
+])
+def test_a_website_that_cant_be_stored_is_refused_plainly(client, db, test_organization, website, detail):
+    response = client.patch(f"/api/v1/organizations/{test_organization.id}", json={"domain": website})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
+    db.refresh(test_organization)
+    assert test_organization.domain == "test.com"
+
+
+@pytest.mark.parametrize("domain", ["localhost", "LocalHost", "localhost:3000", "http://localhost:5173", "127.0.0.1",
+                                    "www.localhost", "app.localhost", "0.0.0.0", "[::1]:8000"])
 def test_update_organization_localhost_domain_is_refused(client, db, test_organization, domain):
     """Localhost is refused as an org domain with a plain message"""
     response = client.patch(

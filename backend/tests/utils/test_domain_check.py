@@ -24,7 +24,7 @@ import time
 import pytest
 
 from app.utils import domain_check
-from app.utils.domain_check import bare_host, domain_resolves
+from app.utils.domain_check import InvalidWebsite, bare_host, domain_resolves, is_localhost_domain, validate_org_website
 
 
 @pytest.mark.parametrize("given,expected", [
@@ -131,3 +131,42 @@ def test_slots_come_back_after_timeouts(monkeypatch):
     fake_dns(monkeypatch, known={"teeckbox.com"})
     monkeypatch.setattr(domain_check, "LOOKUP_TIMEOUT_SECONDS", 1.0)
     assert asyncio.run(domain_resolves("teeckbox.com")) is True
+
+
+# ---- organization websites ----------------------------------------------------
+
+@pytest.mark.parametrize("typed, stored", [
+    ("acme.com", "acme.com"),
+    ("  https://WWW.Acme.com/pricing?plan=pro  ", "www.acme.com"),
+    ("shop.acme.co.uk:8443", "shop.acme.co.uk"),
+    ("acme.com.", "acme.com"),
+])
+def test_a_website_is_stored_as_its_host(typed, stored):
+    assert validate_org_website(typed) == stored
+
+
+@pytest.mark.parametrize("typed, message", [
+    (None, "Your website is required"),
+    ("   ", "Your website is required"),
+    ("a]b.com", "Please enter your website, like yourwebsite.com"),
+    ("[x", "Please enter your website, like yourwebsite.com"),
+    ("intranet", "Please enter your website, like yourwebsite.com"),
+    ("a" * 100 + ".com", "Please enter your website, like yourwebsite.com"),
+    ("localhost:3000", "Localhost can't be used as your website. Use the site where you'll add the widget."),
+])
+def test_a_website_that_cant_be_stored_says_why(typed, message):
+    with pytest.raises(InvalidWebsite, match=message.replace("(", r"\(").replace(".", r"\.")):
+        validate_org_website(typed)
+
+
+@pytest.mark.parametrize("typed", ["localhost", "www.localhost", "app.localhost", "127.0.0.1", "0.0.0.0",
+                                   "[::1]:8000", "http://LocalHost:5173/x"])
+def test_every_form_of_localhost_counts(typed):
+    # www.localhost too: CORS admits a website with and without www.
+    assert is_localhost_domain(typed)
+
+
+@pytest.mark.parametrize("typed", ["localhost.example.com", "mylocalhost.com", "a]b.com"])
+def test_lookalikes_and_unparsable_input_are_not_localhost(typed):
+    assert not is_localhost_domain(typed)
+

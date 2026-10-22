@@ -43,22 +43,6 @@ CACHE_LIMIT = 1000
 _cache: Dict[str, Tuple[float, bool]] = {}
 
 
-LOCALHOST_DOMAIN_MESSAGE = "Localhost can't be used as your website. Use the site where you'll add the widget."
-LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
-
-
-def is_localhost_domain(domain: str) -> bool:
-    """Whether a website (bare host, host:port or URL) points at localhost. Org
-    websites still feed CORS for cached older loaders, which must never admit a
-    developer's machine for everyone."""
-    domain = domain.strip()
-    try:
-        host = urlparse(domain if "://" in domain else f"//{domain}").hostname
-    except ValueError:
-        return False
-    return (host or "") in LOCALHOST_HOSTS
-
-
 def bare_host(domain: str) -> str:
     """'https://Example.com/path' -> 'example.com'."""
     value = domain.strip()
@@ -69,6 +53,47 @@ def site_host(domain: str) -> str:
     """An org's site as hostnames compare: 'https://WWW.Acme.com/' -> 'acme.com'.
     CORS admits this host and its www., however the domain was typed."""
     return bare_host(domain).removeprefix("www.")
+
+
+LOCALHOST_DOMAIN_MESSAGE = "Localhost can't be used as your website. Use the site where you'll add the widget."
+WEBSITE_REQUIRED_MESSAGE = "Your website is required"
+WEBSITE_INVALID_MESSAGE = "Please enter your website, like yourwebsite.com"
+_LOCAL_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1"})
+_WEBSITE_MAX_LENGTH = 100  # the organizations.domain column
+
+
+class InvalidWebsite(ValueError):
+    """An organization website that can't be stored; the message is for the person."""
+
+
+def is_localhost_domain(domain: str) -> bool:
+    """Whether a website points at a developer's machine, however it is typed
+    (www.localhost included: CORS admits a site with and without www.). Org
+    websites still feed CORS for cached older loaders, which must never admit
+    such a machine for everyone."""
+    try:
+        host = site_host(domain).rstrip(".")
+    except ValueError:
+        return False
+    return host in _LOCAL_HOSTS or host.endswith(".localhost")
+
+
+def validate_org_website(value: object) -> str:
+    """An organization's website as stored: its host only, lowercase
+    ('https://WWW.Acme.com/pricing' -> 'www.acme.com'). Required, but not
+    unique. Raises InvalidWebsite with a message a person can act on."""
+    text = value.strip() if isinstance(value, str) else ""
+    if not text:
+        raise InvalidWebsite(WEBSITE_REQUIRED_MESSAGE)
+    try:
+        host = bare_host(text).rstrip(".")
+    except ValueError:
+        host = ""
+    if is_localhost_domain(text):
+        raise InvalidWebsite(LOCALHOST_DOMAIN_MESSAGE)
+    if not host or "." not in host or len(host) > _WEBSITE_MAX_LENGTH:
+        raise InvalidWebsite(WEBSITE_INVALID_MESSAGE)
+    return host
 
 
 def _lookup(host: str) -> Optional[bool]:

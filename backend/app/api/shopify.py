@@ -19,6 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
+from app.utils.domain_check import InvalidWebsite, validate_org_website
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.database import get_db
@@ -568,13 +569,10 @@ async def update_organization_domain(
         body = await request.json()
         new_domain = body.get('domain')
 
-        if not new_domain:
-            raise HTTPException(status_code=400, detail="domain is required")
-
-        # Validate domain format (basic validation)
-        new_domain = new_domain.strip()
-        if not new_domain:
-            raise HTTPException(status_code=400, detail="domain cannot be empty")
+        try:
+            new_domain = validate_org_website(new_domain)
+        except InvalidWebsite as invalid:
+            raise HTTPException(status_code=400, detail=str(invalid))
 
         # Get organization
         if not db_shop.organization_id:
