@@ -27,6 +27,7 @@ from app.api import help_center_images
 from app.api import channels as channels_api
 from app.api import webhooks as channel_webhooks
 from app.api import sso as sso_api
+from app.api import user_identities as user_identities_api
 # Import widget_chat to register socket.io event handlers for /widget namespace
 from app.api import widget_chat  # noqa: F401 - imported for side effects (socket.io handlers registration)
 from fastapi import FastAPI, BackgroundTasks
@@ -178,6 +179,12 @@ app.include_router(
 
 app.include_router(
     users.router,
+    prefix=f"{settings.API_V1_STR}/users",
+    tags=["users"]
+)
+
+app.include_router(
+    user_identities_api.router,
     prefix=f"{settings.API_V1_STR}/users",
     tags=["users"]
 )

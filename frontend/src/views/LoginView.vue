@@ -20,6 +20,7 @@ import { useRouter } from 'vue-router'
 import { authService } from '@/services/auth'
 import { ssoService, type SsoProvider } from '@/services/sso'
 import { resolveLandingRoute } from '@/router/landing'
+import { isInternalPath } from '@/utils/validators'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import { useForgotPassword } from '@/composables/useForgotPassword'
 import InstallPrompt from '@/components/pwa/InstallPrompt.vue'
@@ -42,9 +43,15 @@ const error = ref('')
 const isLoading = ref(false)
 // Single sign-on providers the backend is configured for; none means no buttons.
 const ssoProviders = ref<SsoProvider[]>([])
-// Whether the e-mail/password form is offered at all (an operator can make SSO the only way in).
+// Whether the page leads with the e-mail/password form. An operator can make it
+// lead with SSO; the form then stays one click away for people not linked yet.
 const passwordLogin = ref(true)
-const showPasswordForm = computed(() => passwordLogin.value || ssoProviders.value.length === 0)
+const passwordFormOpened = ref(false)
+// The providers refuse to load in a frame, and in the old Shopify popup the
+// round trip would cut the page off from the window that opened it.
+const embeddedOrFramed = router.currentRoute.value.query.embedded === 'true' || window.self !== window.top
+const ssoAvailable = computed(() => ssoProviders.value.length > 0 && !embeddedOrFramed)
+const showPasswordForm = computed(() => passwordLogin.value || passwordFormOpened.value || !ssoAvailable.value)
 // SSO has its own progress states so the password button never says "Signing in…" for it.
 const ssoRedirecting = ref('')   // provider key the browser is being sent to
 const ssoCompleting = ref(false) // back from the provider, fetching the session
@@ -99,8 +106,8 @@ const continueAfterLogin = () => {
         try {
 
 
-            // If return_to is specified, redirect there
-            if (returnTo) {
+            // If return_to is specified, redirect there (only ever a page of ours)
+            if (isInternalPath(returnTo)) {
                 console.log('📍 Redirecting to return_to:', returnTo)
                 window.location.href = returnTo
                 return
@@ -155,7 +162,7 @@ const continueAfterLogin = () => {
 
         // Redirect to auth complete page
         const query: any = { shop, shop_id: shopId, host }
-        if (returnTo) {
+        if (isInternalPath(returnTo)) {
             query.return_to = returnTo
         }
 
@@ -193,8 +200,8 @@ const continueAfterLogin = () => {
     // Check for redirect query parameter (internal frontend route)
     const redirectPath = router.currentRoute.value.query.redirect as string
     if (redirectPath) {
-        // If it's an internal route (starts with /), use router.push
-        if (redirectPath.startsWith('/')) {
+        // If it's an internal route, use router.push
+        if (isInternalPath(redirectPath)) {
             router.push(redirectPath)
             return
         }
@@ -231,7 +238,7 @@ const startSso = (provider: SsoProvider) => {
     ssoRedirecting.value = provider.key
     // The backend carries the login page's own parameters (?redirect=, the
     // Shopify flows) through the provider and hands them back with ?sso=ok.
-    window.location.href = ssoService.startUrl(provider.key, window.location.search)
+    window.location.href = ssoService.startUrl(provider.key, router.currentRoute.value.query)
 }
 
 // The SSO callback lands here with the cookies set and `?sso=ok` (or `?sso_error=`).
@@ -359,7 +366,7 @@ const handleVerifyAndResetPassword = async () => {
 
                 <p v-if="ssoCompleting" class="sso-status" role="status">Completing sign-in…</p>
 
-                <template v-if="ssoProviders.length">
+                <template v-if="ssoAvailable">
                     <div v-if="showPasswordForm" class="auth-divider" aria-hidden="true"><span>or</span></div>
                     <button
                         v-for="provider in ssoProviders"
@@ -381,6 +388,9 @@ const handleVerifyAndResetPassword = async () => {
                             <path fill="#00A4EF" d="M1 12.5h10.5V23H1z"/><path fill="#FFB900" d="M12.5 12.5H23V23H12.5z"/>
                         </svg>
                         {{ ssoRedirecting === provider.key ? `Redirecting to ${provider.label}…` : `Continue with ${provider.label}` }}
+                    </button>
+                    <button v-if="!showPasswordForm" type="button" class="password-toggle" @click="passwordFormOpened = true">
+                        Sign in with a password instead
                     </button>
                 </template>
 
@@ -714,6 +724,18 @@ const handleVerifyAndResetPassword = async () => {
     text-decoration: none;
 }
 .forgot-link:hover { text-decoration: underline; }
+
+.password-toggle {
+    align-self: center;
+    background: none;
+    border: none;
+    padding: 4px;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    color: var(--accent-ink);
+    cursor: pointer;
+}
+.password-toggle:hover { text-decoration: underline; }
 
 .auth-error {
     color: var(--c-coral);

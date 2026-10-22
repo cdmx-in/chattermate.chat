@@ -30,7 +30,7 @@ from app.models.schemas.organization import (
     OrganizationCreateResponse
 )
 from app.core.auth import get_current_user, require_permissions
-from app.services.auth_sessions import issue_tokens, set_session_cookies
+from app.services.auth_sessions import SIGNUP, issue_tokens, set_session_cookies
 from app.core.logger import get_logger
 from app.models.role import Role
 from app.models.permission import Permission, DEFAULT_AGENT_ROLE_PERMISSIONS
@@ -158,7 +158,7 @@ async def create_organization(
         db.flush()
 
         # Open the admin's first session and set cookies
-        access_token, refresh_token = issue_tokens(db, admin.id, organization.id)
+        access_token, refresh_token = issue_tokens(db, admin.id, organization.id, auth_method=SIGNUP)
 
         set_session_cookies(response, admin, admin_role, access_token, refresh_token)
 

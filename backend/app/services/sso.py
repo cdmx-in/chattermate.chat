@@ -13,8 +13,8 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-Single sign-on for the dashboard: Google and Microsoft over OpenID Connect
-(authorization-code flow).
+Single sign-on for the dashboard over OpenID Connect (authorization-code flow
+with PKCE).
 
 /sso/{provider}/start sends the browser to the provider; it comes back to
 /sso/{provider}/callback with a code. The backend exchanges the code, checks
@@ -23,110 +23,30 @@ dashboard user the account is linked to (app.services.sso_accounts) and opens
 the same session a password login would. SSO never creates accounts: admins
 still decide who is on the team, SSO only decides how they sign in.
 
+What differs per provider lives in app.services.sso_providers; the browser
+side of a sign-in in progress in app.services.sso_state.
+
 No client library: discovery documents and key sets are fetched with httpx
 and the token is verified with python-jose, which already signs the app's own
-JWTs. A user without a profile picture gets the provider's photo (Google's
-picture URL or the Microsoft Graph photo), stored like an uploaded one.
+JWTs.
 """
 
-import re
+import base64
+import hashlib
+import secrets
 import time
-from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
-from urllib.parse import urlencode, urlparse
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Tuple
+from urllib.parse import urlencode
 
 import httpx
 from jose import JWTError, jwt
 
 from app.core.config import settings
-from app.core.logger import get_logger
-from app.core.outbound_policy import OutboundTargetBlocked, check_outbound_target
-from app.services.file_storage import profile_pic_folder, store_upload
+from app.services.sso_providers import Provider, SsoError
 
-logger = get_logger(__name__)
-
-GOOGLE = "google"
-MICROSOFT = "microsoft"
-
-_HTTP_TIMEOUT = 15.0
+_HTTP_TIMEOUT = 10.0
 _METADATA_TTL_SECONDS = 60 * 60
-AVATAR_MAX_BYTES = 2 * 1024 * 1024
-_AVATAR_EXTENSIONS = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/gif": ".gif",
-    "image/webp": ".webp",
-}
-MICROSOFT_GRAPH_PHOTO_URL = "https://graph.microsoft.com/v1.0/me/photo/$value"
-# MICROSOFT_SSO_TENANT values that accept accounts from any directory.
-_MICROSOFT_SHARED_TENANTS = {"common", "organizations", "consumers"}
-# The tenant personal Microsoft accounts sign in from. Microsoft verifies their
-# address itself, unlike a work directory, whose admin can type in any address.
-MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
-
-
-class SsoError(Exception):
-    """A sign-in that must stop. `code` is what the login page gets told; the
-    detail stays in the log, since most of these describe our own config."""
-
-    def __init__(self, code: str, detail: str = ""):
-        super().__init__(detail or code)
-        self.code = code
-        self.detail = detail
-
-
-@dataclass(frozen=True)
-class Provider:
-    key: str
-    label: str
-    discovery_url: str
-    scopes: str
-    client_id: str
-    client_secret: str
-    # Microsoft's multi-tenant endpoints publish an issuer *template*; the real
-    # issuer carries the signing tenant's id, which the token names in `tid`.
-    issuer_template: Optional[str] = None
-    # True when the operator pinned Microsoft to their own directory, whose
-    # addresses they manage and so may link accounts by.
-    trusts_directory_email: bool = False
-
-
-def password_login_enabled() -> bool:
-    """Whether the e-mail/password form is offered. It can only be switched off
-    once an SSO provider exists; otherwise nobody could sign in at all."""
-    return settings.PASSWORD_LOGIN_ENABLED or not providers()
-
-
-def providers() -> Dict[str, Provider]:
-    """The providers an operator has configured, in the order the login page shows them."""
-    out: Dict[str, Provider] = {}
-    if settings.GOOGLE_SSO_CLIENT_ID and settings.GOOGLE_SSO_CLIENT_SECRET:
-        out[GOOGLE] = Provider(
-            key=GOOGLE,
-            label="Google",
-            discovery_url="https://accounts.google.com/.well-known/openid-configuration",
-            scopes="openid email profile",
-            client_id=settings.GOOGLE_SSO_CLIENT_ID,
-            client_secret=settings.GOOGLE_SSO_CLIENT_SECRET,
-        )
-    if settings.MICROSOFT_SSO_CLIENT_ID and settings.MICROSOFT_SSO_CLIENT_SECRET:
-        tenant = (settings.MICROSOFT_SSO_TENANT or "common").strip()
-        out[MICROSOFT] = Provider(
-            key=MICROSOFT,
-            label="Microsoft",
-            discovery_url=f"https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration",
-            # User.Read is what lets us read the profile photo from Graph.
-            scopes="openid email profile User.Read",
-            client_id=settings.MICROSOFT_SSO_CLIENT_ID,
-            client_secret=settings.MICROSOFT_SSO_CLIENT_SECRET,
-            issuer_template="https://login.microsoftonline.com/{tenantid}/v2.0",
-            trusts_directory_email=tenant.lower() not in _MICROSOFT_SHARED_TENANTS,
-        )
-    return out
-
-
-def get_provider(key: str) -> Optional[Provider]:
-    return providers().get((key or "").lower())
 
 
 def redirect_uri(provider: Provider) -> str:
@@ -135,15 +55,22 @@ def redirect_uri(provider: Provider) -> str:
     return f"{settings.BACKEND_URL.rstrip('/')}{settings.API_V1_STR}/sso/{provider.key}/callback"
 
 
+def new_pkce_pair() -> Tuple[str, str]:
+    """(code_verifier, S256 code_challenge) for one sign-in."""
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    return verifier, challenge
+
+
 # ---------------------------------------------------------------------------
-# Provider metadata. ponytail: per-process caches; a worker refetches two small
-# documents an hour, which is nothing, and a rotated key is picked up on demand.
+# Provider metadata. Per-process caches: a worker refetches two small documents
+# an hour, which is nothing, and a rotated key is picked up on demand.
 # ---------------------------------------------------------------------------
 _discovery_cache: Dict[str, Tuple[dict, float]] = {}
 _jwks_cache: Dict[str, Tuple[dict, float]] = {}
 
 
-def _client(**kwargs) -> httpx.AsyncClient:
+def http_client(**kwargs) -> httpx.AsyncClient:
     return httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=settings.VERIFY_SSL_CERTIFICATES, **kwargs)
 
 
@@ -166,7 +93,7 @@ def _endpoint(doc: dict, name: str) -> str:
 
 
 async def _get_json(url: str) -> dict:
-    async with _client() as client:
+    async with http_client() as client:
         response = await client.get(url)
         response.raise_for_status()
         return _json_of(response, url)
@@ -203,7 +130,7 @@ def clear_caches() -> None:
 # ---------------------------------------------------------------------------
 # The flow
 # ---------------------------------------------------------------------------
-async def authorize_url(provider: Provider, state: str, nonce: str) -> str:
+async def authorize_url(provider: Provider, state: str, nonce: str, code_challenge: str) -> str:
     doc = await discovery(provider)
     params = {
         "client_id": provider.client_id,
@@ -212,18 +139,21 @@ async def authorize_url(provider: Provider, state: str, nonce: str) -> str:
         "scope": provider.scopes,
         "state": state,
         "nonce": nonce,
+        "code_challenge": code_challenge,
+        "code_challenge_method": "S256",
         # Always offer the account chooser: a shared machine must not silently
         # sign in whoever Google/Microsoft remembers.
         "prompt": "select_account",
+        **provider.authorize_params(),
     }
     return f"{_endpoint(doc, 'authorization_endpoint')}?{urlencode(params)}"
 
 
-async def exchange_code(provider: Provider, code: str) -> dict:
+async def exchange_code(provider: Provider, code: str, code_verifier: str) -> dict:
     """Redeem the authorization code. Returns the provider's token response
     (id_token, access_token, ...)."""
     doc = await discovery(provider)
-    async with _client() as client:
+    async with http_client() as client:
         response = await client.post(
             _endpoint(doc, "token_endpoint"),
             data={
@@ -232,6 +162,7 @@ async def exchange_code(provider: Provider, code: str) -> dict:
                 "redirect_uri": redirect_uri(provider),
                 "client_id": provider.client_id,
                 "client_secret": provider.client_secret,
+                "code_verifier": code_verifier,
             },
         )
     if response.status_code != 200:
@@ -249,24 +180,12 @@ def _key_for(keys: dict, kid: Optional[str]) -> Optional[dict]:
     return None
 
 
-def _issuer_ok(provider: Provider, claims: dict, doc: dict) -> bool:
-    issuer = claims.get("iss", "")
-    published = doc.get("issuer", "")
-    if provider.issuer_template and "{tenantid}" in (published or provider.issuer_template):
-        # Multi-tenant Microsoft: the issuer is per tenant and the token says
-        # which one signed it; the discovery document only gives the shape.
-        tenant = claims.get("tid")
-        return bool(tenant) and issuer == provider.issuer_template.replace("{tenantid}", tenant)
-    if provider.key == GOOGLE:
-        # Google documents both spellings.
-        return issuer in ("https://accounts.google.com", "accounts.google.com")
-    return bool(published) and issuer == published
-
-
-async def verify_id_token(provider: Provider, id_token: str, nonce: Optional[str]) -> dict:
+async def verify_id_token(provider: Provider, id_token: str, nonce: str) -> dict:
     """The claims of an ID token that is genuinely for us: signed by a key the
     provider publishes, addressed to our client id, from the expected issuer,
     unexpired, and carrying the nonce this sign-in started with."""
+    if not nonce:
+        raise SsoError("invalid_token", "sign-in carries no nonce to check the id_token against")
     try:
         header = jwt.get_unverified_header(id_token)
     except JWTError as e:
@@ -288,9 +207,9 @@ async def verify_id_token(provider: Provider, id_token: str, nonce: Optional[str
         )
     except JWTError as e:
         raise SsoError("invalid_token", f"{provider.key} id_token rejected: {e}")
-    if not _issuer_ok(provider, claims, await discovery(provider)):
+    if not provider.issuer_ok(claims, await discovery(provider)):
         raise SsoError("invalid_token", f"{provider.key} id_token from unexpected issuer {claims.get('iss')}")
-    if nonce and claims.get("nonce") != nonce:
+    if not secrets.compare_digest(str(claims.get("nonce") or ""), nonce):
         raise SsoError("invalid_token", f"{provider.key} id_token nonce mismatch")
     return claims
 
@@ -298,100 +217,35 @@ async def verify_id_token(provider: Provider, id_token: str, nonce: Optional[str
 @dataclass(frozen=True)
 class SsoIdentity:
     """Who the provider says signed in. `issuer` + `subject` is the stable
-    account id; the e-mail is only good for linking when `email_trusted`."""
+    account id; the e-mail is only good for linking when `email_trusted`.
+    `hosted_domain`, `tenant_id` and `claims` are there for sign-in policy."""
     issuer: str
     subject: str
     email: str
     email_trusted: bool
     name: str
-
-
-def _claim_true(value: Any) -> bool:
-    # Booleans arrive as JSON true, or as "true"/"1" in some optional claims.
-    return value is True or str(value).lower() in ("true", "1")
-
-
-def _email_trusted(provider: Provider, claims: dict) -> bool:
-    """Whether the provider vouches that the address belongs to this account.
-
-    Google says so in `email_verified`. In a Microsoft work directory the
-    admin sets the address, so a stranger's tenant could claim anyone's: it
-    counts only for a personal account, a domain Microsoft checked (the
-    optional `xms_edov` claim), or a tenant the operator pinned as their own.
-    """
-    if provider.key == GOOGLE:
-        return _claim_true(claims.get("email_verified"))
-    return (
-        provider.trusts_directory_email
-        or claims.get("tid") == MICROSOFT_CONSUMER_TENANT_ID
-        or _claim_true(claims.get("xms_edov"))
-    )
+    hosted_domain: Optional[str] = None
+    tenant_id: Optional[str] = None
+    claims: dict = field(default_factory=dict, compare=False, repr=False)
 
 
 def identity_from_claims(provider: Provider, claims: dict) -> SsoIdentity:
-    """The account a verified ID token describes. Microsoft accounts without an
-    `email` claim fall back to the sign-in name when it is an address."""
-    subject = claims.get("sub")
+    """The account a verified ID token describes."""
+    provider.check_claims(claims)
+    subject = provider.subject(claims)
     if not subject:
         raise SsoError("invalid_token", f"{provider.key} id_token carries no subject")
-    email = (claims.get("email") or "").strip().lower()
-    if not email and provider.key == MICROSOFT:
-        upn = (claims.get("preferred_username") or "").strip().lower()
-        email = upn if "@" in upn else ""
+    email = provider.email(claims)
     name = claims.get("name") or " ".join(
         part for part in (claims.get("given_name"), claims.get("family_name")) if part
     )
     return SsoIdentity(
-        issuer=claims.get("iss", ""),
-        subject=str(subject),
+        issuer=provider.issuer(claims),
+        subject=subject,
         email=email,
-        email_trusted=bool(email) and _email_trusted(provider, claims),
+        email_trusted=bool(email) and provider.email_trusted(claims, email),
         name=name or email,
+        hosted_domain=provider.hosted_domain(claims),
+        tenant_id=provider.tenant_id(claims),
+        claims=claims,
     )
-
-
-def _google_picture_url(url: str) -> Optional[str]:
-    parsed = urlparse(url)
-    host = (parsed.hostname or "").lower()
-    if parsed.scheme != "https" or not (host == "googleusercontent.com" or host.endswith(".googleusercontent.com")):
-        return None
-    # The token links a 96px thumbnail; the same URL serves larger sizes.
-    return re.sub(r"=s\d+(-c)?$", "=s256-c", url)
-
-
-async def fetch_avatar(provider: Provider, claims: dict, access_token: Optional[str]) -> Optional[Tuple[bytes, str]]:
-    """The account's current photo as (bytes, content type), or None when the
-    provider has none or it is not a plain image of a sane size. Google links
-    a public picture in the token; Microsoft keeps it in Graph, behind the
-    access token the sign-in just earned."""
-    try:
-        if provider.key == GOOGLE:
-            url = _google_picture_url(claims.get("picture") or "")
-            if not url:
-                return None
-            check_outbound_target(url, "Avatar URL")
-            headers: Dict[str, str] = {}
-        else:
-            if not access_token:
-                return None
-            url = MICROSOFT_GRAPH_PHOTO_URL
-            headers = {"Authorization": f"Bearer {access_token}"}
-        async with _client(follow_redirects=False) as client:
-            response = await client.get(url, headers=headers)
-    except (httpx.HTTPError, OutboundTargetBlocked) as e:
-        logger.warning(f"SSO avatar fetch from {provider.key} failed: {e}")
-        return None
-    if response.status_code != 200:
-        return None
-    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-    if content_type not in _AVATAR_EXTENSIONS or not response.content or len(response.content) > AVATAR_MAX_BYTES:
-        return None
-    return response.content, content_type
-
-
-async def store_avatar(user: Any, image: Tuple[bytes, str]) -> str:
-    """Persist a fetched photo where uploaded profile pictures live and return
-    the URL to keep on the user."""
-    content, content_type = image
-    folder = profile_pic_folder(user.organization_id, user.id)
-    return await store_upload(content, folder, f"profile{_AVATAR_EXTENSIONS[content_type]}", content_type)

@@ -29,12 +29,16 @@ from app.models.session_to_agent import SessionToAgent, SessionStatus
 from app.models.schemas.user import AdminPasswordReset, TeammateResponse, UserCreate, UserStatusUpdate, UserUpdate, UserResponse, TokenResponse
 from datetime import datetime, timezone
 from app.core.security import validate_password_strength
-from app.core.auth import INBOX_PERMISSIONS, get_current_user, request_token, require_any_permission, require_permissions
-from app.services.sso import password_login_enabled
+from app.core.auth import (
+    INBOX_PERMISSIONS, get_current_user, request_token, require_any_permission, require_permissions,
+    revoke_presented_sessions,
+)
 from app.services.auth_sessions import (
-    REFRESH, issue_tokens, live_payload, revoke_session, revoke_user_sessions, session_id_of,
+    PASSWORD_LOGIN, REFRESH, issue_tokens, live_payload, revoke_user_sessions, session_id_of,
     session_user_payload, set_session_cookies,
 )
+from app.services.sign_in_policy import SignInRefused, check_sign_in
+from app.services.sso_accounts import forget_identities
 from app.core.logger import get_logger
 from app.repositories.user import UserRepository
 from app.repositories.fcm_token import FCMTokenRepository
@@ -420,6 +424,14 @@ async def get_my_avatar(current_user: User = Depends(get_current_user)):
     )
 
 
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """The signed-in user, as a sign-in answers with it. The dashboard reads it
+    after an SSO sign-in, whose redirect can't carry a response body."""
+    role = db.query(Role).filter(Role.id == current_user.role_id).first()
+    return session_user_payload(current_user, role)
+
+
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: UUID,
@@ -473,11 +485,6 @@ async def login(
     db: Session = Depends(get_db)
 ):
     """Authenticate user and set cookies"""
-    if not password_login_enabled():
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Password sign-in is switched off here. Use single sign-on.",
-        )
     try:
         # Verify credentials
         user = db.query(User).filter(
@@ -491,11 +498,17 @@ async def login(
                 detail="Incorrect email or password",
                 headers={"WWW-Authenticate": "Bearer"},
             )
+        try:
+            check_sign_in(db, user, PASSWORD_LOGIN)
+        except SignInRefused as refused:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(refused))
 
-        # Update online status and open a session for this sign-in
+        # Update online status and open a session for this sign-in, ending the
+        # one this browser had
         user.is_online = True
         user.last_seen = func.now()
-        access_token, refresh_token = issue_tokens(db, user.id, user.organization_id)
+        revoke_presented_sessions(db, request)
+        access_token, refresh_token = issue_tokens(db, user.id, user.organization_id, auth_method=PASSWORD_LOGIN)
         db.commit()
 
         # Get role info
@@ -617,10 +630,7 @@ async def logout(
 ):
     """Logout user, end the session and clear cookies"""
     # End the session server-side, so a copy of either token stops working
-    for token in (request_token(request), request.cookies.get("refresh_token")):
-        sid = session_id_of(token)
-        if sid:
-            revoke_session(db, sid)
+    revoke_presented_sessions(db, request)
 
     # Update online status (commits the revocation too)
     user_repo = UserRepository(db)
@@ -720,6 +730,8 @@ async def update_profile(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already registered"
                 )
+            # SSO links were made for the old address; they don't carry over.
+            forget_identities(db, current_user.id, keep_sid=session_id_of(request_token(request)))
         
         fields = data.dict(exclude_unset=True)
         # `password` and `current_password` are request-only fields; the column
@@ -807,6 +819,10 @@ async def update_user(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
+        # A new address is a new person in the seat: the previous holder's SSO
+        # accounts and sessions must not carry over.
+        forget_identities(db, user.id)
+        revoke_user_sessions(db, user.id)
     
 
     if HAS_ENTERPRISE and hasattr(user_data, 'is_active') and user_data.is_active != user.is_active:

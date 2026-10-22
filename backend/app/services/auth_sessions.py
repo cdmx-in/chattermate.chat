@@ -47,15 +47,21 @@ ACCESS = "access"
 REFRESH = "refresh"
 
 
-def issue_tokens(db: Session, user_id, org_id, sid=None) -> Tuple[str, str]:
+PASSWORD_LOGIN = "password"
+SIGNUP = "signup"
+SSO_LOGIN = "sso"
+
+
+def issue_tokens(db: Session, user_id, org_id, sid=None, auth_method=None, identity_id=None) -> Tuple[str, str]:
     """Return (access_token, refresh_token) for a session.
 
-    Without `sid` a new session is opened (a login). With the `sid` of a live
-    session the tokens are re-minted for it (a refresh), so revoking it still
-    ends everything that came from the same login.
+    Without `sid` a new session is opened (a login), recording how it was
+    opened. With the `sid` of a live session the tokens are re-minted for it
+    (a refresh), so revoking it still ends everything that came from the same
+    login.
     """
     if sid is None:
-        session = AuthSession(user_id=_as_uuid(user_id))
+        session = AuthSession(user_id=_as_uuid(user_id), auth_method=auth_method, identity_id=identity_id)
         db.add(session)
         db.flush()
         sid = session.id
@@ -106,6 +112,18 @@ def revoke_session(db: Session, sid) -> None:
         AuthSession.id == session_id,
         AuthSession.revoked_at.is_(None),
     ).update({"revoked_at": datetime.now(timezone.utc)}, synchronize_session=False)
+
+
+def revoke_identity_sessions(db: Session, identity_id, keep_sid=None) -> None:
+    """End every session a linked SSO account opened, except `keep_sid`."""
+    query = db.query(AuthSession).filter(
+        AuthSession.identity_id == _as_uuid(identity_id),
+        AuthSession.revoked_at.is_(None),
+    )
+    keep = _as_uuid(keep_sid) if keep_sid is not None else None
+    if keep is not None:
+        query = query.filter(AuthSession.id != keep)
+    query.update({"revoked_at": datetime.now(timezone.utc)}, synchronize_session=False)
 
 
 def revoke_user_sessions(db: Session, user_id, keep_sid=None) -> None:

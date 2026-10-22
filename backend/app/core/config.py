@@ -110,16 +110,20 @@ class Settings(BaseSettings):
     #   {BACKEND_URL}/api/v1/sso/microsoft/callback
     GOOGLE_SSO_CLIENT_ID: str = os.getenv("GOOGLE_SSO_CLIENT_ID", "")
     GOOGLE_SSO_CLIENT_SECRET: str = os.getenv("GOOGLE_SSO_CLIENT_SECRET", "")
+    # A Google Workspace domain (example.com): only that domain's accounts may
+    # sign in, and their addresses are trusted for linking.
+    GOOGLE_SSO_HOSTED_DOMAIN: str = os.getenv("GOOGLE_SSO_HOSTED_DOMAIN", "")
     MICROSOFT_SSO_CLIENT_ID: str = os.getenv("MICROSOFT_SSO_CLIENT_ID", "")
     MICROSOFT_SSO_CLIENT_SECRET: str = os.getenv("MICROSOFT_SSO_CLIENT_SECRET", "")
     # "common" accepts any Microsoft work, school or personal account that has an
     # account here (a work account links only with the xms_edov claim, see
-    # app.services.sso); a tenant id limits sign-in to that directory.
+    # app.services.sso_providers); a tenant id limits sign-in to that directory.
     MICROSOFT_SSO_TENANT: str = os.getenv("MICROSOFT_SSO_TENANT", "common")
-    # false makes single sign-on the only way into the dashboard: the login page
-    # hides the e-mail/password form and /users/login refuses. Ignored while no
-    # provider is configured, so a misconfiguration can never lock everyone out.
-    # Install-wide, so meant for single-organization (self-hosted) deployments.
+    # false makes single sign-on the way into the dashboard: the login page leads
+    # with SSO, and a user's password stops working once they have signed in with
+    # SSO (app.services.sign_in_policy). Ignored while no provider is configured,
+    # and never locks out someone not linked yet. Install-wide, so meant for
+    # single-organization (self-hosted) deployments.
     PASSWORD_LOGIN_ENABLED: bool = os.getenv("PASSWORD_LOGIN_ENABLED", "true").lower() == "true"
 
     # Jira. Unlike the others the redirect URI IS configured, because it must

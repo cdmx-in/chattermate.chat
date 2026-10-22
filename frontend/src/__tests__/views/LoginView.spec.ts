@@ -34,7 +34,7 @@ const passwordLogin = vi.hoisted(() => ({ value: true }))
 vi.mock('@/services/sso', () => ({
   ssoService: {
     getConfig: vi.fn(async () => ({ providers: ssoProviders.value, passwordLogin: passwordLogin.value })),
-    startUrl: vi.fn((provider: string, search: string) => `http://api.test/api/v1/sso/${provider}/start${search}`),
+    startUrl: vi.fn((provider: string, query: Record<string, string>) => `http://api.test/api/v1/sso/${provider}/start?${new URLSearchParams(query)}`),
     completeSignIn: vi.fn(),
     errorMessage: vi.fn((code: string | null) => (code === 'no_account' ? 'No team account matches that e-mail address.' : 'Single sign-on failed.')),
   },
@@ -272,6 +272,19 @@ describe('LoginView', () => {
 
   // --- single sign-on -------------------------------------------------------
 
+  // Mount at `path` with window.location.href assignments captured instead of followed.
+  const remountCapturingNavigation = async (path: string) => {
+    const assign = vi.fn()
+    const original = window.location
+    wrapper.unmount()
+    await router.push(path)
+    Object.defineProperty(window, 'location', { value: { ...original, search: original.search, set href(url: string) { assign(url) } }, writable: true, configurable: true })
+    const restore = () => Object.defineProperty(window, 'location', { value: original, writable: true, configurable: true })
+    wrapper = mount(LoginView, { global: { plugins: [router], stubs: { RouterView: true } } })
+    await flushPromises()
+    return { assign, restore }
+  }
+
   const remountAt = async (path: string) => {
     wrapper.unmount()
     await router.push(path)
@@ -297,8 +310,8 @@ describe('LoginView', () => {
     try {
       await buttons[1].trigger('click')
       // The login page's own query goes along; the backend hands it back.
-      expect(ssoService.startUrl).toHaveBeenCalledWith('microsoft', '?redirect=/conversations')
-      expect(assign).toHaveBeenCalledWith('http://api.test/api/v1/sso/microsoft/start?redirect=/conversations')
+      expect(ssoService.startUrl).toHaveBeenCalledWith('microsoft', { redirect: '/conversations' })
+      expect(assign).toHaveBeenCalledWith('http://api.test/api/v1/sso/microsoft/start?redirect=%2Fconversations')
     } finally {
       Object.defineProperty(window, 'location', { value: original, writable: true, configurable: true })
     }
@@ -368,7 +381,7 @@ describe('LoginView', () => {
     }
   })
 
-  it('hides the password form once an operator made SSO the only way in', async () => {
+  it('leads with SSO once an operator made it the way in, keeping the password a click away', async () => {
     ssoProviders.value = [{ key: 'google', label: 'Google' }]
     passwordLogin.value = false
     await remountAt('/')
@@ -376,6 +389,71 @@ describe('LoginView', () => {
     expect(wrapper.find('.auth-submit').exists()).toBe(false)
     expect(wrapper.find('.auth-divider').exists()).toBe(false)
     expect(wrapper.find('.sso-btn').text()).toBe('Continue with Google')
+
+    // Someone who hasn't linked an account yet still has their password.
+    await wrapper.find('.password-toggle').trigger('click')
+    expect(wrapper.find('#email').exists()).toBe(true)
+    expect(wrapper.find('.auth-submit').exists()).toBe(true)
+    expect(wrapper.find('.auth-divider').exists()).toBe(true)
+    expect(wrapper.find('.password-toggle').exists()).toBe(false)
+  })
+
+  it('offers no password toggle while the form already leads', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    await remountAt('/')
+    expect(wrapper.find('#email').exists()).toBe(true)
+    expect(wrapper.find('.password-toggle').exists()).toBe(false)
+  })
+
+  it('hides SSO inside the embedded Shopify app, where the providers cannot load', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    passwordLogin.value = false
+    await remountAt('/?embedded=true&shop_id=7')
+    expect(wrapper.find('.sso-btn').exists()).toBe(false)
+    expect(wrapper.find('#email').exists()).toBe(true)
+  })
+
+  it('hides SSO when the login page is framed', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    const top = Object.getOwnPropertyDescriptor(window, 'top')
+    Object.defineProperty(window, 'top', { value: {}, configurable: true })
+    try {
+      await remountAt('/')
+      expect(wrapper.find('.sso-btn').exists()).toBe(false)
+    } finally {
+      if (top) Object.defineProperty(window, 'top', top)
+    }
+  })
+
+  it('never follows a return_to that leaves the dashboard', async () => {
+    ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
+    const { assign, restore } = await remountCapturingNavigation(
+      '/?sso=ok&shopify_flow=1&shop=s.myshopify.com&shop_id=7&host=aG9zdA&return_to=https%3A%2F%2Fevil.example%2F')
+    try {
+      expect(assign).not.toHaveBeenCalled()
+      expect(router.currentRoute.value.path).toBe('/shopify/auth-complete')
+      expect(router.currentRoute.value.query.return_to).toBeUndefined()
+    } finally {
+      restore()
+    }
+  })
+
+  it('follows a return_to that is a page of the dashboard', async () => {
+    ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
+    const { assign, restore } = await remountCapturingNavigation(
+      '/?sso=ok&shopify_flow=1&shop_id=7&return_to=%2Fshopify%2Fagent-selection%3Fshop_id%3D7')
+    try {
+      expect(assign).toHaveBeenCalledWith('/shopify/agent-selection?shop_id=7')
+    } finally {
+      restore()
+    }
+  })
+
+  it('does not route to a protocol-relative ?redirect=', async () => {
+    ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
+    const push = vi.spyOn(router, 'push')
+    await remountAt('/?sso=ok&redirect=%2F%2Fevil.example')
+    expect(push).not.toHaveBeenCalledWith('//evil.example')
   })
 
   it('keeps the password form when SSO-only is set but no provider is configured', async () => {

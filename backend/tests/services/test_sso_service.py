@@ -14,11 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 The parts of SSO that talk to a provider, exercised against real signatures
-and an in-memory HTTP transport.
+and an in-memory HTTP transport, and the per-provider rules.
 """
 
+import base64
+import hashlib
 import time
 from unittest.mock import AsyncMock
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -28,12 +31,18 @@ from jose import jwk, jwt
 
 from app.core.config import settings
 from app.services import sso
+from app.services.sso_providers import (
+    MICROSOFT_CONSUMER_TENANT_ID, MICROSOFT_GRAPH_PHOTO_URL, Provider, SsoError, get_provider, providers,
+)
+
+GOOGLE_ISS = "https://accounts.google.com"
 
 
 @pytest.fixture
 def both_providers(monkeypatch):
     monkeypatch.setattr(settings, "GOOGLE_SSO_CLIENT_ID", "google-client")
     monkeypatch.setattr(settings, "GOOGLE_SSO_CLIENT_SECRET", "google-secret")
+    monkeypatch.setattr(settings, "GOOGLE_SSO_HOSTED_DOMAIN", "")
     monkeypatch.setattr(settings, "MICROSOFT_SSO_CLIENT_ID", "ms-client")
     monkeypatch.setattr(settings, "MICROSOFT_SSO_CLIENT_SECRET", "ms-secret")
     monkeypatch.setattr(settings, "MICROSOFT_SSO_TENANT", "common")
@@ -64,7 +73,10 @@ def _token(private_pem: str, claims: dict, kid: str = "key-1") -> str:
 
 
 def _stub_metadata(monkeypatch, public_jwk, issuer):
-    monkeypatch.setattr(sso, "discovery", AsyncMock(return_value={"issuer": issuer, "jwks_uri": "https://keys.example"}))
+    monkeypatch.setattr(sso, "discovery", AsyncMock(return_value={
+        "issuer": issuer, "jwks_uri": "https://keys.example",
+        "authorization_endpoint": "https://auth.example/authorize", "token_endpoint": "https://auth.example/token",
+    }))
     jwks = AsyncMock(return_value={"keys": [public_jwk]})
     monkeypatch.setattr(sso, "jwks", jwks)
     return jwks
@@ -79,17 +91,61 @@ def _transport(handler):
 # --- configuration -------------------------------------------------------------
 
 def test_providers_follow_configuration_and_tenant(both_providers, monkeypatch):
-    assert list(sso.providers()) == ["google", "microsoft"]
-    assert "login.microsoftonline.com/common/" in sso.providers()["microsoft"].discovery_url
+    assert list(providers()) == ["google", "microsoft"]
+    assert "login.microsoftonline.com/common/" in providers()["microsoft"].discovery_url
     monkeypatch.setattr(settings, "MICROSOFT_SSO_TENANT", "11111111-2222-3333-4444-555555555555")
-    assert "login.microsoftonline.com/11111111-2222-3333-4444-555555555555/" in sso.providers()["microsoft"].discovery_url
+    assert "login.microsoftonline.com/11111111-2222-3333-4444-555555555555/" in providers()["microsoft"].discovery_url
     monkeypatch.setattr(settings, "GOOGLE_SSO_CLIENT_SECRET", "")
-    assert list(sso.providers()) == ["microsoft"]
+    assert list(providers()) == ["microsoft"]
 
 
 def test_redirect_uri_derives_from_backend_url(both_providers, monkeypatch):
     monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.test/")
-    assert sso.redirect_uri(sso.get_provider("google")) == "https://api.example.test/api/v1/sso/google/callback"
+    assert sso.redirect_uri(get_provider("google")) == "https://api.example.test/api/v1/sso/google/callback"
+
+
+# --- authorization request and code exchange (PKCE) -----------------------------
+
+def test_pkce_pair_is_s256():
+    verifier, challenge = sso.new_pkce_pair()
+    assert len(verifier) >= 43
+    expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    assert challenge == expected
+    assert sso.new_pkce_pair()[0] != verifier
+
+
+@pytest.mark.asyncio
+async def test_authorize_url_carries_state_nonce_and_challenge(both_providers, signing_key, monkeypatch):
+    _stub_metadata(monkeypatch, signing_key[1], GOOGLE_ISS)
+    url = await sso.authorize_url(get_provider("google"), "st", "no", "ch")
+    query = {k: v[0] for k, v in parse_qs(urlparse(url).query).items()}
+    assert url.startswith("https://auth.example/authorize?")
+    assert (query["state"], query["nonce"], query["code_challenge"], query["code_challenge_method"]) == ("st", "no", "ch", "S256")
+    assert "hd" not in query
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_domain_is_asked_for(both_providers, signing_key, monkeypatch):
+    monkeypatch.setattr(settings, "GOOGLE_SSO_HOSTED_DOMAIN", "Acme.Test")
+    _stub_metadata(monkeypatch, signing_key[1], GOOGLE_ISS)
+    url = await sso.authorize_url(get_provider("google"), "st", "no", "ch")
+    assert parse_qs(urlparse(url).query)["hd"] == ["acme.test"]
+
+
+@pytest.mark.asyncio
+async def test_the_code_is_redeemed_with_the_verifier(both_providers, signing_key, monkeypatch):
+    _stub_metadata(monkeypatch, signing_key[1], GOOGLE_ISS)
+    seen = {}
+
+    def handler(request):
+        seen.update({k: v[0] for k, v in parse_qs(request.content.decode()).items()})
+        return httpx.Response(200, json={"id_token": "id", "access_token": "at"})
+
+    monkeypatch.setattr(sso, "http_client", _transport(handler))
+    assert (await sso.exchange_code(get_provider("google"), "the-code", "the-verifier"))["id_token"] == "id"
+    assert seen["code"] == "the-code"
+    assert seen["code_verifier"] == "the-verifier"
+    assert seen["grant_type"] == "authorization_code"
 
 
 # --- ID token verification -----------------------------------------------------
@@ -97,10 +153,10 @@ def test_redirect_uri_derives_from_backend_url(both_providers, monkeypatch):
 @pytest.mark.asyncio
 async def test_a_genuine_google_token_is_accepted(both_providers, signing_key, monkeypatch):
     private_pem, public_jwk = signing_key
-    _stub_metadata(monkeypatch, public_jwk, "https://accounts.google.com")
-    token = _token(private_pem, {"iss": "https://accounts.google.com", "aud": "google-client", "sub": "1", "nonce": "n1",
+    _stub_metadata(monkeypatch, public_jwk, GOOGLE_ISS)
+    token = _token(private_pem, {"iss": GOOGLE_ISS, "aud": "google-client", "sub": "1", "nonce": "n1",
                                  "email": "a@example.test", "email_verified": True})
-    claims = await sso.verify_id_token(sso.get_provider("google"), token, "n1")
+    claims = await sso.verify_id_token(get_provider("google"), token, "n1")
     assert claims["email"] == "a@example.test"
 
 
@@ -108,18 +164,29 @@ async def test_a_genuine_google_token_is_accepted(both_providers, signing_key, m
 @pytest.mark.parametrize("bad, code_detail", [
     ({"aud": "someone-else"}, "rejected"),      # not addressed to us
     ({"nonce": "other"}, "nonce"),              # not the sign-in we started
+    ({"nonce": None}, "nonce"),                 # no nonce at all
     ({"iss": "https://evil.example"}, "issuer"), # not the provider
     ({"exp": int(time.time()) - 10}, "rejected"),  # expired
 ])
 async def test_tokens_that_are_not_for_us_are_refused(both_providers, signing_key, monkeypatch, bad, code_detail):
     private_pem, public_jwk = signing_key
-    _stub_metadata(monkeypatch, public_jwk, "https://accounts.google.com")
-    claims = {"iss": "https://accounts.google.com", "aud": "google-client", "sub": "1", "nonce": "n1", **bad}
+    _stub_metadata(monkeypatch, public_jwk, GOOGLE_ISS)
+    claims = {k: v for k, v in {"iss": GOOGLE_ISS, "aud": "google-client", "sub": "1", "nonce": "n1", **bad}.items() if v is not None}
     token = _token(private_pem, claims)
-    with pytest.raises(sso.SsoError) as err:
-        await sso.verify_id_token(sso.get_provider("google"), token, "n1")
+    with pytest.raises(SsoError) as err:
+        await sso.verify_id_token(get_provider("google"), token, "n1")
     assert err.value.code == "invalid_token"
     assert code_detail in err.value.detail
+
+
+@pytest.mark.asyncio
+async def test_a_sign_in_without_a_nonce_is_refused(both_providers, signing_key, monkeypatch):
+    private_pem, public_jwk = signing_key
+    _stub_metadata(monkeypatch, public_jwk, GOOGLE_ISS)
+    token = _token(private_pem, {"iss": GOOGLE_ISS, "aud": "google-client", "sub": "1"})
+    with pytest.raises(SsoError) as err:
+        await sso.verify_id_token(get_provider("google"), token, "")
+    assert err.value.code == "invalid_token"
 
 
 @pytest.mark.asyncio
@@ -128,14 +195,13 @@ async def test_a_token_signed_by_another_key_is_refused(both_providers, signing_
     other = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     other_pem = other.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
                                     serialization.NoEncryption()).decode()
-    jwks = _stub_metadata(monkeypatch, public_jwk, "https://accounts.google.com")
-    token = _token(other_pem, {"iss": "https://accounts.google.com", "aud": "google-client", "sub": "1"}, kid="key-1")
-    with pytest.raises(sso.SsoError):
-        await sso.verify_id_token(sso.get_provider("google"), token, None)
+    jwks = _stub_metadata(monkeypatch, public_jwk, GOOGLE_ISS)
+    claims = {"iss": GOOGLE_ISS, "aud": "google-client", "sub": "1", "nonce": "n1"}
+    with pytest.raises(SsoError):
+        await sso.verify_id_token(get_provider("google"), _token(other_pem, claims, kid="key-1"), "n1")
     # An unknown kid is looked up once more in case the provider rotated keys.
-    token = _token(other_pem, {"iss": "https://accounts.google.com", "aud": "google-client", "sub": "1"}, kid="key-9")
-    with pytest.raises(sso.SsoError) as err:
-        await sso.verify_id_token(sso.get_provider("google"), token, None)
+    with pytest.raises(SsoError) as err:
+        await sso.verify_id_token(get_provider("google"), _token(other_pem, claims, kid="key-9"), "n1")
     assert "unknown key" in err.value.detail
     assert jwks.call_args.kwargs.get("force") is True
 
@@ -144,44 +210,82 @@ async def test_a_token_signed_by_another_key_is_refused(both_providers, signing_
 async def test_microsoft_multi_tenant_issuer_must_match_the_tokens_tenant(both_providers, signing_key, monkeypatch):
     private_pem, public_jwk = signing_key
     _stub_metadata(monkeypatch, public_jwk, "https://login.microsoftonline.com/{tenantid}/v2.0")
-    provider = sso.get_provider("microsoft")
+    provider = get_provider("microsoft")
     good = _token(private_pem, {"iss": "https://login.microsoftonline.com/tenant-a/v2.0", "tid": "tenant-a",
-                                "aud": "ms-client", "sub": "1", "email": "b@example.test"})
-    assert (await sso.verify_id_token(provider, good, None))["tid"] == "tenant-a"
+                                "aud": "ms-client", "sub": "1", "nonce": "n1", "email": "b@example.test"})
+    assert (await sso.verify_id_token(provider, good, "n1"))["tid"] == "tenant-a"
     forged = _token(private_pem, {"iss": "https://login.microsoftonline.com/tenant-a/v2.0", "tid": "tenant-b",
-                                  "aud": "ms-client", "sub": "1"})
-    with pytest.raises(sso.SsoError):
-        await sso.verify_id_token(provider, forged, None)
+                                  "aud": "ms-client", "sub": "1", "nonce": "n1"})
+    with pytest.raises(SsoError):
+        await sso.verify_id_token(provider, forged, "n1")
 
 
-# --- identity ------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_a_pinned_microsoft_tenant_checks_the_published_issuer(both_providers, signing_key, monkeypatch):
+    private_pem, public_jwk = signing_key
+    monkeypatch.setattr(settings, "MICROSOFT_SSO_TENANT", "tenant-a")
+    _stub_metadata(monkeypatch, public_jwk, "https://login.microsoftonline.com/tenant-a/v2.0")
+    other_tenant = _token(private_pem, {"iss": "https://login.microsoftonline.com/tenant-b/v2.0", "tid": "tenant-b",
+                                        "aud": "ms-client", "sub": "1", "nonce": "n1"})
+    with pytest.raises(SsoError):
+        await sso.verify_id_token(get_provider("microsoft"), other_tenant, "n1")
 
-GOOGLE_ISS = "https://accounts.google.com"
 
+# --- identity and trust ----------------------------------------------------------
 
 def _ms(tid: str, **claims) -> dict:
-    return {"iss": f"https://login.microsoftonline.com/{tid}/v2.0", "tid": tid, "sub": "ms-1", **claims}
+    return {"iss": f"https://login.microsoftonline.com/{tid}/v2.0", "tid": tid, "sub": "pairwise", "oid": "oid-1", **claims}
 
 
-def test_identity_is_the_issuer_and_subject(both_providers):
-    google = sso.get_provider("google")
-    identity = sso.identity_from_claims(google, {"iss": GOOGLE_ISS, "sub": "g-1", "email": "A@Example.Test",
-                                                 "email_verified": True, "name": "Ann"})
-    assert identity == sso.SsoIdentity(issuer=GOOGLE_ISS, subject="g-1", email="a@example.test", email_trusted=True, name="Ann")
-    with pytest.raises(sso.SsoError) as err:
-        sso.identity_from_claims(google, {"iss": GOOGLE_ISS, "email": "a@example.test", "email_verified": True})
+def test_google_identity(both_providers):
+    identity = sso.identity_from_claims(get_provider("google"), {
+        "iss": "accounts.google.com", "sub": "g-1", "email": "A@Gmail.com", "email_verified": True, "name": "Ann"})
+    # One spelling of the issuer, whichever Google sent.
+    assert (identity.issuer, identity.subject, identity.email, identity.email_trusted, identity.name) == (
+        GOOGLE_ISS, "g-1", "a@gmail.com", True, "Ann")
+    with pytest.raises(SsoError) as err:
+        sso.identity_from_claims(get_provider("google"), {"iss": GOOGLE_ISS, "email": "a@gmail.com", "email_verified": True})
     assert err.value.code == "invalid_token"
 
 
-@pytest.mark.parametrize("verified, trusted", [(True, True), ("true", True), (False, False), (None, False), ("false", False)])
-def test_google_address_counts_only_when_google_verified_it(both_providers, verified, trusted):
-    claims = {"iss": GOOGLE_ISS, "sub": "g-1", "email": "a@example.test", "email_verified": verified}
-    assert sso.identity_from_claims(sso.get_provider("google"), claims).email_trusted is trusted
+@pytest.mark.parametrize("claims, trusted", [
+    ({"email": "a@gmail.com", "email_verified": True}, True),
+    ({"email": "a@googlemail.com", "email_verified": "true"}, True),
+    ({"email": "a@acme.test", "email_verified": True, "hd": "acme.test"}, True),
+    # A Google account made with a work address, not a Workspace account: Google
+    # only saw that address once, so it can't vouch for it now.
+    ({"email": "a@acme.test", "email_verified": True}, False),
+    ({"email": "a@acme.test", "email_verified": True, "hd": "other.test"}, False),
+    ({"email": "a@gmail.com", "email_verified": False}, False),
+    ({"email": "a@gmail.com"}, False),
+])
+def test_google_vouches_only_where_it_is_the_authority(both_providers, claims, trusted):
+    identity = sso.identity_from_claims(get_provider("google"), {"iss": GOOGLE_ISS, "sub": "g-1", **claims})
+    assert identity.email_trusted is trusted
+
+
+def test_a_hosted_domain_turns_other_accounts_away(both_providers, monkeypatch):
+    monkeypatch.setattr(settings, "GOOGLE_SSO_HOSTED_DOMAIN", "acme.test")
+    google = get_provider("google")
+    assert sso.identity_from_claims(google, {"iss": GOOGLE_ISS, "sub": "1", "email": "a@acme.test",
+                                             "email_verified": True, "hd": "acme.test"}).hosted_domain == "acme.test"
+    for claims in ({"email": "a@gmail.com", "email_verified": True}, {"email": "a@x.test", "email_verified": True, "hd": "x.test"}):
+        with pytest.raises(SsoError) as err:
+            sso.identity_from_claims(google, {"iss": GOOGLE_ISS, "sub": "1", **claims})
+        assert err.value.code == "wrong_domain"
+
+
+def test_microsoft_account_is_its_tenant_object_id(both_providers):
+    """`sub` changes with the app registration; `oid` doesn't."""
+    identity = sso.identity_from_claims(get_provider("microsoft"), _ms("acme", email="a@acme.test"))
+    assert (identity.subject, identity.tenant_id) == ("oid-1", "acme")
+    no_oid = {k: v for k, v in _ms("acme").items() if k != "oid"}
+    assert sso.identity_from_claims(get_provider("microsoft"), no_oid).subject == "pairwise"
 
 
 def test_microsoft_directory_address_is_not_trusted_on_a_shared_tenant(both_providers):
     """nOAuth: in someone else's tenant the admin types in whatever address they like."""
-    identity = sso.identity_from_claims(sso.get_provider("microsoft"), _ms("attacker", email="ceo@victim.test"))
+    identity = sso.identity_from_claims(get_provider("microsoft"), _ms("attacker", email="ceo@victim.test"))
     assert identity.email == "ceo@victim.test"
     assert identity.email_trusted is False
 
@@ -189,10 +293,10 @@ def test_microsoft_directory_address_is_not_trusted_on_a_shared_tenant(both_prov
 @pytest.mark.parametrize("claims", [
     _ms("acme", email="a@acme.test", xms_edov=True),
     _ms("acme", email="a@acme.test", xms_edov="1"),
-    _ms(sso.MICROSOFT_CONSUMER_TENANT_ID, email="a@outlook.test"),
+    _ms(MICROSOFT_CONSUMER_TENANT_ID, email="a@outlook.test"),
 ])
 def test_microsoft_address_is_trusted_when_microsoft_vouches_for_it(both_providers, claims):
-    assert sso.identity_from_claims(sso.get_provider("microsoft"), claims).email_trusted is True
+    assert sso.identity_from_claims(get_provider("microsoft"), claims).email_trusted is True
 
 
 @pytest.mark.parametrize("tenant, trusted", [
@@ -203,17 +307,40 @@ def test_microsoft_address_is_trusted_when_microsoft_vouches_for_it(both_provide
 ])
 def test_a_pinned_tenant_trusts_its_own_directory(both_providers, monkeypatch, tenant, trusted):
     monkeypatch.setattr(settings, "MICROSOFT_SSO_TENANT", tenant)
-    identity = sso.identity_from_claims(sso.get_provider("microsoft"), _ms("acme", email="a@acme.test"))
+    identity = sso.identity_from_claims(get_provider("microsoft"), _ms("acme", email="a@acme.test"))
     assert identity.email_trusted is trusted
 
 
 def test_microsoft_falls_back_to_the_sign_in_name(both_providers):
-    microsoft = sso.get_provider("microsoft")
+    microsoft = get_provider("microsoft")
     identity = sso.identity_from_claims(microsoft, _ms("acme", preferred_username="Bob@Example.Test",
                                                        given_name="Bob", family_name="B"))
     assert (identity.email, identity.name) == ("bob@example.test", "Bob B")
     bare = sso.identity_from_claims(microsoft, _ms("acme", preferred_username="bob"))
     assert (bare.email, bare.email_trusted) == ("", False)
+
+
+def test_a_plain_oidc_provider_gets_the_generic_rules():
+    """What a third provider would get without a subclass: its own issuer,
+    `sub`, `email_verified`, and no photo (never Microsoft's Graph)."""
+    plain = Provider(key="okta", label="Okta", discovery_url="https://okta.example/.well-known/openid-configuration",
+                     scopes="openid email", client_id="c", client_secret="s")
+    claims = {"iss": "https://okta.example", "sub": "o-1", "email": "a@acme.test", "email_verified": True, "oid": "x"}
+    assert plain.issuer_ok(claims, {"issuer": "https://okta.example"})
+    assert not plain.issuer_ok(claims, {"issuer": "https://other.example"})
+    identity = sso.identity_from_claims(plain, claims)
+    assert (identity.subject, identity.email_trusted) == ("o-1", True)
+    assert plain.photo_request(claims, "token") is None
+
+
+def test_photo_requests(both_providers):
+    google, microsoft = get_provider("google"), get_provider("microsoft")
+    assert google.photo_request({"picture": "https://lh3.googleusercontent.com/a/abc=s96-c"}, None) == (
+        "https://lh3.googleusercontent.com/a/abc=s256-c", {})
+    for picture in ("https://evil.example/x.png", "http://lh3.googleusercontent.com/x", ""):
+        assert google.photo_request({"picture": picture}, None) is None
+    assert microsoft.photo_request({}, "graph-token") == (MICROSOFT_GRAPH_PHOTO_URL, {"Authorization": "Bearer graph-token"})
+    assert microsoft.photo_request({}, None) is None
 
 
 # --- provider metadata ------------------------------------------------------------
@@ -224,18 +351,18 @@ def test_microsoft_falls_back_to_the_sign_in_name(both_providers):
     httpx.Response(200, json=["not", "an", "object"]),
 ])
 async def test_metadata_that_is_not_a_json_object_is_a_provider_error(both_providers, monkeypatch, response):
-    monkeypatch.setattr(sso, "_client", _transport(lambda r: response))
-    with pytest.raises(sso.SsoError) as err:
-        await sso.discovery(sso.get_provider("google"))
+    monkeypatch.setattr(sso, "http_client", _transport(lambda r: response))
+    with pytest.raises(SsoError) as err:
+        await sso.discovery(get_provider("google"))
     assert err.value.code == "provider_error"
 
 
 @pytest.mark.asyncio
 async def test_a_discovery_document_without_endpoints_is_a_provider_error(both_providers, monkeypatch):
     monkeypatch.setattr(sso, "discovery", AsyncMock(return_value={"issuer": GOOGLE_ISS}))
-    google = sso.get_provider("google")
-    for call in (sso.authorize_url(google, "s", "n"), sso.exchange_code(google, "c"), sso.jwks(google)):
-        with pytest.raises(sso.SsoError) as err:
+    google = get_provider("google")
+    for call in (sso.authorize_url(google, "s", "n", "c"), sso.exchange_code(google, "c", "v"), sso.jwks(google)):
+        with pytest.raises(SsoError) as err:
             await call
         assert err.value.code == "provider_error"
 
@@ -248,71 +375,8 @@ async def test_a_discovery_document_without_endpoints_is_a_provider_error(both_p
 ])
 async def test_a_bad_token_response_is_a_provider_error(both_providers, monkeypatch, response, detail):
     monkeypatch.setattr(sso, "discovery", AsyncMock(return_value={"token_endpoint": "https://token.example"}))
-    monkeypatch.setattr(sso, "_client", _transport(lambda r: response))
-    with pytest.raises(sso.SsoError) as err:
-        await sso.exchange_code(sso.get_provider("google"), "c")
+    monkeypatch.setattr(sso, "http_client", _transport(lambda r: response))
+    with pytest.raises(SsoError) as err:
+        await sso.exchange_code(get_provider("google"), "c", "v")
     assert err.value.code == "provider_error"
     assert detail in err.value.detail
-
-
-# --- avatar --------------------------------------------------------------------
-
-@pytest.mark.asyncio
-async def test_google_avatar_is_fetched_larger_from_the_token_picture(both_providers, monkeypatch):
-    seen = {}
-    def handler(request):
-        seen["url"] = str(request.url)
-        return httpx.Response(200, content=b"\xff\xd8jpeg", headers={"content-type": "image/jpeg"})
-    monkeypatch.setattr(sso, "_client", _transport(handler))
-    image = await sso.fetch_avatar(sso.get_provider("google"), {"picture": "https://lh3.googleusercontent.com/a/abc=s96-c"}, None)
-    assert image == (b"\xff\xd8jpeg", "image/jpeg")
-    assert seen["url"] == "https://lh3.googleusercontent.com/a/abc=s256-c"
-
-
-@pytest.mark.asyncio
-async def test_google_avatar_only_comes_from_google_hosts(both_providers, monkeypatch):
-    monkeypatch.setattr(sso, "_client", _transport(lambda r: httpx.Response(200, content=b"x", headers={"content-type": "image/png"})))
-    assert await sso.fetch_avatar(sso.get_provider("google"), {"picture": "https://evil.example/x.png"}, None) is None
-    assert await sso.fetch_avatar(sso.get_provider("google"), {"picture": "http://lh3.googleusercontent.com/x"}, None) is None
-    assert await sso.fetch_avatar(sso.get_provider("google"), {}, None) is None
-
-
-@pytest.mark.asyncio
-async def test_microsoft_avatar_comes_from_graph_with_the_access_token(both_providers, monkeypatch):
-    seen = {}
-    def handler(request):
-        seen["url"] = str(request.url)
-        seen["auth"] = request.headers.get("authorization")
-        return httpx.Response(200, content=b"\x89PNG", headers={"content-type": "image/png"})
-    monkeypatch.setattr(sso, "_client", _transport(handler))
-    image = await sso.fetch_avatar(sso.get_provider("microsoft"), {}, "graph-token")
-    assert image == (b"\x89PNG", "image/png")
-    assert seen == {"url": sso.MICROSOFT_GRAPH_PHOTO_URL, "auth": "Bearer graph-token"}
-    assert await sso.fetch_avatar(sso.get_provider("microsoft"), {}, None) is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("response", [
-    httpx.Response(404),
-    httpx.Response(200, content=b"<html>", headers={"content-type": "text/html"}),
-    httpx.Response(200, content=b"x" * (sso.AVATAR_MAX_BYTES + 1), headers={"content-type": "image/png"}),
-])
-async def test_avatars_that_are_missing_or_not_images_are_skipped(both_providers, monkeypatch, response):
-    monkeypatch.setattr(sso, "_client", _transport(lambda r: response))
-    assert await sso.fetch_avatar(sso.get_provider("microsoft"), {}, "t") is None
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("s3, folder", [(False, "user/org-1/user-1"), (True, "users/org-1/user-1")])
-async def test_avatar_is_stored_like_an_uploaded_profile_picture(both_providers, monkeypatch, s3, folder):
-    """Same place the profile-picture upload uses, on disk and on S3."""
-    monkeypatch.setattr(settings, "S3_FILE_STORAGE", s3)
-    store = AsyncMock(return_value="stored-url")
-    monkeypatch.setattr(sso, "store_upload", store)
-
-    class U:
-        organization_id = "org-1"
-        id = "user-1"
-
-    assert await sso.store_avatar(U(), (b"jpeg", "image/jpeg")) == "stored-url"
-    store.assert_awaited_once_with(b"jpeg", folder, "profile.jpg", "image/jpeg")
