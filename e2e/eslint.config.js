@@ -2,9 +2,7 @@ import playwright from 'eslint-plugin-playwright'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['node_modules/', 'test-results/', 'playwright-report/', '.cache/', '.stack/', '.auth/', 'src/api/schema.d.ts',
-    // A frozen, minified copy of the last release's loader (see services/customer-site)
-    'services/customer-site/legacy-loader-*.min.js'] },
+  { ignores: ['node_modules/', 'test-results/', 'playwright-report/', '.cache/', '.stack/', '.auth/', 'src/api/schema.d.ts'] },
   ...tseslint.configs.recommended,
   {
     files: ['**/*.ts'],

@@ -268,7 +268,7 @@ const { data } = await response.json();
 
           <div v-if="frameSources.length" class="csp-note">
             <p class="code-description">
-              If your site sets a <strong>Content-Security-Policy</strong>, add these sources to it, or the browser blocks the chat:
+              If your site sets a <strong>Content-Security-Policy</strong>, add these sources so the chat runs in its own secure frame:
             </p>
             <div class="code-block">
               <pre><code>{{ scriptCsp }}</code></pre>
@@ -358,7 +358,7 @@ const { data } = await response.json();
 
           <div v-if="frameSources.length" class="csp-note">
             <p class="code-description">
-              If your site sets a <strong>Content-Security-Policy</strong>, add these sources to it, or the browser blocks the chat:
+              If your site sets a <strong>Content-Security-Policy</strong>, add these sources so the chat runs in its own secure frame:
             </p>
             <div class="code-block">
               <pre><code>{{ iframeCsp }}</code></pre>
