@@ -39,13 +39,18 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | People | Rename, phone, mark customer; international and unique phones; a WhatsApp contact keeps their number | `specs/leads/people.spec.ts` | P2 | ✅ |
 | Team | Admin adds an agent who signs in to the inbox; Agent role sees only Inbox/People/Settings | `specs/team/team.spec.ts` | P1 | ✅ |
 | Team | Groups management UI | — | P1 | ⬜ |
-| Widget JS API | open/close/isOpen; hidden launcher + page's own trigger button | `specs/widget/js-api.spec.ts` | P1 | ✅ |
+| Widget JS API | open/close/isOpen; hidden launcher + page's own trigger button; `logout()` starts a fresh anonymous visitor (the signed-in conversation is closed, not shown); Escape inside the frame closes a sidebar drawer; a token-auth visitor whose 60s token lapsed is re-identified by the site's `tokenProvider` and keeps the conversation (`@slow`) | `specs/widget/js-api.spec.ts` | P1 | ✅ |
 | Widget placement | Left side; sidebar mode; dashboard display settings with no code, site config wins; welcome message and colour | `specs/widget/placement.spec.ts` | P1 | ✅ |
+| Widget allowed domains | No list: works on any site incl. localhost (no CORS for the site); a list blocks other sites with a notice and allows its own; clearing it reopens | `specs/widget/allowed-domains.spec.ts` | P1 | ✅ |
+| Widget allowed domains | Dashboard editor (Agent → Widget tab): a pasted URL saves as its host; `*.com`, `*.co.uk`, a bad port and a bare name are explained and not saved; the 21st domain says "At most 20 domains"; the list takes effect on the customer site (refused, then allowed), and removing every entry shows the any-site state | `specs/settings/widget-allowed-domains.spec.ts` | P1 | ✅ |
+| Widget frame | Server error on start → "Chat is unavailable right now", opening again retries and chats; a refused visitor (token required) or a refused site (allowed domains) is not retried | `specs/widget/frame-recovery.spec.ts` | P1 | ✅ |
+| Widget frame | The last release's cached loader (v1.0.27: srcdoc + cross-origin /data, on the CORS-listed legacy origin 127.0.0.1:13001) still chats, keeps history across a reload, and is not limited by allowed domains (by design) | `specs/widget/legacy-loader.spec.ts` | P1 | ✅ |
 | Widget placement | `open({message})`, events | — | P1 | ⬜ |
 | Token-auth widget | Server-issued token → chat works; no, tampered, other-widget or expired token is refused | `specs/widget/token-auth.spec.ts` | P1 | ✅ |
 | Reply buttons | Telegram, WhatsApp, Messenger, Instagram: AI offers buttons, a tap gets the next answer | `specs/channels/reply-buttons.spec.ts` | P2 | ✅ |
 | Reply buttons | Widget quick replies; typed-number matching | — | P2 | ⬜ |
 | Help center | Only published articles are public; unpublishing takes one down | `specs/help-center/publishing.org.spec.ts` | P2 | ✅ |
+| Help center | The agent's chat widget shows and chats on the help center even when its allowed domains list other sites | `specs/help-center/chat-widget.org.spec.ts` | P2 | ✅ |
 | Help center | Search | — | P2 | ⬜ |
 | Workflows | One-message flow greets once and answers once with no AI call; a question branches on the answer; AND across two answers (true, false, an answer that looks like code, a non-number); a missing branch stops instead of taking the other | `specs/workflows/workflows.spec.ts` | P2 | ✅ |
 | MCP connectors | An agent answers from a real MCP server's tool; header secrets masked on read, kept on save; a server that is down costs only its own tools, and Test says it could not connect | `specs/mcp/connectors.spec.ts` | P2 | ✅ |
@@ -69,5 +74,6 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Security basics | HttpOnly/Secure sign-in cookies; no CORS for other origins | `specs/security` | P2 | ✅ |
 | Org website and API access | Changing the org's website allows the new site and revokes the old one; it never gets the sign-in cookies | `specs/security/org-domain-cors.org.spec.ts` | P2 | ✅ |
 | Live-chat socket origin | The dashboard's socket signs in with its cookies; an org's website, or a `<script>`-tag (JSONP) handshake, never does (JSONP case `@one-worker`) | `specs/security/agent-socket-origin.spec.ts` | P2 | ✅ |
+| Widget frame host | A signed-in dashboard user chats on a customer site with the widget framed on the cookieless frame host: its start and socket requests carry no Cookie; a frame request hopped back to a cookie host gets 421 and no widget (skipped when `E2E_WIDGET_FRAME_URL` is empty) | `specs/security/widget-frame-host.spec.ts` | P2 | ✅ |
 
 Enterprise journeys are tracked privately in `enterprise_frontend/e2e/FEATURES.md`.

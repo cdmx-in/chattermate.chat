@@ -68,39 +68,58 @@ export const readTokenClaims = (token: string | null): Record<string, any> | nul
   }
 }
 
-const readStoredToken = (): string | null => {
-  try {
-    return sanitizeToken(localStorage.getItem(TOKEN_STORAGE_KEY))
-  } catch {
-    // Private mode, or storage blocked by the host page's settings.
-    return null
-  }
+/** Where the widget keeps its token between page views. */
+export interface TokenStore {
+  read(): string | null
+  write(token: string): void
+  clear(): void
 }
 
-const writeStoredToken = (token: string) => {
-  try {
-    localStorage.setItem(TOKEN_STORAGE_KEY, token)
-  } catch {
-    // Not fatal: the token still lives in memory for this page view.
-  }
-}
+/** localStorage under `key`; private mode or blocked storage just means no persistence. */
+export const localTokenStore = (key: string = TOKEN_STORAGE_KEY): TokenStore => ({
+  read: () => {
+    try {
+      return sanitizeToken(localStorage.getItem(key))
+    } catch {
+      return null
+    }
+  },
+  write: (token) => {
+    try {
+      localStorage.setItem(key, token)
+    } catch {
+      // Not fatal: the token still lives in memory for this page view.
+    }
+  },
+  clear: () => {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      /* nothing to clear */
+    }
+  },
+})
 
-const clearStoredToken = () => {
-  try {
-    localStorage.removeItem(TOKEN_STORAGE_KEY)
-  } catch {
-    /* nothing to clear */
-  }
-}
+/** Nothing persisted here: the host page holds the token and is told of every change. */
+export const memoryTokenStore = (): TokenStore => ({
+  read: () => null,
+  write: () => {},
+  clear: () => {},
+})
 
 export interface ConversationTokenOptions {
   /** Called whenever the token changes, so the host page can store the new one. */
   onTokenChanged?: (token: string) => void
   /** Called when only the host can help: its token expired and cannot be rotated. */
   onIdentityExpired?: () => void
+  /** Called when the widget drops its token, so the host page can forget it too. */
+  onTokenCleared?: () => void
+  /** Defaults to the `ctid` localStorage entry the host page shares with the widget. */
+  store?: TokenStore
 }
 
 export function useConversationToken(options: ConversationTokenOptions = {}) {
+  const store = options.store ?? localTokenStore()
   const token: Ref<string | null> = ref(null)
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
   let inFlight: Promise<boolean> | null = null
@@ -131,14 +150,16 @@ export function useConversationToken(options: ConversationTokenOptions = {}) {
 
   const setToken = (next: string | null, { persist = true } = {}) => {
     const clean = sanitizeToken(next)
+    const hadToken = !!token.value
     clearTimer()
     token.value = clean
     if (!clean) {
-      clearStoredToken()
+      store.clear()
+      if (hadToken) options.onTokenCleared?.()
       return
     }
     if (persist) {
-      writeStoredToken(clean)
+      store.write(clean)
       options.onTokenChanged?.(clean)
     }
     scheduleRefresh()
@@ -233,11 +254,11 @@ export function useConversationToken(options: ConversationTokenOptions = {}) {
   /** Adopt the token the backend rendered into the frame, or the stored one. */
   const start = (widgetId: string, initialToken?: unknown) => {
     scheduledWidgetId = widgetId
-    const initial = sanitizeToken(initialToken) || readStoredToken()
+    const initial = sanitizeToken(initialToken) || store.read()
     // Persisting on start would echo the token straight back to the host page, which
     // already has it. setToken still arms the refresh timer.
     setToken(initial, { persist: false })
-    if (initial) writeStoredToken(initial)
+    if (initial) store.write(initial)
   }
 
   const stop = () => {

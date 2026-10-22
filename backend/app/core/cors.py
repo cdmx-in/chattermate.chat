@@ -62,14 +62,16 @@ def first_party_origins() -> Set[str]:
 
     Never an org's domain or a help centre. An org domain is whatever someone
     typed at signup, unverified, so trusting it with credentials would let a
-    page on any signed-up domain read a signed-in user's account. Read from
+    page on any signed-up domain read a signed-in user's account. Nor the
+    widget frame's host (WIDGET_FRAME_URL), even if listed: it is kept
+    cookieless so the widget can never act as a signed-in user. Read from
     settings once: every /agent socket connect asks.
     """
     dashboard = origin_of(settings.FRONTEND_URL)
     if not dashboard:
         logger.error(f"FRONTEND_URL {settings.FRONTEND_URL!r} is not an http(s) URL; the dashboard can't sign in cross-origin")
     origins = {dashboard, *(origin_of(url) for url in BASE_CORS_ORIGINS)}
-    return {o for o in origins if o}
+    return {o for o in origins if o} - {origin_of(settings.WIDGET_FRAME_URL)}
 
 
 def is_first_party_origin(origin: Optional[str]) -> bool:
@@ -255,8 +257,9 @@ def update_local_cors(app: FastAPI, new_origins: List[str]) -> bool:
     
     # Update Socket.IO CORS settings
     try:
-        from app.core.socketio import sio
-        sio.eio.cors_allowed_origins = new_origins
+        from app.core.socketio import sio, socket_origins
+        socket_origins.update(new_origins)
+        sio.eio.cors_allowed_origins = socket_origins
         logger.info(f"Updated Socket.IO CORS origins: {new_origins}")
     except Exception as e:
         logger.error(f"Failed to update Socket.IO CORS origins: {str(e)}")

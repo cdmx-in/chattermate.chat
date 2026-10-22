@@ -19,6 +19,7 @@ import { computed } from 'vue'
 import { toast } from 'vue-sonner'
 import type { Agent } from '@/types/agent'
 import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+import WidgetAllowedDomains from './WidgetAllowedDomains.vue'
 
 interface Widget {
   id: string;
@@ -112,16 +113,16 @@ const copyText = (text: string) => {
     .catch(() => toast.error('Copy failed — copy the snippet manually'))
 }
 
-// Generate iframe URL
+// The framed widget page: runs on our origin and honours the allowed domains
 const iframeUrl = computed(() => {
   if (!props.widget?.id) return ''
-  return `${props.widgetUrl}/api/v1/widgets/${props.widget.id}/data`
+  return `${props.widgetUrl}/api/v1/widgets/${props.widget.id}/frame`
 })
 
 // Generate iframe embed code
 const iframeEmbedCode = computed(() => {
   if (!props.widget?.id) return ''
-  return `<iframe src="${iframeUrl.value}" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write"></iframe>`
+  return `<iframe src="${iframeUrl.value}" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write *"></iframe>`
 })
 </script>
 
@@ -262,6 +263,10 @@ const { data } = await response.json();
       </div>
 
       <!-- Per-page overrides + JS API -->
+      <div v-if="widget" class="widget-info">
+        <WidgetAllowedDomains :widget-id="widget.id" />
+      </div>
+
       <div class="widget-info">
         <h4 class="widget-section-title">Customize &amp; control (optional)</h4>
         <div class="widget-code-section">
@@ -314,7 +319,7 @@ const { data } = await response.json();
                 class="iframe-preview"
                 frameborder="0"
                 title="AI Assistant Preview"
-                allow="clipboard-write"
+                allow="clipboard-write *"
               ></iframe>
             </div>
           </div>

@@ -129,7 +129,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [ prod-like, browsers, visual, upgrade, api-fuzz ]
+        variant: [ prod-like, shared-origin, browsers, visual, upgrade, api-fuzz ]
 
     services:
       postgres:
@@ -167,6 +167,15 @@ jobs:
           ./scripts/stack.sh up
           npx playwright test --project=chromium --grep-invert @quarantine --fail-on-flaky-tests
           npx playwright test --project=org --workers=1 --pass-with-no-tests --grep-invert @quarantine --fail-on-flaky-tests
+
+      - name: Shared origin — the widget framed on the API's own origin, as a self-host without WIDGET_FRAME_URL
+        if: matrix.variant == 'shared-origin'
+        working-directory: e2e
+        env:
+          E2E_WIDGET_FRAME_URL: ''
+        run: |
+          ./scripts/stack.sh up
+          npx playwright test --project=chromium --grep-invert @quarantine --fail-on-flaky-tests
 
       - name: Browsers — the widget on Firefox, WebKit, Android and iPhone
         if: matrix.variant == 'browsers'

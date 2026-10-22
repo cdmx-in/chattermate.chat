@@ -15,14 +15,11 @@ limitations under the License.
 """
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, Response, Header, Query, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
 from datetime import datetime
-from pathlib import Path
-import json
-from urllib.parse import urlparse
 
 from app.models.agent import Agent
 from app.models.customer import Customer
@@ -33,9 +30,8 @@ from app.core.auth import get_current_user
 from app.database import get_db
 from app.repositories.widget import WidgetRepository
 from app.repositories.agent import AgentRepository
-from app.core.security import create_conversation_token, verify_conversation_token
+from app.core.security import verify_conversation_token
 from app.services import conversation_token
-from app.utils.client_ip import forwarded_client_ip
 from app.repositories.customer import CustomerRepository
 from app.models.schemas.widget import WidgetCreate, WidgetResponse
 from app.core.logger import get_logger
@@ -44,19 +40,21 @@ from app.services.contact_capture import CONTACT_EMAIL_META_KEY
 from app.services.widget_identity import may_stand_for
 from app.models.session_to_agent import SessionStatus
 from app.core.config import settings
-from app.core.s3 import get_s3_signed_url
-from app.utils.business_hours import is_within_business_hours
+from app.services import widget_bootstrap
+from app.api.widget_common import (
+    FONT_LINKS,
+    PAGE_LOAD,
+    allow_widget_open,
+    asset_version,
+    bearer_token,
+    frame_ancestors,
+    note_install,
+    script_json,
+    widget_runtime_config,
+)
 
 router = APIRouter()
 logger = get_logger(__name__)
-
-# The enterprise module can record where each widget is live; without it,
-# nothing is recorded.
-try:
-    from app.enterprise.services import widget_install
-except ImportError:
-    widget_install = None
-
 
 def _identity_expired() -> HTTPException:
     """401 telling the widget its visitor's identity lapsed, not that it never had one.
@@ -69,30 +67,9 @@ def _identity_expired() -> HTTPException:
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail={
             "code": conversation_token.IDENTITY_EXPIRED_CODE,
-            "message": "Conversation token expired. Issue a new one with /generate-token.",
+            "message": widget_bootstrap.IDENTITY_EXPIRED_MESSAGE,
         },
     )
-
-
-_ASSETS_DIR = Path(settings.WIDGET_ASSETS_DIR)
-
-
-def _asset_version() -> str:
-    """Cache-buster for the widget bundle URLs.
-
-    /assets/widget.js is served without a Cache-Control header and its URL never
-    changes, so browsers fall back to heuristic caching and can keep serving an old
-    bundle for hours after a release — the widget silently runs last week's code.
-    Stamping the build's mtime+size onto the URL makes a new build a new URL.
-    Recomputed per request (a stat is microseconds) so a rebuild takes effect
-    without restarting the backend.
-    """
-    try:
-        stat = (_ASSETS_DIR / "widget.js").stat()
-        return f"{int(stat.st_mtime)}-{stat.st_size}"
-    except OSError:
-        # Assets served from somewhere else (CDN, dev server) — nothing to stamp.
-        return ""
 
 
 def _widget_html_response(html: str) -> HTMLResponse:
@@ -102,84 +79,6 @@ def _widget_html_response(html: str) -> HTMLResponse:
     build after a release."""
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
-
-# BACKEND_URL defaults to http://localhost:8000 and neither compose file sets
-# it, so a self-hosted install that never overrode it used to serve every visitor
-# a widget whose socket dialled the visitor's own machine (#315). Loopback can
-# never be right for a browser on someone else's computer, so we fall back to the
-# origin the widget HTML was actually fetched over.
-_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"})
-
-_warned_about_loopback_backend_url = False
-
-
-def _is_loopback(url: str) -> bool:
-    host = urlparse(url).hostname
-    return host is not None and host.lower() in _LOOPBACK_HOSTS
-
-
-def _public_origin(request: Optional[Request]) -> Optional[str]:
-    """Scheme and host this request reached us on, as the browser sees them.
-
-    Reads the forwarding headers our nginx sets rather than ``request.url``, which
-    only reflects them when the ASGI server is started with proxy headers enabled.
-    """
-    if request is None:
-        return None
-
-    # Several proxies in a chain append to these, and the browser's own value is
-    # the first entry.
-    forwarded_host = request.headers.get("x-forwarded-host")
-    host = (forwarded_host or request.headers.get("host") or "").split(",")[0].strip()
-    if not host:
-        return None
-
-    forwarded_proto = request.headers.get("x-forwarded-proto")
-    if forwarded_proto:
-        scheme = forwarded_proto.split(",")[0].strip()
-    elif forwarded_host:
-        # A proxy that rewrites the host but not the protocol (Traefik and some
-        # Caddy setups, unlike our nginx) leaves request.url.scheme reading "http"
-        # for the proxy's own hop. Trusting that would hand an https page a ws://
-        # socket the browser refuses as mixed content, so assume the hop was TLS.
-        scheme = "https"
-    else:
-        scheme = request.url.scheme or "https"
-
-    return f"{scheme}://{host}"
-
-
-def _widget_runtime_config(request: Optional[Request] = None) -> dict:
-    """Runtime API/WS URLs to hand the widget iframe as ``window.APP_CONFIG``.
-
-    Derived from ``BACKEND_URL`` so a self-hosted widget talks to the configured
-    backend instead of the vendor cloud. On the hosted deployment BACKEND_URL is
-    ``https://api.chattermate.chat``, which yields exactly the widget's baked-in
-    defaults, so injecting this is a no-op there.
-    """
-    global _warned_about_loopback_backend_url
-
-    api_base = settings.BACKEND_URL.rstrip("/")
-    if _is_loopback(api_base):
-        derived = _public_origin(request)
-        if derived and not _is_loopback(derived):
-            if not _warned_about_loopback_backend_url:
-                _warned_about_loopback_backend_url = True
-                logger.warning(
-                    "BACKEND_URL is %s, which no visitor's browser can reach. "
-                    "Serving widgets against %s instead, taken from the request. "
-                    "Set BACKEND_URL to this install's public API URL.",
-                    api_base, derived,
-                )
-            api_base = derived
-
-    if api_base.startswith("https://"):
-        ws_url = "wss://" + api_base[len("https://"):]
-    elif api_base.startswith("http://"):
-        ws_url = "ws://" + api_base[len("http://"):]
-    else:
-        ws_url = api_base
-    return {"API_URL": f"{api_base}/api/v1", "WS_URL": ws_url}
 
 @router.post("", response_model=WidgetResponse)
 def create_new_widget(
@@ -192,165 +91,65 @@ def create_new_widget(
     return widget_repo.create_widget(widget, current_user.organization_id)
 
 
-def _note_install(db: Session, widget: Widget, request: Request, background_tasks: BackgroundTasks) -> None:
-    """Note where the widget is live (or blocked), after the response is
-    sent. Never lets a tracking error break the widget itself."""
-    if widget_install is None:
-        return
-    try:
-        sighting = widget_install.claim_write(db, widget, request.headers.get("origin"), forwarded_client_ip(request))
-        if sighting:
-            background_tasks.add_task(widget_install.record, widget.id, sighting)
-    except Exception:
-        logger.exception(f"Install tracking failed for widget {widget.id}")
+def _token_required() -> HTTPException:
+    """401 for an agent that only talks to identified visitors. The embed loader
+    matches this wording, so it stays as it was."""
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Authentication required. Token must be obtained from /api/v1/generate-token endpoint with valid API key."
+    )
 
 
 @router.get("/{widget_id}/data", response_class=HTMLResponse)
 async def get_widget_ui(
     widget_id: str,
     request: Request,
-    response: Response,
     background_tasks: BackgroundTasks,
     authorization: Optional[str] = Header(None),
     source: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
-    """Get widget UI and handle customer authentication"""
+    """The widget page with its visitor's token baked in.
 
-    widget = db.query(Widget).filter(Widget.id == widget_id).first()
-    if not widget:
-        raise HTTPException(status_code=404, detail="Widget not found")
+    Fetched cross-origin by older embed loaders (and injected as srcdoc), or
+    framed directly by a raw <iframe> embed — which is why it carries the same
+    frame-ancestors as /frame: a CSP on a fetch() response is never applied, so
+    old loaders are unaffected, while a raw iframe can't dodge the list.
+    """
+    if request.headers.get("sec-fetch-dest") == "iframe":
+        # A raw <iframe src=".../data"> embed: send it to the framed page, which
+        # carries no token in its HTML and moves to the cookieless frame host
+        return RedirectResponse(request.url.path.rsplit("/data", 1)[0] + "/frame", status_code=status.HTTP_302_FOUND)
 
-    _note_install(db, widget, request, background_tasks)
+    if not allow_widget_open(request, widget_id):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests. Try again shortly.")
 
-    # Get agent data
-    agent_repo = AgentRepository(db)
-    agent = agent_repo.get_by_id(widget.agent_id)
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
+    widget = widget_bootstrap.find_widget(db, widget_id)
+    note_install(db, widget, request.headers.get("origin"), request, background_tasks, PAGE_LOAD)
 
-    # What the header may honestly claim. Only a human-handled agent needs the
-    # business-hours check: while the AI answers, it answers at 3am too.
-    presence = {
-        'mode': 'ai' if agent.ai_replies_enabled else 'human',
-        'available': True if agent.ai_replies_enabled
-                     else is_within_business_hours(agent.organization),
-    }
+    try:
+        session = widget_bootstrap.open_session(db, widget, bearer_token(authorization), source)
+    except widget_bootstrap.WidgetAccessDenied as denied:
+        raise _identity_expired() if denied.code == conversation_token.IDENTITY_EXPIRED_CODE else _token_required()
 
-    require_token_auth = getattr(agent, 'require_token_auth', False)
-    customer_id = None
-    token = None
-    token_payload = None
+    html_page = get_widget_html(await widget_bootstrap.initial_data(session), request)
+    response = _widget_html_response(html_page)
+    ancestors = frame_ancestors(db, widget)
+    if ancestors:
+        response.headers["Content-Security-Policy"] = ancestors
+    return response
 
-    # Try to validate existing token if provided
-    if authorization and authorization.startswith('Bearer '):
-        token = authorization.split(' ')[1]
-        state = conversation_token.inspect(token, widget_id)
-        if state.is_live:
-            token_payload = state.payload
-            customer_id = state.payload.get("sub")
-        elif state.identity_lost:
-            # A lapsed token that named a customer means a signed-in visitor whose
-            # identity just ran out. Say so instead of rendering the frame as a
-            # brand-new anonymous visitor - the loader re-identifies and retries.
-            raise _identity_expired()
-        else:
-            token = None  # Invalid token
 
-    # SECURITY: If token auth is required, valid token MUST be provided
-    if require_token_auth:
-        if not token or customer_id is None:
-            logger.warning(f"Widget UI request denied: require_token_auth=true but no valid token for widget_id={widget_id}")
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required. Token must be obtained from /api/v1/generate-token endpoint with valid API key."
-            )
-        # Has valid token - return widget with existing token
-        return _widget_html_response(await get_widget_html(
-            widget_id=widget_id,
-            agent_name=agent.display_name or agent.name,
-            agent_customization=agent.customization,
-            customer_id=customer_id,
-            initial_token=token,
-            agent_workflow=bool(agent.use_workflow and agent.active_workflow_id),
-            allow_attachments=agent.allow_attachments,
-            ai_replies_enabled=agent.ai_replies_enabled,
-            presence=presence,
-            request=request
-        ))
-    
-    # Token auth NOT required - allow anonymous access
-    # If we have a valid token, use it; otherwise create a new one
-    if token and customer_id:
-        return _widget_html_response(await get_widget_html(
-            widget_id=widget_id,
-            agent_name=agent.display_name or agent.name,
-            agent_customization=agent.customization,
-            customer_id=customer_id,
-            initial_token=token,
-            agent_workflow=bool(agent.use_workflow and agent.active_workflow_id),
-            allow_attachments=agent.allow_attachments,
-            ai_replies_enabled=agent.ai_replies_enabled,
-            presence=presence,
-            request=request
-        ))
+def get_widget_html(data: dict, request: Optional[Request] = None) -> str:
+    """Widget HTML with `data` baked in as window.__INITIAL_DATA__.
 
-    # No valid token - create new one for anonymous access. A live token that
-    # names no customer yet keeps its conversation key.
-    token = _mint_widget_token(widget_id, _conversation_key(token_payload), source=source)
-    
-    return _widget_html_response(await get_widget_html(
-        widget_id=widget_id,
-        agent_name=agent.display_name or agent.name,
-        agent_customization=agent.customization,
-        customer_id=customer_id,
-        initial_token=token,
-        agent_workflow=bool(agent.use_workflow and agent.active_workflow_id),
-        allow_attachments=agent.allow_attachments,
-        ai_replies_enabled=agent.ai_replies_enabled,
-        presence=presence,
-        request=request
-    ))
-
-async def get_widget_html(widget_id: str, agent_name: str, agent_customization: dict, customer_id: Optional[str] = None, initial_token: Optional[str] = None, agent_workflow: bool = False, allow_attachments: bool = False, ai_replies_enabled: bool = True,
-                          presence: Optional[dict] = None, request: Optional[Request] = None) -> str:
-    """Generate widget HTML with embedded data"""
+    The layout of the __INITIAL_DATA__ block is read by tooling that scrapes
+    this page, so it keeps its one-key-per-line shape.
+    """
     import html
     widget_url = settings.VITE_WIDGET_URL
-    version = _asset_version()
+    version = asset_version()
     asset_query = f"?v={version}" if version else ""
-
-    # Convert AgentCustomization to dict if it's a model instance
-    customization_dict = {}
-    if agent_customization:
-        # Get signed URL for photo if using S3
-        photo_url = agent_customization.photo_url
-        if settings.S3_FILE_STORAGE and photo_url:
-            photo_url = await get_s3_signed_url(photo_url)
-
-        customization_dict = {
-            "chat_background_color": agent_customization.chat_background_color,
-            "chat_text_color": agent_customization.chat_text_color,
-            "chat_bubble_color": agent_customization.chat_bubble_color,
-            "accent_color": agent_customization.accent_color,
-            "font_family": agent_customization.font_family,
-            "photo_url": photo_url,
-            "chat_style": agent_customization.chat_style.value if agent_customization.chat_style else "CHATBOT",
-            "widget_position": agent_customization.widget_position.value if agent_customization.widget_position else "FLOATING",
-            "welcome_title": agent_customization.welcome_title,
-            "welcome_subtitle": agent_customization.welcome_subtitle,
-            "welcome_message": agent_customization.welcome_message,
-            "chat_initiation_messages": agent_customization.chat_initiation_messages or [],
-            "quick_actions": agent_customization.quick_actions or [],
-            "show_citations": agent_customization.show_citations,
-            "collect_email": agent_customization.collect_email,
-            # A human-only agent never produces an AI reply, so disclosing one
-            # would be untrue — same reason the widget hides it after takeover.
-            "show_ai_disclaimer": agent_customization.show_ai_disclaimer and ai_replies_enabled,
-            "allow_new_chat": agent_customization.allow_new_chat,
-            "customization_metadata": agent_customization.customization_metadata or {}
-        }
-        
 
     return f"""
         <!DOCTYPE html>
@@ -359,28 +158,26 @@ async def get_widget_html(widget_id: str, agent_name: str, agent_customization: 
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Chat Widget</title>
-            <link rel="preconnect" href="https://fonts.googleapis.com">
-            <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-            <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+            {FONT_LINKS}
             <script>
                 // Runtime backend config so the widget connects to THIS install's
                 // backend instead of falling back to the baked cloud default.
                 // Declared before the widget module loads.
-                window.APP_CONFIG = {json.dumps(_widget_runtime_config(request))};
+                window.APP_CONFIG = {script_json(widget_runtime_config(request))};
             </script>
             <script type="module" crossorigin src="{widget_url}/assets/widget.js{asset_query}"></script>
             <link rel="stylesheet" crossorigin href="{widget_url}/assets/widget.css{asset_query}">
             <script>
                 window.__INITIAL_DATA__ = {{
-                    widgetId: "{html.escape(widget_id)}",
-                    agentName: "{html.escape(agent_name)}",
-                    customization: {json.dumps(customization_dict)},
-                    customerId: "{html.escape(customer_id or '')}",
-                    initialToken: "{html.escape(initial_token or '')}",
+                    widgetId: "{html.escape(data['widgetId'])}",
+                    agentName: "{html.escape(data['agentName'])}",
+                    customization: {script_json(data['customization'])},
+                    customerId: "{html.escape(data['customerId'])}",
+                    initialToken: "{html.escape(data['initialToken'])}",
                     customer: {{}},
-                    workflow: {str(agent_workflow).lower()},
-                    allowAttachments: {str(allow_attachments).lower()},
-                    presence: {json.dumps(presence or {'mode': 'ai', 'available': True})}
+                    workflow: {str(data['workflow']).lower()},
+                    allowAttachments: {str(data['allowAttachments']).lower()},
+                    presence: {script_json(data['presence'])}
                 }};
             </script>
         </head>
@@ -409,32 +206,6 @@ async def get_human_agent_session_info(db: Session, customer_id: str, scope: str
             }
 
     return human_agent_info
-
-
-def _conversation_key(token_payload: Optional[dict]) -> str:
-    """Keep the browser's conversation key across re-mints, or start one.
-
-    Never an account key: only our backend mints those, for one signed-in
-    dashboard account, and every token the widget issues is unverified.
-    """
-    key = (token_payload or {}).get(conversation_token.CONVERSATION_KEY_CLAIM)
-    if key and not conversation_token.is_account_key(key):
-        return key
-    return conversation_token.new_conversation_key()
-
-
-def _mint_widget_token(widget_id: str, conversation_key: str, customer_id: Optional[str] = None,
-                       source: Optional[str] = None, token_payload: Optional[dict] = None) -> str:
-    """A conversation token the widget issues itself - unverified, so always scoped.
-
-    Prefers a fresh `source` (first-visit Explore flow) over one the visitor's
-    earlier token carried.
-    """
-    extra_data = {conversation_token.CONVERSATION_KEY_CLAIM: conversation_key}
-    source = source or (token_payload or {}).get("source")
-    if widget_id == settings.EXPLORE_WIDGET_ID and source:
-        extra_data["source"] = source
-    return create_conversation_token(widget_id=widget_id, customer_id=customer_id, **extra_data)
 
 
 def _anonymous_customer(customer_repo: CustomerRepository, widget: Widget, conversation_key: str,
@@ -539,7 +310,7 @@ async def get_widget_data(
     email_bypass = not bool(agent.customization and getattr(agent.customization, 'collect_email', False))
 
     customer_repo = CustomerRepository(db)
-    conversation_key = _conversation_key(token_payload)
+    conversation_key = widget_bootstrap.conversation_key(token_payload)
     # Judged on the customer the socket will act as - the merge survivor - or
     # the widget would be told yes here and refused on every connect.
     customer = customer_repo.resolve_merged(customer_id) if customer_id not in (None, "None") else None
@@ -552,7 +323,7 @@ async def get_widget_data(
         if not may_stand_for(customer, scope):
             logger.info(f"Widget {widget_id}: unverified token names a signed-in customer; starting an anonymous one")
             anonymous = _anonymous_customer(customer_repo, widget, conversation_key, claimed_email=customer.email)
-            new_token = _mint_widget_token(widget_id, conversation_key, customer_id=str(anonymous.id),
+            new_token = widget_bootstrap.mint_widget_token(widget_id, conversation_key, customer_id=str(anonymous.id),
                                            source=source, token_payload=token_payload)
             return _widget_data_response(widget, agent, str(anonymous.id), {}, new_token)
 
@@ -588,7 +359,7 @@ async def get_widget_data(
         customer = _anonymous_customer(customer_repo, widget, conversation_key)
 
     human_agent_info = await get_human_agent_session_info(db, str(customer.id), conversation_key)
-    new_token = _mint_widget_token(widget_id, conversation_key, customer_id=str(customer.id),
+    new_token = widget_bootstrap.mint_widget_token(widget_id, conversation_key, customer_id=str(customer.id),
                                    source=source, token_payload=token_payload)
     return _widget_data_response(widget, agent, str(customer.id), human_agent_info, new_token)
 
