@@ -237,8 +237,10 @@ window.chattermateConfig;
   // This script's own address while it runs: the in-page loader sits beside it.
   const LOADER_SRC = (document.currentScript && document.currentScript.src) || ''
   const IN_PAGE_LOADER = 'chattermate-legacy.min.js'
-  // How long the in-page chat gets to start before the console says it couldn't
+  // How long the in-page chat gets to load, then to come up once loaded, before the
+  // framed widget comes back to say it can't load here
   const IN_PAGE_START_MS = 20000
+  const IN_PAGE_MOUNT_MS = 10000
   let fellBackInPage = false
   // The in-page loader couldn't be fetched: the framed widget is back, showing its error
   let inPageUnavailable = false
@@ -1781,7 +1783,8 @@ window.chattermateConfig;
         try { blocked = new URL(e.blockedURI) } catch (err) { return /* 'inline' and the like */ }
         if (blocked.origin === new URL(src).origin) {
           frameRefusedByPolicy = true
-          fallBackInPage(frameSources())
+          // No in-page chat here either: ours won't start, so say so now
+          if (!fallBackInPage(frameSources())) frameDidNotStart()
         } else if (blocked.pathname === '/' && !blocked.search) {
           // Just an origin: how a refused redirect to the frame host is reported
           frameRefusedByPolicy = true
@@ -1826,6 +1829,10 @@ window.chattermateConfig;
     function frameDidNotStart() {
       if (frameRefusedByPolicy && fallBackInPage(frameSources())) return
       const host = window.location.hostname || 'this site'
+      if (frameRefusedByPolicy) {
+        showLoadError('Chat couldn’t load on “' + host + '”: this page’s Content-Security-Policy blocks it. The site owner can allow it in the policy’s frame-src.')
+        return
+      }
       showLoadError('Chat couldn’t load on “' + host + '”. If the widget is limited to certain domains, add this one in its settings; otherwise check the widget ID.')
     }
 
@@ -2472,7 +2479,8 @@ window.chattermateConfig;
   // scripts). The site's options, listeners, an open chat and any calls made while
   // it loads carry over. False when it can't be done.
   function fallBackInPage(sources) {
-    if (fellBackInPage || !LOADER_SRC) return false
+    const ownApi = window.ChatterMate
+    if (fellBackInPage || !LOADER_SRC || !ownApi || typeof ownApi !== 'object') return false
     let src
     try {
       src = new URL(IN_PAGE_LOADER, LOADER_SRC).href
@@ -2484,7 +2492,6 @@ window.chattermateConfig;
       'For the framed chat, add to the policy: frame-src ' + sources.join(' ') + ' (the Widget tab in ChatterMate lists every source).')
     const wasOpen = !!(controller && controller.isOpen())
     const carried = Object.keys(listeners).map(function (event) { return [event, listeners[event].splice(0)] })
-    const ownApi = window.ChatterMate
     // Until the in-page loader is up, the page's calls wait for it
     const waiting = []
     const standIn = {}
@@ -2496,16 +2503,33 @@ window.chattermateConfig;
     destroyWidgetIfRunning()
     window.chattermateConfig = Object.assign({}, givenOptions)
 
+    // The in-page chat can't run here either (missing, or the page's policy blocks
+    // its inline scripts too): back to the framed widget, which shows why it can't load
+    function backToFramed(reason) {
+      if (inPageUnavailable) return
+      console.error('[ChatterMate] ' + reason + ' Add to the Content-Security-Policy: frame-src ' + sources.join(' '))
+      inPageUnavailable = true
+      const inPage = window.ChatterMate
+      if (inPage && inPage !== standIn && inPage !== ownApi && typeof inPage.destroy === 'function') inPage.destroy()
+      window.ChatterMate = ownApi
+      carried.forEach(function (entry) { listeners[entry[0]] = entry[1] })
+      ownApi.reload()
+    }
+
     const script = document.createElement('script')
     script.src = src
     script.onload = function () {
       const api = window.ChatterMate
-      if (!api || api === standIn || typeof api.on !== 'function') return
-      let started = false
-      api.on('ready', function () { started = true })
-      setTimeout(function () {
-        if (!started) console.error('[ChatterMate] The chat couldn\'t start inside this page either. Add to the Content-Security-Policy: frame-src ' + sources.join(' '))
-      }, IN_PAGE_START_MS)
+      if (!api || api === standIn || typeof api.on !== 'function') {
+        backToFramed('The in-page chat didn\'t start.')
+        return
+      }
+      const cannotStart = function () { backToFramed('The chat couldn\'t start inside this page either.') }
+      const startTimer = setTimeout(cannotStart, IN_PAGE_START_MS)
+      api.on('ready', function () {
+        clearTimeout(startTimer)
+        setTimeout(function () { if (!inPageChatMounted()) cannotStart() }, IN_PAGE_MOUNT_MS)
+      })
       carried.forEach(function (entry) {
         entry[1].forEach(function (cb) { api.on(entry[0], cb) })
       })
@@ -2514,17 +2538,23 @@ window.chattermateConfig;
         if (typeof api[call[0]] === 'function') api[call[0]].apply(api, call[1])
       })
     }
-    // Not there (an exact-path script-src, a network error): back to the framed
-    // widget, which shows why it can't load rather than leaving nothing
-    script.onerror = function () {
-      console.error('[ChatterMate] The in-page chat couldn\'t be loaded from ' + src)
-      inPageUnavailable = true
-      window.ChatterMate = ownApi
-      carried.forEach(function (entry) { listeners[entry[0]] = entry[1] })
-      ownApi.reload()
-    }
+    // Not there (an exact-path script-src, a network error)
+    script.onerror = function () { backToFramed('The in-page chat couldn\'t be loaded from ' + src + '.') }
     document.head.appendChild(script)
     return true
+  }
+
+  // Whether the in-page chat actually came up: its loader says 'ready' once its page
+  // has loaded, even when this page's policy then blocks the scripts inside it (a
+  // nonce or 'strict-dynamic' policy). That page is same-origin, so look at it.
+  function inPageChatMounted() {
+    const frame = document.querySelector('iframe.chattermate-iframe')
+    try {
+      const app = frame && frame.contentDocument && frame.contentDocument.getElementById('app')
+      return !!(app && app.childElementCount)
+    } catch (e) {
+      return true // nothing to look into: take its word for it
+    }
   }
 
   function destroyWidgetIfRunning() {

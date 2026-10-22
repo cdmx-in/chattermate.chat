@@ -106,7 +106,7 @@ class WidgetEmbedSettings(BaseModel):
 
 
 class WidgetEmbedSettingsResponse(WidgetEmbedSettings):
-    """The settings, plus the hosts a site's Content-Security-Policy must let
-    frame the widget (frame-src): the API, whose /frame redirects to the
-    widget's frame host when it has one."""
-    frame_sources: List[str] = Field(default_factory=list)
+    """The settings, plus the widget's frame host (WIDGET_FRAME_URL's origin), which
+    the API's /frame redirects to: a strict site's frame-src needs it beside the API,
+    and only the backend knows it. None when the widget is framed on the API itself."""
+    frame_host: Optional[str] = None

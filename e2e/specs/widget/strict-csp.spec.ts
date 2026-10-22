@@ -50,4 +50,13 @@ test.describe('a site with a strict Content-Security-Policy', () => {
     // The in-page loader's card ("can't load on"); the framed one would say "couldn't load on"
     await expect(widget.unavailableReason).toContainText('can’t load on')
   })
+
+  test('that runs scripts only by nonce gets the can\'t-load card, not a blank chat @widget', async ({ widget }) => {
+    // No 'unsafe-inline': the in-page chat's page loads but its inline scripts don't run,
+    // so once it's had its chance the loader brings the framed widget back to say why
+    await widget.embed({ strictCsp: { frameSrc: [], nonceOnly: true } })
+
+    await expect(widget.unavailableReason).toContainText('Content-Security-Policy blocks it', { timeout: 30_000 })
+  })
 })
+

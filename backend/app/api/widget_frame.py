@@ -246,15 +246,8 @@ async def get_embed_settings(
     db: Session = Depends(get_db),
 ):
     widget = _own_widget(db, widget_id, current_user)
-    return WidgetEmbedSettingsResponse(allowed_domains=widget.allowed_domains or [], frame_sources=_frame_sources())
-
-
-def _frame_sources() -> list:
-    """What a site's frame-src must allow: the API the snippet points at, and
-    the frame host /frame redirects to (the browser checks the redirect too)."""
-    origins = [widget_embed_policy.origin_of(settings.BACKEND_URL),
-               widget_embed_policy.origin_of(settings.WIDGET_FRAME_URL)]
-    return list(dict.fromkeys(o for o in origins if o))
+    return WidgetEmbedSettingsResponse(allowed_domains=widget.allowed_domains or [],
+                                       frame_host=widget_embed_policy.origin_of(settings.WIDGET_FRAME_URL))
 
 
 @router.put("/{widget_id}/embed-settings", response_model=WidgetEmbedSettings)

@@ -40,7 +40,21 @@ function refuseFrame(blockedURI: string, effectiveDirective = 'frame-src', isTru
 const inPageLoader = () =>
   [...document.querySelectorAll('script')].find((s) => s.src === IN_PAGE_LOADER_URL) as HTMLScriptElement | undefined
 
+/** The in-page chat's own frame (same-origin srcdoc), with the widget mounted in it or not. */
+function inPageFrame(mounted: boolean) {
+  const frame = document.createElement('iframe')
+  frame.className = 'chattermate-iframe'
+  document.body.appendChild(frame)
+  const doc = frame.contentDocument!
+  doc.body.innerHTML = mounted ? '<div id="app"><main>chat</main></div>' : '<div id="app"></div>'
+  return frame
+}
+
 /** What the in-page loader does once it runs: replaces the public API. */
+function readyCallback(legacy: { on: ReturnType<typeof vi.fn> }): () => void {
+  return legacy.on.mock.calls.find((call: unknown[]) => call[0] === 'ready')![1] as () => void
+}
+
 function runInPageLoader() {
   const legacy = { on: vi.fn(), open: vi.fn(), toggle: vi.fn() }
   ;(window as any).ChatterMate = legacy
@@ -94,7 +108,8 @@ describe('ChatterMate on a page whose policy refuses the frame', () => {
   })
 
   it('keeps the site\'s event listeners and an open chat', async () => {
-    await loadLoader()
+    vi.useFakeTimers()
+    await loadLoader({ fakeTimers: true })
     const ready = vi.fn()
     api().on('unread', ready)
     api().open()
@@ -155,8 +170,6 @@ describe('ChatterMate on a page whose policy refuses the frame', () => {
     await loadLoader({ fakeTimers: true })
 
     refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
-    frame().dispatchEvent(new Event('load'))
-    await vi.advanceTimersByTimeAsync(3000)
 
     expect(inPageLoader()).toBeUndefined()
     expect(document.querySelector('.chattermate-error-ui')).not.toBeNull()
@@ -191,7 +204,8 @@ describe('ChatterMate on a page whose policy refuses the frame', () => {
 
   it('passes the site\'s options and the calls made while it loads to the in-page chat', async () => {
     ;(window as any).chattermateConfig = { launcher: false }
-    await loadLoader()
+    vi.useFakeTimers()
+    await loadLoader({ fakeTimers: true })
     api().init({ position: { side: 'left' } })
 
     refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
@@ -212,22 +226,66 @@ describe('ChatterMate on a page whose policy refuses the frame', () => {
     expect(frames()).toHaveLength(1)
     // Refused again: no second fallback, the framed widget says it can't load
     refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
-    frame().dispatchEvent(new Event('load'))
-    await vi.advanceTimersByTimeAsync(3000)
 
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('chattermate-legacy.min.js'))
     expect(document.querySelector('.chattermate-error-ui')).not.toBeNull()
   })
 
-  it('says so in the console when the in-page chat doesn\'t start either', async () => {
+  it('goes back to the framed widget and its error when the in-page chat doesn\'t start either', async () => {
+    // e.g. a nonce-only policy that blocks the in-page chat's inline scripts too
     vi.useFakeTimers()
     await loadLoader({ fakeTimers: true })
     vi.spyOn(console, 'error').mockImplementation(() => {})
 
     refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
-    runInPageLoader()
+    const legacy = Object.assign(runInPageLoader(), { destroy: vi.fn() })
     await vi.advanceTimersByTimeAsync(20000)
+    expect(legacy.destroy).toHaveBeenCalled()
+    expect(frames()).toHaveLength(1)
+    refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
 
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('couldn\'t start inside this page either'))
+    expect(document.querySelector('.chattermate-error-ui')).not.toBeNull()
+  })
+
+  it('stays put when the in-page chat comes up', async () => {
+    vi.useFakeTimers()
+    await loadLoader({ fakeTimers: true })
+
+    refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
+    const legacy = Object.assign(runInPageLoader(), { destroy: vi.fn() })
+    inPageFrame(true)
+    readyCallback(legacy)()
+    await vi.advanceTimersByTimeAsync(20000)
+
+    expect(legacy.destroy).not.toHaveBeenCalled()
+  })
+
+  it('goes back to the framed widget when the in-page chat loads but never comes up', async () => {
+    // 'strict-dynamic' or nonce policies: its page loads ('ready'), its scripts don't run
+    vi.useFakeTimers()
+    await loadLoader({ fakeTimers: true })
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
+    const legacy = Object.assign(runInPageLoader(), { destroy: vi.fn() })
+    inPageFrame(false)
+    readyCallback(legacy)()
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(legacy.destroy).toHaveBeenCalled()
+    refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
+
+    expect(document.querySelector('.chattermate-error-ui')?.textContent).toContain('Content-Security-Policy blocks it')
+  })
+
+  it('shows the usual error when the page took the API object away', async () => {
+    vi.useFakeTimers()
+    await loadLoader({ fakeTimers: true })
+    delete (window as any).ChatterMate
+
+    refuseFrame(`${BASE_URL}/widgets/${WIDGET_ID}/frame`)
+
+    expect(inPageLoader()).toBeUndefined()
+    expect(document.querySelector('.chattermate-error-ui')).not.toBeNull()
   })
 })

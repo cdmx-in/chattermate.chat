@@ -40,7 +40,7 @@ from app.services.contact_capture import CONTACT_EMAIL_META_KEY
 from app.services.widget_identity import may_stand_for
 from app.models.session_to_agent import SessionStatus
 from app.core.config import settings
-from app.services import widget_bootstrap
+from app.services import widget_bootstrap, widget_embed_policy
 from app.api.widget_common import (
     FONT_LINKS,
     PAGE_LOAD,
@@ -125,6 +125,14 @@ async def get_widget_ui(
         raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests. Try again shortly.")
 
     widget = widget_bootstrap.find_widget(db, widget_id)
+    # The in-page widget (an older loader, or the current one's fallback on a page
+    # that refuses our frame) runs on the page itself, where frame-ancestors can't
+    # apply: hold its origin to the widget's allowed domains here instead
+    ancestors = frame_ancestors(db, widget)
+    origin = widget_embed_policy.origin_of(request.headers.get("origin") or "")
+    if origin and not widget_embed_policy.directive_allows(ancestors, origin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail={"code": "origin_not_allowed", "message": "This site isn't in the widget's allowed domains."})
     note_install(db, widget, request.headers.get("origin"), request, background_tasks, PAGE_LOAD)
 
     try:
@@ -134,7 +142,6 @@ async def get_widget_ui(
 
     html_page = get_widget_html(await widget_bootstrap.initial_data(session), request)
     response = _widget_html_response(html_page)
-    ancestors = frame_ancestors(db, widget)
     if ancestors:
         response.headers["Content-Security-Policy"] = ancestors
     return response

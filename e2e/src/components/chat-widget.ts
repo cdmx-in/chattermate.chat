@@ -25,7 +25,7 @@ export interface EmbedOptions {
    * widget falls back to running inside the page, which fetches the widget
    * cross-origin, so that case runs on the CORS-listed legacy origin.
    */
-  strictCsp?: { frameSrc: string[], onUnlistedOrigin?: boolean }
+  strictCsp?: { frameSrc: string[], onUnlistedOrigin?: boolean, nonceOnly?: boolean }
   /**
    * The site's `tokenProvider`: what its server answers when the widget asks for a
    * fresh conversation token. Counted in tokenRequests.
@@ -146,7 +146,7 @@ export class ChatWidget {
       }
       let inPageFallback = false
       if (options.strictCsp) {
-        params.set('csp', 'strict')
+        params.set('csp', options.strictCsp.nonceOnly ? 'nonce' : 'strict')
         if (options.strictCsp.frameSrc.length) params.set('frameSrc', options.strictCsp.frameSrc.join(' '))
         else if (!options.strictCsp.onUnlistedOrigin) {
           inPageFallback = true

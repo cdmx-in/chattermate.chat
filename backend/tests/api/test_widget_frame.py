@@ -281,6 +281,22 @@ class TestDataPageEmbedding:
     def test_unrestricted_widget_sends_no_frame_ancestors(self, client, test_widget):
         assert "content-security-policy" not in client.get(f"/api/v1/widgets/{test_widget.id}/data").headers
 
+    def test_an_in_page_widget_on_a_site_the_list_refuses_is_refused(self, client, restricted):
+        # An older loader, or the current one's in-page fallback: frame-ancestors
+        # can't hold it to the list, so the origin is checked here
+        response = client.get(f"/api/v1/widgets/{restricted.id}/data", headers={"Origin": "https://elsewhere.example"})
+        assert response.status_code == 403
+        assert response.json()["detail"]["code"] == "origin_not_allowed"
+        assert "__INITIAL_DATA__" not in response.text
+
+    @pytest.mark.parametrize("origin", ["https://acme.com", "https://www.acme.com"])
+    def test_an_in_page_widget_on_an_allowed_site_loads(self, client, restricted, origin):
+        assert client.get(f"/api/v1/widgets/{restricted.id}/data", headers={"Origin": origin}).status_code == 200
+
+    def test_an_unrestricted_widget_loads_in_page_anywhere(self, client, test_widget):
+        response = client.get(f"/api/v1/widgets/{test_widget.id}/data", headers={"Origin": "https://anywhere.example"})
+        assert response.status_code == 200
+
     def test_restricted_widget_sends_its_frame_ancestors(self, client, restricted):
         csp = client.get(f"/api/v1/widgets/{restricted.id}/data").headers["content-security-policy"]
         assert csp.startswith("frame-ancestors ")
@@ -452,17 +468,13 @@ class TestEmbedSettings:
     def test_a_new_widget_allows_any_site(self, client, test_widget):
         assert client.get(self.url(test_widget)).json()["allowed_domains"] == []
 
-    def test_says_what_a_sites_frame_src_must_allow(self, client, test_widget, monkeypatch):
-        # The API the snippet points at, then the frame host its /frame redirects to
-        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
-        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com")
-        assert client.get(self.url(test_widget)).json()["frame_sources"] == [
-            "https://api.example.com", "https://widget.example.com"]
+    def test_names_the_frame_host_a_sites_frame_src_needs_beside_the_api(self, client, test_widget, monkeypatch):
+        monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "https://widget.example.com/")
+        assert client.get(self.url(test_widget)).json()["frame_host"] == "https://widget.example.com"
 
-    def test_without_a_frame_host_only_the_api_needs_framing(self, client, test_widget, monkeypatch):
-        monkeypatch.setattr(settings, "BACKEND_URL", "https://api.example.com")
+    def test_without_a_frame_host_the_api_alone_frames_it(self, client, test_widget, monkeypatch):
         monkeypatch.setattr(settings, "WIDGET_FRAME_URL", "")
-        assert client.get(self.url(test_widget)).json()["frame_sources"] == ["https://api.example.com"]
+        assert client.get(self.url(test_widget)).json()["frame_host"] is None
 
     def test_saved_domains_are_normalised(self, client, db, test_widget):
         response = client.put(self.url(test_widget), json={"allowed_domains": ["https://ACME.com/", "localhost:3000", "acme.com"]})

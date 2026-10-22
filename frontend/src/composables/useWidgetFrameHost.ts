@@ -18,25 +18,28 @@ import { ref, watch, type Ref } from 'vue'
 import { widgetService } from '@/services/widget'
 
 /**
- * The hosts a site's Content-Security-Policy must let frame this widget, for the
- * note beside the embed code. Empty until loaded, or if it couldn't be: the note
- * just isn't shown then.
+ * The widget's frame host, for the CSP note beside the embed code. `loaded` stays
+ * false until it's known, or if it couldn't be: the note just isn't shown then.
  */
-export function useWidgetFrameSources(widgetId: Ref<string | undefined>) {
-  const frameSources = ref<string[]>([])
+export function useWidgetFrameHost(widgetId: Ref<string | undefined>) {
+  const frameHost = ref<string | null>(null)
+  const loaded = ref(false)
 
   const load = async () => {
     const id = widgetId.value
-    frameSources.value = []
+    frameHost.value = null
+    loaded.value = false
     if (!id) return
     try {
-      const sources = await widgetService.getFrameSources(id)
-      if (id === widgetId.value) frameSources.value = sources
+      const host = await widgetService.getFrameHost(id)
+      if (id !== widgetId.value) return
+      frameHost.value = host
+      loaded.value = true
     } catch (err) {
-      console.error('Failed to load the widget frame sources:', err)
+      console.error('Failed to load the widget frame host:', err)
     }
   }
 
   watch(widgetId, load, { immediate: true })
-  return { frameSources }
+  return { frameHost, loaded }
 }

@@ -17,8 +17,16 @@ limitations under the License.
 import api from '@/services/api'
 import type { Widget, WidgetCreate } from '@/types/widget'
 
+interface EmbedSettings {
+  allowed_domains: string[]
+  frame_host: string | null
+}
+
 class WidgetService {
   private baseUrl = '/widgets'
+  // One request per widget at a time: the Widget tab's domain editor and CSP note
+  // both read these settings as it opens
+  private embedSettingsInFlight = new Map<string, Promise<EmbedSettings>>()
 
   async getWidgets(): Promise<Widget[]> {
     const response = await api.get(this.baseUrl)
@@ -46,14 +54,23 @@ class WidgetService {
 
   /** Sites the widget may be embedded on; empty means any site. */
   async getAllowedDomains(id: string): Promise<string[]> {
-    const response = await api.get(`${this.baseUrl}/${id}/embed-settings`)
-    return response.data.allowed_domains
+    return (await this.getEmbedSettings(id)).allowed_domains
   }
 
-  /** The hosts a site's Content-Security-Policy must let frame this widget. */
-  async getFrameSources(id: string): Promise<string[]> {
-    const response = await api.get(`${this.baseUrl}/${id}/embed-settings`)
-    return response.data.frame_sources ?? []
+  /** The widget's frame host, which a strict site's frame-src needs beside the API; null when there is none. */
+  async getFrameHost(id: string): Promise<string | null> {
+    return (await this.getEmbedSettings(id)).frame_host ?? null
+  }
+
+  private getEmbedSettings(id: string): Promise<EmbedSettings> {
+    let request = this.embedSettingsInFlight.get(id)
+    if (!request) {
+      request = api.get(`${this.baseUrl}/${id}/embed-settings`)
+        .then((response) => response.data as EmbedSettings)
+        .finally(() => this.embedSettingsInFlight.delete(id))
+      this.embedSettingsInFlight.set(id, request)
+    }
+    return request
   }
 
   /** Replace the list. Resolves with it as the server normalised it. */

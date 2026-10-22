@@ -18,8 +18,8 @@ limitations under the License.
 import { computed, toRef } from 'vue'
 import { toast } from 'vue-sonner'
 import type { Agent } from '@/types/agent'
-import { buildWidgetCsp, buildWidgetEmbed } from '@/utils/widgetEmbed'
-import { useWidgetFrameSources } from '@/composables/useWidgetFrameSources'
+import { buildWidgetCsp, buildWidgetEmbed, widgetFrameSources } from '@/utils/widgetEmbed'
+import { useWidgetFrameHost } from '@/composables/useWidgetFrameHost'
 import WidgetAllowedDomains from './WidgetAllowedDomains.vue'
 
 interface Widget {
@@ -57,8 +57,9 @@ const requiresTokenAuth = computed(() => {
 // in the preview so what you see always matches what you copy.
 const embedCode = computed(() => buildWidgetEmbed(props.widget?.id ?? '', requiresTokenAuth.value))
 
-// For sites that set a Content-Security-Policy: without these the browser blocks the widget
-const { frameSources } = useWidgetFrameSources(toRef(() => props.widget?.id))
+// For sites that set a Content-Security-Policy: these give the chat its own frame
+const { frameHost, loaded: frameHostLoaded } = useWidgetFrameHost(toRef(() => props.widget?.id))
+const frameSources = computed(() => widgetFrameSources(frameHost.value))
 const scriptCsp = computed(() => buildWidgetCsp(frameSources.value))
 const iframeCsp = computed(() => buildWidgetCsp(frameSources.value, false))
 
@@ -266,7 +267,7 @@ const { data } = await response.json();
             </div>
           </template>
 
-          <div v-if="frameSources.length" class="csp-note">
+          <div v-if="frameHostLoaded && frameSources.length" class="csp-note">
             <p class="code-description">
               If your site sets a <strong>Content-Security-Policy</strong>, add these sources so the chat runs in its own secure frame:
             </p>
@@ -356,7 +357,7 @@ const { data } = await response.json();
             </button>
           </div>
 
-          <div v-if="frameSources.length" class="csp-note">
+          <div v-if="frameHostLoaded && frameSources.length" class="csp-note">
             <p class="code-description">
               If your site sets a <strong>Content-Security-Policy</strong>, add these sources so the chat runs in its own secure frame:
             </p>
