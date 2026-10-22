@@ -311,11 +311,17 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     
     # Mock ChatAgent
     mock_chat_agent = MagicMock()
-    mock_chat_agent.get_response = AsyncMock(return_value=MagicMock(
-        message="I'm here to help!",
-        transfer_to_human=False,
-        shopify_output=MagicMock(model_dump=MagicMock(return_value={}))
-    ))
+    held = []
+
+    async def reply(*args, **kwargs):
+        # Whether the handler's session sat on a connection through the model call
+        held.append(db.in_transaction())
+        return MagicMock(
+            message="I'm here to help!",
+            transfer_to_human=False,
+            shopify_output=MagicMock(model_dump=MagicMock(return_value={}))
+        )
+    mock_chat_agent.get_response = AsyncMock(side_effect=reply)
     mock_chat_agent.agent.session_id = session_id
     mock_chat_agent.safe_cleanup_mcp_tools = AsyncMock()
 
@@ -358,6 +364,9 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     emitted = [c[0][0] for c in mock_sio.emit.call_args_list]
     assert 'bot_typing' in emitted
     assert emitted.index('bot_typing') < emitted.index('chat_response')
+
+    # A few concurrent chats would otherwise use up the connection pool
+    assert held == [False]
 
 @pytest.mark.asyncio
 async def test_human_only_agent_waits_instead_of_answering(

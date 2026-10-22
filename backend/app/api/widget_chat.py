@@ -32,7 +32,7 @@ from app.core.auth_utils import (
     authenticate_socket_conversation_token,
     widget_socket_identity,
 )
-from app.database import get_db
+from app.database import get_db, release_connection
 from app.repositories.ai_config import AIConfigRepository
 from app.repositories.widget import WidgetRepository
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
@@ -586,12 +586,19 @@ async def handle_widget_chat(sid, data):
         elif ai_replies_enabled and active_session.status == SessionStatus.OPEN and active_session.user_id is None: # open and user has not taken over
             await _emit_bot_typing(session_id)
             logger.debug(f"Initializing chat agent for model {session['ai_config'].model_type}")
+            ai_config = session['ai_config']
+            model = dict(
+                api_key=decrypt_api_key(ai_config.encrypted_api_key),
+                model_name=ai_config.model_name,
+                model_type=ai_config.model_type,
+                base_url=(ai_config.settings or {}).get('base_url'),
+            )
+            # Everything the model call needs is read: let the connection go
+            # rather than hold it through the call
+            release_connection(db)
             # Initialize chat agent with async factory method for MCP tools support
             chat_agent = await ChatAgent.create_async(
-                api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
-                model_name=session['ai_config'].model_name,
-                model_type=session['ai_config'].model_type,
-                base_url=(session['ai_config'].settings or {}).get('base_url'),
+                **model,
                 org_id=org_id,
                 agent_id=session['agent_id'],
                 customer_id=customer_id,
