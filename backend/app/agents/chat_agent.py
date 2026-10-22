@@ -22,7 +22,7 @@ from app.core.logger import get_logger
 from app.channels.constants import is_widget_channel
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
 from app.tools.mcp_manager import ChatAgentMCPMixin
-from app.database import get_db, SessionLocal, engine
+from app.database import get_db, SessionLocal, engine, release_connection
 from app.agents.choice_prompt import choice_instructions
 from app.channels.interactive_limits import InteractiveLimits
 from app.agents.encrypted_storage import EncryptedPostgresAgentStorage
@@ -1426,7 +1426,9 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 if self.knowledge_tool is not None:
                     self.knowledge_tool.reset_turn()
 
-                # Get AI response
+                # Get AI response; storing the message left a read open,
+                # which mustn't hold the connection through the model call
+                release_connection(db)
                 self._groq_json_capture.clear()
                 _salvaged_content = None
                 try:

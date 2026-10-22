@@ -17,6 +17,7 @@ limitations under the License.
 import asyncio
 from app.core.logger import get_logger
 from app.agents.chat_agent import ChatAgent, ChatResponse
+from app.database import release_connection
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services.workflow_execution import WorkflowExecutionService
@@ -238,6 +239,7 @@ class WorkflowChatService:
                 f"No transfer_group_id provided for workflow transfer in session {session_id}; "
                 "falling back to the agent's default group")
 
+        release_connection(self.db)  # not held while the agent connects its tools
         chat_agent = await ChatAgent.create_async(
             api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
             model_name=session['ai_config'].model_name,
@@ -304,6 +306,7 @@ class WorkflowChatService:
         logger.info(f"Workflow requested end chat for session {session_id}")
         
         # Create a ChatAgent instance to use the _handle_end_chat method
+        release_connection(self.db)  # not held while the agent connects its tools
         chat_agent = await ChatAgent.create_async(
             api_key=decrypt_api_key(session['ai_config'].encrypted_api_key),
             model_name=session['ai_config'].model_name,

@@ -33,7 +33,7 @@ from app.utils.client_ip import forwarded_client_ip
 from app.api.help_center_images import router as help_center_images_router
 from app.core.config import settings
 from app.core.error_handlers import ClientSafeHTTPException, install_error_handlers
-from app.database import get_db
+from app.database import get_db, release_connection
 from app.models.faq import FAQ
 from app.models.help_center import HelpCenterSettings
 from app.repositories.faq import FAQRepository
@@ -332,8 +332,12 @@ async def ask(payload: AskRequest, request: Request, db: Session = Depends(get_d
         f"ask:{ip}:1d", ASK_LIMIT_PER_DAY, 86400
     ):
         raise HTTPException(status_code=429, detail="Too many questions — please try again later.")
-    # answer_question manages its own short sessions around the slow LLM call.
-    answer = await answer_question(row.organization_id, row.agent_id, payload.question)
+    # answer_question manages its own short sessions around the slow LLM call; this
+    # request's session let its connection go first, or it would hold one for the
+    # whole wait for a slot and the answer (anyone can ask, no sign-in)
+    organization_id, agent_id = row.organization_id, row.agent_id
+    release_connection(db)
+    answer = await answer_question(organization_id, agent_id, payload.question)
     if not answer:
         raise ClientSafeHTTPException(status_code=503, detail="Could not answer right now — please try again.")
     return {"answer": answer}

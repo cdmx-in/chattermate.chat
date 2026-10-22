@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import logging
 import os
 
 from sqlalchemy import create_engine
@@ -55,6 +56,21 @@ os.register_at_fork(after_in_child=_fresh_pool_after_fork)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+
+
+def release_connection(db) -> None:
+    """Give a session's connection back to the pool before a slow await (a
+    model call), instead of holding it idle in a transaction for the whole
+    wait: a few concurrent chats would otherwise use up the pool and stall
+    every other request. Commits what the session holds, so the objects it
+    loaded stay usable and reload on next access."""
+    if db is None or not db.in_transaction():
+        return
+    if db.new or db.dirty or db.deleted:
+        # Expected to be reads only: say so if not, rather than save it early unnoticed
+        logging.getLogger(__name__).warning(
+            "release_connection is committing unsaved changes before a slow call")
+    db.commit()
 
 
 def get_db():
