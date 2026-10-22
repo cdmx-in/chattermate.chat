@@ -18,7 +18,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from typing import List, Union
 from app.core.logger import get_logger
-from app.database import get_db
+from app.database import get_db, release_connection
 from app.models.user import User, UserGroup
 from app.core.auth import (
     INBOX_PERMISSIONS,
@@ -813,6 +813,7 @@ async def generate_instructions(
             existing_instructions_text = "\n".join(f"- {instr}" for instr in existing_instructions)
             user_message += f"\n\nExisting instructions for context:\n{existing_instructions_text}"
         
+        release_connection(db)  # not held through the model call
         response = await generator.arun(user_message)
         
         # Parse response to get instructions list

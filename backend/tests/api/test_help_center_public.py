@@ -469,6 +469,22 @@ def test_ask_answers_and_rate_limits(client, db, test_organization, help_center,
         assert limited.status_code == 429
 
 
+def test_ask_holds_no_connection_while_the_ai_answers(client, db, test_organization, help_center, test_agent):
+    # Anyone can ask: a request sitting on a pooled connection through the wait for a
+    # slot and the answer would let a handful of visitors starve the API
+    help_center.agent_id = test_agent.id
+    db.commit()
+    held = []
+
+    async def answer(*args):
+        held.append(db.in_transaction())
+        return "From your dashboard."
+    with patch("app.api.help_center_public.answer_question", new=answer):
+        assert client.post("/ask", json={"question": "Where do I log in?"}, headers={"host": HOST}).status_code == 200
+
+    assert held == [False]
+
+
 def test_ask_unanswerable_503(client, db, test_organization, help_center, test_agent):
     help_center.agent_id = test_agent.id
     db.commit()

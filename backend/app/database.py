@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import logging
 import os
 
 from sqlalchemy import create_engine
@@ -63,8 +64,13 @@ def release_connection(db) -> None:
     wait: a few concurrent chats would otherwise use up the pool and stall
     every other request. Commits what the session holds, so the objects it
     loaded stay usable and reload on next access."""
-    if db is not None and db.in_transaction():
-        db.commit()
+    if db is None or not db.in_transaction():
+        return
+    if db.new or db.dirty or db.deleted:
+        # Expected to be reads only: say so if not, rather than save it early unnoticed
+        logging.getLogger(__name__).warning(
+            "release_connection is committing unsaved changes before a slow call")
+    db.commit()
 
 
 def get_db():

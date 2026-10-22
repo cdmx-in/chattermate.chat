@@ -29,10 +29,13 @@ def test_an_open_read_is_ended(db, test_organization):
     assert not db.in_transaction()
 
 
-def test_pending_work_is_kept_and_objects_still_load(db, test_organization):
+def test_pending_work_is_kept_and_objects_still_load(db, test_organization, caplog):
     test_organization.name = "Renamed before the model call"
 
     release_connection(db)
+
+    # Kept, but said out loud: release points are expected to hold reads only
+    assert "unsaved changes" in caplog.text
 
     db.expire_all()
     assert db.get(Organization, test_organization.id).name == "Renamed before the model call"
@@ -43,3 +46,9 @@ def test_an_idle_session_or_none_is_left_alone(db):
     db.rollback()
     release_connection(db)
     assert not db.in_transaction()
+
+
+def test_reads_alone_commit_quietly(db, test_organization, caplog):
+    db.query(Organization).first()
+    release_connection(db)
+    assert "unsaved changes" not in caplog.text

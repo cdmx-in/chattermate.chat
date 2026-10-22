@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from types import SimpleNamespace
 from typing import Any, Dict, Optional
 import asyncio
 from agno.agent import Agent
@@ -275,10 +276,13 @@ async def get_agent_availability_response(
         )
         transfer_agent.agent.tools = [jira_tools]
 
-    # Get contextual response, without holding the connection through the model call
+    # Get contextual response, without holding the connection through the model call.
+    # The history is copied first: its rows would reload (and take the connection
+    # back) when the model prompt reads them after the release.
+    history = [SimpleNamespace(message_type=m.message_type, message=m.message) for m in chat_history or []]
     release_connection(db)
     response = await transfer_agent.get_transfer_response(
-        chat_history=chat_history or [],
+        chat_history=history,
         business_hours=business_hours,
         available_agents=len(available_users),
         is_business_hours=is_business_hours,
