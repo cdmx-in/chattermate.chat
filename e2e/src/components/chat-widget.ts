@@ -1,4 +1,4 @@
-import { expect, type Frame, type FrameLocator, type Locator, type Page, type Request } from '@playwright/test'
+import { expect, type Frame, type FrameLocator, type Locator, type Page, type Request, type WebSocketRoute } from '@playwright/test'
 import { env } from '../env'
 import { unique } from '../support/ids'
 import { step } from '../support/step'
@@ -41,6 +41,14 @@ export interface FrameRequest {
   kind: 'start' | 'socket'
   url: string
   cookie: string | null
+}
+
+/** The widget's live chat connection, from watchConnection(). */
+export interface ChatConnection {
+  /** The conversation token the widget connected with last. */
+  token(): string
+  /** Cuts the connection the way a network blip does; the widget dials again on its own. */
+  drop(): Promise<void>
 }
 
 /** A widget start held back by failNextStart(), until it is let through to fail. */
@@ -130,6 +138,33 @@ export class ChatWidget {
       }
       await route.fulfill({ response, json: answer })
     })
+  }
+
+  /**
+   * Passes the widget's socket.io connections through, noting the token each one
+   * authenticates with, so a test can cut them. Call before embed().
+   */
+  async watchConnection(): Promise<ChatConnection> {
+    const open: WebSocketRoute[] = []
+    let token = ''
+    await this.page.routeWebSocket(/\/socket\.io\//, (ws) => {
+      const server = ws.connectToServer()
+      open.push(ws)
+      ws.onMessage((message) => {
+        // socket.io's namespace connect: `40/widget,{"conversation_token": …}`
+        const connect = /^40\/widget,(\{.*\})$/.exec(String(message))
+        if (connect) token = JSON.parse(connect[1]).conversation_token ?? token
+        server.send(message)
+      })
+    })
+    return {
+      token: () => token,
+      drop: async () => {
+        await step('The visitor\'s connection drops', async () => {
+          for (const ws of open.splice(0)) await ws.close()
+        })
+      },
+    }
   }
 
   /** Opens the pretend customer site (services/customer-site) with this widget embedded. */

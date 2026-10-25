@@ -21,6 +21,11 @@ export async function issueConversationToken(
   return body.data.token
 }
 
+/** What the customer's server does when a visitor signs out: the token stops working at once. */
+export async function revokeConversationToken(api: ApiClient, apiKey: string, token: string): Promise<void> {
+  await api.withToken(apiKey).post('/revoke-token', { data: { token, reason: 'Visitor signed out' } })
+}
+
 /** When a conversation token stops working (its `exp`), as the backend's clock reads it. */
 export function conversationTokenExpiry(token: string): Date {
   const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) as { exp: number }
