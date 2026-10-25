@@ -77,6 +77,7 @@ export class ChatWidget {
   readonly customer: { name: string; email: string }
   private readonly frame: FrameLocator
   private starts = 0
+  private authorizationCount = 0
   private framesServed = 0
   private tokenAnswers = 0
   private tokenProviderExposed = false
@@ -90,6 +91,7 @@ export class ChatWidget {
     this.frame = page.frameLocator('iframe.chattermate-iframe')
     page.on('request', (request) => {
       if (this.isStart(request)) this.starts++
+      if (this.isAuthorization(request)) this.authorizationCount++
     })
     page.on('response', (response) => {
       // The frame page itself, not the redirect hop to the frame host
@@ -99,6 +101,10 @@ export class ChatWidget {
 
   private isStart(request: Request): boolean {
     return request.method() === 'POST' && new URL(request.url()).pathname.endsWith(`/widgets/${this.widgetId}/bootstrap`)
+  }
+
+  private isAuthorization(request: Request): boolean {
+    return request.method() === 'GET' && new URL(request.url()).pathname.endsWith(`/widgets/${this.widgetId}`)
   }
 
   private isFramePage(url: string): boolean {
@@ -113,6 +119,11 @@ export class ChatWidget {
   /** How many times the widget's frame page was served on this page so far (each try at loading it). */
   get frameLoads(): number {
     return this.framesServed
+  }
+
+  /** How many times the widget authorized the visitor (GET /widgets/{id}) on this page so far. */
+  get authorizations(): number {
+    return this.authorizationCount
   }
 
   /** How many times the site's tokenProvider was asked for a token. */
@@ -151,10 +162,16 @@ export class ChatWidget {
       const server = ws.connectToServer()
       open.push(ws)
       ws.onMessage((message) => {
+        // Forwarded first: a frame this can't read must still reach the backend
+        server.send(message)
         // socket.io's namespace connect: `40/widget,{"conversation_token": …}`
         const connect = /^40\/widget,(\{.*\})$/.exec(String(message))
-        if (connect) token = JSON.parse(connect[1]).conversation_token ?? token
-        server.send(message)
+        if (!connect) return
+        try {
+          token = JSON.parse(connect[1]).conversation_token ?? token
+        } catch {
+          // not a connect payload after all
+        }
       })
     })
     return {
@@ -191,6 +208,15 @@ export class ChatWidget {
       const site = options.legacyLoader || inPageFallback ? env.customerSiteLegacyUrl
         : options.onOtherOrigin ? env.customerSiteOtherUrl : env.customerSiteUrl
       await this.page.goto(`${site}/?${params}`)
+    })
+  }
+
+  /** The visitor comes back to the site with `token` kept from an earlier visit. */
+  async returnWithStoredToken(token: string): Promise<void> {
+    await step('Customer comes back to the site', async () => {
+      // The loader's own storage key (chattermate.js tokenKey)
+      await this.page.evaluate((stored) => localStorage.setItem('ctid', stored), token)
+      await this.page.reload()
     })
   }
 

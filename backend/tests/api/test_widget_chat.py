@@ -761,7 +761,7 @@ class TestWidgetConnectionErrors:
             await widget_chat.widget_connect("test_sid", {}, {"conversation_token": token, "widget_id": str(test_widget.id)})
 
         assert refused.value.error_args['data'] == {
-            'error': 'Conversation token expired', 'type': 'token_invalid'}
+            'error': 'Conversation token no longer valid', 'type': 'token_invalid'}
         mock_sio.emit.assert_not_called()
 
     @pytest.mark.asyncio

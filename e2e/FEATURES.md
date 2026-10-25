@@ -18,7 +18,7 @@ One row per user journey. Every feature PR adds or updates its row and the spec 
 | Widget chat | History survives a reload | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
 | Widget chat | The dashboard's iframe snippet chats (its socket comes from the API's own origin) | `specs/widget/iframe-snippet.spec.ts` | P1 | ✅ |
 | Widget chat | First authorization answer lost (socket gets the anonymous token) → widget authorizes again and chats | `specs/widget/widget-chat.spec.ts` | P1 | ✅ |
-| Widget chat | A visitor whose token is revoked (or lapses) while the page is open gets the chat back when the connection drops: the refused reconnect authorizes again for a live token instead of retrying the dead one (`@redis`) | `specs/widget/token-lapse.spec.ts` | P1 | ✅ |
+| Widget chat | A visitor whose token runs out (`@slow`) or is revoked (`@redis`) while the page is open gets the chat back when the connection drops: the refused reconnect authorizes again, once, for a live token instead of retrying the dead one | `specs/widget/token-lapse.spec.ts` | P1 | ✅ |
 | Widget chat | Email-first agent (gate → chat, person recorded), Ask anything panel, lead capture with no email asked — each also with the first authorization lost | `specs/widget/chat-styles.spec.ts` | P1 | ✅ |
 | Widget chat | Agent wraps up → customer rates the chat → rating stored against the agent | `specs/widget/rating.spec.ts` | P1 | ✅ |
 | Widget chat | A second browser that types a customer's email gets its own empty conversation (the owner keeps theirs), can't rename them or make them a lead, and an address claimed before its owner signs in yields none of their chats | `specs/widget/conversation-ownership.spec.ts` | P1 | ✅ |

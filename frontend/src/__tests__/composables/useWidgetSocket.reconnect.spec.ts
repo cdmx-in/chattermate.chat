@@ -212,7 +212,7 @@ describe('widget socket reconnection', () => {
       widget.setToken('expired-token')
       const connected = widget.connect()
 
-      refuse('token_invalid', 'Conversation token expired')
+      refuse('token_invalid', 'Conversation token no longer valid')
 
       await expect(connected).resolves.toBe(false)
       expect(widget.refusal.value).toBe('token_invalid')
@@ -227,7 +227,7 @@ describe('widget socket reconnection', () => {
       fire('connect')
 
       // The connection drops and the reconnect presents the token that has lapsed.
-      refuse('token_invalid', 'Conversation token expired')
+      refuse('token_invalid', 'Conversation token no longer valid')
 
       expect(reauthorize).toHaveBeenCalledTimes(1)
       expect(widget.showError.value).toBe(false)

@@ -211,7 +211,7 @@ def _refuse_dead_token(sid: str):
     swaps such a token for a live one, so the widget authorizes again on this
     reason; refused like any other failure, it retried the dead token forever."""
     logger.warning(f"Widget connection refused for sid {sid}: conversation token expired or revoked")
-    _refuse_connection('Conversation token expired', 'token_invalid')
+    _refuse_connection('Conversation token no longer valid', 'token_invalid')
 
 
 def _holds_dead_token(auth) -> bool:
