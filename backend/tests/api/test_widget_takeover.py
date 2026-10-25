@@ -194,8 +194,11 @@ class TestEmailDoesNotOpenAnotherBrowsersConversation:
     async def test_an_unverifiable_token_is_refused(self, socket, mock_sio, test_widget, test_customer, monkeypatch):
         monkeypatch.setattr(widget_chat, "verify_conversation_token", lambda token: None)
 
-        assert await socket(_victim_token(test_widget, test_customer), "sid") is None
-        assert _emitted(mock_sio, "error")["type"] == "connection_error"
+        # Refused for the widget to authorize again, and never given a conversation.
+        with pytest.raises(ConnectionRefusedError) as refused:
+            await socket(_victim_token(test_widget, test_customer), "sid")
+        assert refused.value.error_args["data"]["type"] == "token_invalid"
+        mock_sio.save_session.assert_not_called()
 
 
 class TestOwnConversationOnly:

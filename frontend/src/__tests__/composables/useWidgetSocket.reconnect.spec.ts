@@ -201,6 +201,61 @@ describe('widget socket reconnection', () => {
     })
   })
 
+  describe('a token that expired or was revoked', () => {
+    // A tab left open past the token's lifetime reconnected with the dead token
+    // about once a minute for hours, and never got a chat back (prod, Oct 2026).
+    it('hands a startup refusal to the caller of connect(), not the callback', async () => {
+      const { useWidgetSocket } = await import('@/composables/useWidgetSocket')
+      const widget = useWidgetSocket()
+      const reauthorize = vi.fn()
+      widget.onReauthorize(reauthorize)
+      widget.setToken('expired-token')
+      const connected = widget.connect()
+
+      refuse('token_invalid', 'Conversation token expired')
+
+      await expect(connected).resolves.toBe(false)
+      expect(widget.refusal.value).toBe('token_invalid')
+      expect(widget.showError.value).toBe(false)
+      expect(reauthorize).not.toHaveBeenCalled()
+    })
+
+    it('asks the widget to authorize again when a later reconnect is refused', async () => {
+      const widget = await connectWidget()
+      const reauthorize = vi.fn()
+      widget.onReauthorize(reauthorize)
+      fire('connect')
+
+      // The connection drops and the reconnect presents the token that has lapsed.
+      refuse('token_invalid', 'Conversation token expired')
+
+      expect(reauthorize).toHaveBeenCalledTimes(1)
+      expect(widget.showError.value).toBe(false)
+    })
+
+    it('does not retry the dead token', async () => {
+      const widget = await connectWidget()
+      widget.onReauthorize(vi.fn())
+      fire('connect')
+      refuse('token_invalid')
+
+      vi.advanceTimersByTime(60000)
+      expect(socket.connect).not.toHaveBeenCalled()
+    })
+
+    it('leaves refusals authorizing cannot fix to the visitor-facing error', async () => {
+      const widget = await connectWidget()
+      const reauthorize = vi.fn()
+      widget.onReauthorize(reauthorize)
+      fire('connect')
+
+      refuse('ai_config_missing', 'AI configuration required')
+
+      expect(reauthorize).not.toHaveBeenCalled()
+      expect(widget.errorMessage.value).toBe('Chat service is currently unavailable.')
+    })
+  })
+
   it('does not leave a retry running after the widget is torn down', async () => {
     const widget = await connectWidget()
 

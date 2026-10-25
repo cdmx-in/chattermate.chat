@@ -40,6 +40,7 @@ const socket = {
 }
 const connect = vi.fn()
 const onTakeover = vi.fn()
+const onReauthorize = vi.fn()
 
 vi.mock('@/composables/useWidgetSocket', () => ({
     useWidgetSocket: () => ({
@@ -53,6 +54,7 @@ vi.mock('@/composables/useWidgetSocket', () => ({
         reconnect: vi.fn(),
         cleanup: vi.fn(),
         onSessionState: vi.fn(),
+        onReauthorize,
         submitRating: vi.fn(),
         submitForm: vi.fn(),
         getWorkflowState: vi.fn(),
@@ -64,9 +66,10 @@ vi.mock('@/composables/useWidgetSocket', () => ({
     })
 }))
 
-/** One connect attempt: refused for a missing customer, or connected. */
+/** One connect attempt: refused for a missing customer (or `reason`), or connected. */
+let refusalReason = 'customer_required'
 const refused = async () => {
-    socket.refusal.value = 'customer_required'
+    socket.refusal.value = refusalReason
     socket.connectionStatus.value = 'failed'
     return false
 }
@@ -91,6 +94,8 @@ describe('a widget whose socket is refused at startup', () => {
     beforeEach(() => {
         connect.mockReset()
         onTakeover.mockReset()
+        onReauthorize.mockReset()
+        refusalReason = 'customer_required'
         socket.refusal.value = null
         socket.connectionStatus.value = 'connecting'
         ;(window as any).__INITIAL_DATA__ = {
@@ -127,6 +132,31 @@ describe('a widget whose socket is refused at startup', () => {
         expect(connect).toHaveBeenCalledTimes(2)
         expect(wrapper.find('.initializing-overlay').exists()).toBe(false)
         expect(onTakeover).toHaveBeenCalled() // the rest of startup ran
+    })
+
+    it('authorizes again when the token it started with has expired', async () => {
+        refusalReason = 'token_invalid'
+        connect.mockImplementationOnce(refused).mockImplementationOnce(connected)
+
+        const wrapper = await start()
+
+        expect(authorizationCalls()).toHaveLength(2)
+        expect(connect).toHaveBeenCalledTimes(2)
+        expect(wrapper.find('.initializing-overlay').exists()).toBe(false)
+    })
+
+    it('authorizes again when a later reconnect is refused for an expired token', async () => {
+        connect.mockImplementation(connected)
+        await start()
+        expect(authorizationCalls()).toHaveLength(1)
+
+        // The socket reports a refusal nobody's connect() was waiting on: the token
+        // lapsed while the page stayed open.
+        await onReauthorize.mock.calls[0][0]()
+        await flushPromises()
+
+        expect(authorizationCalls()).toHaveLength(2)
+        expect(connect).toHaveBeenCalledTimes(2)
     })
 
     it('never answers authorization from a stored copy', async () => {
