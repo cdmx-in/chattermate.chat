@@ -21,6 +21,7 @@ from app.database import Base
 from app.models.role import Role
 from sqlalchemy.dialects.postgresql import UUID
 from app.core.logger import get_logger
+from app.utils.domain_check import WEBSITE_MAX_LENGTH
 
 logger = get_logger(__name__)
 
@@ -31,7 +32,7 @@ class Organization(Base):
     name = Column(String(100), nullable=False)
     # The org's website, stored as its host. Not unique: the widget no longer
     # depends on it (it is framed from our origin), so two orgs may run on one site.
-    domain = Column(String(100), nullable=False)
+    domain = Column(String(WEBSITE_MAX_LENGTH), nullable=False)
     timezone = Column(String(50), nullable=False, default='UTC')
     business_hours = Column(JSON, default=lambda: {
         'monday': {'start': '09:00', 'end': '17:00', 'enabled': True},

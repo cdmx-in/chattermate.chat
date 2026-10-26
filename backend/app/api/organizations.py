@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
 import json
 
-from app.utils.domain_check import LOCALHOST_DOMAIN_MESSAGE, InvalidWebsite, validate_org_website
+from app.utils.domain_check import InvalidWebsite, validate_org_website, website_update
 from app.database import get_db
 from app.models.organization import Organization
 from app.models.user import User
@@ -83,11 +83,16 @@ async def create_organization(
 
         
       
+        try:
+            website = validate_org_website(org_data.domain)
+        except InvalidWebsite as invalid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(invalid))
+
         # Create organization
         org_repo = OrganizationRepository(db)
         organization = org_repo.create_organization(
             name=org_data.name,
-            domain=org_data.domain,
+            domain=website,
             timezone=org_data.timezone,
             business_hours=org_data.business_hours
         )
@@ -337,15 +342,12 @@ async def update_organization(
         # A changed website is checked and stored as its host; saving the form
         # with the website as it already is never fails on an older value
         if 'domain' in update_data:
-            new_domain = update_data['domain']
-            unchanged = isinstance(new_domain, str) and new_domain.strip().lower() == (org.domain or '').strip().lower()
-            if unchanged:
-                del update_data['domain']
-            else:
-                try:
-                    update_data['domain'] = validate_org_website(new_domain)
-                except InvalidWebsite as invalid:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(invalid))
+            try:
+                website = website_update(update_data.pop('domain'), org.domain)
+            except InvalidWebsite as invalid:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(invalid))
+            if website:
+                update_data['domain'] = website
 
         for field, value in update_data.items():
             setattr(org, field, value)

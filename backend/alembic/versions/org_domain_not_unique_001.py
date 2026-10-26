@@ -10,6 +10,7 @@ required: the website seeds the agent's knowledge and the setup emails.
 """
 from typing import Sequence, Union
 
+import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -19,25 +20,46 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# Every unique constraint, then every other unique index, on just the domain
+# column, whatever it's called: a database built by hand may differ from ours
+DROP_UNIQUE_DOMAIN = """
+    DO $$
+    DECLARE item record;
+    BEGIN
+        FOR item IN
+            SELECT con.conname
+            FROM pg_constraint con
+            JOIN pg_attribute att ON att.attrelid = con.conrelid AND att.attnum = con.conkey[1]
+            WHERE con.conrelid = 'organizations'::regclass AND con.contype = 'u'
+              AND cardinality(con.conkey) = 1 AND att.attname = 'domain'
+        LOOP
+            EXECUTE format('ALTER TABLE organizations DROP CONSTRAINT %I', item.conname);
+        END LOOP;
+        FOR item IN
+            SELECT ns.nspname, idx.relname
+            FROM pg_index i
+            JOIN pg_class idx ON idx.oid = i.indexrelid
+            JOIN pg_namespace ns ON ns.oid = idx.relnamespace
+            JOIN pg_attribute att ON att.attrelid = i.indrelid AND att.attnum = i.indkey[0]
+            WHERE i.indrelid = 'organizations'::regclass AND i.indisunique
+              AND i.indnatts = 1 AND att.attname = 'domain'
+        LOOP
+            EXECUTE format('DROP INDEX %I.%I', item.nspname, item.relname);
+        END LOOP;
+    END $$;
+"""
+
+
 def upgrade() -> None:
-    # The constraint the first migration created (Postgres named it this)...
-    op.execute("ALTER TABLE organizations DROP CONSTRAINT IF EXISTS organizations_domain_key")
-    # ...and any unique index on the column a hand-built database may have instead
-    op.execute("""
-        DO $$
-        DECLARE unique_index record;
-        BEGIN
-            FOR unique_index IN
-                SELECT indexname FROM pg_indexes
-                WHERE tablename = 'organizations'
-                  AND indexdef ILIKE 'CREATE UNIQUE INDEX % ON %organizations% (domain)'
-            LOOP
-                EXECUTE format('DROP INDEX IF EXISTS %I', unique_index.indexname);
-            END LOOP;
-        END $$;
-    """)
+    op.execute(DROP_UNIQUE_DOMAIN)
 
 
 def downgrade() -> None:
-    # Fails if two orgs now share a website: that is the point of the upgrade
+    shared = op.get_bind().execute(sa.text(
+        "SELECT domain FROM organizations GROUP BY domain HAVING count(*) > 1 LIMIT 5"
+    )).scalars().all()
+    if shared:
+        raise RuntimeError(
+            "Can't make organization websites unique again: more than one "
+            f"organization uses {', '.join(shared)}")
     op.execute("ALTER TABLE organizations ADD CONSTRAINT organizations_domain_key UNIQUE (domain)")

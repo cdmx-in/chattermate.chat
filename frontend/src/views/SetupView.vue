@@ -20,7 +20,8 @@ import { useRouter } from 'vue-router'
 import type { OrganizationCreate } from '@/types/organization'
 import { createOrganization, getSetupStatus } from '@/services/organization'
 import { userService } from '@/services/user'
-import { validatePassword, validateDomain, validateEmail, validateName, validateOrgName, type PasswordStrength } from '@/utils/validators'
+import { validatePassword, validateEmail, validateName, validateOrgName, type PasswordStrength } from '@/utils/validators'
+import { WEBSITE_INVALID_MESSAGE, looksLikeWebsite } from '@/utils/website'
 // @ts-ignore
 import { defaultTimezone, timezoneOptions } from '@/utils/timezones'
 import type { BusinessHoursDict } from '@/types/organization'
@@ -132,7 +133,7 @@ const handleDomainInput = (domain: string) => {
     if (!domainTouched.value && domain.length > 0) {
         domainTouched.value = true
     }
-    isDomainValid.value = validateDomain(domain)
+    isDomainValid.value = looksLikeWebsite(domain)
 }
 
 const handleSubmit = async () => {
@@ -142,7 +143,7 @@ const handleSubmit = async () => {
     }
 
     if (!isDomainValid.value) {
-        error.value = 'Please enter your website, like yourwebsite.com'
+        error.value = WEBSITE_INVALID_MESSAGE
         return
     }
 
@@ -237,7 +238,7 @@ const timeOptions = Array.from({ length: 24 * 4 }, (_, i) => {
                                 @input="handleDomainInput(orgData.domain)" type="text" required
                                 :class="{ 'invalid': domainTouched && !isDomainValid }" placeholder="yourwebsite.com">
                             <p v-if="domainTouched && !isDomainValid" class="error-hint">
-                                Please enter your website, like yourwebsite.com
+                                {{ WEBSITE_INVALID_MESSAGE }}
                             </p>
                         </div>
 

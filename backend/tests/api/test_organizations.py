@@ -31,6 +31,8 @@ from app.models.permission import (
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from app.api import organizations as organizations_router
+from app.repositories.agent import AgentRepository
+from app.utils.domain_check import LOCALHOST_DOMAIN_MESSAGE, WEBSITE_INVALID_MESSAGE, WEBSITE_REQUIRED_MESSAGE
 from app.core.auth import get_current_user, require_permissions
 from tests.conftest import engine, TestingSessionLocal, create_tables, Base
 
@@ -385,6 +387,45 @@ def test_create_organization_rejects_disposable_admin_email(client, db):
     assert db.query(User).count() == 0
 
 
+def _first_run_setup(client, db, domain):
+    """POST the first-run setup form on an empty install."""
+    app.dependency_overrides[get_db] = lambda: db
+    db.query(User).delete()
+    db.query(Organization).delete()
+    db.commit()
+    return client.post("/api/v1/organizations", json={
+        "name": "First Org",
+        "domain": domain,
+        "timezone": "UTC",
+        "admin_email": "admin@first.example",
+        "admin_name": "First Admin",
+        "admin_password": "adminpass123",
+    })
+
+
+@pytest.mark.parametrize("typed, message", [
+    ("localhost:5173", LOCALHOST_DOMAIN_MESSAGE),
+    ("acme .com", WEBSITE_INVALID_MESSAGE),
+    ("", WEBSITE_REQUIRED_MESSAGE),
+])
+def test_first_run_setup_checks_the_website_and_creates_nothing(client, db, typed, message):
+    response = _first_run_setup(client, db, typed)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == message
+    assert db.query(Organization).count() == 0
+    assert db.query(User).count() == 0
+
+
+def test_first_run_setup_stores_the_website_as_its_host(client, db, monkeypatch):
+    monkeypatch.setattr(AgentRepository, "create_agent", lambda self, **kwargs: None)
+
+    response = _first_run_setup(client, db, "https://WWW.First.example/pricing")
+
+    assert response.status_code == 201
+    assert response.json()["domain"] == "www.first.example"
+
+
 def test_update_organization_invalid_hours(client, test_organization):
     """Test updating organization with invalid business hours"""
     update_data = {
@@ -522,7 +563,7 @@ def test_update_organization_localhost_domain_is_refused(client, db, test_organi
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == organizations_router.LOCALHOST_DOMAIN_MESSAGE
+    assert response.json()["detail"] == LOCALHOST_DOMAIN_MESSAGE
     db.refresh(test_organization)
     assert test_organization.domain == "test.com"
 
