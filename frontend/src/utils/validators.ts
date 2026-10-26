@@ -66,7 +66,14 @@ export const validateOrgName = (name: string): boolean => {
   return name.length >= 2 && name.length <= 100 && /^[a-zA-Z0-9\s\-'&.]+$/.test(name)
 }
 
-/** A path on this dashboard, never another site: "//host" and "/\host" are
- * protocol-relative to browsers, so they don't count. */
-export const isInternalPath = (value: unknown): value is string =>
-  typeof value === 'string' && value.startsWith('/') && !value.startsWith('//') && !value.includes('\\')
+/** A path on this dashboard, never another site. Browsers read "//host" and
+ * "/\host" as another host, and drop tabs and newlines first, so "/<tab>/host"
+ * is one too: refuse control characters and spaces, then check the host. */
+export const isInternalPath = (value: unknown): value is string => {
+  if (typeof value !== 'string' || !value.startsWith('/') || /[\u0000-\u0020\\]/.test(value)) return false
+  try {
+    return new URL(value, 'https://dashboard.invalid').host === 'dashboard.invalid'
+  } catch {
+    return false
+  }
+}

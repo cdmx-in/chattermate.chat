@@ -93,7 +93,9 @@ describe('isInternalPath', () => {
   })
 
   it('refuses anything a browser would take to another site', () => {
-    for (const value of ['//evil.example', '/\\evil.example', 'https://evil.example', 'evil', '', null, undefined, 42]) {
+    for (const value of ['//evil.example', '/\\evil.example', 'https://evil.example', 'evil', '', null, undefined, 42,
+      // Browsers strip tabs and newlines before parsing: these are //evil.example.
+      '/\t/evil.example', '/\n/evil.example', '/\r/evil.example', '/ /evil.example']) {
       expect(isInternalPath(value)).toBe(false)
     }
   })

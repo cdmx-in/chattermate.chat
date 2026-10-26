@@ -229,7 +229,9 @@ def test_start_carries_only_the_login_page_parameters(client: TestClient, google
 
 
 @pytest.mark.parametrize("param", ["redirect", "return_to"])
-@pytest.mark.parametrize("value", ["https://evil.example/", "//evil.example/x", "/%5Cevil.example", "evil"])
+@pytest.mark.parametrize("value", ["https://evil.example/", "//evil.example/x", "/%5Cevil.example", "evil",
+                                   # Browsers strip tabs and newlines: these are //evil.example.
+                                   "/%09/evil.example", "/%0a/evil.example", "/%0d/evil.example", "/%20/evil.example"])
 def test_start_drops_a_destination_off_the_dashboard(client: TestClient, google_only, param, value):
     query = _begin(client, f"?{param}={value}&shop_id=7")
     assert _started(client, query["state"])["carry"] == {"shop_id": "7"}

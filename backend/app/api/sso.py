@@ -18,7 +18,7 @@ Dashboard single sign-on (Google, Microsoft). See app.services.sso for the flow.
 
 import secrets
 from typing import Dict, Optional
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
@@ -52,8 +52,12 @@ _MAX_CARRIED_LENGTH = 256
 
 
 def _internal_path(value: str) -> bool:
-    """A path on the dashboard itself, never another site ("//host", "/\\host")."""
-    return value.startswith("/") and not value.startswith(("//", "/\\")) and "\\" not in value
+    """A path on the dashboard itself, never another site. Browsers read "//host"
+    and "/\\host" as another host, and drop tabs and newlines first, so
+    "/<tab>/host" is one too: refuse control characters and spaces outright."""
+    if not value.startswith("/") or any(ch <= " " or ch == "\\" for ch in value):
+        return False
+    return not value.startswith("//") and urlsplit(value).netloc == ""
 
 
 def _carried(request: Request) -> Dict[str, str]:
