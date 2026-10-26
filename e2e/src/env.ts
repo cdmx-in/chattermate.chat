@@ -49,6 +49,8 @@ export const env = {
     meta: 'e2e-meta-app-secret',
     slack: 'e2e-slack-signing-secret',
   },
+  /** Signs conversation tokens; the same CONVERSATION_SECRET_KEY is set in .env.e2e. */
+  conversationTokenSecret: 'e2e-conversation-secret-not-for-production',
   /** The Shopify app's key and secret, which sign embedded-app session tokens. */
   shopifyApp: { key: 'e2e-shopify-api-key', secret: 'e2e-shopify-api-secret' },
 } as const

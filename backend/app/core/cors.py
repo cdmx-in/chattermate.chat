@@ -147,7 +147,13 @@ def get_cors_origins() -> Set[str]:
             # The site with and without www., over http and https. Normalised:
             # a domain typed as "www.Acme.com" must admit https://acme.com
             # (browsers send Origin lowercase), not www.www.Acme.com.
-            host = site_host(org.domain or "")
+            try:
+                host = site_host(org.domain or "")
+            except ValueError:
+                # One unparsable website (stored before it was validated) must
+                # not cost every other org, help center and store its origins
+                logger.warning(f"Skipping organization {org.id}: its website {org.domain!r} can't be parsed")
+                continue
             if not host:
                 continue
             for scheme in ("https", "http"):

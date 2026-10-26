@@ -39,6 +39,7 @@ from app.repositories.customer import CustomerRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services import conversation_token
 from app.services.contact_capture import CONTACT_EMAIL_META_KEY
+from tests.socket_db import serve_socket_db
 
 VICTIM_BROWSER = "victim-browser"
 
@@ -70,7 +71,7 @@ def mock_sio():
 def socket(db, test_widget, test_ai_config, mock_sio, monkeypatch):
     """Connect a widget socket with a given token; returns its saved session."""
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     monkeypatch.setattr(
         "app.repositories.widget.WidgetRepository.get_widget",
         lambda self, widget_id: test_widget,
@@ -194,8 +195,11 @@ class TestEmailDoesNotOpenAnotherBrowsersConversation:
     async def test_an_unverifiable_token_is_refused(self, socket, mock_sio, test_widget, test_customer, monkeypatch):
         monkeypatch.setattr(widget_chat, "verify_conversation_token", lambda token: None)
 
-        assert await socket(_victim_token(test_widget, test_customer), "sid") is None
-        assert _emitted(mock_sio, "error")["type"] == "connection_error"
+        # Refused for the widget to authorize again, and never given a conversation.
+        with pytest.raises(ConnectionRefusedError) as refused:
+            await socket(_victim_token(test_widget, test_customer), "sid")
+        assert refused.value.error_args["data"]["type"] == "token_invalid"
+        mock_sio.save_session.assert_not_called()
 
 
 class TestOwnConversationOnly:

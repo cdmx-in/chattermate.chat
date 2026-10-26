@@ -26,6 +26,7 @@ from app.models.customer import Customer
 from app.models.session_to_agent import SessionStatus, SessionToAgent
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services import conversation_token
+from tests.socket_db import serve_socket_db
 
 
 @pytest.fixture
@@ -67,7 +68,7 @@ def connected(db, test_widget, test_ai_config, identified_customer, mock_sio, mo
     )
 
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     monkeypatch.setattr(
         widget_chat,
         "authenticate_socket_conversation_token",
@@ -133,7 +134,7 @@ async def test_an_anonymous_visitor_is_not_reported_as_authenticated(
         {"sub": str(test_customer.id), "widget_id": str(test_widget.id)}, ttl_seconds=600
     )
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     monkeypatch.setattr(
         widget_chat,
         "authenticate_socket_conversation_token",

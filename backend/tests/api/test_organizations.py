@@ -31,6 +31,8 @@ from app.models.permission import (
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from app.api import organizations as organizations_router
+from app.repositories.agent import AgentRepository
+from app.utils.domain_check import LOCALHOST_DOMAIN_MESSAGE, WEBSITE_INVALID_MESSAGE, WEBSITE_REQUIRED_MESSAGE
 from app.core.auth import get_current_user, require_permissions
 from tests.conftest import engine, TestingSessionLocal, create_tables, Base
 
@@ -385,6 +387,45 @@ def test_create_organization_rejects_disposable_admin_email(client, db):
     assert db.query(User).count() == 0
 
 
+def _first_run_setup(client, db, domain):
+    """POST the first-run setup form on an empty install."""
+    app.dependency_overrides[get_db] = lambda: db
+    db.query(User).delete()
+    db.query(Organization).delete()
+    db.commit()
+    return client.post("/api/v1/organizations", json={
+        "name": "First Org",
+        "domain": domain,
+        "timezone": "UTC",
+        "admin_email": "admin@first.example",
+        "admin_name": "First Admin",
+        "admin_password": "adminpass123",
+    })
+
+
+@pytest.mark.parametrize("typed, message", [
+    ("localhost:5173", LOCALHOST_DOMAIN_MESSAGE),
+    ("acme .com", WEBSITE_INVALID_MESSAGE),
+    ("", WEBSITE_REQUIRED_MESSAGE),
+])
+def test_first_run_setup_checks_the_website_and_creates_nothing(client, db, typed, message):
+    response = _first_run_setup(client, db, typed)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == message
+    assert db.query(Organization).count() == 0
+    assert db.query(User).count() == 0
+
+
+def test_first_run_setup_stores_the_website_as_its_host(client, db, monkeypatch):
+    monkeypatch.setattr(AgentRepository, "create_agent", lambda self, **kwargs: None)
+
+    response = _first_run_setup(client, db, "https://WWW.First.example/pricing")
+
+    assert response.status_code == 201
+    assert response.json()["domain"] == "www.first.example"
+
+
 def test_update_organization_invalid_hours(client, test_organization):
     """Test updating organization with invalid business hours"""
     update_data = {
@@ -458,31 +499,17 @@ def test_get_another_organizations_stats_is_not_found(client, other_organization
 
 
 @pytest.mark.parametrize("domain", ["other.example.com", "Other.Example.COM"])
-def test_update_organization_domain_taken_is_conflict(client, db, test_organization, other_organization, domain):
-    """A domain another org already uses is refused with 409, ignoring case"""
+def test_two_organizations_may_share_a_website(client, db, test_organization, other_organization, domain):
+    """The widget is framed from our origin, so an org's website needn't be its own:
+    an agency and its client, or two teams on one site, can both name it"""
     response = client.patch(
         f"/api/v1/organizations/{test_organization.id}",
         json={"domain": domain}
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == organizations_router.DOMAIN_TAKEN_MESSAGE
+    assert response.status_code == 200
     db.refresh(test_organization)
-    assert test_organization.domain == "test.com"
-
-
-def test_update_organization_domain_taken_race_is_conflict(client, db, test_organization, other_organization, monkeypatch):
-    """A unique violation at commit (domain claimed after the check) is a 409, not a 500"""
-    from app.repositories.organization import OrganizationRepository
-    monkeypatch.setattr(OrganizationRepository, "is_domain_taken", lambda *args, **kwargs: False)
-
-    response = client.patch(
-        f"/api/v1/organizations/{test_organization.id}",
-        json={"domain": other_organization.domain}
-    )
-
-    assert response.status_code == 409
-    assert response.json()["detail"] == organizations_router.DOMAIN_TAKEN_MESSAGE
+    assert test_organization.domain == "other.example.com"
 
 
 def test_update_organization_keeps_own_domain(client, test_organization, other_organization):
@@ -497,11 +524,10 @@ def test_update_organization_keeps_own_domain(client, test_organization, other_o
     assert response.json()["name"] == "Renamed"
 
 
-def test_update_organization_unique_domain(client, db, test_organization, other_organization):
-    """A domain nobody else uses is saved"""
+def test_a_new_website_is_stored_as_its_host(client, db, test_organization):
     response = client.patch(
         f"/api/v1/organizations/{test_organization.id}",
-        json={"domain": "fresh.example.com"}
+        json={"domain": "  https://Fresh.Example.com/pricing?x=1  "}
     )
 
     assert response.status_code == 200
@@ -510,7 +536,25 @@ def test_update_organization_unique_domain(client, db, test_organization, other_
     assert test_organization.domain == "fresh.example.com"
 
 
-@pytest.mark.parametrize("domain", ["localhost", "LocalHost", "localhost:3000", "http://localhost:5173", "127.0.0.1"])
+@pytest.mark.parametrize("website, detail", [
+    ("", "Your website is required"),
+    ("   ", "Your website is required"),
+    (None, "Your website is required"),
+    ("a]b.com", "Please enter your website, like yourwebsite.com"),
+    ("intranet", "Please enter your website, like yourwebsite.com"),
+    ("a" * 120 + ".com", "Please enter your website, like yourwebsite.com"),
+])
+def test_a_website_that_cant_be_stored_is_refused_plainly(client, db, test_organization, website, detail):
+    response = client.patch(f"/api/v1/organizations/{test_organization.id}", json={"domain": website})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == detail
+    db.refresh(test_organization)
+    assert test_organization.domain == "test.com"
+
+
+@pytest.mark.parametrize("domain", ["localhost", "LocalHost", "localhost:3000", "http://localhost:5173", "127.0.0.1",
+                                    "www.localhost", "app.localhost", "0.0.0.0", "[::1]:8000"])
 def test_update_organization_localhost_domain_is_refused(client, db, test_organization, domain):
     """Localhost is refused as an org domain with a plain message"""
     response = client.patch(
@@ -519,7 +563,7 @@ def test_update_organization_localhost_domain_is_refused(client, db, test_organi
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == organizations_router.LOCALHOST_DOMAIN_MESSAGE
+    assert response.json()["detail"] == LOCALHOST_DOMAIN_MESSAGE
     db.refresh(test_organization)
     assert test_organization.domain == "test.com"
 

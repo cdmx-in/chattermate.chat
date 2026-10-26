@@ -18,7 +18,6 @@ import { describe, it, expect } from 'vitest'
 import {
   isInternalPath,
   validatePassword,
-  validateDomain,
   validateEmail,
   validateName,
   validateOrgName
@@ -43,20 +42,6 @@ describe('validatePassword', () => {
     expect(result.hasUpperCase).toBe(true)
     expect(result.hasNumber).toBe(true)
     expect(result.hasSpecialChar).toBe(true)
-  })
-})
-
-describe('validateDomain', () => {
-  it('validates correct domains', () => {
-    expect(validateDomain('example.com')).toBe(true)
-    expect(validateDomain('sub.example.com')).toBe(true)
-    expect(validateDomain('sub-domain.example.co.uk')).toBe(true)
-  })
-
-  it('rejects invalid domains', () => {
-    expect(validateDomain('invalid')).toBe(false)
-    expect(validateDomain('invalid@domain')).toBe(false)
-    expect(validateDomain('invalid..')).toBe(false)
   })
 })
 
