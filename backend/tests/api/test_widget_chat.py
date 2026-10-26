@@ -36,6 +36,7 @@ from app.models.workflow_connection import WorkflowConnection
 from app.models.rating import Rating
 import datetime
 from socketio.exceptions import ConnectionRefusedError as SocketRefused
+from tests.socket_db import serve_socket_db
 
 @pytest.fixture
 def test_ai_config(db, test_organization) -> AIConfig:
@@ -167,7 +168,7 @@ async def test_widget_connect(db, test_widget, test_ai_config, test_customer, mo
     
     # Mock dependencies
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     
     # Mock authentication
     conversation_token = "test_token"
@@ -253,7 +254,7 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     # Mock dependencies
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     
     # Create a test session
     session_id = uuid4()
@@ -384,7 +385,7 @@ async def test_human_only_agent_waits_instead_of_answering(
 
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
 
     session_id = uuid4()
     conversation_token = "test_token"
@@ -469,7 +470,7 @@ async def test_widget_chat_history(db, test_widget, test_customer, mock_sio, mon
     # Mock dependencies
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     
     # Create a test session
     session_id = uuid4()
@@ -564,7 +565,7 @@ async def test_agent_message(db, test_widget, test_customer, test_user, mock_sio
     # Mock dependencies
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     
     # Create a test session
     session_id = uuid4()
@@ -835,7 +836,7 @@ class TestWidgetConnectionErrors:
         from app.api import widget_chat
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Mock authentication
         mock_auth_result = (
@@ -879,7 +880,7 @@ class TestWidgetConnectionErrors:
         from app.api import widget_chat
 
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         monkeypatch.setattr(
             widget_chat,
             "authenticate_socket_conversation_token",
@@ -901,7 +902,7 @@ class TestWidgetConnectionErrors:
         from app.api import widget_chat
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Mock authentication
         mock_auth_result = ("invalid_widget_id", "org_id", "customer_id", "test_token")
@@ -1123,7 +1124,7 @@ class TestAgentHandlers:
         from app.repositories.session_to_agent import SessionToAgentRepository
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Create a test session
         session_id = uuid4()
@@ -1246,7 +1247,7 @@ class TestRatingSubmission:
         from app.repositories.session_to_agent import SessionToAgentRepository
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Create a test session
         session_id = uuid4()
@@ -1302,7 +1303,7 @@ class TestRatingSubmission:
         from app.repositories.session_to_agent import SessionToAgentRepository
 
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
 
         session_id = uuid4()
         SessionToAgentRepository(db).create_session(
@@ -1559,7 +1560,7 @@ class TestEnterpriseFeatures:
         from app.api import widget_chat
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Mock authentication
         mock_auth_result = (
@@ -1631,7 +1632,7 @@ class TestComplexScenarios:
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
         monkeypatch.setattr(message_delivery, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Create a test session
         session_id = uuid4()
@@ -1689,7 +1690,7 @@ class TestComplexScenarios:
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
         monkeypatch.setattr(message_delivery, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Create a test session
         session_id = uuid4()
@@ -1752,7 +1753,7 @@ async def test_agent_message_tells_the_sender_its_stored_id(db, test_widget, tes
 
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     session_id = uuid4()
     from app.repositories.session_to_agent import SessionToAgentRepository
     SessionToAgentRepository(db).create_session(
@@ -1791,7 +1792,7 @@ async def test_org_inbox_room_is_for_people_who_see_unowned_chats(
         test_role.permissions = [*test_role.permissions, permission]
     db.commit()
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     mock_sio.enter_room = AsyncMock()
     mock_sio.get_session.return_value = {
         "user_id": str(test_user.id), "organization_id": str(test_organization.id)}
