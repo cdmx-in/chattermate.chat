@@ -24,14 +24,17 @@ from app.core.config import settings
 from app.core.loop_safe_pool import LoopSafeQueuePool
 
 # Create SQLAlchemy engine with Unicode support
-# t3.micro RDS has ~45-65 max connections, reserve some for admin and other services
+# Every process (each backend worker and worker container) has its own pool:
+# keep processes x (pool_size + max_overflow + loop_overflow) under Postgres
+# max_connections, with some left for admin
 engine = create_engine(
     settings.DATABASE_URL,
     pool_pre_ping=True,
     # Never makes the event loop wait for a connection (see LoopSafeQueuePool)
     poolclass=LoopSafeQueuePool,
     pool_size=5,  # Conservative pool size for t3.micro
-    max_overflow=10,  # Up to 15 connections (the event loop may briefly open loop_overflow more)
+    max_overflow=10,  # Allow up to 15 total connections from this pool
+    loop_overflow=5,  # Opened past that only for the event loop, which never waits
     pool_timeout=30,  # Timeout waiting for connection
     pool_recycle=1800,  # Recycle connections after 30 minutes
     # Unicode, and UTC: naive timestamp columns default to now(), which is the

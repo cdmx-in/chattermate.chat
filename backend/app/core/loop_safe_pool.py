@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 
 def _on_event_loop() -> bool:
+    """True when called from the thread running an asyncio loop, not from a
+    worker thread (anyio's threadpool, asyncio.to_thread)."""
     try:
         asyncio.get_running_loop()
         return True
@@ -36,23 +38,33 @@ class LoopSafeQueuePool(QueuePool):
     """A QueuePool that never makes the event loop wait for a connection.
 
     Socket handlers, async routes and agent tools run sync queries on the event
-    loop. When the pool is full, a plain QueuePool blocks the loop until a
-    connection comes back, but the connections out are held by coroutines
-    suspended at an await, and by request teardowns that close their session
-    from the loop. None of them can give theirs back while the loop is blocked,
-    so the whole server froze until the timeout ran out.
+    loop. A checkout there that waits for a full pool blocks the loop, but the
+    connections out are held by coroutines suspended at an await and by request
+    teardowns that run on the loop: none of them can give theirs back until the
+    wait times out, and every request stalls meanwhile.
 
     So on the loop, a full pool opens up to loop_overflow connections past its
-    limit (they close again as they come back), and beyond that a checkout fails
-    at once: one failed call instead of every user waiting. Checkouts from
-    threads wait as usual, since the loop keeps running while they do.
+    limit (closed again as they come back to a full pool), and beyond that a
+    checkout fails at once. Checkouts from threads wait as usual: the loop keeps
+    running while they do.
     """
 
-    loop_overflow = 10
+    def __init__(self, creator, loop_overflow: int = 0, **kw):
+        # A plain keyword (not keyword-only): create_engine forwards only the
+        # pool arguments it finds that way
+        super().__init__(creator, **kw)
+        self.loop_overflow = loop_overflow
+
+    def recreate(self) -> "LoopSafeQueuePool":
+        pool = super().recreate()
+        pool.loop_overflow = self.loop_overflow
+        return pool
 
     def _do_get(self):
         if self._max_overflow == -1 or not _on_event_loop():
             return super()._do_get()
+        # Mirrors QueuePool._do_get (SQLAlchemy 2.0) without its wait: recheck
+        # this against the base class when upgrading SQLAlchemy
         try:
             return self._pool.get(False)
         except sqla_queue.Empty:
@@ -65,12 +77,12 @@ class LoopSafeQueuePool(QueuePool):
                     % (self.size(), self.overflow()),
                     code="3o7r",
                 )
-            beyond_limit = self._overflow >= self._max_overflow
+            first_past_limit = self._overflow == self._max_overflow
             self._overflow += 1
-        if beyond_limit:
+        if first_past_limit:
             logger.warning(
-                "Connection pool full: opened one past its limit for the event "
-                "loop (%s)", self.status())
+                "Connection pool full: opening up to %d more for the event loop (%s)",
+                self.loop_overflow, self.status())
         try:
             return self._create_connection()
         except BaseException:

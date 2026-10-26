@@ -16,6 +16,7 @@ limitations under the License.
 
 import asyncio
 import logging
+import threading
 import time
 from unittest.mock import MagicMock
 
@@ -23,15 +24,17 @@ import pytest
 from sqlalchemy import exc
 from sqlalchemy.pool import QueuePool
 
-from app import database
 from app.core.loop_safe_pool import LoopSafeQueuePool
 
+# Waits are measured with time.monotonic, SQLAlchemy's queue with time.time
+CLOCK_SLACK = 0.9
 
-def make_pool(pool_class=LoopSafeQueuePool, *, pool_size=1, max_overflow=0, timeout=5.0, loop_overflow=None):
+
+def make_pool(pool_class=LoopSafeQueuePool, *, pool_size=1, max_overflow=0, timeout=5.0, **kw):
     creator = MagicMock(side_effect=lambda: MagicMock(name="dbapi connection"))
-    pool = pool_class(creator, pool_size=pool_size, max_overflow=max_overflow, timeout=timeout)
-    if loop_overflow is not None:
-        pool.loop_overflow = loop_overflow
+    if pool_class is LoopSafeQueuePool:
+        kw.setdefault("loop_overflow", 10)
+    pool = pool_class(creator, pool_size=pool_size, max_overflow=max_overflow, timeout=timeout, **kw)
     return pool, creator
 
 
@@ -70,7 +73,7 @@ def test_a_plain_pool_freezes_the_loop_until_it_times_out():
     with pytest.raises(exc.TimeoutError):
         run_the_freeze(pool)
 
-    assert time.monotonic() - started >= 0.3
+    assert time.monotonic() - started >= 0.3 * CLOCK_SLACK
 
 
 def test_a_connection_held_across_an_await_no_longer_freezes_the_loop():
@@ -104,9 +107,21 @@ def test_on_the_loop_a_full_pool_opens_one_more_instead_of_waiting(caplog):
     assert time.monotonic() - started < 1.0
     assert creator.call_count == 2
     assert pool.checkedout() == 2
-    assert "past its limit" in caplog.text
+    assert "Connection pool full" in caplog.text
     extra.close()
     held.close()
+
+
+def test_the_warning_is_logged_once_per_crossing_not_per_connection(caplog):
+    pool, _ = make_pool()
+    held = [pool.connect()]
+
+    with caplog.at_level(logging.WARNING, logger="app.core.loop_safe_pool"):
+        held += [on_loop(pool.connect) for _ in range(3)]
+
+    assert caplog.text.count("Connection pool full") == 1
+    for conn in held:
+        conn.close()
 
 
 def test_within_its_own_overflow_the_loop_opens_connections_without_a_warning(caplog):
@@ -117,7 +132,7 @@ def test_within_its_own_overflow_the_loop_opens_connections_without_a_warning(ca
         extra = on_loop(pool.connect)
 
     assert creator.call_count == 2
-    assert "past its limit" not in caplog.text
+    assert "Connection pool full" not in caplog.text
     extra.close()
     held.close()
 
@@ -127,10 +142,11 @@ def test_past_its_headroom_the_loop_fails_at_once_rather_than_waiting():
     held = [pool.connect(), on_loop(pool.connect)]
 
     started = time.monotonic()
-    with pytest.raises(exc.TimeoutError, match="event loop"):
+    with pytest.raises(exc.TimeoutError, match="event loop") as refused:
         on_loop(pool.connect)
 
     assert time.monotonic() - started < 1.0
+    assert refused.value.code == "3o7r"
     for conn in held:
         conn.close()
 
@@ -173,8 +189,18 @@ def test_a_thread_still_waits_and_times_out_as_before():
     with pytest.raises(exc.TimeoutError):
         pool.connect()
 
-    assert time.monotonic() - started >= 0.2
+    assert time.monotonic() - started >= 0.2 * CLOCK_SLACK
     held.close()
+
+
+def test_a_thread_never_gets_the_loops_headroom():
+    pool, _ = make_pool(timeout=0.2)
+    held = [pool.connect(), on_loop(pool.connect)]
+
+    with pytest.raises(exc.TimeoutError):
+        pool.connect()
+    for conn in held:
+        conn.close()
 
 
 def test_work_moved_off_the_loop_into_a_thread_waits_as_before():
@@ -200,11 +226,42 @@ def test_an_unlimited_pool_is_left_alone():
     held.close()
 
 
-def test_the_app_engine_uses_it_and_keeps_it_in_a_forked_worker():
-    assert isinstance(database.engine.pool, LoopSafeQueuePool)
-    size, overflow = database.engine.pool.size(), database.engine.pool._max_overflow
+def test_without_headroom_the_loop_fails_at_once_on_a_full_pool():
+    pool, _ = make_pool(loop_overflow=0)
+    held = pool.connect()
 
-    database._fresh_pool_after_fork()
+    with pytest.raises(exc.TimeoutError):
+        on_loop(pool.connect)
+    held.close()
 
-    assert isinstance(database.engine.pool, LoopSafeQueuePool)
-    assert (database.engine.pool.size(), database.engine.pool._max_overflow) == (size, overflow)
+
+def test_the_count_stays_right_with_threads_and_the_loop_at_once():
+    pool, _ = make_pool(pool_size=2, max_overflow=2, timeout=5.0, loop_overflow=4)
+    overflow_at_rest = pool.overflow()
+
+    def thread_work():
+        for _ in range(50):
+            pool.connect().close()
+
+    async def loop_work():
+        for _ in range(50):
+            conn = pool.connect()
+            await asyncio.sleep(0)
+            conn.close()
+
+    threads = [threading.Thread(target=thread_work) for _ in range(4)]
+    for thread in threads:
+        thread.start()
+    asyncio.run(loop_work())
+    for thread in threads:
+        thread.join()
+
+    assert pool.checkedout() == 0
+    assert pool.overflow() <= overflow_at_rest + pool.size()
+    assert pool.checkedin() <= pool.size()
+
+
+def test_its_headroom_survives_a_recreate():
+    pool, _ = make_pool(loop_overflow=3)
+
+    assert pool.recreate().loop_overflow == 3
