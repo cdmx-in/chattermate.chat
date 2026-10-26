@@ -24,7 +24,16 @@ import time
 import pytest
 
 from app.utils import domain_check
-from app.utils.domain_check import bare_host, domain_resolves
+from app.utils.domain_check import (
+    LOCALHOST_DOMAIN_MESSAGE,
+    WEBSITE_INVALID_MESSAGE,
+    WEBSITE_REQUIRED_MESSAGE,
+    InvalidWebsite,
+    bare_host,
+    domain_resolves,
+    validate_org_website,
+    website_update,
+)
 
 
 @pytest.mark.parametrize("given,expected", [
@@ -131,3 +140,79 @@ def test_slots_come_back_after_timeouts(monkeypatch):
     fake_dns(monkeypatch, known={"teeckbox.com"})
     monkeypatch.setattr(domain_check, "LOOKUP_TIMEOUT_SECONDS", 1.0)
     assert asyncio.run(domain_resolves("teeckbox.com")) is True
+
+
+# ---- organization websites ----------------------------------------------------
+
+@pytest.mark.parametrize("typed, stored", [
+    ("acme.com", "acme.com"),
+    ("  https://WWW.Acme.com/pricing?plan=pro  ", "www.acme.com"),
+    ("shop.acme.co.uk:8443", "shop.acme.co.uk"),
+    ("acme.com.", "acme.com"),
+    ("my.cool-site.com", "my.cool-site.com"),
+    ("bücher.de", "xn--bcher-kva.de"),  # as browsers send it in an Origin
+    ("xn--bcher-kva.de", "xn--bcher-kva.de"),
+    ("203.0.113.7", "203.0.113.7"),
+    ("192.168.1.5", "192.168.1.5"),  # a self-hosted intranet site
+])
+def test_a_website_is_stored_as_its_host(typed, stored):
+    assert validate_org_website(typed) == stored
+
+
+@pytest.mark.parametrize("typed", [None, "", "   ", 42])
+def test_a_website_is_required(typed):
+    with pytest.raises(InvalidWebsite) as refused:
+        validate_org_website(typed)
+    assert str(refused.value) == WEBSITE_REQUIRED_MESSAGE
+
+
+@pytest.mark.parametrize("typed", [
+    "a]b.com", "[x", "intranet", "acme .com", "acme.com<script>x", 'a"b.com', ".com", "a..b.com",
+    "-acme.com", "acme-.com", "acme_shop.com", "acme.123", "10.1",
+    "a" * 64 + ".com",  # one label is at most 63
+    ".".join(["abcdefghi"] * 10) + ".com",  # longer than the column
+    ".".join(["日本語のウェブサイト名前店舗"] * 3) + ".jp",  # 47 typed, 134 as punycode
+    "169.254.169.254", "224.0.0.1", "240.0.0.1", "[2001:db8::1]",
+])
+def test_what_no_public_website_could_be_is_refused(typed):
+    with pytest.raises(InvalidWebsite) as refused:
+        validate_org_website(typed)
+    assert str(refused.value) == WEBSITE_INVALID_MESSAGE
+
+
+@pytest.mark.parametrize("typed", [
+    "localhost", "localhost:3000", "www.localhost", "app.localhost", "http://LocalHost:5173/x",
+    "127.0.0.1", "127.0.0.2", "0.0.0.0", "::1", "[::1]:8000", "http://[::1]/",
+])
+def test_every_form_of_localhost_gets_its_own_message(typed):
+    # www.localhost too: CORS admits a website with and without www.
+    with pytest.raises(InvalidWebsite) as refused:
+        validate_org_website(typed)
+    assert str(refused.value) == LOCALHOST_DOMAIN_MESSAGE
+
+
+@pytest.mark.parametrize("typed", ["localhost.example.com", "mylocalhost.com"])
+def test_lookalikes_of_localhost_are_websites(typed):
+    assert validate_org_website(typed) == typed
+
+
+@pytest.mark.parametrize("typed", ["acme.com", " ACME.com ", "Acme.Com"])
+def test_an_unchanged_website_is_left_as_it_is(typed):
+    assert website_update(typed, "acme.com") is None
+
+
+def test_an_unchanged_older_value_never_blocks_saving():
+    # stored before websites were checked
+    assert website_update("https://Acme.com/x", "https://acme.com/x") is None
+
+
+def test_a_changed_website_is_checked_and_stored_as_its_host():
+    assert website_update("https://New.example/x", "acme.com") == "new.example"
+    with pytest.raises(InvalidWebsite):
+        website_update("localhost", "acme.com")
+    with pytest.raises(InvalidWebsite):
+        website_update("", "acme.com")
+
+
+def test_a_first_website_is_checked():
+    assert website_update("acme.com", None) == "acme.com"

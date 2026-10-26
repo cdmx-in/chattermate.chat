@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import Optional, List
 from app.models.organization import Organization
@@ -56,21 +55,6 @@ class OrganizationRepository:
         return self.db.query(Organization).filter(
             Organization.id == org_id
         ).first()
-
-    def get_organization_by_domain(self, domain: str) -> Optional[Organization]:
-        """Get organization by domain"""
-        return self.db.query(Organization).filter(
-            Organization.domain == domain
-        ).first()
-
-    def is_domain_taken(self, domain: str, exclude_org_id: Optional[UUID] = None) -> bool:
-        """Whether another organization already uses this domain, ignoring case"""
-        query = self.db.query(Organization.id).filter(
-            func.lower(Organization.domain) == domain.lower()
-        )
-        if exclude_org_id is not None:
-            query = query.filter(Organization.id != exclude_org_id)
-        return query.first() is not None
 
     def get_active_organizations(self) -> List[Organization]:
         """Get all active organizations"""

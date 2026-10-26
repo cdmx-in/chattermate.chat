@@ -45,9 +45,6 @@ def use_shop_domain_if_unset(db: Session, organization_id: Union[str, UUID], sho
     organization = org_repo.get_organization(UUID(str(organization_id)))
     if not organization or organization.domain or not shop_domain:
         return
-    if org_repo.get_organization_by_domain(shop_domain):
-        logger.warning(f"Domain {shop_domain} is already another organization's website; not adopting it")
-        return
     organization.domain = shop_domain
     db.add(organization)
     logger.info(f"Organization {organization_id} had no website; using its store's domain {shop_domain}")

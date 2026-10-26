@@ -19,6 +19,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
+from app.utils.domain_check import InvalidWebsite, website_update
+from app.repositories.organization import OrganizationRepository
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.database import get_db
@@ -528,7 +530,6 @@ async def get_organization_domain(
             raise HTTPException(status_code=400, detail="Shop not linked to organization")
 
         # Get organization
-        from app.repositories.organization import OrganizationRepository
         org_repo = OrganizationRepository(db)
         organization = org_repo.get_organization(str(db_shop.organization_id))
 
@@ -568,24 +569,23 @@ async def update_organization_domain(
         body = await request.json()
         new_domain = body.get('domain')
 
-        if not new_domain:
-            raise HTTPException(status_code=400, detail="domain is required")
-
-        # Validate domain format (basic validation)
-        new_domain = new_domain.strip()
-        if not new_domain:
-            raise HTTPException(status_code=400, detail="domain cannot be empty")
-
         # Get organization
         if not db_shop.organization_id:
             raise HTTPException(status_code=400, detail="Shop not linked to organization")
 
-        from app.repositories.organization import OrganizationRepository
         org_repo = OrganizationRepository(db)
         organization = org_repo.get_organization(str(db_shop.organization_id))
 
         if not organization:
             raise HTTPException(status_code=404, detail="Organization not found")
+
+        try:
+            website = website_update(new_domain, organization.domain)
+        except InvalidWebsite as invalid:
+            raise HTTPException(status_code=400, detail=str(invalid))
+        if not website:
+            return {"success": True, "domain": organization.domain, "organization_id": str(organization.id)}
+        new_domain = website
 
         # Update organization domain
         organization.domain = new_domain
@@ -608,12 +608,6 @@ async def update_organization_domain(
         raise
     except Exception as e:
         logger.error(f"Error updating organization domain: {str(e)}")
-        # Check if it's a unique constraint violation
-        if "duplicate key" in str(e).lower() or "unique constraint" in str(e).lower():
-            raise HTTPException(
-                status_code=400,
-                detail="Domain is already connected to another organization"
-            )
         raise HTTPException(
             status_code=500,
             detail="Error updating organization domain"

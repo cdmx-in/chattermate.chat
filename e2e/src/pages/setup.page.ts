@@ -26,7 +26,7 @@ export class SetupPage {
     await step('Create the organization', async () => {
       const form = this.page
       await form.getByLabel('Organization Name', { exact: true }).fill(details.orgName)
-      await form.getByLabel('Domain', { exact: true }).fill(details.domain)
+      await form.getByLabel('Your website', { exact: true }).fill(details.domain)
       await form.getByLabel('Admin Name', { exact: true }).fill(details.adminName)
       await form.getByLabel('Admin Email', { exact: true }).fill(details.adminEmail)
       await form.getByLabel('Admin Password', { exact: true }).fill(details.adminPassword)

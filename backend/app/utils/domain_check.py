@@ -13,11 +13,14 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 
-Whether a signup domain resolves in DNS - for a soft warning, never a block:
-some people sign up before their site is live.
+An organization's website: the one check every surface stores it through, and
+whether it resolves in DNS - for a soft warning, never a block: some people
+sign up before their site is live.
 """
 
 import asyncio
+import ipaddress
+import re
 import socket
 import threading
 import time
@@ -53,6 +56,89 @@ def site_host(domain: str) -> str:
     """An org's site as hostnames compare: 'https://WWW.Acme.com/' -> 'acme.com'.
     CORS admits this host and its www., however the domain was typed."""
     return bare_host(domain).removeprefix("www.")
+
+
+LOCALHOST_DOMAIN_MESSAGE = "Localhost can't be used as your website. Use the site where you'll add the widget."
+WEBSITE_REQUIRED_MESSAGE = "Your website is required"
+WEBSITE_INVALID_MESSAGE = "Please enter your website, like yourwebsite.com"
+WEBSITE_MAX_LENGTH = 100  # the organizations.domain column
+# One DNS label: letters, digits and inner hyphens (punycode for the rest)
+_LABEL = re.compile(r"^(?!-)[a-z0-9-]{1,63}(?<!-)$")
+
+
+class InvalidWebsite(ValueError):
+    """An organization website that can't be stored; the message is for the person."""
+
+
+def _typed_host(text: str) -> str:
+    """The host in what was typed, a bare IPv6 address included."""
+    try:
+        host = bare_host(text)
+    except ValueError:
+        host = ""
+    if not host:
+        try:
+            host = str(ipaddress.ip_address(text.strip("[]")))
+        except ValueError:
+            return ""
+    return host.rstrip(".")
+
+
+def _is_local(host: str) -> bool:
+    """Whether a host is a developer's machine. Org websites still feed CORS for
+    cached older loaders, which must never admit such a machine for everyone."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        name = host.removeprefix("www.")  # CORS admits a site with and without www.
+        return name == "localhost" or name.endswith(".localhost")
+    return address.is_loopback or address.is_unspecified
+
+
+def _public_name(host: str) -> Optional[str]:
+    """The host as browsers send it in an Origin (punycode), or None when it
+    isn't a hostname a public website can have."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        usable = address.version == 4 and not (
+            address.is_link_local or address.is_multicast or address.is_reserved)
+        return host if usable else None
+    try:
+        name = host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return None
+    labels = name.split(".")
+    if len(labels) < 2 or labels[-1].isdigit() or not all(_LABEL.match(label) for label in labels):
+        return None
+    return name if len(name) <= WEBSITE_MAX_LENGTH else None
+
+
+def validate_org_website(value: object) -> str:
+    """An organization's website as stored: its host only, lowercase and in
+    punycode ('https://WWW.Acme.com/pricing' -> 'www.acme.com'). Required, but
+    not unique. Raises InvalidWebsite with a message a person can act on."""
+    text = value.strip() if isinstance(value, str) else ""
+    if not text:
+        raise InvalidWebsite(WEBSITE_REQUIRED_MESSAGE)
+    host = _typed_host(text)
+    if host and _is_local(host):
+        raise InvalidWebsite(LOCALHOST_DOMAIN_MESSAGE)
+    name = _public_name(host) if host else None
+    if not name:
+        raise InvalidWebsite(WEBSITE_INVALID_MESSAGE)
+    return name
+
+
+def website_update(new: object, current: Optional[str]) -> Optional[str]:
+    """The website to store when someone edits it, or None to leave it be: an
+    unchanged value (however it's cased or spaced) is kept as it is, so an older
+    stored value never blocks saving other settings."""
+    if isinstance(new, str) and current and new.strip().lower() == current.strip().lower():
+        return None
+    return validate_org_website(new)
 
 
 def _lookup(host: str) -> Optional[bool]:
