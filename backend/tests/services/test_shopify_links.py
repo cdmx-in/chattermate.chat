@@ -42,7 +42,8 @@ def test_an_org_without_a_website_gets_its_stores(db, test_organization):
     assert db.get(Organization, test_organization.id).domain == STORE
 
 
-def test_a_domain_another_org_has_is_not_taken(db, test_organization):
+def test_a_domain_another_org_has_is_adopted_too(db, test_organization):
+    # Websites aren't unique: another org on the same store doesn't stop this one
     db.add(Organization(name="Other", domain=STORE, timezone="UTC"))
     test_organization.domain = ""
     db.commit()
@@ -50,7 +51,7 @@ def test_a_domain_another_org_has_is_not_taken(db, test_organization):
     use_shop_domain_if_unset(db, test_organization.id, STORE)
     db.commit()
 
-    assert db.get(Organization, test_organization.id).domain == ""
+    assert db.get(Organization, test_organization.id).domain == STORE
 
 
 def test_who_owns_a_store():
