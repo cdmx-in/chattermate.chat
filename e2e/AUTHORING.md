@@ -154,6 +154,7 @@ A journey that should hold on every channel loops over `channels` (or `channelsW
 | Size and speed budgets | `specs/perf` | every run |
 | Migrations | `./scripts/upgrade-check.sh [ref]`: the last release's schema upgraded to HEAD must equal a fresh install | nightly |
 | API fuzzing | `./scripts/api-fuzz.sh` (Schemathesis): every read endpoint, no 500s | nightly |
+| Widget burst | `./scripts/stack.sh reset && node scripts/widget-burst.mjs [visitors]`: that many page loads at once all get in, and the API never stalls | nightly |
 
 ## Adding a test
 

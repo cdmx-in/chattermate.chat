@@ -43,6 +43,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.compiler import compiles
+from app import database
 from app.database import Base
 from typing import Generator
 from sqlalchemy.schema import CreateTable, Table
@@ -167,6 +168,13 @@ def _before_create_table(target, connection, **kw):
     # For SQLite, we need to remove schema prefixes
     if connection.engine.dialect.name == 'sqlite':
         target.schema = None
+
+@pytest.fixture(autouse=True)
+def app_sessions_use_the_test_database(monkeypatch):
+    """Request and socket sessions (app.database.session_off_loop) connect as
+    soon as they open, so point them at the test database rather than the
+    Postgres in settings, which CI doesn't run."""
+    monkeypatch.setattr(database, "engine", engine)
 
 def create_tables():
     """Create all tables in the test database"""

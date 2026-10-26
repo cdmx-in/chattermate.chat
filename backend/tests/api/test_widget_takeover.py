@@ -39,6 +39,7 @@ from app.repositories.customer import CustomerRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services import conversation_token
 from app.services.contact_capture import CONTACT_EMAIL_META_KEY
+from tests.socket_db import serve_socket_db
 
 VICTIM_BROWSER = "victim-browser"
 
@@ -70,7 +71,7 @@ def mock_sio():
 def socket(db, test_widget, test_ai_config, mock_sio, monkeypatch):
     """Connect a widget socket with a given token; returns its saved session."""
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     monkeypatch.setattr(
         "app.repositories.widget.WidgetRepository.get_widget",
         lambda self, widget_id: test_widget,

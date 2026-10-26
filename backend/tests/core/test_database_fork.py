@@ -19,14 +19,25 @@ import os
 import pytest
 
 from app import database
+from app.core.loop_safe_pool import LoopSafeQueuePool
+
+
+@pytest.fixture
+def app_sessions_use_the_test_database():
+    """These tests are about the app's own engine: leave it in place."""
 
 
 def test_a_child_starts_with_its_own_pool():
     parent_pool = database.engine.pool
+    parent_threads = database._checkout_threads
 
     database._fresh_pool_after_fork()
 
     assert database.engine.pool is not parent_pool
+    # still the pool that never makes the event loop wait, with its headroom
+    assert isinstance(database.engine.pool, LoopSafeQueuePool)
+    assert database.engine.pool.loop_overflow == parent_pool.loop_overflow > 0
+    assert database._checkout_threads is not parent_threads
 
 
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork()")

@@ -32,7 +32,7 @@ from app.core.auth_utils import (
     authenticate_socket_conversation_token,
     widget_socket_identity,
 )
-from app.database import get_db, release_connection
+from app.database import close_session, release_connection, session_off_loop
 from app.repositories.ai_config import AIConfigRepository
 from app.repositories.widget import WidgetRepository
 from app.repositories.agent_shopify_config_repository import AgentShopifyConfigRepository
@@ -42,6 +42,7 @@ from app.repositories.chat import ChatRepository
 from app.repositories.customer import CustomerRepository
 import uuid
 from app.services.socket_rate_limit import socket_rate_limit
+from app.utils.keyed_lock import KeyedLock
 from app.services import conversation_token as conversation_token_service
 from app.services.workflow_chat import WorkflowChatService
 from app.services.file_upload_service import FileUploadService
@@ -258,7 +259,7 @@ async def widget_connect(sid, environ, auth):
         is_identified = conversation_token_service.is_identified(token_data)
 
         # Get widget and verify it exists
-        db = next(get_db())
+        db = await session_off_loop()
         widget_repo = WidgetRepository(db)
         widget = widget_repo.get_widget(widget_id)
         if not widget:
@@ -402,7 +403,7 @@ async def widget_connect(sid, environ, auth):
         return False
     finally:
         if db:
-            db.close()
+            close_session(db)
 
 
 @sio.on('chat', namespace='/widget')
@@ -446,7 +447,7 @@ async def handle_widget_chat(sid, data):
         # Upload files if provided
         uploaded_files = []
         if files:
-            db_temp = next(get_db())
+            db_temp = await session_off_loop()
             try:
                 agent_repo = AgentRepository(db_temp)
                 agent = agent_repo.get_agent(session['agent_id'])
@@ -505,9 +506,9 @@ async def handle_widget_chat(sid, data):
                         }, room=sid, namespace='/widget')
                         return
             finally:
-                db_temp.close()
+                close_session(db_temp)
 
-        db = next(get_db())
+        db = await session_off_loop()
         session_repo = SessionToAgentRepository(db)
                 
         own_session = _own_session(session_repo, session, active_only=False)
@@ -956,7 +957,7 @@ async def handle_widget_chat(sid, data):
         }, to=sid, namespace='/widget')
     finally:
         if db:
-            db.close()
+            close_session(db)
 
 
 @sio.on('get_chat_history', namespace='/widget')
@@ -974,7 +975,7 @@ async def get_widget_chat_history(sid):
             await sio.emit('error', {'error': 'Authentication failed', 'type': 'auth_error'}, room=sid, namespace='/widget')
             return
 
-        db = next(get_db())
+        db = await session_off_loop()
         
         # History of this socket's own conversation only
         session_repo = SessionToAgentRepository(db)
@@ -1042,7 +1043,7 @@ async def get_widget_chat_history(sid):
         }, to=sid, namespace='/widget')
     finally:
         if db:
-            db.close()
+            close_session(db)
 
 
 @sio.on('refresh_token', namespace='/widget')
@@ -1117,7 +1118,7 @@ async def handle_end_chat(sid, data):
             logger.error(f"No session_id in session data for sid {sid}")
             return
 
-        db = next(get_db())
+        db = await session_off_loop()
         try:
             # Close the session immediately
             session_repo = SessionToAgentRepository(db)
@@ -1153,7 +1154,7 @@ async def handle_end_chat(sid, data):
                 'type': 'end_chat_error'
             }, to=sid, namespace='/widget')
         finally:
-            db.close()
+            close_session(db)
     
     except Exception as e:
         logger.error(f"Error in end_chat handler for sid {sid}: {str(e)}")
@@ -1201,7 +1202,7 @@ async def handle_agent_message(sid, data):
         if not session_id:
             raise ValueError("No active session")
 
-        db = next(get_db())
+        db = await session_off_loop()
         session_repo = SessionToAgentRepository(db)
         chat_repo = ChatRepository(db)
         
@@ -1380,7 +1381,7 @@ async def handle_agent_message(sid, data):
         }, to=sid, namespace='/agent')
     finally:
         if db:
-            db.close()
+            close_session(db)
 
 # Add handlers for room management
 @sio.on('join_room', namespace='/agent')
@@ -1413,14 +1414,14 @@ async def handle_join_room(sid, data):
         # Per-org inbox room (live delivery receipts on any of the org's
         # chats) — for the people who can see chats nobody owns
         if is_org_inbox_room(session_id):
-            db = next(get_db())
+            db = await session_off_loop()
             if not may_join_org_inbox(db, session, session_id):
                 raise ValueError("Unauthorized to join org inbox room")
             await sio.enter_room(sid, session_id, namespace='/agent')
             return
 
         # Verify this agent has permission to join this room
-        db = next(get_db())
+        db = await session_off_loop()
         session_repo = SessionToAgentRepository(db)
         session_data = session_repo.get_session(session_id)
         
@@ -1455,7 +1456,7 @@ async def handle_join_room(sid, data):
         }, to=sid, namespace='/agent')
     finally:
         if db:
-            db.close()
+            close_session(db)
 
 @sio.on('leave_room', namespace='/agent')
 async def handle_leave_room(sid, data):
@@ -1524,7 +1525,7 @@ async def handle_rating_submission(sid, data):
             # and ends up in the agent UI and the ticket activity feed.
             feedback = sanitize_message(feedback.strip()[:MAX_RATING_FEEDBACK_LENGTH]) or None
 
-        db = next(get_db())
+        db = await session_off_loop()
         
         # Get session details
         session_repo = SessionToAgentRepository(db)
@@ -1578,7 +1579,11 @@ async def handle_rating_submission(sid, data):
         }, to=sid, namespace='/widget')
     finally:
         if db:
-            db.close()
+            close_session(db)
+
+
+# A session's workflow is started by one get_workflow_state at a time
+_workflow_starts = KeyedLock()
 
 
 @sio.on('get_workflow_state', namespace='/widget')
@@ -1586,6 +1591,7 @@ async def handle_rating_submission(sid, data):
 async def handle_get_workflow_state(sid):
     """Get current workflow state and execute next node if no chat history"""
     db = None
+    starting = None
     try:
         logger.info(f"Getting workflow state for sid {sid}")
         # Identity was established (and the token verified) at connect time.
@@ -1598,8 +1604,13 @@ async def handle_get_workflow_state(sid):
             return
 
         session_id = session['session_id']
+        # The widget may ask twice on load: one at a time, or both would see no
+        # history yet and start the workflow (greeting the visitor) twice
+        lock = _workflow_starts(session_id)
+        await lock.acquire()
+        starting = lock
 
-        db = next(get_db())
+        db = await session_off_loop()
         session_repo = SessionToAgentRepository(db)
         chat_repo = ChatRepository(db)
         
@@ -1849,7 +1860,9 @@ async def handle_get_workflow_state(sid):
         }, to=sid, namespace='/widget')
     finally:
         if db:
-            db.close()
+            close_session(db)
+        if starting is not None:
+            starting.release()
 
 
 @sio.on('proceed_workflow', namespace='/widget')
@@ -1870,7 +1883,7 @@ async def handle_proceed_workflow(sid, data):
 
         session_id = session['session_id']
 
-        db = next(get_db())
+        db = await session_off_loop()
         session_repo = SessionToAgentRepository(db)
         chat_repo = ChatRepository(db)
         
@@ -2025,7 +2038,7 @@ async def handle_proceed_workflow(sid, data):
         }, to=sid, namespace='/widget')
     finally:
         if db:
-            db.close()
+            close_session(db)
 
 
 async def _confirm_contact(session_id: str, message: str) -> None:
@@ -2072,7 +2085,7 @@ async def handle_contact_info(sid, data):
         if not email and not name:
             return  # nothing to update
 
-        db = next(get_db())
+        db = await session_off_loop()
         customer_repo = CustomerRepository(db)
         # A visitor bound to a known customer by an email they only typed must
         # not rename that person, nor leave an address on their record for the
@@ -2108,7 +2121,7 @@ async def handle_contact_info(sid, data):
         logger.error(f"Error handling contact info for sid {sid}: {str(e)}")
     finally:
         if db:
-            db.close()
+            close_session(db)
 
 
 @sio.on('submit_form', namespace='/widget')
@@ -2134,7 +2147,7 @@ async def handle_form_submission(sid, data):
         if not form_data:
             raise ValueError("No form data provided")
 
-        db = next(get_db())
+        db = await session_off_loop()
         session_repo = SessionToAgentRepository(db)
         
         active_session = _own_session(session_repo, session)
@@ -2310,5 +2323,5 @@ async def handle_form_submission(sid, data):
         }, to=sid, namespace='/widget')
     finally:
         if db:
-            db.close()
+            close_session(db)
 
