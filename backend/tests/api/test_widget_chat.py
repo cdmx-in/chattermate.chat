@@ -741,6 +741,70 @@ class TestUtilityFunctions:
 class TestWidgetConnectionErrors:
     """Test widget connection error scenarios"""
     
+    @staticmethod
+    def _signed_token(widget_id, expires_in):
+        """A conversation token of ours, signed like the real ones."""
+        from jose import jwt
+        from app.core.security import ALGORITHM, CONVERSATION_SECRET_KEY
+        exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=expires_in)
+        return jwt.encode({"widget_id": str(widget_id), "type": "conversation", "jti": str(uuid4()),
+                           "sub": str(uuid4()), "exp": exp}, CONVERSATION_SECRET_KEY, algorithm=ALGORITHM)
+
+    @pytest.mark.asyncio
+    async def test_widget_connect_with_expired_token_is_refused_for_reauthorization(self, test_widget, mock_sio, monkeypatch):
+        """A token that lapsed in an open tab is refused with a reason the widget
+        acts on (it authorizes again), not as a failure it retries forever."""
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+        token = self._signed_token(test_widget.id, expires_in=-60)
+
+        with pytest.raises(SocketRefused) as refused:
+            await widget_chat.widget_connect("test_sid", {}, {"conversation_token": token, "widget_id": str(test_widget.id)})
+
+        assert refused.value.error_args['data'] == {
+            'error': 'Conversation token no longer valid', 'type': 'token_invalid'}
+        mock_sio.emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_widget_connect_with_revoked_token_is_refused_for_reauthorization(self, test_widget, mock_sio, monkeypatch):
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+        monkeypatch.setattr("app.core.security._is_token_in_redis", lambda jti: False)
+        monkeypatch.setattr("app.services.conversation_token._is_token_in_redis", lambda jti: False)
+        token = self._signed_token(test_widget.id, expires_in=3600)
+
+        with pytest.raises(SocketRefused) as refused:
+            await widget_chat.widget_connect("test_sid", {}, {"conversation_token": token})
+
+        assert refused.value.error_args['data']['type'] == 'token_invalid'
+
+    @pytest.mark.asyncio
+    async def test_widget_connect_token_lapsing_mid_connect_is_refused_for_reauthorization(
+            self, test_widget, test_customer, mock_sio, monkeypatch):
+        """The token verified a moment ago and no longer does by the scope check."""
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+        monkeypatch.setattr(
+            widget_chat,
+            "authenticate_socket_conversation_token",
+            AsyncMock(return_value=(str(test_widget.id), str(test_widget.organization_id), str(test_customer.id), "token"))
+        )
+        monkeypatch.setattr(widget_chat, "verify_conversation_token", lambda token: None)
+
+        with pytest.raises(SocketRefused) as refused:
+            await widget_chat.widget_connect("test_sid", {}, {"conversation_token": "token"})
+
+        assert refused.value.error_args['data']['type'] == 'token_invalid'
+
+    @pytest.mark.asyncio
+    async def test_widget_connect_without_token_still_fails_as_before(self, mock_sio, monkeypatch):
+        """No token is nothing authorizing again can be told about from here."""
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+
+        result = await widget_chat.widget_connect("test_sid", {}, {"widget_id": "w"})
+
+        assert result is False
+        mock_sio.emit.assert_called_with(
+            'error', {'error': 'Connection failed', 'type': 'connection_error'},
+            to="test_sid", namespace='/widget')
+
     @pytest.mark.asyncio
     async def test_widget_connect_authentication_failed(self, mock_sio, monkeypatch):
         """Test widget connection with authentication failure"""
@@ -846,6 +910,7 @@ class TestWidgetConnectionErrors:
             "authenticate_socket_conversation_token",
             AsyncMock(return_value=mock_auth_result)
         )
+        _accept_conversation_token(monkeypatch)
         
         # Mock WidgetRepository to return None
         monkeypatch.setattr(

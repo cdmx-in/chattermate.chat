@@ -117,6 +117,30 @@ describe('useConversationToken', () => {
     stop()
   })
 
+  it('leaves an anonymous token that ran out to the caller, which authorizes again', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: () => Promise.resolve({ detail: { code: 'invalid_token' } }) })
+    const onIdentityExpired = vi.fn()
+    const { start, ensureFresh, stop } = useConversationToken({ onIdentityExpired })
+    start(WIDGET_ID, makeToken(3600, 3601))
+
+    expect(await ensureFresh(WIDGET_ID)).toBe(false)
+    // Nobody signed in to hand back to the host page: GET /widgets/{id} replaces it.
+    expect(onIdentityExpired).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('tells the host page when the server says the identity lapsed', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: () => Promise.resolve({ detail: { code: 'identity_expired' } }) })
+    const onIdentityExpired = vi.fn()
+    const { start, ensureFresh, stop } = useConversationToken({ onIdentityExpired })
+    start(WIDGET_ID, makeToken(3600, 3599))
+
+    await ensureFresh(WIDGET_ID)
+
+    expect(onIdentityExpired).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
   it('keeps the current token when the network is down', async () => {
     fetchMock.mockRejectedValue(new Error('offline'))
     const current = makeToken(3600, 3599)

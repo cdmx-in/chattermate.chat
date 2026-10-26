@@ -206,6 +206,20 @@ def _refuse_connection(error: str, error_type: str):
     raise SocketRefused(error, {'error': error, 'type': error_type})
 
 
+def _refuse_dead_token(sid: str):
+    """Refuse a connect whose token has expired or been revoked. GET /widgets/{id}
+    swaps such a token for a live one, so the widget authorizes again on this
+    reason; refused like any other failure, it retried the dead token forever."""
+    logger.warning(f"Widget connection refused for sid {sid}: conversation token expired or revoked")
+    _refuse_connection('Conversation token no longer valid', 'token_invalid')
+
+
+def _holds_dead_token(auth) -> bool:
+    """True when the connect presented a token that no longer authenticates."""
+    token = auth.get('conversation_token') if isinstance(auth, dict) else None
+    return bool(token) and not conversation_token_service.inspect(token).is_live
+
+
 def _own_session(session_repo: SessionToAgentRepository, session: dict, active_only: bool = True):
     """The conversation this socket connected to, while it still belongs to it."""
     return session_repo.get_widget_session(
@@ -223,6 +237,8 @@ async def widget_connect(sid, environ, auth):
         widget_id, org_id, customer_id, conversation_token = await authenticate_socket_conversation_token(sid, auth)
         
         if not widget_id or not org_id:
+            if _holds_dead_token(auth):
+                _refuse_dead_token(sid)
             raise ValueError("Widget authentication failed")
 
         # The widget page hands out an anonymous token; GET /widgets/{id} binds it
@@ -236,7 +252,7 @@ async def widget_connect(sid, environ, auth):
         # an unverifiable token fails the connection instead of being shrugged off.
         token_data = verify_conversation_token(conversation_token)
         if not token_data:
-            raise ValueError("Conversation token could not be verified")
+            _refuse_dead_token(sid)
         scope = conversation_token_service.conversation_scope(token_data)
         source = token_data.get("source")
         is_identified = conversation_token_service.is_identified(token_data)
