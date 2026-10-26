@@ -1,7 +1,7 @@
 """user_identities table, linking SSO accounts to dashboard users
 
 Revision ID: user_identities_001
-Revises: widget_allowed_domains_001
+Revises: org_domain_not_unique_001
 Create Date: 2026-10-22
 
 Empty on deploy: each SSO account is linked on its first sign-in.
@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = 'user_identities_001'
-down_revision: Union[str, None] = 'widget_allowed_domains_001'
+down_revision: Union[str, None] = 'org_domain_not_unique_001'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
