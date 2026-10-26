@@ -18,7 +18,8 @@ limitations under the License.
 // @ts-nocheck
 import { ref, onMounted, computed, onUnmounted, watch, nextTick } from 'vue'
 import {
-    isValidEmail} from '../types/widget'
+    isValidEmail,
+    isReauthorizingRefusal} from '../types/widget'
 import { renderMarkdown } from './markdown'
 import AskAiPanel from './AskAiPanel.vue'
 import NewChatConfirm from './NewChatConfirm.vue'
@@ -94,7 +95,8 @@ const {
     currentSessionId,
     setToken,
     setWidgetId,
-    onSessionState
+    onSessionState,
+    onReauthorize
 } = useWidgetSocket()
 
 // Client-side typewriter reveal for live agent/bot replies; keep the view pinned
@@ -636,9 +638,9 @@ const checkAuthorization = async ({ afterRefusal = false } = {}): Promise<boolea
         // banner, so replacing the whole widget with an error overlay would take
         // away the chat the visitor is about to get back.
         const connected = await connect()
-        // The socket was refused because this token isn't bound to a customer yet
-        // (an anonymous token reached it): authorizing again binds one. Once.
-        if (!connected && refusal.value === 'customer_required' && !afterRefusal) {
+        // The socket was refused for a token authorizing again fixes - not bound to a
+        // customer yet, or expired or revoked: authorizing again binds or replaces it. Once.
+        if (!connected && isReauthorizingRefusal(refusal.value) && !afterRefusal) {
             return await checkAuthorization({ afterRefusal: true })
         }
         if (!connected) {
@@ -739,7 +741,7 @@ watch(() => messages.value, (newMessages) => {
 // Add reconnect handler
 const handleReconnect = async () => {
     const connected = await reconnect()
-    if (connected || refusal.value === 'customer_required') {
+    if (connected || isReauthorizingRefusal(refusal.value)) {
         await checkAuthorization()
     }
 }
@@ -1428,6 +1430,12 @@ window.addEventListener('keydown', (event) => {
 const setupEventListeners = () => {
     // Register takeover callback
     onTakeover(async () => {
+        await checkAuthorization()
+    })
+
+    // A reconnect refused for a token authorizing again fixes - it expired while
+    // the page stayed open - instead of retrying the dead token forever.
+    onReauthorize(async () => {
         await checkAuthorization()
     })
 

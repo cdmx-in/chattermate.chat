@@ -33,6 +33,10 @@ export const TOKEN_STORAGE_KEY = 'ctid'
 // carried a real token for a signed-in visitor, and it has run out.
 export const IDENTITY_EXPIRED_CODE = 'identity_expired'
 
+// Matches conversation_token.INVALID_TOKEN_CODE: the token names nobody the host page
+// could sign in again (an anonymous visitor's, or not ours). Authorizing replaces it.
+const INVALID_TOKEN_CODE = 'invalid_token'
+
 // Rotate once this share of the lifetime is gone. Early enough to survive a sleeping
 // tab that wakes just before expiry, late enough not to churn tokens on every visit.
 const REFRESH_AT_LIFETIME_FRACTION = 0.8
@@ -65,6 +69,15 @@ export const readTokenClaims = (token: string | null): Record<string, any> | nul
     return JSON.parse(json)
   } catch {
     return null
+  }
+}
+
+/** The `detail.code` of an error answer, when it has one. */
+const errorCode = async (response: Response): Promise<string | undefined> => {
+  try {
+    return (await response.json())?.detail?.code
+  } catch {
+    return undefined
   }
 }
 
@@ -186,8 +199,10 @@ export function useConversationToken(options: ConversationTokenOptions = {}) {
         })
 
         if (response.status === 401) {
-          // Past saving from in here: only the host page can mint a new identity.
-          options.onIdentityExpired?.()
+          // Past saving from in here. A lapsed identity only the host page can mint
+          // again; telling it about an anonymous token as well started a second
+          // authorization next to the caller's, and a second anonymous customer.
+          if (await errorCode(response) !== INVALID_TOKEN_CODE) options.onIdentityExpired?.()
           return false
         }
         if (!response.ok) {
