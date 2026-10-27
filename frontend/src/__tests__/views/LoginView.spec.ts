@@ -15,11 +15,14 @@ limitations under the License.
 */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount, VueWrapper, flushPromises } from '@vue/test-utils'
+import { mount, VueWrapper, flushPromises, config } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import { createRouter, createWebHistory, Router } from 'vue-router'
 import LoginView from '../../views/LoginView.vue'
 import { createPinia, setActivePinia } from 'pinia'
+
+// Font Awesome is registered globally in main.ts, not in these mounts.
+config.global.stubs = { ...config.global.stubs, 'font-awesome-icon': true }
 
 // Mock the services
 vi.mock('@/services/auth', () => ({
@@ -398,6 +401,37 @@ describe('LoginView', () => {
     expect(wrapper.find('.password-toggle').exists()).toBe(false)
   })
 
+  it('puts the cursor in the e-mail field when the password form is opened', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    passwordLogin.value = false
+    wrapper.unmount()
+    await router.push('/')
+    wrapper = mount(LoginView, { attachTo: document.body, global: { plugins: [router], stubs: { RouterView: true } } })
+    await flushPromises()
+    await wrapper.find('.password-toggle').trigger('click')
+    await flushPromises()
+    expect(document.activeElement).toBe(wrapper.find('#email').element)
+    wrapper.unmount() // attached to the document, so take it off again
+  })
+
+  it('disables every provider button while one is redirecting', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }, { key: 'microsoft', label: 'Microsoft' }]
+    await remountAt('/')
+    const original = window.location
+    Object.defineProperty(window, 'location', { value: { ...original, set href(_url: string) {} }, writable: true, configurable: true })
+    try {
+      await wrapper.findAll('.sso-btn')[0].trigger('click')
+      const [google, microsoft] = wrapper.findAll('.sso-btn')
+      expect(google.attributes('aria-busy')).toBe('true')
+      expect(google.attributes('disabled')).toBeDefined()
+      expect(microsoft.attributes('disabled')).toBeDefined()
+      expect(microsoft.attributes('aria-busy')).toBeUndefined()
+      expect(microsoft.text()).toBe('Continue with Microsoft')
+    } finally {
+      Object.defineProperty(window, 'location', { value: original, writable: true, configurable: true })
+    }
+  })
+
   it('offers no password toggle while the form already leads', async () => {
     ssoProviders.value = [{ key: 'google', label: 'Google' }]
     await remountAt('/')
@@ -449,11 +483,79 @@ describe('LoginView', () => {
     }
   })
 
-  it('does not route to a protocol-relative ?redirect=', async () => {
-    ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
-    const push = vi.spyOn(router, 'push')
-    await remountAt('/?sso=ok&redirect=%2F%2Fevil.example')
-    expect(push).not.toHaveBeenCalledWith('//evil.example')
+  it.each(['%2F%2Fevil.example', '%40evil.example', 'https%3A%2F%2Fevil.example'])(
+    'lands on the dashboard, nowhere else, for ?redirect=%s', async (redirect) => {
+      currentUser.value = userWithPermissions(['manage_agents'])
+      ;(ssoService.completeSignIn as any).mockResolvedValue({ id: 1, email: 'sso@example.com' })
+      const { assign, restore } = await remountCapturingNavigation(`/?sso=ok&redirect=${redirect}`)
+      try {
+        expect(assign).not.toHaveBeenCalled()
+        expect(router.currentRoute.value.path).toBe('/ai-agents')
+      } finally {
+        restore()
+      }
+    })
+
+  it('drops the return markers from the address so a reload does not repeat them', async () => {
+    await remountAt('/?sso_error=no_account&redirect=%2Fconversations')
+    expect(router.currentRoute.value.query).toEqual({ redirect: '/conversations' })
+    ;(ssoService.completeSignIn as any).mockRejectedValueOnce(new Error('401'))
+    await remountAt('/?sso=ok&shop_id=7')
+    expect(router.currentRoute.value.query).toEqual({ shop_id: '7' })
+  })
+
+  it('reports an error even when the address also says sso=ok', async () => {
+    await remountAt('/?sso=ok&sso_error=no_account')
+    expect(ssoService.completeSignIn).not.toHaveBeenCalled()
+    expect(wrapper.find('.auth-error').text()).toContain('No team account matches')
+  })
+
+  it('shows an SSO error inside the Shopify app, where there are no SSO buttons', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    await remountAt('/?embedded=true&sso_error=no_account')
+    expect(wrapper.find('.auth-error').text()).toContain('No team account matches')
+    expect(wrapper.find('.sso-btn').exists()).toBe(false)
+    expect(wrapper.find('#email').exists()).toBe(true)
+  })
+
+  it('frees the buttons when the browser brings the page back from the provider', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    await remountAt('/')
+    const original = window.location
+    Object.defineProperty(window, 'location', { value: { ...original, set href(_url: string) {} }, writable: true, configurable: true })
+    try {
+      await wrapper.find('.sso-btn').trigger('click')
+      expect(wrapper.find('.sso-btn').attributes('disabled')).toBeDefined()
+      window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }))
+      await nextTick()
+      expect(wrapper.find('.sso-btn').attributes('disabled')).toBeUndefined()
+    } finally {
+      Object.defineProperty(window, 'location', { value: original, writable: true, configurable: true })
+    }
+  })
+
+  it('keeps the controls out of sight until it knows which way the page leads', async () => {
+    let answer: (config: unknown) => void = () => {}
+    ;(ssoService.getConfig as any).mockReturnValueOnce(new Promise(resolve => { answer = resolve }))
+    await remountAt('/')
+    expect(wrapper.find('.auth-body').classes()).toContain('is-pending')
+    answer({ providers: [{ key: 'google', label: 'Google' }], passwordLogin: false })
+    await flushPromises()
+    expect(wrapper.find('.auth-body').classes()).not.toContain('is-pending')
+    expect(wrapper.find('#email').exists()).toBe(false)
+  })
+
+  it('shows why a linked account\'s password is refused in SSO-only mode', async () => {
+    ssoProviders.value = [{ key: 'google', label: 'Google' }]
+    passwordLogin.value = false
+    await remountAt('/')
+    ;(authService.login as any) = vi.fn().mockRejectedValue(new Error('Password sign-in is switched off for your account. Use single sign-on.'))
+    await wrapper.find('.password-toggle').trigger('click')
+    await wrapper.find('#email').setValue('a@example.com')
+    await wrapper.find('#password').setValue('secret')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('.auth-error').text()).toContain('Use single sign-on')
   })
 
   it('keeps the password form when SSO-only is set but no provider is configured', async () => {

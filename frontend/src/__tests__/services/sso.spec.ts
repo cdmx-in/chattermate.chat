@@ -58,7 +58,31 @@ describe('ssoService.errorMessage', () => {
     expect(ssoService.errorMessage('wrong_domain')).toContain('Google domain')
     expect(ssoService.errorMessage('sign_in_refused')).toContain('does not allow')
     expect(ssoService.errorMessage('email_unverified')).toContain('not verified')
+    expect(ssoService.errorMessage('server_error')).toBe('Single sign-on failed. Please try again.')
     expect(ssoService.errorMessage('something_new')).toBe('Single sign-on failed. Please try again.')
     expect(ssoService.errorMessage(null)).toBe('Single sign-on failed. Please try again.')
+  })
+})
+
+describe('ssoService.getConfig', () => {
+  it('offers only the password form when the backend cannot be reached', async () => {
+    ;(api.get as any).mockRejectedValueOnce(new Error('500'))
+    expect(await ssoService.getConfig()).toEqual({ providers: [], passwordLogin: true })
+  })
+
+  it('never hides the form when there is no provider to sign in with', async () => {
+    ;(api.get as any).mockResolvedValueOnce({ data: { providers: [], password_login: false } })
+    expect(await ssoService.getConfig()).toEqual({ providers: [], passwordLogin: true })
+  })
+
+  it('ignores a provider list that is not a list', async () => {
+    ;(api.get as any).mockResolvedValueOnce({ data: { providers: { google: true }, password_login: true } })
+    expect((await ssoService.getConfig()).providers).toEqual([])
+  })
+
+  it('leads with SSO when the operator switched password sign-in off', async () => {
+    const google = { key: 'google', label: 'Google' }
+    ;(api.get as any).mockResolvedValueOnce({ data: { providers: [google], password_login: false } })
+    expect(await ssoService.getConfig()).toEqual({ providers: [google], passwordLogin: false })
   })
 })
