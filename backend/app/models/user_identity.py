@@ -34,6 +34,8 @@ class UserIdentity(Base):
     __tablename__ = "user_identities"
     __table_args__ = (
         UniqueConstraint("provider", "issuer", "subject", name="uq_user_identities_provider_issuer_subject"),
+        # One account per provider per user; also serves lookups by user.
+        UniqueConstraint("user_id", "provider", name="uq_user_identities_user_provider"),
     )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -41,7 +43,6 @@ class UserIdentity(Base):
         UUID(as_uuid=True),
         ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
-        index=True,
     )
     provider = Column(String, nullable=False)
     issuer = Column(String, nullable=False)

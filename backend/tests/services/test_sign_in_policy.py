@@ -16,13 +16,19 @@ limitations under the License.
 Whether a user who has proven who they are may sign in this way.
 """
 
+import builtins
+import sys
+import types
+from uuid import UUID
+
 import pytest
 
 from app.core.config import settings
 from app.models.user import User
 from app.models.user_identity import UserIdentity
 from app.services import sign_in_policy
-from app.services.auth_sessions import PASSWORD_LOGIN, SSO_LOGIN
+from app.models.auth_session import AuthSession
+from app.services.auth_sessions import PASSWORD_LOGIN, SIGNUP, SSO_LOGIN, issue_tokens, session_id_of
 from app.services.sign_in_policy import SignInRefused, check_sign_in, password_form_primary
 
 
@@ -88,3 +94,66 @@ def test_the_community_edition_has_no_enterprise_policy(monkeypatch):
     monkeypatch.setattr(sign_in_policy, "_enterprise_loaded", False)
     monkeypatch.setattr(sign_in_policy, "_enterprise_check", None)
     assert sign_in_policy._enterprise_rules() is None
+
+
+@pytest.fixture
+def fresh_hook(monkeypatch):
+    monkeypatch.setattr(sign_in_policy, "_enterprise_loaded", False)
+    monkeypatch.setattr(sign_in_policy, "_enterprise_check", None)
+
+
+def _enterprise_package(monkeypatch, hook):
+    """Install app.enterprise with `hook` as its sign_in_policy module (None:
+    an enterprise build without one)."""
+    for name in ("app.enterprise", "app.enterprise.services"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(sys.modules, sign_in_policy._ENTERPRISE_HOOK, hook)
+
+
+def test_an_enterprise_build_without_the_hook_has_no_policy(fresh_hook, monkeypatch):
+    _enterprise_package(monkeypatch, None)
+    assert sign_in_policy._enterprise_rules() is None
+
+
+def test_a_hook_that_fails_to_load_refuses_every_sign_in(db, test_user, fresh_hook, monkeypatch):
+    """Fail closed: a broken enterprise policy must not quietly stop enforcing."""
+    _enterprise_package(monkeypatch, types.ModuleType(sign_in_policy._ENTERPRISE_HOOK))  # no check_sign_in
+    with pytest.raises(SignInRefused):
+        check_sign_in(db, test_user, SSO_LOGIN)
+
+
+def test_a_hook_whose_own_dependency_is_missing_refuses_every_sign_in(db, test_user, fresh_hook, monkeypatch):
+    _enterprise_package(monkeypatch, None)
+    real_import = builtins.__import__
+
+    def importing(name, *args, **kwargs):
+        if name == sign_in_policy._ENTERPRISE_HOOK:
+            raise ModuleNotFoundError("No module named 'some_sdk'", name="some_sdk")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", importing)
+    with pytest.raises(SignInRefused):
+        check_sign_in(db, test_user, PASSWORD_LOGIN)
+
+
+def _session(db, user, method):
+    access, _ = issue_tokens(db, user.id, user.organization_id, auth_method=method)
+    db.commit()
+    return session_id_of(access)
+
+
+def test_sso_only_ends_the_password_sessions_of_whoever_signs_in_with_sso(db, test_user, google_configured, monkeypatch):
+    monkeypatch.setattr(settings, "PASSWORD_LOGIN_ENABLED", False)
+    sids = {method: _session(db, test_user, method) for method in (PASSWORD_LOGIN, SIGNUP, None, SSO_LOGIN)}
+    sign_in_policy.end_refused_sessions(db, test_user)
+    db.commit()
+    ended = {m for m, sid in sids.items() if db.get(AuthSession, UUID(sid)).revoked_at is not None}
+    assert ended == {PASSWORD_LOGIN, SIGNUP, None}
+
+
+def test_password_sessions_stay_while_password_login_is_on(db, test_user, google_configured, monkeypatch):
+    monkeypatch.setattr(settings, "PASSWORD_LOGIN_ENABLED", True)
+    sid = _session(db, test_user, PASSWORD_LOGIN)
+    sign_in_policy.end_refused_sessions(db, test_user)
+    db.commit()
+    assert db.get(AuthSession, UUID(sid)).revoked_at is None

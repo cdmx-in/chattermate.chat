@@ -293,10 +293,19 @@ def test_microsoft_directory_address_is_not_trusted_on_a_shared_tenant(both_prov
 @pytest.mark.parametrize("claims", [
     _ms("acme", email="a@acme.test", xms_edov=True),
     _ms("acme", email="a@acme.test", xms_edov="1"),
-    _ms(MICROSOFT_CONSUMER_TENANT_ID, email="a@outlook.test"),
+    _ms(MICROSOFT_CONSUMER_TENANT_ID, email="a@outlook.com"),
+    _ms(MICROSOFT_CONSUMER_TENANT_ID, email="a@Hotmail.co.uk"),
 ])
 def test_microsoft_address_is_trusted_when_microsoft_vouches_for_it(both_providers, claims):
     assert sso.identity_from_claims(get_provider("microsoft"), claims).email_trusted is True
+
+
+@pytest.mark.parametrize("email", ["alice@corp.test", "alice@outlook.evil.test", "alice@live.example"])
+def test_a_personal_microsoft_account_is_not_trusted_for_other_domains(both_providers, email):
+    """Anyone can open a personal account with an address they once received
+    mail at; only Microsoft's own mail domains stay with their owner."""
+    identity = sso.identity_from_claims(get_provider("microsoft"), _ms(MICROSOFT_CONSUMER_TENANT_ID, email=email))
+    assert identity.email_trusted is False
 
 
 @pytest.mark.parametrize("tenant, trusted", [
@@ -355,6 +364,28 @@ async def test_metadata_that_is_not_a_json_object_is_a_provider_error(both_provi
     with pytest.raises(SsoError) as err:
         await sso.discovery(get_provider("google"))
     assert err.value.code == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_provider_fails_fast_for_a_while(both_providers, monkeypatch):
+    """During an outage each sign-in must not wait out the full timeout."""
+    calls = []
+
+    def down(request):
+        calls.append(request)
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(sso, "http_client", _transport(down))
+    google = get_provider("google")
+    with pytest.raises(httpx.ConnectError):
+        await sso.discovery(google)
+    with pytest.raises(SsoError) as err:
+        await sso.discovery(google)
+    assert (err.value.code, len(calls)) == ("provider_error", 1)
+
+    monkeypatch.setattr(sso.time, "time", lambda now=sso.time.time(): now + sso._FAILURE_TTL_SECONDS + 1)
+    monkeypatch.setattr(sso, "http_client", _transport(lambda r: httpx.Response(200, json={"issuer": GOOGLE_ISS})))
+    assert (await sso.discovery(google))["issuer"] == GOOGLE_ISS
 
 
 @pytest.mark.asyncio

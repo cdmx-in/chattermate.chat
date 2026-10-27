@@ -35,10 +35,11 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('provider', 'issuer', 'subject',
                             name='uq_user_identities_provider_issuer_subject'),
+        # One account per provider per user; also serves lookups by user.
+        sa.UniqueConstraint('user_id', 'provider',
+                            name='uq_user_identities_user_provider'),
     )
-    op.create_index('ix_user_identities_user_id', 'user_identities', ['user_id'])
 
 
 def downgrade() -> None:
-    op.drop_index('ix_user_identities_user_id', table_name='user_identities')
     op.drop_table('user_identities')

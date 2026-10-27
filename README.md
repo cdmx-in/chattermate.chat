@@ -150,13 +150,16 @@ Team members can sign in to the dashboard with **Google** or **Microsoft**
 `backend/.env.example`). SSO signs in existing team members and never creates
 accounts: the first sign-in links the provider account to the team member with
 the same e-mail address, when the provider vouches for that address, and later
-sign-ins use that link. Changing a team member's address drops their links, and
-an admin can list and unlink them (`GET`/`DELETE /api/v1/users/{id}/identities`).
+sign-ins use that link. Each team member links at most one account per
+provider. Changing a team member's address drops their links (changing your own
+needs your current password), and an admin can list and unlink them
+(`GET`/`DELETE /api/v1/users/{id}/identities`).
 A team member without a profile picture gets the provider's photo. Register
 `{BACKEND_URL}/api/v1/sso/<provider>/callback` as the redirect URI with the
 provider. With `PASSWORD_LOGIN_ENABLED=false` the login page leads with SSO, and
-a team member's password stops working once they have signed in with SSO (it
-applies install-wide, so it is meant for single-organization installs).
+a team member's password stops working once they have signed in with SSO, and
+their password sessions end (it applies install-wide, so it is meant for
+single-organization installs).
 
 ### Integrations
 

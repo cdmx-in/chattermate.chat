@@ -28,8 +28,8 @@ from app.models.schemas.organization import (
     OrganizationResponse,
     OrganizationCreateResponse
 )
-from app.core.auth import get_current_user, require_permissions
-from app.services.auth_sessions import SIGNUP, issue_tokens, set_session_cookies
+from app.core.auth import get_current_user, require_permissions, set_session_cookies
+from app.services.auth_sessions import SIGNUP, issue_tokens
 from app.core.logger import get_logger
 from app.models.role import Role
 from app.models.permission import Permission, DEFAULT_AGENT_ROLE_PERMISSIONS

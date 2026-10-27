@@ -80,16 +80,50 @@ def test_anything_but_this_browsers_own_sign_in_is_refused(cookies, state):
     assert sso_state.recall(_request(cookies), state) is None
 
 
+def _signed(claims: dict, key: str = None) -> str:
+    return jwt.encode(claims, key or sso_state._signing_key(), algorithm="HS256")
+
+
 def test_a_tampered_expired_or_foreign_token_is_refused():
     name = f"sso_{STATE}"
-    forged = jwt.encode({"state": STATE, "type": "sso_state", "provider": "google", "exp": int(time.time()) + 60},
-                        "not-our-secret", algorithm="HS256")
-    expired = jwt.encode({"state": STATE, "type": "sso_state", "exp": int(time.time()) - 1}, settings.SECRET_KEY, algorithm="HS256")
-    other_state = jwt.encode({"state": "x" * 32, "type": "sso_state", "exp": int(time.time()) + 60}, settings.SECRET_KEY, algorithm="HS256")
-    # An access token is signed with the same key but is not a sign-in in progress.
-    access = jwt.encode({"state": STATE, "type": "access", "exp": int(time.time()) + 60}, settings.SECRET_KEY, algorithm="HS256")
-    for token in (forged, expired, other_state, access):
+    live = int(time.time()) + 60
+    forged = _signed({"state": STATE, "type": "sso_state", "provider": "google", "exp": live}, "not-our-secret")
+    expired = _signed({"state": STATE, "type": "sso_state", "exp": int(time.time()) - 1})
+    other_state = _signed({"state": "x" * 32, "type": "sso_state", "exp": live})
+    wrong_type = _signed({"state": STATE, "type": "access", "exp": live})
+    for token in (forged, expired, other_state, wrong_type):
         assert sso_state.recall(_request({name: token}), STATE) is None
+
+
+def test_a_token_signed_with_the_session_key_is_refused():
+    # Session tokens are signed with SECRET_KEY itself; the state has its own
+    # key, so not even a well-formed state signed with that one passes.
+    token = _signed({"state": STATE, "type": "sso_state", "provider": "google", "exp": int(time.time()) + 60},
+                    settings.SECRET_KEY)
+    assert sso_state.recall(_request({f"sso_{STATE}": token}), STATE) is None
+
+
+def test_an_expired_sign_in_still_gives_back_its_login_parameters():
+    carry = {"shopify_flow": "1", "shop_id": "7"}
+    expired = _signed({"state": STATE, "type": "sso_state", "carry": carry, "exp": int(time.time()) - 1})
+    request = _request({f"sso_{STATE}": expired})
+    assert sso_state.recall(request, STATE) is None
+    assert sso_state.carried_after_expiry(request, STATE) == carry
+
+
+def test_nothing_is_carried_from_a_forged_or_missing_sign_in():
+    forged = _signed({"state": STATE, "type": "sso_state", "carry": {"shop_id": "7"}, "exp": 1}, "not-our-secret")
+    assert sso_state.carried_after_expiry(_request({f"sso_{STATE}": forged}), STATE) == {}
+    assert sso_state.carried_after_expiry(_request({}), STATE) == {}
+    assert sso_state.carried_after_expiry(_request({}), None) == {}
+
+
+def test_starting_again_clears_unfinished_sign_ins_only():
+    request = _request({f"sso_{'a' * 32}": "x", f"sso_{'b' * 32}": "y", "access_token": "t", "sso_bad;": "z"})
+    response = Response()
+    sso_state.forget_abandoned(request, response)
+    cleared = [h.split("=")[0] for k, h in response.raw_headers if k == b"set-cookie" for h in [h.decode()]]
+    assert sorted(cleared) == [f"sso_{'a' * 32}", f"sso_{'b' * 32}"]
 
 
 def test_forgetting_expires_only_that_sign_ins_cookie():

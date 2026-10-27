@@ -16,7 +16,9 @@ limitations under the License.
 Whether a user who has proven who they are may sign in this way.
 
 Every dashboard sign-in asks check_sign_in() once the credentials are good:
-password login with the password checked, SSO with the account linked. The
+password login with the password checked, SSO with the account linked, and
+every token refresh again with how its session was opened (an SSO refresh
+has no `identity`), so a policy that changes reaches sessions already open. The
 community edition's one rule is PASSWORD_LOGIN_ENABLED=false (see below); an
 installed enterprise module adds its own through
 app.enterprise.services.sign_in_policy.check_sign_in, e.g. per-organization
@@ -28,12 +30,18 @@ from typing import Callable, Optional
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
+from app.core.logger import get_logger
 from app.models.user import User
-from app.services.auth_sessions import PASSWORD_LOGIN
+from app.services.auth_sessions import PASSWORD_LOGIN, revoke_non_sso_sessions
 from app.services.sso import SsoIdentity
 from app.services.sso_accounts import has_identity
 from app.services.sso_providers import providers
 
+logger = get_logger(__name__)
+
+_ENTERPRISE_HOOK = "app.enterprise.services.sign_in_policy"
+# Missing modules that mean "no enterprise policy here", not "it is broken".
+_ABSENT_ENTERPRISE_MODULES = {"app.enterprise", "app.enterprise.services", _ENTERPRISE_HOOK}
 _enterprise_check: Optional[Callable] = None
 _enterprise_loaded = False
 
@@ -60,6 +68,15 @@ def _community_rules(db: Session, user: User, method: str) -> None:
         raise SignInRefused("Password sign-in is switched off for your account. Use single sign-on.")
 
 
+def end_refused_sessions(db: Session, user: User) -> None:
+    """After an SSO sign-in: with PASSWORD_LOGIN_ENABLED=false the user is now
+    (or already was) linked, so the password sessions they still have are ones
+    the policy would refuse; end them rather than let them refresh on. The
+    caller commits."""
+    if not settings.PASSWORD_LOGIN_ENABLED:
+        revoke_non_sso_sessions(db, user.id)
+
+
 def _enterprise_rules() -> Optional[Callable]:
     global _enterprise_check, _enterprise_loaded
     if not _enterprise_loaded:
@@ -67,9 +84,19 @@ def _enterprise_rules() -> Optional[Callable]:
         try:
             from app.enterprise.services.sign_in_policy import check_sign_in as enterprise_check
             _enterprise_check = enterprise_check
-        except ImportError:  # community edition / enterprise package not installed
-            _enterprise_check = None
+        except ImportError as e:
+            if isinstance(e, ModuleNotFoundError) and e.name in _ABSENT_ENTERPRISE_MODULES:
+                _enterprise_check = None  # community edition, or an enterprise build without the hook
+            else:
+                # The policy is installed but can't load: refuse sign-ins rather
+                # than quietly drop whatever it enforces.
+                logger.error(f"Enterprise sign-in policy failed to load: {e}")
+                _enterprise_check = _refuse_all
     return _enterprise_check
+
+
+def _refuse_all(db: Session, user: User, method: str, identity: Optional[SsoIdentity] = None) -> None:
+    raise SignInRefused("Sign-in is unavailable right now. Contact your administrator.")
 
 
 def check_sign_in(db: Session, user: User, method: str, identity: Optional[SsoIdentity] = None) -> None:

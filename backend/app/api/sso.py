@@ -26,16 +26,16 @@ from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.core.auth import revoke_presented_sessions
+from app.core.auth import revoke_presented_sessions, set_session_cookies
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.database import get_db
 from app.models.role import Role
 from app.services import sso, sso_state
-from app.services.auth_sessions import SSO_LOGIN, issue_tokens, set_session_cookies
+from app.services.auth_sessions import SSO_LOGIN, issue_tokens
 from app.services.profile_pictures import adopt_provider_photo
 from app.services.shopify_links import link_shop_at_sign_in
-from app.services.sign_in_policy import SignInRefused, check_sign_in, password_form_primary
+from app.services.sign_in_policy import SignInRefused, check_sign_in, end_refused_sessions, password_form_primary
 from app.services.sso_accounts import user_for_identity
 from app.services.sso_providers import Provider, SsoError, get_provider, providers
 
@@ -65,7 +65,9 @@ def _carried(request: Request) -> Dict[str, str]:
     carried = {}
     for name in CARRIED_LOGIN_PARAMS:
         value = params.get(name)
-        if not value or len(value) > _MAX_CARRIED_LENGTH:
+        # ASCII only: JSON escapes anything else six-fold, which could push the
+        # state cookie past what browsers keep.
+        if not value or len(value) > _MAX_CARRIED_LENGTH or not value.isascii():
             continue
         if name in _DESTINATION_PARAMS and not _internal_path(value):
             continue
@@ -110,6 +112,7 @@ async def start(provider_key: str, request: Request):
         return _login_redirect(sso_error="provider_error", **carried)
 
     response = RedirectResponse(authorize_url, status_code=302)
+    sso_state.forget_abandoned(request, response)
     sso_state.remember(response, state, {"provider": provider.key, "nonce": nonce, "verifier": verifier, "carry": carried})
     return response
 
@@ -127,10 +130,15 @@ async def callback(
     """Finish the sign-in and hand the browser back to the dashboard with the
     session cookies a password login would set. Problems land on the login
     page as `sso_error`; the detail stays in the log."""
-    provider = _provider_or_404(provider_key)
+    provider = get_provider(provider_key)
     started = sso_state.recall(request, state)
-    if not started or started.get("provider") != provider.key:
-        response = _login_redirect(sso_error="invalid_state")
+    if provider is None:
+        # Switched off while the person was at the provider.
+        response = _login_redirect(sso_error="provider_error", **sso_state.carried_after_expiry(request, state))
+    elif not started or started.get("provider") != provider.key:
+        # Took too long, or not this browser's sign-in: keep the flow it came
+        # from (a Shopify install) so trying again lands in the same place.
+        response = _login_redirect(sso_error="invalid_state", **sso_state.carried_after_expiry(request, state))
     else:
         carried = started.get("carry") or {}
         try:
@@ -169,10 +177,13 @@ async def _complete_sign_in(
     claims = await sso.verify_id_token(provider, tokens["id_token"], started.get("nonce") or "")
     identity = sso.identity_from_claims(provider, claims)
     user, link = user_for_identity(db, provider.key, identity)
+    if user.organization is None or not user.organization.is_active:
+        raise SsoError("no_account", f"organization of user {user.id} is inactive")
     try:
         check_sign_in(db, user, SSO_LOGIN, identity)
     except SignInRefused as refused:
         raise SsoError("sign_in_refused", str(refused))
+    end_refused_sessions(db, user)
 
     if not user.full_name and identity.name:
         user.full_name = identity.name

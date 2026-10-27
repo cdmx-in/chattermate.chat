@@ -33,12 +33,8 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple
 from uuid import UUID
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
-
-import json
-from urllib.parse import quote
-
-from fastapi import Response
 
 from app.core.security import create_access_token, create_refresh_token, verify_token
 from app.models.auth_session import AuthSession
@@ -138,6 +134,26 @@ def revoke_user_sessions(db: Session, user_id, keep_sid=None) -> None:
     query.update({"revoked_at": datetime.now(timezone.utc)}, synchronize_session=False)
 
 
+def session_method(db: Session, sid) -> str:
+    """How a session was opened, for re-checking the sign-in policy on refresh.
+    Sessions from before the record (and legacy tokens) count as password
+    sign-ins, which is what they were or what a signup is."""
+    session_id = _as_uuid(sid)
+    method = None
+    if session_id is not None:
+        method = db.query(AuthSession.auth_method).filter(AuthSession.id == session_id).scalar()
+    return SSO_LOGIN if method == SSO_LOGIN else PASSWORD_LOGIN
+
+
+def revoke_non_sso_sessions(db: Session, user_id) -> None:
+    """End every session the user opened other than through SSO."""
+    db.query(AuthSession).filter(
+        AuthSession.user_id == _as_uuid(user_id),
+        AuthSession.revoked_at.is_(None),
+        or_(AuthSession.auth_method.is_(None), AuthSession.auth_method != SSO_LOGIN),
+    ).update({"revoked_at": datetime.now(timezone.utc)}, synchronize_session=False)
+
+
 def _as_uuid(value) -> Optional[UUID]:
     if isinstance(value, UUID):
         return value
@@ -145,30 +161,6 @@ def _as_uuid(value) -> Optional[UUID]:
         return UUID(str(value))
     except (TypeError, ValueError):
         return None
-
-
-# Cookie lifetimes: the access token is short-lived, the refresh token and the
-# readable user_info blob last a week.
-ACCESS_COOKIE_MAX_AGE = 30 * 60
-REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60
-
-
-def set_session_cookies(response: Response, user, role, access_token: str, refresh_token: str) -> None:
-    """Install a dashboard session on `response`: the two httpOnly JWT cookies
-    and the user_info blob the dashboard may read. One place for every
-    sign-in path (password login, token refresh, organization signup, SSO),
-    so a cookie attribute cannot drift between them."""
-    cookie = dict(secure=True, samesite="none")  # cross-site for the Shopify embedded app
-    response.set_cookie("access_token", access_token, httponly=True, max_age=ACCESS_COOKIE_MAX_AGE, **cookie)
-    response.set_cookie("refresh_token", refresh_token, httponly=True, max_age=REFRESH_COOKIE_MAX_AGE, **cookie)
-    user_info = json.dumps({
-        "id": str(user.id),
-        "email": user.email,
-        "full_name": user.full_name,
-        "organization_id": str(user.organization_id),
-        "role": role.to_dict() if role else None,
-    }, default=str)
-    response.set_cookie("user_info", quote(user_info), max_age=REFRESH_COOKIE_MAX_AGE, **cookie)
 
 
 def session_user_payload(user, role) -> dict:

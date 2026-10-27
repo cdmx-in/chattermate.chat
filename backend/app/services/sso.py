@@ -47,6 +47,9 @@ from app.services.sso_providers import Provider, SsoError
 
 _HTTP_TIMEOUT = 10.0
 _METADATA_TTL_SECONDS = 60 * 60
+# After a failed discovery fetch, sign-ins fail fast for this long instead of
+# each waiting out the timeout while the provider is down.
+_FAILURE_TTL_SECONDS = 30
 
 
 def redirect_uri(provider: Provider) -> str:
@@ -68,10 +71,13 @@ def new_pkce_pair() -> Tuple[str, str]:
 # ---------------------------------------------------------------------------
 _discovery_cache: Dict[str, Tuple[dict, float]] = {}
 _jwks_cache: Dict[str, Tuple[dict, float]] = {}
+_discovery_failures: Dict[str, float] = {}
 
 
 def http_client(**kwargs) -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=settings.VERIFY_SSL_CERTIFICATES, **kwargs)
+    # Always verified: what these hosts say decides who signs in, whatever
+    # VERIFY_SSL_CERTIFICATES says for the operator's own services.
+    return httpx.AsyncClient(timeout=_HTTP_TIMEOUT, verify=True, **kwargs)
 
 
 def _json_of(response: httpx.Response, what: str) -> dict:
@@ -108,7 +114,15 @@ def _fresh(entry: Optional[Tuple[dict, float]]) -> Optional[dict]:
 async def discovery(provider: Provider) -> dict:
     doc = _fresh(_discovery_cache.get(provider.key))
     if doc is None:
-        doc = await _get_json(provider.discovery_url)
+        failed_at = _discovery_failures.get(provider.key)
+        if failed_at and time.time() - failed_at < _FAILURE_TTL_SECONDS:
+            raise SsoError("provider_error", f"{provider.key} discovery failed {int(time.time() - failed_at)}s ago")
+        try:
+            doc = await _get_json(provider.discovery_url)
+        except (httpx.HTTPError, SsoError):
+            _discovery_failures[provider.key] = time.time()
+            raise
+        _discovery_failures.pop(provider.key, None)
         _discovery_cache[provider.key] = (doc, time.time())
     return doc
 
@@ -125,6 +139,7 @@ def clear_caches() -> None:
     """Tests and config changes."""
     _discovery_cache.clear()
     _jwks_cache.clear()
+    _discovery_failures.clear()
 
 
 # ---------------------------------------------------------------------------

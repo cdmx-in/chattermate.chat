@@ -18,8 +18,8 @@ Which dashboard user a single sign-on account signs in as.
 An account already linked (app.models.user_identity) signs in as its user,
 whatever address it now carries. An unlinked account is linked once, by an
 e-mail address the provider vouches for, to the one active user with that
-address, unless that user already has an account from the same provider and
-issuer (a recreated account must be unlinked by an admin first). SSO never
+address, unless that user already has an account from the same provider (a
+second or recreated account must be unlinked by an admin first). SSO never
 creates users.
 
 A link belongs to the person, not the seat: changing a user's e-mail address
@@ -64,11 +64,13 @@ def _user_by_email(db: Session, email: str) -> User:
     return matches[0]
 
 
-def _already_linked_elsewhere(db: Session, user: User, provider_key: str, issuer: str) -> bool:
+def _already_linked_elsewhere(db: Session, user: User, provider_key: str) -> bool:
+    # One account per provider: a second one (a personal Microsoft account next
+    # to a work one, a recreated Google account) needs an admin to unlink the
+    # first, rather than quietly becoming another way in.
     return db.query(UserIdentity.id).filter(
         UserIdentity.user_id == user.id,
         UserIdentity.provider == provider_key,
-        UserIdentity.issuer == issuer,
     ).first() is not None
 
 
@@ -87,8 +89,8 @@ def _link(db: Session, provider_key: str, identity: SsoIdentity) -> Tuple[User, 
     if not identity.email_trusted:
         raise SsoError("email_unverified", f"{provider_key} does not vouch for the address of an unlinked account")
     user = _user_by_email(db, identity.email)
-    if _already_linked_elsewhere(db, user, provider_key, identity.issuer):
-        raise SsoError("already_linked", f"user {user.id} already has another {provider_key} account from {identity.issuer}")
+    if _already_linked_elsewhere(db, user, provider_key):
+        raise SsoError("already_linked", f"user {user.id} already has another {provider_key} account")
     link = UserIdentity(
         user_id=user.id,
         provider=provider_key,
@@ -101,12 +103,14 @@ def _link(db: Session, provider_key: str, identity: SsoIdentity) -> Tuple[User, 
     try:
         db.flush()
     except IntegrityError:
-        # A parallel first sign-in of the same account linked it first. Nothing
-        # else of this sign-in is pending yet, so the whole rollback is safe.
+        # A parallel first sign-in linked it first: this same account (sign in
+        # through that link), or another account of this provider to the same
+        # user (refused like any second one). Nothing else of this sign-in is
+        # pending yet, so the whole rollback is safe.
         db.rollback()
         existing = _linked(db, provider_key, identity)
         if existing is None:
-            raise
+            raise SsoError("already_linked", f"user {user.id} linked another {provider_key} account meanwhile")
         return _signed_in(existing, identity)
     logger.info(f"SSO {provider_key} account linked to user {user.id}")
     return user, link
@@ -120,6 +124,12 @@ def user_for_identity(db: Session, provider_key: str, identity: SsoIdentity) -> 
     if link is not None:
         return _signed_in(link, identity)
     return _link(db, provider_key, identity)
+
+
+def same_address(a: Optional[str], b: Optional[str]) -> bool:
+    """Whether two e-mail addresses are the same mailbox as far as linking goes
+    (it matches them case-insensitively)."""
+    return (a or "").strip().lower() == (b or "").strip().lower()
 
 
 def identities_of(db: Session, user_id) -> List[UserIdentity]:

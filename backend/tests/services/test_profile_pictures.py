@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
 from app.models.user import User
@@ -87,17 +88,23 @@ async def test_the_photo_is_stored_like_an_uploaded_profile_picture(monkeypatch,
     store = AsyncMock(return_value="stored-url")
     monkeypatch.setattr(profile_pictures, "store_upload", store)
 
-    class U:
-        organization_id = "org-1"
-        id = "user-1"
-
-    assert await profile_pictures.store_profile_picture(U(), (b"jpeg", "image/jpeg")) == "stored-url"
+    assert await profile_pictures.store_profile_picture("org-1", "user-1", (b"jpeg", "image/jpeg")) == "stored-url"
     store.assert_awaited_once_with(b"jpeg", folder, "profile.jpg", "image/jpeg")
 
 
 @pytest.fixture
 def background_session(db, monkeypatch):
-    monkeypatch.setattr(profile_pictures, "_open_session", lambda: db)
+    """Sessions of their own, as in production, on the test database; `db`
+    sees what they committed."""
+    opened = []
+
+    def open_session():
+        session = sessionmaker(bind=db.get_bind())()
+        opened.append(session)
+        return session
+
+    monkeypatch.setattr(profile_pictures, "_open_session", open_session)
+    db.opened = opened
     return db
 
 
@@ -118,6 +125,34 @@ async def test_an_uploaded_picture_is_never_replaced(background_session, test_us
     monkeypatch.setattr(profile_pictures, "fetch_provider_photo", fetch)
     await profile_pictures.adopt_provider_photo(test_user.id, GOOGLE, PICTURE, None)
     fetch.assert_not_awaited()
+    background_session.refresh(test_user)
+    assert test_user.profile_pic == "/api/v1/uploads/user/mine.png"
+
+
+@pytest.mark.asyncio
+async def test_no_connection_is_held_while_the_photo_downloads(background_session, test_user: User, monkeypatch):
+    async def fetch(*args):
+        # Every session opened so far is closed again before the network call.
+        assert background_session.opened and all(not s.in_transaction() for s in background_session.opened)
+        return b"png", "image/png"
+
+    monkeypatch.setattr(profile_pictures, "fetch_provider_photo", fetch)
+    monkeypatch.setattr(profile_pictures, "store_profile_picture", AsyncMock(return_value="/p.png"))
+    await profile_pictures.adopt_provider_photo(test_user.id, GOOGLE, PICTURE, None)
+    background_session.refresh(test_user)
+    assert test_user.profile_pic == "/p.png"
+
+
+@pytest.mark.asyncio
+async def test_a_picture_uploaded_during_the_download_wins(background_session, test_user: User, monkeypatch):
+    async def fetch(*args):
+        test_user.profile_pic = "/api/v1/uploads/user/mine.png"
+        background_session.commit()
+        return b"png", "image/png"
+
+    monkeypatch.setattr(profile_pictures, "fetch_provider_photo", fetch)
+    monkeypatch.setattr(profile_pictures, "store_profile_picture", AsyncMock(return_value="/provider.png"))
+    await profile_pictures.adopt_provider_photo(test_user.id, GOOGLE, PICTURE, None)
     background_session.refresh(test_user)
     assert test_user.profile_pic == "/api/v1/uploads/user/mine.png"
 

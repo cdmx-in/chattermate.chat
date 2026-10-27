@@ -153,6 +153,17 @@ _MICROSOFT_SHARED_TENANTS = {"common", "organizations", "consumers"}
 # The tenant personal Microsoft accounts sign in from. Microsoft verifies their
 # address itself, unlike a work directory, whose admin can type in any address.
 MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
+# A personal account can be opened with any address, verified once and never
+# again; only Microsoft's own mail domains stay with the mailbox's owner (the
+# same reason Google trusts only Gmail outside Workspace). An address elsewhere
+# has to be linked by an admin-pinned tenant or a work account instead.
+_MICROSOFT_MAIL_DOMAINS = frozenset({
+    "outlook.com", "hotmail.com", "live.com", "msn.com",
+    "hotmail.co.uk", "live.co.uk", "outlook.co.uk",
+    "hotmail.fr", "live.fr", "outlook.fr",
+    "hotmail.de", "outlook.de", "hotmail.it", "outlook.it",
+    "hotmail.es", "outlook.es", "outlook.in", "outlook.jp", "live.jp",
+})
 MICROSOFT_ISSUER_TEMPLATE = "https://login.microsoftonline.com/{tenantid}/v2.0"
 MICROSOFT_GRAPH_PHOTO_URL = "https://graph.microsoft.com/v1.0/me/photo/$value"
 
@@ -188,14 +199,12 @@ class MicrosoftProvider(Provider):
 
     def email_trusted(self, claims: dict, email: str) -> bool:
         # In a work directory the admin sets the address, so a stranger's tenant
-        # could claim anyone's: it counts only for a personal account, a domain
-        # Microsoft checked (the optional `xms_edov` claim), or a tenant the
-        # operator pinned as their own.
-        return (
-            self.trusts_directory_email
-            or claims.get("tid") == MICROSOFT_CONSUMER_TENANT_ID
-            or claim_true(claims.get("xms_edov"))
-        )
+        # could claim anyone's: it counts only for a domain Microsoft checked
+        # (the optional `xms_edov` claim), a tenant the operator pinned as their
+        # own, or a personal account on Microsoft's own mail domains.
+        if self.trusts_directory_email or claim_true(claims.get("xms_edov")):
+            return True
+        return claims.get("tid") == MICROSOFT_CONSUMER_TENANT_ID and _is_microsoft_mail(email)
 
     def tenant_id(self, claims: dict) -> Optional[str]:
         return claims.get("tid")
@@ -204,6 +213,10 @@ class MicrosoftProvider(Provider):
         if not access_token:
             return None
         return MICROSOFT_GRAPH_PHOTO_URL, {"Authorization": f"Bearer {access_token}"}
+
+
+def _is_microsoft_mail(email: str) -> bool:
+    return email.rpartition("@")[2].lower() in _MICROSOFT_MAIL_DOMAINS
 
 
 def microsoft_tenant_is_shared() -> bool:

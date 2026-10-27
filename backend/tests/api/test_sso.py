@@ -31,6 +31,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from jose import jwt
+from sqlalchemy.orm import sessionmaker
 
 from app.api import sso as sso_api
 from app.api import user_identities as identities_api
@@ -39,12 +40,14 @@ from app.core.config import settings
 from app.database import get_db
 from app.models.auth_session import AuthSession
 from app.models.organization import Organization
+from app.models.role import Role
 from app.models.shopify.shopify_shop import ShopifyShop
 from app.models.user import User
 from app.models.user_identity import UserIdentity
 from app.services import profile_pictures
 from app.services import sso as sso_service
-from app.services.auth_sessions import session_id_of
+from app.services import sign_in_policy, sso_state
+from app.services.auth_sessions import issue_tokens, session_id_of
 from app.services.sign_in_policy import SignInRefused
 
 # The SSO router on its own, like the other API test modules do: app.main's
@@ -73,8 +76,8 @@ def client(db, monkeypatch) -> TestClient:
     def override_get_db():
         yield db
     app.dependency_overrides[get_db] = override_get_db
-    # The photo is adopted after the response, in a session of its own.
-    monkeypatch.setattr(profile_pictures, "_open_session", lambda: db)
+    # The photo is adopted after the response, in sessions of its own.
+    monkeypatch.setattr(profile_pictures, "_open_session", lambda: sessionmaker(bind=db.get_bind())())
     with TestClient(app, base_url="https://testserver") as test_client:
         yield test_client
     app.dependency_overrides.pop(get_db, None)
@@ -130,7 +133,7 @@ def _begin(client: TestClient, query: str = "", provider: str = "google") -> dic
 
 def _started(client: TestClient, state: str) -> dict:
     """What this browser's state cookie holds for the sign-in."""
-    return jwt.decode(client.cookies.get(f"sso_{state}"), settings.SECRET_KEY, algorithms=["HS256"])
+    return jwt.decode(client.cookies.get(f"sso_{state}"), sso_state._signing_key(), algorithms=["HS256"])
 
 
 def _callback(client: TestClient, query: dict, provider: str = "google"):
@@ -290,14 +293,33 @@ def test_callback_links_and_signs_in_an_existing_user(client: TestClient, db, gm
     assert me.status_code == 200
     assert me.json()["email"] == gmail_user.email
 
-    # The sign-in is spent; replaying the callback gets nothing.
+    # The browser dropped the spent state cookie, so a second callback gets nothing.
     assert _error_of(_callback(client, query)) == "invalid_state"
 
 
-def test_parallel_sign_ins_in_two_tabs_both_finish(client: TestClient, gmail_user: User, google_only, monkeypatch):
-    first, second = _begin(client), _begin(client)
+def test_a_replayed_state_cookie_is_stopped_by_the_spent_code(client: TestClient, gmail_user: User, google_only, monkeypatch):
+    """Nothing is kept on the server, so a captured state cookie is good for
+    its ten minutes. What stops a replay is the provider: an authorization
+    code works once."""
+    query = _begin(client)
+    captured = client.cookies.get(f"sso_{query['state']}")
     _provider_says(monkeypatch, _google_claims(gmail_user.email))
-    assert _callback(client, first).headers["location"] == SSO_OK
+    assert _callback(client, query).headers["location"] == SSO_OK
+
+    client.cookies.set(f"sso_{query['state']}", captured)
+    monkeypatch.setattr(sso_service, "exchange_code", AsyncMock(
+        side_effect=sso_service.SsoError("provider_error", "invalid_grant: code already redeemed")))
+    assert _error_of(_callback(client, query)) == "provider_error"
+
+
+def test_starting_again_replaces_an_unfinished_sign_in(client: TestClient, gmail_user: User, google_only, monkeypatch):
+    """Back from the provider and click again: the abandoned state cookie goes,
+    so retries never pile up past what proxies accept in a Cookie header."""
+    first = _begin(client)
+    second = _begin(client)
+    assert [name for name in client.cookies.keys() if name.startswith("sso_")] == [f"sso_{second['state']}"]
+    _provider_says(monkeypatch, _google_claims(gmail_user.email))
+    assert _callback(client, first).headers["location"].endswith("sso_error=invalid_state")
     assert _callback(client, second).headers["location"] == SSO_OK
 
 
@@ -528,6 +550,69 @@ def test_callback_without_a_code_is_a_provider_error(client: TestClient, google_
     assert _error_of(response) == "provider_error"
 
 
+def _age_state(client: TestClient, state: str) -> None:
+    """Make this browser's sign-in older than its ten minutes."""
+    claims = {**_started(client, state), "exp": int(time.time()) - 1}
+    client.cookies.clear()
+    client.cookies.set(f"sso_{state}", jwt.encode(claims, sso_state._signing_key(), algorithm="HS256"))
+
+
+def test_a_sign_in_that_took_too_long_keeps_the_shopify_flow(client: TestClient, gmail_user: User, google_only, monkeypatch):
+    """Retrying from the login page must land in the same install flow."""
+    query = _begin(client, "?shopify_flow=1&shop_id=7&return_to=%2Fshopify%2Fagents")
+    _age_state(client, query["state"])
+    _provider_says(monkeypatch, _google_claims(gmail_user.email))
+    assert _query_of(_callback(client, query)) == {
+        "sso_error": "invalid_state", "shopify_flow": "1", "shop_id": "7", "return_to": "/shopify/agents",
+    }
+    assert "access_token" not in client.cookies
+
+
+def test_a_provider_switched_off_mid_sign_in_lands_on_the_login_page(client: TestClient, google_only, monkeypatch):
+    query = _begin(client, "?redirect=%2Fx")
+    monkeypatch.setattr(settings, "GOOGLE_SSO_CLIENT_ID", "")
+    response = _callback(client, query)
+    assert _query_of(response) == {"sso_error": "provider_error", "redirect": "/x"}
+    assert f"sso_{query['state']}" not in client.cookies
+
+
+def test_a_member_of_an_inactive_organization_is_turned_away(client: TestClient, db, gmail_user: User, google_only, monkeypatch):
+    gmail_user.organization.is_active = False
+    db.commit()
+    _provider_says(monkeypatch, _google_claims(gmail_user.email))
+    assert _error_of(_callback(client, _begin(client))) == "no_account"
+    assert db.query(AuthSession).count() == 0
+
+
+def test_start_drops_a_parameter_that_is_not_plain_ascii(client: TestClient, google_only):
+    """JSON escapes it several-fold: 256 such characters would push the state
+    cookie past what a browser keeps, and the sign-in would fail."""
+    query = _begin(client, "?shop=" + "%C3%A9" * 200 + "&shop_id=7")
+    assert _started(client, query["state"])["carry"] == {"shop_id": "7"}
+
+
+def test_sso_only_mode_signs_in_and_ends_the_users_password_sessions(client: TestClient, db, gmail_user: User, google_only, monkeypatch):
+    """The real policy on the SSO path: allowed, and the password sessions it
+    would now refuse are ended rather than left to refresh."""
+    monkeypatch.setattr(settings, "PASSWORD_LOGIN_ENABLED", False)
+    password_token, _ = issue_tokens(db, gmail_user.id, gmail_user.organization_id, auth_method="password")
+    db.commit()
+    _provider_says(monkeypatch, _google_claims(gmail_user.email))
+    assert _callback(client, _begin(client)).headers["location"] == SSO_OK
+    db.expire_all()
+    assert db.get(AuthSession, uuid.UUID(session_id_of(password_token))).revoked_at is not None
+    assert db.query(AuthSession).filter(AuthSession.revoked_at.is_(None)).one().auth_method == "sso"
+
+
+def test_an_enterprise_policy_refusal_reaches_the_login_page(client: TestClient, db, gmail_user: User, google_only, monkeypatch):
+    def enterprise(db_, user, method, identity):
+        raise SignInRefused("SSO is not allowed for this organization")
+    monkeypatch.setattr(sign_in_policy, "_enterprise_rules", lambda: enterprise)
+    _provider_says(monkeypatch, _google_claims(gmail_user.email))
+    assert _error_of(_callback(client, _begin(client))) == "sign_in_refused"
+    assert db.query(AuthSession).count() == 0
+
+
 def test_callback_with_an_unknown_state_is_rejected(client: TestClient, google_only):
     response = client.get("/api/v1/sso/google/callback?code=abc&state=made-up", follow_redirects=False)
     assert _error_of(response) == "invalid_state"
@@ -570,3 +655,20 @@ def test_another_organizations_team_member_is_404(client: TestClient, db, gmail_
     _signed_in_admin(client, gmail_user, monkeypatch)
     assert client.get(f"/api/v1/users/{stranger.id}/identities").status_code == 404
     assert client.delete(f"/api/v1/users/{stranger.id}/identities/{uuid.uuid4()}").status_code == 404
+
+
+def test_unlinking_needs_permission_to_manage_users(client: TestClient, db, gmail_user: User, google_only, monkeypatch):
+    agent_role = Role(name="Agent", organization_id=gmail_user.organization_id)
+    db.add(agent_role)
+    db.flush()
+    agent = User(organization_id=gmail_user.organization_id, email="agent@gmail.com", full_name="A",
+                 hashed_password="x", is_active=True, role_id=agent_role.id)
+    db.add(agent)
+    db.commit()
+    link = _link(db, gmail_user)
+    _provider_says(monkeypatch, _google_claims(agent.email, sub="g-agent"))
+    assert _callback(client, _begin(client)).headers["location"] == SSO_OK
+    assert client.get("/api/v1/users/me").json()["email"] == agent.email
+    assert client.get(f"/api/v1/users/{gmail_user.id}/identities").status_code == 403
+    assert client.delete(f"/api/v1/users/{gmail_user.id}/identities/{link.id}").status_code == 403
+    assert db.query(UserIdentity).filter(UserIdentity.id == link.id).count() == 1

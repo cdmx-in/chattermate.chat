@@ -31,14 +31,14 @@ from datetime import datetime, timezone
 from app.core.security import validate_password_strength
 from app.core.auth import (
     INBOX_PERMISSIONS, get_current_user, request_token, require_any_permission, require_permissions,
-    revoke_presented_sessions,
+    revoke_presented_sessions, set_session_cookies,
 )
 from app.services.auth_sessions import (
-    PASSWORD_LOGIN, REFRESH, issue_tokens, live_payload, revoke_user_sessions, session_id_of,
-    session_user_payload, set_session_cookies,
+    PASSWORD_LOGIN, REFRESH, issue_tokens, live_payload, revoke_session, revoke_user_sessions, session_id_of,
+    session_method, session_user_payload,
 )
 from app.services.sign_in_policy import SignInRefused, check_sign_in
-from app.services.sso_accounts import forget_identities
+from app.services.sso_accounts import forget_identities, same_address
 from app.core.logger import get_logger
 from app.repositories.user import UserRepository
 from app.repositories.fcm_token import FCMTokenRepository
@@ -594,6 +594,19 @@ async def refresh_token(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+        # The sign-in policy may have changed since this session opened
+        # (password sign-in switched off, an enterprise rule).
+        try:
+            check_sign_in(db, user, session_method(db, payload.get("sid")))
+        except SignInRefused as refused:
+            revoke_session(db, payload.get("sid"))
+            db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=str(refused),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
         # Update last seen, and re-mint tokens for the same session (a legacy
         # token without one gets a new session)
         user.last_seen = func.now()
@@ -721,17 +734,26 @@ async def update_profile(
         
         # If updating email, check it's a real mailbox and not already taken.
         # Same bounce risk as signup, and otherwise a trivial way around that gate.
-        if data.email and data.email != current_user.email:
+        if data.email and not same_address(data.email, current_user.email):
+            # Whoever controls the address can link an SSO account to it, so a
+            # borrowed session must not be enough to change it.
+            if not data.current_password or not current_user.verify_password(data.current_password):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Enter your current password to change your email"
+                )
             if HAS_EMAIL_VALIDATION:
                 ensure_not_disposable(data.email)
-            existing_user = user_repo.get_user_by_email(data.email)
-            if existing_user:
+            if user_repo.email_taken(data.email, except_user_id=current_user.id):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email already registered"
                 )
-            # SSO links were made for the old address; they don't carry over.
-            forget_identities(db, current_user.id, keep_sid=session_id_of(request_token(request)))
+            # SSO links were made for the old address; they don't carry over,
+            # and every other session ends with them.
+            current_sid = session_id_of(request_token(request))
+            forget_identities(db, current_user.id, keep_sid=current_sid)
+            revoke_user_sessions(db, current_user.id, keep_sid=current_sid)
         
         fields = data.dict(exclude_unset=True)
         # `password` and `current_password` are request-only fields; the column
@@ -796,6 +818,7 @@ async def update_profile(
 async def update_user(
     user_id: str,
     user_data: UserUpdate,
+    request: Request,
     current_user: User = Depends(require_permissions("manage_users")),
     db: Session = Depends(get_db)
 ):
@@ -810,19 +833,20 @@ async def update_user(
     role = _require_role_in_org(db, user_data.role_id, current_user.organization_id)
 
     # Check if updating email and if it's already taken
-    if user_data.email and user_data.email != user.email:
+    if user_data.email and not same_address(user_data.email, user.email):
         if HAS_EMAIL_VALIDATION:
             ensure_not_disposable(user_data.email)
-        existing_user = user_repo.get_user_by_email(user_data.email)
-        if existing_user:
+        if user_repo.email_taken(user_data.email, except_user_id=user.id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
         # A new address is a new person in the seat: the previous holder's SSO
-        # accounts and sessions must not carry over.
-        forget_identities(db, user.id)
-        revoke_user_sessions(db, user.id)
+        # accounts and sessions must not carry over. An admin editing their own
+        # address keeps the session they are doing it from.
+        keep_sid = session_id_of(request_token(request)) if user.id == current_user.id else None
+        forget_identities(db, user.id, keep_sid=keep_sid)
+        revoke_user_sessions(db, user.id, keep_sid=keep_sid)
     
 
     if HAS_ENTERPRISE and hasattr(user_data, 'is_active') and user_data.is_active != user.is_active:

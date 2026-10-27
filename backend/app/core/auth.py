@@ -14,7 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import Depends, HTTPException, status, Cookie, Request
+import json
+from urllib.parse import quote
+
+from fastapi import Depends, HTTPException, status, Cookie, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
@@ -187,6 +190,30 @@ def revoke_presented_sessions(db: Session, request: Request) -> None:
         sid = session_id_of(token)
         if sid:
             revoke_session(db, sid)
+
+
+# Cookie lifetimes: the access token is short-lived, the refresh token and the
+# readable user_info blob last a week.
+ACCESS_COOKIE_MAX_AGE = 30 * 60
+REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60
+
+
+def set_session_cookies(response: Response, user, role, access_token: str, refresh_token: str) -> None:
+    """Install a dashboard session on `response`: the two httpOnly JWT cookies
+    and the user_info blob the dashboard may read. One place for every
+    sign-in path (password login, token refresh, organization signup, SSO),
+    so a cookie attribute cannot drift between them."""
+    cookie = dict(secure=True, samesite="none")  # cross-site for the Shopify embedded app
+    response.set_cookie("access_token", access_token, httponly=True, max_age=ACCESS_COOKIE_MAX_AGE, **cookie)
+    response.set_cookie("refresh_token", refresh_token, httponly=True, max_age=REFRESH_COOKIE_MAX_AGE, **cookie)
+    user_info = json.dumps({
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "organization_id": str(user.organization_id),
+        "role": role.to_dict() if role else None,
+    }, default=str)
+    response.set_cookie("user_info", quote(user_info), max_age=REFRESH_COOKIE_MAX_AGE, **cookie)
 
 
 def _unauthorized(detail: str) -> HTTPException:

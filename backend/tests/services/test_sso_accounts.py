@@ -79,15 +79,23 @@ def test_a_recreated_account_is_not_linked_on_its_own(db, test_user: User):
     assert db.query(UserIdentity).count() == 1
 
 
-def test_accounts_from_other_issuers_may_be_added(db, test_user: User):
-    """One Google account and accounts in two Microsoft tenants: different issuers."""
+def test_one_account_per_provider_even_from_another_issuer(db, test_user: User):
+    """A personal Microsoft account next to a work one is a second way in: an
+    admin has to unlink the first."""
+    _link(db, test_user, subject="oid-a", provider="microsoft", issuer="https://login.microsoftonline.com/a/v2.0")
+    with pytest.raises(SsoError) as err:
+        sso_accounts.user_for_identity(db, "microsoft", _identity(
+            test_user.email, subject="oid-b", issuer="https://login.microsoftonline.com/b/v2.0"))
+    assert err.value.code == "already_linked"
+
+
+def test_accounts_from_different_providers_may_be_added(db, test_user: User):
     _link(db, test_user)
-    for tenant in ("a", "b"):
-        user, _ = sso_accounts.user_for_identity(db, "microsoft", _identity(
-            test_user.email, subject=f"oid-{tenant}", issuer=f"https://login.microsoftonline.com/{tenant}/v2.0"))
-        assert user.id == test_user.id
+    user, _ = sso_accounts.user_for_identity(db, "microsoft", _identity(
+        test_user.email, subject="oid-a", issuer="https://login.microsoftonline.com/a/v2.0"))
     db.commit()
-    assert db.query(UserIdentity).count() == 3
+    assert user.id == test_user.id
+    assert db.query(UserIdentity).count() == 2
 
 
 def test_a_parallel_first_sign_in_reuses_the_link_it_lost_to(db, test_user: User, monkeypatch):

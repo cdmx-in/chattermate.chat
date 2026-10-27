@@ -16,16 +16,17 @@ limitations under the License.
 Profile pictures taken from a sign-in provider.
 
 A team member without a profile picture gets their SSO account's photo. It is
-fetched after the sign-in has answered (a background task with its own
-database session), so a slow photo host never holds up the sign-in, and a
-picture the person uploaded is never replaced.
+fetched after the sign-in has answered (a background task that holds no
+database connection while it downloads), so a slow photo host never holds up
+the sign-in, and a picture the person uploaded is never replaced, even one
+uploaded while the photo was on its way.
 """
 
 from typing import Optional, Tuple
 
 import httpx
+from sqlalchemy import or_
 
-from app.core.config import settings
 from app.core.logger import get_logger
 from app.core.outbound_policy import OutboundTargetBlocked, check_outbound_target
 from app.database import SessionLocal
@@ -50,7 +51,9 @@ def _open_session():
 
 
 def _client() -> httpx.AsyncClient:
-    return httpx.AsyncClient(timeout=_PHOTO_TIMEOUT, verify=settings.VERIFY_SSL_CERTIFICATES, follow_redirects=False)
+    # Always verified: these are the providers' public hosts, whatever
+    # VERIFY_SSL_CERTIFICATES says for the operator's own services.
+    return httpx.AsyncClient(timeout=_PHOTO_TIMEOUT, verify=True, follow_redirects=False)
 
 
 async def fetch_provider_photo(provider: Provider, claims: dict, access_token: Optional[str]) -> Optional[Tuple[bytes, str]]:
@@ -75,29 +78,56 @@ async def fetch_provider_photo(provider: Provider, claims: dict, access_token: O
     return response.content, content_type
 
 
-async def store_profile_picture(user: User, image: Tuple[bytes, str]) -> str:
+async def store_profile_picture(organization_id, user_id, image: Tuple[bytes, str]) -> str:
     """Persist a photo where uploaded profile pictures live and return the URL
     to keep on the user."""
     content, content_type = image
-    folder = profile_pic_folder(user.organization_id, user.id)
+    folder = profile_pic_folder(organization_id, user_id)
     return await store_upload(content, folder, f"profile{_PHOTO_EXTENSIONS[content_type]}", content_type)
+
+
+def _user_without_picture(user_id) -> Optional[Tuple]:
+    """(organization_id, user_id) of a user still without a picture, or None.
+    The session is closed again before any network call, so a slow photo host
+    never holds a pooled connection."""
+    db = _open_session()
+    try:
+        row = db.query(User.organization_id, User.id, User.profile_pic).filter(User.id == user_id).first()
+    finally:
+        db.close()
+    if row is None or row.profile_pic:
+        return None
+    return row.organization_id, row.id
+
+
+def _keep_unless_uploaded(user_id, url: str) -> bool:
+    """Set the picture only if the person hasn't uploaded one meanwhile."""
+    db = _open_session()
+    try:
+        updated = db.query(User).filter(
+            User.id == user_id, or_(User.profile_pic.is_(None), User.profile_pic == "")
+        ).update(
+            {"profile_pic": url}, synchronize_session=False
+        )
+        db.commit()
+        return bool(updated)
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 async def adopt_provider_photo(user_id, provider: Provider, claims: dict, access_token: Optional[str]) -> None:
     """Background task: give a user without a picture their provider's photo.
     Never raises; a missing photo is not worth an error anywhere."""
-    db = _open_session()
     try:
-        user = db.query(User).filter(User.id == user_id).first()
-        if user is None or user.profile_pic:
+        found = _user_without_picture(user_id)
+        if found is None:
             return
         image = await fetch_provider_photo(provider, claims, access_token)
         if image is None:
             return
-        user.profile_pic = await store_profile_picture(user, image)
-        db.commit()
+        _keep_unless_uploaded(user_id, await store_profile_picture(*found, image))
     except Exception as e:
-        db.rollback()
         logger.warning(f"Profile photo for user {user_id} could not be stored: {e}")
-    finally:
-        db.close()
