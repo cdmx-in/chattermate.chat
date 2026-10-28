@@ -16,6 +16,7 @@ limitations under the License.
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from app.api import widget_chat
 from app.models.widget import Widget
 from app.models.agent import Agent, AgentType
 from app.models.ai_config import AIConfig, AIModelType
@@ -35,6 +36,7 @@ from app.models.workflow_connection import WorkflowConnection
 from app.models.rating import Rating
 import datetime
 from socketio.exceptions import ConnectionRefusedError as SocketRefused
+from tests.socket_db import serve_socket_db
 
 @pytest.fixture
 def test_ai_config(db, test_organization) -> AIConfig:
@@ -137,6 +139,16 @@ def test_workflow_node(db, test_workflow) -> WorkflowNode:
     db.refresh(node)
     return node
 
+
+def _accept_conversation_token(monkeypatch):
+    """Connect verifies the token to read its scope; these tests pass a literal."""
+    monkeypatch.setattr(
+        widget_chat,
+        "verify_conversation_token",
+        lambda token: {"jti": "test-jti", "customer_email": "visitor@example.com"},
+    )
+
+
 @pytest.fixture
 def mock_sio():
     """Create a mock socket.io server"""
@@ -156,7 +168,7 @@ async def test_widget_connect(db, test_widget, test_ai_config, test_customer, mo
     
     # Mock dependencies
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     
     # Mock authentication
     conversation_token = "test_token"
@@ -171,6 +183,7 @@ async def test_widget_connect(db, test_widget, test_ai_config, test_customer, mo
         "authenticate_socket_conversation_token",
         AsyncMock(return_value=mock_auth_result)
     )
+    _accept_conversation_token(monkeypatch)
     
     # Mock WidgetRepository.get_widget to return our test widget
     monkeypatch.setattr(
@@ -183,10 +196,10 @@ async def test_widget_connect(db, test_widget, test_ai_config, test_customer, mo
     mock_ai_config_repo.get_active_config.return_value = test_ai_config
     monkeypatch.setattr(widget_chat, "AIConfigRepository", lambda db: mock_ai_config_repo)
     
-    # Mock get_active_customer_session to return None
+    # No conversation to resume
     monkeypatch.setattr(
-        "app.repositories.session_to_agent.SessionToAgentRepository.get_active_customer_session",
-        lambda self, customer_id, agent_id=None: None
+        "app.repositories.session_to_agent.SessionToAgentRepository.get_active_widget_session",
+        lambda self, customer_id, agent_id, scope: None
     )
     
     # Mock create_session to handle UUID conversion
@@ -241,7 +254,7 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     # Mock dependencies
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     
     # Create a test session
     session_id = uuid4()
@@ -279,16 +292,16 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     # Mock get_environ to return empty dict
     mock_sio.get_environ.return_value = {}
     
-    # Mock get_active_customer_session
+    # The conversation this socket connected to
     mock_session = MagicMock()
     mock_session.session_id = session_id
     mock_session.status = SessionStatus.OPEN
     mock_session.user_id = None
     mock_session.workflow_id = None  # Explicitly set to None to avoid workflow path
     monkeypatch.setattr(
-        SessionToAgentRepository,
-        "get_active_customer_session",
-        lambda self, customer_id, agent_id=None: mock_session
+        widget_chat,
+        "_own_session",
+        lambda session_repo, session, active_only=True: mock_session
     )
     
     # Test chat message
@@ -299,11 +312,17 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     
     # Mock ChatAgent
     mock_chat_agent = MagicMock()
-    mock_chat_agent.get_response = AsyncMock(return_value=MagicMock(
-        message="I'm here to help!",
-        transfer_to_human=False,
-        shopify_output=MagicMock(model_dump=MagicMock(return_value={}))
-    ))
+    held = []
+
+    async def reply(*args, **kwargs):
+        # Whether the handler's session sat on a connection through the model call
+        held.append(db.in_transaction())
+        return MagicMock(
+            message="I'm here to help!",
+            transfer_to_human=False,
+            shopify_output=MagicMock(model_dump=MagicMock(return_value={}))
+        )
+    mock_chat_agent.get_response = AsyncMock(side_effect=reply)
     mock_chat_agent.agent.session_id = session_id
     mock_chat_agent.safe_cleanup_mcp_tools = AsyncMock()
 
@@ -347,6 +366,9 @@ async def test_widget_chat_message(db, test_widget, test_ai_config, test_custome
     assert 'bot_typing' in emitted
     assert emitted.index('bot_typing') < emitted.index('chat_response')
 
+    # A few concurrent chats would otherwise use up the connection pool
+    assert held == [False]
+
 @pytest.mark.asyncio
 async def test_human_only_agent_waits_instead_of_answering(
     db, test_widget, test_ai_config, test_customer, mock_sio, monkeypatch
@@ -363,7 +385,7 @@ async def test_human_only_agent_waits_instead_of_answering(
 
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
 
     session_id = uuid4()
     conversation_token = "test_token"
@@ -406,9 +428,9 @@ async def test_human_only_agent_waits_instead_of_answering(
     mock_session.organization_id = test_widget.organization_id
     mock_session.customer_id = test_customer.id
     monkeypatch.setattr(
-        SessionToAgentRepository,
-        "get_active_customer_session",
-        lambda self, customer_id, agent_id=None: mock_session
+        widget_chat,
+        "_own_session",
+        lambda session_repo, session, active_only=True: mock_session
     )
 
     with patch("app.api.widget_chat.ChatAgent.create_async", AsyncMock()) as create_async, \
@@ -448,7 +470,7 @@ async def test_widget_chat_history(db, test_widget, test_customer, mock_sio, mon
     # Mock dependencies
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     
     # Create a test session
     session_id = uuid4()
@@ -543,7 +565,7 @@ async def test_agent_message(db, test_widget, test_customer, test_user, mock_sio
     # Mock dependencies
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     
     # Create a test session
     session_id = uuid4()
@@ -720,6 +742,70 @@ class TestUtilityFunctions:
 class TestWidgetConnectionErrors:
     """Test widget connection error scenarios"""
     
+    @staticmethod
+    def _signed_token(widget_id, expires_in):
+        """A conversation token of ours, signed like the real ones."""
+        from jose import jwt
+        from app.core.security import ALGORITHM, CONVERSATION_SECRET_KEY
+        exp = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=expires_in)
+        return jwt.encode({"widget_id": str(widget_id), "type": "conversation", "jti": str(uuid4()),
+                           "sub": str(uuid4()), "exp": exp}, CONVERSATION_SECRET_KEY, algorithm=ALGORITHM)
+
+    @pytest.mark.asyncio
+    async def test_widget_connect_with_expired_token_is_refused_for_reauthorization(self, test_widget, mock_sio, monkeypatch):
+        """A token that lapsed in an open tab is refused with a reason the widget
+        acts on (it authorizes again), not as a failure it retries forever."""
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+        token = self._signed_token(test_widget.id, expires_in=-60)
+
+        with pytest.raises(SocketRefused) as refused:
+            await widget_chat.widget_connect("test_sid", {}, {"conversation_token": token, "widget_id": str(test_widget.id)})
+
+        assert refused.value.error_args['data'] == {
+            'error': 'Conversation token no longer valid', 'type': 'token_invalid'}
+        mock_sio.emit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_widget_connect_with_revoked_token_is_refused_for_reauthorization(self, test_widget, mock_sio, monkeypatch):
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+        monkeypatch.setattr("app.core.security._is_token_in_redis", lambda jti: False)
+        monkeypatch.setattr("app.services.conversation_token._is_token_in_redis", lambda jti: False)
+        token = self._signed_token(test_widget.id, expires_in=3600)
+
+        with pytest.raises(SocketRefused) as refused:
+            await widget_chat.widget_connect("test_sid", {}, {"conversation_token": token})
+
+        assert refused.value.error_args['data']['type'] == 'token_invalid'
+
+    @pytest.mark.asyncio
+    async def test_widget_connect_token_lapsing_mid_connect_is_refused_for_reauthorization(
+            self, test_widget, test_customer, mock_sio, monkeypatch):
+        """The token verified a moment ago and no longer does by the scope check."""
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+        monkeypatch.setattr(
+            widget_chat,
+            "authenticate_socket_conversation_token",
+            AsyncMock(return_value=(str(test_widget.id), str(test_widget.organization_id), str(test_customer.id), "token"))
+        )
+        monkeypatch.setattr(widget_chat, "verify_conversation_token", lambda token: None)
+
+        with pytest.raises(SocketRefused) as refused:
+            await widget_chat.widget_connect("test_sid", {}, {"conversation_token": "token"})
+
+        assert refused.value.error_args['data']['type'] == 'token_invalid'
+
+    @pytest.mark.asyncio
+    async def test_widget_connect_without_token_still_fails_as_before(self, mock_sio, monkeypatch):
+        """No token is nothing authorizing again can be told about from here."""
+        monkeypatch.setattr(widget_chat, "sio", mock_sio)
+
+        result = await widget_chat.widget_connect("test_sid", {}, {"widget_id": "w"})
+
+        assert result is False
+        mock_sio.emit.assert_called_with(
+            'error', {'error': 'Connection failed', 'type': 'connection_error'},
+            to="test_sid", namespace='/widget')
+
     @pytest.mark.asyncio
     async def test_widget_connect_authentication_failed(self, mock_sio, monkeypatch):
         """Test widget connection with authentication failure"""
@@ -750,7 +836,7 @@ class TestWidgetConnectionErrors:
         from app.api import widget_chat
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Mock authentication
         mock_auth_result = (
@@ -764,6 +850,7 @@ class TestWidgetConnectionErrors:
             "authenticate_socket_conversation_token",
             AsyncMock(return_value=mock_auth_result)
         )
+        _accept_conversation_token(monkeypatch)
         
         # Mock WidgetRepository
         monkeypatch.setattr(
@@ -793,7 +880,7 @@ class TestWidgetConnectionErrors:
         from app.api import widget_chat
 
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         monkeypatch.setattr(
             widget_chat,
             "authenticate_socket_conversation_token",
@@ -815,7 +902,7 @@ class TestWidgetConnectionErrors:
         from app.api import widget_chat
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Mock authentication
         mock_auth_result = ("invalid_widget_id", "org_id", "customer_id", "test_token")
@@ -824,6 +911,7 @@ class TestWidgetConnectionErrors:
             "authenticate_socket_conversation_token",
             AsyncMock(return_value=mock_auth_result)
         )
+        _accept_conversation_token(monkeypatch)
         
         # Mock WidgetRepository to return None
         monkeypatch.setattr(
@@ -1036,7 +1124,7 @@ class TestAgentHandlers:
         from app.repositories.session_to_agent import SessionToAgentRepository
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Create a test session
         session_id = uuid4()
@@ -1159,7 +1247,7 @@ class TestRatingSubmission:
         from app.repositories.session_to_agent import SessionToAgentRepository
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Create a test session
         session_id = uuid4()
@@ -1215,7 +1303,7 @@ class TestRatingSubmission:
         from app.repositories.session_to_agent import SessionToAgentRepository
 
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
 
         session_id = uuid4()
         SessionToAgentRepository(db).create_session(
@@ -1472,7 +1560,7 @@ class TestEnterpriseFeatures:
         from app.api import widget_chat
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Mock authentication
         mock_auth_result = (
@@ -1486,6 +1574,7 @@ class TestEnterpriseFeatures:
             "authenticate_socket_conversation_token",
             AsyncMock(return_value=mock_auth_result)
         )
+        _accept_conversation_token(monkeypatch)
         
         # Mock WidgetRepository
         monkeypatch.setattr(
@@ -1500,8 +1589,8 @@ class TestEnterpriseFeatures:
         
         # Mock other required components
         monkeypatch.setattr(
-            "app.repositories.session_to_agent.SessionToAgentRepository.get_active_customer_session",
-            lambda self, customer_id, agent_id=None: None
+            "app.repositories.session_to_agent.SessionToAgentRepository.get_active_widget_session",
+            lambda self, customer_id, agent_id, scope: None
         )
         
         def mock_create_session(self, session_id, agent_id, customer_id, organization_id, **kwargs):
@@ -1543,7 +1632,7 @@ class TestComplexScenarios:
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
         monkeypatch.setattr(message_delivery, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Create a test session
         session_id = uuid4()
@@ -1601,7 +1690,7 @@ class TestComplexScenarios:
         
         monkeypatch.setattr(widget_chat, "sio", mock_sio)
         monkeypatch.setattr(message_delivery, "sio", mock_sio)
-        monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+        serve_socket_db(monkeypatch, db)
         
         # Create a test session
         session_id = uuid4()
@@ -1664,7 +1753,7 @@ async def test_agent_message_tells_the_sender_its_stored_id(db, test_widget, tes
 
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
     monkeypatch.setattr(message_delivery, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     session_id = uuid4()
     from app.repositories.session_to_agent import SessionToAgentRepository
     SessionToAgentRepository(db).create_session(
@@ -1703,7 +1792,7 @@ async def test_org_inbox_room_is_for_people_who_see_unowned_chats(
         test_role.permissions = [*test_role.permissions, permission]
     db.commit()
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     mock_sio.enter_room = AsyncMock()
     mock_sio.get_session.return_value = {
         "user_id": str(test_user.id), "organization_id": str(test_organization.id)}

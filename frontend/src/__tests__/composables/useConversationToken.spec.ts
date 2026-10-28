@@ -15,7 +15,7 @@ limitations under the License.
 */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { useConversationToken } from '@/composables/useConversationToken'
+import { localTokenStore, memoryTokenStore, useConversationToken } from '@/composables/useConversationToken'
 
 /**
  * The widget's conversation token has to outlive the page it loads on. A visitor who
@@ -117,6 +117,30 @@ describe('useConversationToken', () => {
     stop()
   })
 
+  it('leaves an anonymous token that ran out to the caller, which authorizes again', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: () => Promise.resolve({ detail: { code: 'invalid_token' } }) })
+    const onIdentityExpired = vi.fn()
+    const { start, ensureFresh, stop } = useConversationToken({ onIdentityExpired })
+    start(WIDGET_ID, makeToken(3600, 3601))
+
+    expect(await ensureFresh(WIDGET_ID)).toBe(false)
+    // Nobody signed in to hand back to the host page: GET /widgets/{id} replaces it.
+    expect(onIdentityExpired).not.toHaveBeenCalled()
+    stop()
+  })
+
+  it('tells the host page when the server says the identity lapsed', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: () => Promise.resolve({ detail: { code: 'identity_expired' } }) })
+    const onIdentityExpired = vi.fn()
+    const { start, ensureFresh, stop } = useConversationToken({ onIdentityExpired })
+    start(WIDGET_ID, makeToken(3600, 3599))
+
+    await ensureFresh(WIDGET_ID)
+
+    expect(onIdentityExpired).toHaveBeenCalledTimes(1)
+    stop()
+  })
+
   it('keeps the current token when the network is down', async () => {
     fetchMock.mockRejectedValue(new Error('offline'))
     const current = makeToken(3600, 3599)
@@ -176,5 +200,60 @@ describe('useConversationToken', () => {
     await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
 
     expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  describe('where the token is kept', () => {
+    it('can keep it under another key', () => {
+      const initial = makeToken(3600)
+      const { start, stop } = useConversationToken({ store: localTokenStore('ctid:w-1') })
+
+      start(WIDGET_ID, initial)
+
+      expect(localStorage.getItem('ctid:w-1')).toBe(initial)
+      expect(localStorage.getItem('ctid')).toBeNull()
+      stop()
+    })
+
+    it('can keep it in memory only, never touching shared storage', () => {
+      localStorage.setItem('ctid', 'tok-someone-else')
+      const changed = vi.fn()
+      const { token, start, setToken, stop } = useConversationToken({ store: memoryTokenStore(), onTokenChanged: changed })
+
+      start(WIDGET_ID)
+      expect(token.value).toBeNull()
+
+      const next = makeToken(3600)
+      setToken(next)
+      expect(token.value).toBe(next)
+      expect(changed).toHaveBeenCalledWith(next)
+      expect(localStorage.getItem('ctid')).toBe('tok-someone-else')
+      stop()
+    })
+
+    it('says when it lets a token go, and only then', () => {
+      const cleared = vi.fn()
+      const { start, setToken, stop } = useConversationToken({ store: memoryTokenStore(), onTokenCleared: cleared })
+
+      setToken(null)
+      expect(cleared).not.toHaveBeenCalled()
+
+      start(WIDGET_ID, makeToken(3600))
+      setToken(null)
+      expect(cleared).toHaveBeenCalledTimes(1)
+
+      setToken(null)
+      expect(cleared).toHaveBeenCalledTimes(1)
+      stop()
+    })
+
+    it('clears the stored copy too', () => {
+      const { start, setToken, stop } = useConversationToken()
+      start(WIDGET_ID, makeToken(3600))
+
+      setToken(null)
+
+      expect(localStorage.getItem('ctid')).toBeNull()
+      stop()
+    })
   })
 })

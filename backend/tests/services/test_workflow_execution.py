@@ -202,6 +202,33 @@ class TestWorkflowExecutionService:
                 assert result.should_continue is False
     
     @pytest.mark.asyncio
+    async def test_execute_llm_node_releases_the_connection_before_the_model(
+        self, workflow_service, mock_db, sample_workflow_node, sample_workflow
+    ):
+        # Not held idle through the call: a few concurrent chats would use up the pool
+        committed_first = []
+
+        async def model(**kwargs):
+            committed_first.append(mock_db.commit.called)
+            return Mock(message="On it.", transfer_to_human=False, end_chat=False,
+                        transfer_reason=None, transfer_description=None, success=True)
+        mock_chat_agent = AsyncMock()
+        mock_chat_agent._get_llm_response_only = AsyncMock(side_effect=model)
+        mock_db.in_transaction.return_value = True
+
+        with patch('app.services.workflow_execution.ChatAgent') as mock_chat_agent_class:
+            mock_chat_agent_class.create_async = AsyncMock(return_value=mock_chat_agent)
+            with patch.object(workflow_service.session_repo, 'get_workflow_history', return_value=[]):
+                await workflow_service._execute_llm_node(
+                    node=sample_workflow_node, workflow=sample_workflow, workflow_state={},
+                    user_message="Where is my order?", api_key="test-key", model_name="gpt-4",
+                    model_type="openai", base_url=None, org_id="test-org", agent_id="test-agent",
+                    customer_id="test-customer", session_id="test-session",
+                )
+
+        assert committed_first == [True]
+
+    @pytest.mark.asyncio
     async def test_execute_llm_node_with_normal_message(
         self, workflow_service, sample_workflow_node, sample_workflow
     ):

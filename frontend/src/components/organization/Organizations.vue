@@ -141,13 +141,14 @@ onMounted(async () => {
               >
             </div>
             <div class="field">
-              <label>Primary domain</label>
+              <label>Website</label>
               <input
                 type="text"
                 class="mono"
                 v-model="formData.domain"
                 placeholder="example.com"
               >
+              <p class="field-hint">Where the chat widget can appear is set per widget, under Allowed domains.</p>
             </div>
           </div>
 

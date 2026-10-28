@@ -116,12 +116,12 @@ class GenerateTokenResponse(BaseModel):
 # DEPENDENCIES
 # ============================================================================
 
-async def validate_api_key(request: Request, db: Session = Depends(get_db)):
+def validate_api_key(request: Request, db: Session = Depends(get_db)):
     """
-    Validate API key from Authorization header (Bearer token).
-
-    Now validates against widget_apps table instead of hardcoded WIDGET_API_KEY.
-    Uses Redis caching for performance.
+    Validate API key from Authorization header (Bearer token) against the
+    widget_apps table. A plain def, so FastAPI runs it in a worker thread:
+    a key issued before the lookup column is bcrypt-checked, which must not
+    hold up the event loop.
     """
     auth_header = request.headers.get("Authorization", "")
 
@@ -141,7 +141,6 @@ async def validate_api_key(request: Request, db: Session = Depends(get_db)):
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Validate against database (with Redis caching)
     repo = WidgetAppRepository(db)
     widget_app = repo.validate_api_key(api_key)
 

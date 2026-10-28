@@ -38,10 +38,10 @@ describe('useOrganizationSettings – save errors', () => {
     vi.clearAllMocks()
   })
 
-  it('shows the API detail when the domain is already taken', async () => {
+  it('shows the API detail when the website is refused', async () => {
     updateOrganization.mockRejectedValueOnce({
-      message: 'Request failed with status code 409',
-      response: { status: 409, data: { detail: 'That domain is already used by another organization.' } },
+      message: 'Request failed with status code 400',
+      response: { status: 400, data: { detail: "Localhost can't be used as your website. Use the site where you'll add the widget." } },
     })
     const settings = useOrganizationSettings()
     settings.formData.value.domain = 'localhost'
@@ -49,7 +49,7 @@ describe('useOrganizationSettings – save errors', () => {
     await settings.updateOrganization()
 
     expect(updateOrganization).toHaveBeenCalledWith('org-1', expect.objectContaining({ domain: 'localhost' }))
-    expect(settings.error.value).toBe('That domain is already used by another organization.')
+    expect(settings.error.value).toBe("Localhost can't be used as your website. Use the site where you'll add the widget.")
     expect(settings.message.value).toBe('')
     expect(settings.hasChanges.value).toBe(true)
   })

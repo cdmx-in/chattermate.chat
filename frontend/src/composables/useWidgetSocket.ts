@@ -17,9 +17,10 @@ limitations under the License.
 import { ref } from 'vue'
 import { io, Socket } from 'socket.io-client'
 import type { HumanAgent, SocketError } from '../types/widget'
-import { getErrorMessage } from '../types/widget'
+import { getErrorMessage, isReauthorizingRefusal, REAUTHORIZING_REFUSALS } from '../types/widget'
 import { widgetEnv } from '../webclient/widget-env'
-import { readTokenClaims } from './useConversationToken'
+import { localTokenStore, readTokenClaims } from './useConversationToken'
+import { isFramed, reportedPageUrl } from '../webclient/frame-session'
 import type { Message } from '@/types/chat'
 
 type ConnectionStatus = 'connected' | 'connecting' | 'failed'
@@ -84,11 +85,11 @@ export function useWidgetSocket() {
     let manualRetryTimer: ReturnType<typeof setTimeout> | null = null
 
     // Refusals that retrying the same connection can't change, so retrying is just
-    // load: the org has no AI config, or the token isn't bound to a customer yet
-    // (authorizing again binds one - the caller of connect() does that, see
-    // `refusal`). Anything else, including a transient failure inside the connect
-    // handler, is worth another attempt.
-    const FINAL_REFUSALS = new Set<SocketError['type']>(['ai_config_missing', 'customer_required'])
+    // load: the org has no AI config, or the token needs authorizing again (see
+    // REAUTHORIZING_REFUSALS - the caller of connect() does that, see `refusal`).
+    // Anything else, including a transient failure inside the connect handler, is
+    // worth another attempt.
+    const FINAL_REFUSALS = new Set<SocketError['type']>(['ai_config_missing', ...REAUTHORIZING_REFUSALS])
     let refusedForGood = false
     // Why the last attempt was refused for good, for the caller of connect().
     const refusal = ref<SocketError['type'] | null>(null)
@@ -116,6 +117,11 @@ export function useWidgetSocket() {
     let onWorkflowStateCallback: ((data: any) => void) | null = null
     let onWorkflowProceededCallback: ((data: any) => void) | null = null
     let onSessionStateCallback: ((data: SessionState) => void) | null = null
+    // A refusal while connect() is settling goes to its caller. One after that - a
+    // reconnect once the token lapsed in a tab left open - has nobody waiting on
+    // it, so it is handed to the widget to authorize again.
+    let onReauthorizeCallback: (() => void) | null = null
+    let startingUp = false
     // The server announces the conversation the moment the socket connects, which is
     // before the widget has finished starting up and registered its listener - so the
     // last announcement is held and replayed to a late subscriber.
@@ -144,8 +150,9 @@ export function useWidgetSocket() {
 
     /** Auth payload for one connection attempt, read fresh each time. */
     const buildAuth = () => {
-        // Use passed token first, then stored token, then localStorage
-        const token = widgetToken || localStorage.getItem('ctid')
+        // Use passed token first, then the shared localStorage entry - except in a
+        // framed widget, whose own storage is not the host's (the host owns the token)
+        const token = widgetToken || (isFramed() ? null : localTokenStore().read())
 
         // Build auth object with token and widget_id
         const auth: any = {}
@@ -156,12 +163,13 @@ export function useWidgetSocket() {
             auth.widget_id = widgetIdAuth
         }
         // Host page embedding the widget, recorded server-side on lead capture
-        // (lead_source.page_url). The widget runs in a srcdoc iframe, so the parent
-        // page is same-origin when embedded via chattermate.js; fall back to referrer.
+        // (lead_source.page_url). A framed widget is told it by the loader; a srcdoc
+        // one (older loaders) can read its same-origin parent; else the referrer.
         try {
-            auth.page_url = (window.parent !== window && window.parent.location?.href)
-                ? window.parent.location.href
-                : (document.referrer || window.location.href)
+            auth.page_url = reportedPageUrl()
+                || ((window.parent !== window && window.parent.location?.href)
+                    ? window.parent.location.href
+                    : (document.referrer || window.location.href))
         } catch {
             auth.page_url = document.referrer || ''
         }
@@ -215,8 +223,12 @@ export function useWidgetSocket() {
                 refusal.value = reason
                 clearManualRetry()
                 connectionStatus.value = 'failed'
-                // A missing customer is ours to fix, not the visitor's to read.
-                if (reason !== 'customer_required') handleError(err!.data)
+                // A token to authorize again is ours to fix, not the visitor's to read.
+                if (!isReauthorizingRefusal(reason)) {
+                    handleError(err!.data)
+                } else if (!startingUp) {
+                    onReauthorizeCallback?.()
+                }
                 return
             }
 
@@ -400,11 +412,16 @@ export function useWidgetSocket() {
                 socket = null
             }
 
+            startingUp = true
             socket = initializeSocket('')
 
             return new Promise((resolve) => {
+                const settle = (connected: boolean) => {
+                    startingUp = false
+                    resolve(connected)
+                }
                 socket?.on('connect', () => {
-                    resolve(true)
+                    settle(true)
                 })
 
                 // Registered after initializeSocket's handler, so a refusal is
@@ -412,13 +429,13 @@ export function useWidgetSocket() {
                 // the widget's startup awaits it.
                 socket?.on('connect_error', () => {
                     if (refusedForGood || retryCount.value >= MAX_RETRIES) {
-                        resolve(false)
+                        settle(false)
                     }
                 })
             })
         } catch (error) {
             console.error('Socket initialization failed:', error)
-           
+            startingUp = false
             connectionStatus.value = 'failed'
             return false
         }
@@ -435,6 +452,11 @@ export function useWidgetSocket() {
     // Register takeover callback
     const onTakeover = (callback: (data: { session_id: string, user_name: string }) => void) => {
         onTakeoverCallback = callback
+    }
+
+    // Register the callback that authorizes again after a later refusal
+    const onReauthorize = (callback: () => void) => {
+        onReauthorizeCallback = callback
     }
 
     // Register conversation-state callback
@@ -807,6 +829,7 @@ export function useWidgetSocket() {
         humanAgent,
         onTakeover,
         onSessionState,
+        onReauthorize,
         refusal,
         submitRating,
         currentForm,

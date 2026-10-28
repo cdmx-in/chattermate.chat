@@ -61,6 +61,14 @@ export class SetupWizard {
     })
   }
 
+  /** "Looks good" on the Test step, on to Launch. */
+  async continueFromTest(): Promise<void> {
+    await step('Continue from the Test step', async () => {
+      await this.page.getByRole('button', { name: /^Looks good/ }).click()
+      await expect(this.launchHeading).toBeVisible()
+    })
+  }
+
   async back(): Promise<void> {
     await step('Go back a step', async () => {
       await this.page.getByRole('button', { name: 'Back' }).click()
@@ -105,5 +113,9 @@ export class SetupWizard {
 
   get testHeading(): Locator {
     return this.page.getByRole('heading', { name: 'Try it out' })
+  }
+
+  get launchHeading(): Locator {
+    return this.page.getByRole('heading', { name: 'Go live' })
   }
 }

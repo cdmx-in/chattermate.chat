@@ -11,6 +11,7 @@ name: E2E
 #   visual     widget screenshots (run by hand with update_snapshots to refresh them)
 #   upgrade    the last release's schema upgraded to HEAD equals a fresh install
 #   api-fuzz   every read endpoint fuzzed against the OpenAPI schema
+#   burst      150 widget page loads at once all get in, and the API never stalls
 # A failed nightly opens (or comments on) one "E2E nightly failed" issue.
 
 on:
@@ -129,7 +130,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [ prod-like, browsers, visual, upgrade, api-fuzz ]
+        variant: [ prod-like, shared-origin, browsers, visual, upgrade, api-fuzz, burst ]
 
     services:
       postgres:
@@ -168,6 +169,15 @@ jobs:
           npx playwright test --project=chromium --grep-invert @quarantine --fail-on-flaky-tests
           npx playwright test --project=org --workers=1 --pass-with-no-tests --grep-invert @quarantine --fail-on-flaky-tests
 
+      - name: Shared origin — the widget framed on the API's own origin, as a self-host without WIDGET_FRAME_URL
+        if: matrix.variant == 'shared-origin'
+        working-directory: e2e
+        env:
+          E2E_WIDGET_FRAME_URL: ''
+        run: |
+          ./scripts/stack.sh up
+          npx playwright test --project=chromium --grep-invert @quarantine --fail-on-flaky-tests
+
       - name: Browsers — the widget on Firefox, WebKit, Android and iPhone
         if: matrix.variant == 'browsers'
         working-directory: e2e
@@ -199,6 +209,13 @@ jobs:
           ./scripts/stack.sh up
           npx playwright test --project=setup
           ./scripts/api-fuzz.sh
+
+      - name: Burst — widget page loads all at once against a fresh install
+        if: matrix.variant == 'burst'
+        working-directory: e2e
+        run: |
+          ./scripts/stack.sh up
+          node scripts/widget-burst.mjs 150
 
       - name: Upload results
         if: ${{ !cancelled() }}

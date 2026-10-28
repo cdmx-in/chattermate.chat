@@ -14,15 +14,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import asyncio
+
 import pytest
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from app.models.agent import Agent, AgentType
 from app.models.chat_history import ChatHistory
 from app.models.workflow import Workflow, WorkflowStatus
 from app.models.workflow_node import WorkflowNode, NodeType
+from app.services.workflow_execution import WorkflowExecutionService
 from app.models.organization import Organization
 from app.models.user import User
 from uuid import UUID, uuid4
+from app.services.conversation_token import VERIFIED_SCOPE
+from tests.socket_db import serve_socket_db
 
 
 @pytest.fixture
@@ -198,9 +203,6 @@ def one_message_session(db, test_workflow, test_agent, test_customer, test_ai_co
         organization_id=test_agent.organization_id,
     )
     assert active_session.workflow_id == test_workflow.id
-    # The handlers pass ids as strings, which SQLite cannot bind to a UUID column.
-    monkeypatch.setattr(SessionToAgentRepository, "get_active_customer_session",
-                        lambda self, customer_id, agent_id=None: active_session)
 
     sio = MagicMock()
     sio.emit = AsyncMock()
@@ -211,10 +213,12 @@ def one_message_session(db, test_workflow, test_agent, test_customer, test_ai_co
         "customer_id": str(test_customer.id),
         "session_id": str(session_id),
         "ai_config": test_ai_config,
+        # A keyless session is resumed by a token the embedding app vouched for.
+        "conversation_scope": VERIFIED_SCOPE,
     })
     monkeypatch.setattr(widget_chat, "sio", sio)
     monkeypatch.setattr(message_delivery, "sio", sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     monkeypatch.setattr(widget_chat, "notify_new_chat", AsyncMock())
     return sio, str(session_id)
 
@@ -242,6 +246,28 @@ class TestOneMessageWorkflowIsSentOnce:
         assert _chat_responses(sio) == ["Hello from the workflow"]
         states = [c.args[1] for c in sio.emit.call_args_list if c.args[0] == "workflow_state"]
         assert [(s["type"], s["message"]) for s in states] == [("message", "Hello from the workflow")]
+        assert _stored_bot_messages(db, session_id) == ["Hello from the workflow"]
+
+    @pytest.mark.asyncio
+    async def test_when_the_widget_asks_twice_at_once(self, db, one_message_session, monkeypatch):
+        from app.api import widget_chat
+        sio, session_id = one_message_session
+
+        async def session_after_a_wait():
+            await asyncio.sleep(0)  # as the real checkout does, off the loop
+            return db
+        monkeypatch.setattr(widget_chat, "session_off_loop", session_after_a_wait)
+        start_workflow = WorkflowExecutionService.execute_workflow
+
+        async def start_after_a_wait(self, **kwargs):
+            await asyncio.sleep(0)  # starting a workflow awaits real work
+            return await start_workflow(self, **kwargs)
+        monkeypatch.setattr(WorkflowExecutionService, "execute_workflow", start_after_a_wait)
+
+        await asyncio.gather(widget_chat.handle_get_workflow_state("sid_a"),
+                             widget_chat.handle_get_workflow_state("sid_b"))
+
+        assert _chat_responses(sio) == ["Hello from the workflow"]
         assert _stored_bot_messages(db, session_id) == ["Hello from the workflow"]
 
     @pytest.mark.asyncio

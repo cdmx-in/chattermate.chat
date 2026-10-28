@@ -78,44 +78,13 @@
   }
 
   if (mode === 'stub') {
-    // Fake widget served instead of the real /widgets/{id}/data. It runs inside the
-    // loader's srcdoc iframe, so its messages pass the loader's source checks —
-    // including the dashboard widget_display defaults used by scenarios 10 and 11.
-    const dashboardDisplay = params.get('dashboard') || 'undefined'
-    const fakeWidgetHtml = `<!DOCTYPE html><html><head><style>
-        body { margin:0; font-family:system-ui; background:#123; color:#fff; display:flex; flex-direction:column; height:100vh; }
-        #head { padding:10px; background:#0a1522; display:flex; justify-content:space-between; align-items:center; }
-        #head button { border:none; border-radius:6px; padding:4px 10px; cursor:pointer; }
-        #body { flex:1; padding:12px; font-size:13px; } #input { padding:12px; background:#0a1522; font-size:13px; }
-      </style></head><body>
-      <div id="head"><span>FAKE WIDGET</span><button onclick="parent.postMessage({type:'WIDGET_MINIMIZE'},'*')">minimize</button></div>
-      <div id="body">waiting for WIDGET_DISPLAY…</div>
-      <div id="input">input: <span id="prefill">(empty)</span></div>
-      <scr` + `ipt>
-        window.parent.postMessage({ type: 'CUSTOMIZATION_UPDATE', data: {
-          chat_bubble_color: '#3366FF',
-          chat_style: '${params.get('style') || 'CHATBOT'}',
-          chat_initiation_messages: ['Hi from the fake widget!'],
-          widget_display: ${dashboardDisplay}
-        }}, '*')
-        window.parent.postMessage({ type: 'UNREAD_COUNT', count: 3 }, '*')
-        window.addEventListener('message', function (e) {
-          if (!e.data) return
-          if (e.data.type === 'PREFILL_MESSAGE') document.getElementById('prefill').textContent = e.data.text
-          if (e.data.type === 'WIDGET_DISPLAY') document.getElementById('body').textContent = 'WIDGET_DISPLAY: ' + JSON.stringify(e.data)
-        })
-      </scr` + `ipt></body></html>`
-
-    const realFetch = window.fetch
-    window.fetch = function (url) {
-      if (String(url).includes('/widgets/')) {
-        log('fetch stubbed: ' + url)
-        return Promise.resolve(new Response(fakeWidgetHtml, { status: 200, headers: { 'Content-Type': 'text/html' } }))
-      }
-      return realFetch.apply(this, arguments)
-    }
+    // A fake widget frame (stub-frame.html, served by server.js at the path the
+    // loader frames) instead of the real backend. It does the real handshake, so its
+    // messages pass the loader's checks — including the dashboard widget_display
+    // defaults used by scenarios 10 and 11, read from this page's URL.
     window.chattermateId = 'stub-widget-id'
-    window.chattermateBaseUrl = 'http://localhost:9/api/v1' // never hit — fetch is stubbed
+    window.chattermateBaseUrl = window.location.origin + '/stub/api/v1'
+    log('stub mode → fake frame from ' + window.chattermateBaseUrl)
   } else {
     window.chattermateId = settings.widgetId || ''
     // Without this the loader falls back to the URL baked in at build time, which for

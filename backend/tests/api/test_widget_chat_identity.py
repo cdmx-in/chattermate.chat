@@ -26,6 +26,7 @@ from app.models.customer import Customer
 from app.models.session_to_agent import SessionStatus, SessionToAgent
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.services import conversation_token
+from tests.socket_db import serve_socket_db
 
 
 @pytest.fixture
@@ -67,7 +68,7 @@ def connected(db, test_widget, test_ai_config, identified_customer, mock_sio, mo
     )
 
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     monkeypatch.setattr(
         widget_chat,
         "authenticate_socket_conversation_token",
@@ -106,7 +107,7 @@ async def test_a_new_conversation_is_reported_as_created_and_authenticated(mock_
 
 @pytest.mark.asyncio
 async def test_resuming_a_conversation_is_not_reported_as_created(
-    db, test_widget, identified_customer, mock_sio, connected, monkeypatch
+    db, test_widget, identified_customer, mock_sio, connected
 ):
     open_session = SessionToAgent(
         session_id=uuid4(),
@@ -117,16 +118,12 @@ async def test_resuming_a_conversation_is_not_reported_as_created(
     )
     db.add(open_session)
     db.commit()
-    # The lookup takes a string customer id, which SQLite's UUID column cannot bind -
-    # the same reason the other widget socket tests stub this out.
-    monkeypatch.setattr(
-        "app.repositories.session_to_agent.SessionToAgentRepository.get_active_customer_session",
-        lambda self, customer_id, agent_id=None: open_session,
-    )
 
     assert await widget_chat.widget_connect("sid-2", {}, {}) is True
 
-    assert _session_initialized(mock_sio)['created'] is False
+    payload = _session_initialized(mock_sio)
+    assert payload['created'] is False
+    assert payload['session_id'] == str(open_session.session_id)
 
 
 @pytest.mark.asyncio
@@ -137,7 +134,7 @@ async def test_an_anonymous_visitor_is_not_reported_as_authenticated(
         {"sub": str(test_customer.id), "widget_id": str(test_widget.id)}, ttl_seconds=600
     )
     monkeypatch.setattr(widget_chat, "sio", mock_sio)
-    monkeypatch.setattr(widget_chat, "get_db", lambda: iter([db]))
+    serve_socket_db(monkeypatch, db)
     monkeypatch.setattr(
         widget_chat,
         "authenticate_socket_conversation_token",

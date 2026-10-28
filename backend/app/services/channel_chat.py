@@ -29,7 +29,7 @@ from app.channels.interactive import from_options
 from app.channels.interactive_limits import InteractiveLimits
 from app.core.security import decrypt_api_key
 from app.core.logger import get_logger
-from app.database import SessionLocal
+from app.database import SessionLocal, release_connection
 from app.models.ai_config import AIModelType
 from app.models.channels import ChannelAccount
 from app.models.session_to_agent import SessionStatus
@@ -48,6 +48,7 @@ from app.services.app_first_routing import announce_inbound, app_claims
 from app.services.chat_notifications import notify_new_channel_chat_once, team_not_yet_notified
 from app.services.human_routing import HUMAN_ONLY_ACK, notify_customer
 from app.services.lead_capture import record_lead_from_response
+from app.services.conversation_token import VERIFIED_SCOPE
 from app.services.agent_rooms import USER_MESSAGE, relay_stored_message
 from app.services.business_message import business_message_context
 from app.services.channel_replies import inbound_attributes, reply_text
@@ -192,6 +193,8 @@ async def process_channel_message(account_id, inbound: InboundMessage) -> None:
             customer_id=customer_id,
             session_id=session_id,
             channel=account.channel_type,
+            # The platform vouches for who is messaging.
+            scope=VERIFIED_SCOPE,
         )
 
         delivery = await _deliver(db, session_record, {
@@ -469,31 +472,41 @@ async def _run_chat_agent(db: Session, account: ChannelAccount, ai_config,
 
     Returns (response, id of the stored reply row); response is None when the
     agent hard-failed."""
-    chat_agent = await ChatAgent.create_async(
+    # Everything the model call needs, read before the connection is let go:
+    # it isn't held through the call, and these rows would reload on access
+    channel = account.channel_type
+    message = reply_text(db, account.id, inbound)
+    attributes = inbound_attributes(inbound, channel)
+    extra_context = business_message_context(conversation)
+    model = dict(
         api_key=decrypt_api_key(ai_config.encrypted_api_key),
         model_name=ai_config.model_name,
         model_type=ai_config.model_type.value if hasattr(ai_config.model_type, 'value') else ai_config.model_type,
         base_url=(ai_config.settings or {}).get('base_url'),
+    )
+    release_connection(db)
+    chat_agent = await ChatAgent.create_async(
+        **model,
         org_id=org_id,
         agent_id=agent_id,
         customer_id=customer_id,
         session_id=session_id,
-        channel=account.channel_type,
-        extra_context=business_message_context(conversation),
+        channel=channel,
+        extra_context=extra_context,
         choice_limits=choice_limits,
     )
     try:
         response = await chat_agent.get_response(
-            message=reply_text(db, account.id, inbound),
+            message=message,
             session_id=session_id,
             org_id=org_id,
             agent_id=agent_id,
             customer_id=customer_id,
-            user_attributes=inbound_attributes(inbound, account.channel_type),
+            user_attributes=attributes,
         )
         return response, chat_agent.last_bot_message_id
     except Exception as e:
-        logger.error(f"Chat agent error on {account.channel_type} session {session_id}: {e}")
+        logger.error(f"Chat agent error on {channel} session {session_id}: {e}")
         return None, None
     finally:
         await chat_agent.safe_cleanup_mcp_tools()

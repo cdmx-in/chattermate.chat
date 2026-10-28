@@ -40,19 +40,27 @@ class EndChatReasonType(str, enum.Enum):
     TASK_COMPLETED = "TASK_COMPLETED"
 
 
+# A conversation the visitor can still talk in.
+ACTIVE_STATUSES = (SessionStatus.OPEN, SessionStatus.TRANSFERRED)
+
+
 class SessionToAgent(Base):
     __tablename__ = "session_to_agents"
 
     session_id = Column(UUID(as_uuid=True), primary_key=True)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     agent_id = Column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)
-    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=False)
+    customer_id = Column(UUID(as_uuid=True), ForeignKey("customers.id", ondelete="SET NULL"), nullable=False, index=True)
     group_id = Column(UUID(as_uuid=True), ForeignKey("groups.id", ondelete="SET NULL"), nullable=True)
     organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False)
     status = Column(SQLEnum(SessionStatus), nullable=False, default=SessionStatus.OPEN)
     # Messaging channel the session belongs to ('web' = widget, 'telegram',
     # 'whatsapp', ...). Routing key for outbound delivery of replies.
     channel = Column(String, nullable=False, server_default='web', index=True)
+    # Which widget conversation token may resume this session (see
+    # conversation_token.conversation_scope). NULL: only a token the embedding app
+    # vouched for - and every non-widget channel, which never resumes by token.
+    conversation_key = Column(String(64), nullable=True)
     assigned_at = Column(DateTime(timezone=True), server_default=func.now())
     closed_at = Column(DateTime(timezone=True), nullable=True)
 

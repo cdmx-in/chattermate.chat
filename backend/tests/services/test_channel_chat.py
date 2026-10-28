@@ -125,6 +125,26 @@ async def test_ai_path_creates_session_and_delivers(db, routed_account, use_test
     assert str(session.agent_id) == str(test_agent.id)
 
 
+@pytest.mark.asyncio
+async def test_no_connection_is_held_through_the_model_call(db, routed_account, use_test_db, test_ai_config, mock_sio):
+    # A few concurrent conversations would otherwise use up the connection pool
+    held = []
+
+    async def respond(**kwargs):
+        held.append(db.in_transaction())
+        return SimpleNamespace(message="hi there", transfer_to_human=False,
+                               end_chat=False, request_lead_capture=False)
+    fake_agent = MagicMock()
+    fake_agent.get_response = AsyncMock(side_effect=respond)
+    fake_agent.safe_cleanup_mcp_tools = AsyncMock()
+
+    with patch.object(channel_chat.ChatAgent, "create_async", AsyncMock(return_value=fake_agent)), \
+         patch.object(channel_chat, "deliver_to_customer", AsyncMock()):
+        await process_channel_message(routed_account.id, make_inbound())
+
+    assert held == [False]
+
+
 def _agent_persisting_reply(db, text="hi there"):
     """A ChatAgent stub that persists its reply the way the real one does and
     reports the row id, so delivery results land on that row."""

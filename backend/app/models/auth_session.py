@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from sqlalchemy import Column, DateTime, ForeignKey, func
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, func, text
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
@@ -30,6 +30,10 @@ class AuthSession(Base):
     """
 
     __tablename__ = "auth_sessions"
+    __table_args__ = (
+        # Only SSO sessions have an identity; built CONCURRENTLY by the migration.
+        Index("ix_auth_sessions_identity_id", "identity_id", postgresql_where=text("identity_id IS NOT NULL")),
+    )
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(
@@ -40,3 +44,12 @@ class AuthSession(Base):
     )
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     revoked_at = Column(DateTime(timezone=True), nullable=True)
+    # How the session was opened ("password", "signup", "sso"), and through
+    # which linked SSO account, so unlinking an account or a sign-in policy
+    # can end exactly the sessions it opened. NULL on sessions from before.
+    auth_method = Column(String, nullable=True)
+    identity_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("user_identities.id", ondelete="SET NULL"),
+        nullable=True,
+    )

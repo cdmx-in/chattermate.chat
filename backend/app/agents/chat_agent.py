@@ -22,7 +22,7 @@ from app.core.logger import get_logger
 from app.channels.constants import is_widget_channel
 from app.tools.knowledge_search_byagent import KnowledgeSearchByAgent
 from app.tools.mcp_manager import ChatAgentMCPMixin
-from app.database import get_db, SessionLocal, engine
+from app.database import get_db, SessionLocal, engine, release_connection
 from app.agents.choice_prompt import choice_instructions
 from app.channels.interactive_limits import InteractiveLimits
 from app.agents.encrypted_storage import EncryptedPostgresAgentStorage
@@ -30,6 +30,7 @@ from app.agents.history_memory import BoundedHistoryMemory, run_with_overflow_re
 from app.repositories.chat import ChatRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.repositories.webhook import WebhookRepository
+from app.services.widget_identity import trusts_identity_in_session
 from app.models.session_to_agent import SessionStatus
 from app.models.schemas.chat import ChannelChatResponse, ChatResponse, TransferReasonType, EndChatReasonType
 from app.services.webhook_service import WebhookService
@@ -451,7 +452,7 @@ class ChatAgent(ChatAgentMCPMixin):
                 try:
                     from app.repositories.customer import CustomerRepository
                     cust = CustomerRepository(db).get_by_id(customer_id)
-                    if cust:
+                    if cust and trusts_identity_in_session(db, cust, session_id):
                         if not CustomerRepository.is_placeholder_email(cust.email):
                             self.known_customer_email = cust.email
                         if (cust.full_name or "").strip():
@@ -1436,7 +1437,9 @@ Keep your responses concise and focused. Provide clear, actionable information i
                 if self.knowledge_tool is not None:
                     self.knowledge_tool.reset_turn()
 
-                # Get AI response
+                # Get AI response; storing the message left a read open,
+                # which mustn't hold the connection through the model call
+                release_connection(db)
                 self._groq_json_capture.clear()
                 _salvaged_content = None
                 try:

@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, status, Header, Request, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from typing import Optional, Tuple
 import uuid
@@ -47,20 +48,6 @@ MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 MAX_IMAGE_SIZE = 5 * 1024 * 1024  # 5MB
 
 
-def get_cors_headers(request: Request) -> dict:
-    """
-    Get CORS headers for responses with credentials support
-    """
-    origin = request.headers.get('origin', '*')
-    return {
-        'Access-Control-Allow-Origin': origin,
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Conversation-Token',
-        'Access-Control-Max-Age': '3600'
-    }
-
-
 async def get_current_user_or_widget(
     request: Request,
     db: Session = Depends(get_db),
@@ -74,7 +61,7 @@ async def get_current_user_or_widget(
     # Try to get user from cookies or Authorization header (admin/agent users)
     try:
         # Call get_current_user with the request - it handles both cookies and headers
-        user = await get_current_user(request, None, db)
+        user = await run_in_threadpool(get_current_user, request, None, db)
         if user:
             return {
                 "type": "user",

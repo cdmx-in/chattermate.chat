@@ -15,10 +15,12 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, toRef } from 'vue'
 import { toast } from 'vue-sonner'
 import type { Agent } from '@/types/agent'
-import { buildWidgetEmbed } from '@/utils/widgetEmbed'
+import { buildWidgetCsp, buildWidgetEmbed, widgetFrameSources } from '@/utils/widgetEmbed'
+import { useWidgetFrameHost } from '@/composables/useWidgetFrameHost'
+import WidgetAllowedDomains from './WidgetAllowedDomains.vue'
 
 interface Widget {
   id: string;
@@ -54,6 +56,12 @@ const requiresTokenAuth = computed(() => {
 // The exact snippet the Copy button produces (see buildWidgetEmbed) — rendered
 // in the preview so what you see always matches what you copy.
 const embedCode = computed(() => buildWidgetEmbed(props.widget?.id ?? '', requiresTokenAuth.value))
+
+// For sites that set a Content-Security-Policy: these give the chat its own frame
+const { frameHost, loaded: frameHostLoaded } = useWidgetFrameHost(toRef(() => props.widget?.id))
+const frameSources = computed(() => widgetFrameSources(frameHost.value))
+const scriptCsp = computed(() => buildWidgetCsp(frameSources.value))
+const iframeCsp = computed(() => buildWidgetCsp(frameSources.value, false))
 
 const copyWidgetCode = () => {
   emit('copy-widget-code')
@@ -112,16 +120,16 @@ const copyText = (text: string) => {
     .catch(() => toast.error('Copy failed — copy the snippet manually'))
 }
 
-// Generate iframe URL
+// The framed widget page: runs on our origin and honours the allowed domains
 const iframeUrl = computed(() => {
   if (!props.widget?.id) return ''
-  return `${props.widgetUrl}/api/v1/widgets/${props.widget.id}/data`
+  return `${props.widgetUrl}/api/v1/widgets/${props.widget.id}/frame`
 })
 
 // Generate iframe embed code
 const iframeEmbedCode = computed(() => {
   if (!props.widget?.id) return ''
-  return `<iframe src="${iframeUrl.value}" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write"></iframe>`
+  return `<iframe src="${iframeUrl.value}" width="100%" height="600" frameborder="0" title="AI Assistant" allow="clipboard-write *"></iframe>`
 })
 </script>
 
@@ -258,10 +266,29 @@ const { data } = await response.json();
               </div>
             </div>
           </template>
+
+          <div v-if="frameHostLoaded && frameSources.length" class="csp-note">
+            <p class="code-description">
+              If your site sets a <strong>Content-Security-Policy</strong>, add these sources so the chat runs in its own secure frame:
+            </p>
+            <div class="code-block">
+              <pre><code>{{ scriptCsp }}</code></pre>
+              <button class="copy-button" @click="copyText(scriptCsp)" title="Copy CSP sources">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8 4V16C8 17.1046 8.89543 18 10 18H18C19.1046 18 20 17.1046 20 16V7.41421C20 6.88378 19.7893 6.37507 19.4142 6L16 2.58579C15.6249 2.21071 15.1162 2 14.5858 2H10C8.89543 2 8 2.89543 8 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M16 18V20C16 21.1046 15.1046 22 14 22H6C4.89543 22 4 21.1046 4 20V8C4 6.89543 4.89543 6 6 6H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- Per-page overrides + JS API -->
+      <div v-if="widget" class="widget-info">
+        <WidgetAllowedDomains :widget-id="widget.id" />
+      </div>
+
       <div class="widget-info">
         <h4 class="widget-section-title">Customize &amp; control (optional)</h4>
         <div class="widget-code-section">
@@ -314,7 +341,7 @@ const { data } = await response.json();
                 class="iframe-preview"
                 frameborder="0"
                 title="AI Assistant Preview"
-                allow="clipboard-write"
+                allow="clipboard-write *"
               ></iframe>
             </div>
           </div>
@@ -328,6 +355,21 @@ const { data } = await response.json();
                 <path d="M16 18V20C16 21.1046 15.1046 22 14 22H6C4.89543 22 4 21.1046 4 20V8C4 6.89543 4.89543 6 6 6H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
+          </div>
+
+          <div v-if="frameHostLoaded && frameSources.length" class="csp-note">
+            <p class="code-description">
+              If your site sets a <strong>Content-Security-Policy</strong>, add these sources so the chat runs in its own secure frame:
+            </p>
+            <div class="code-block">
+              <pre><code>{{ iframeCsp }}</code></pre>
+              <button class="copy-button" @click="copyText(iframeCsp)" title="Copy CSP sources">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M8 4V16C8 17.1046 8.89543 18 10 18H18C19.1046 18 20 17.1046 20 16V7.41421C20 6.88378 19.7893 6.37507 19.4142 6L16 2.58579C15.6249 2.21071 15.1162 2 14.5858 2H10C8.89543 2 8 2.89543 8 4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                  <path d="M16 18V20C16 21.1046 15.1046 22 14 22H6C4.89543 22 4 21.1046 4 20V8C4 6.89543 4.89543 6 6 6H8" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           <div class="info-box">
@@ -347,6 +389,10 @@ const { data } = await response.json();
 </template>
 
 <style scoped>
+.csp-note {
+  margin-top: var(--space-md);
+}
+
 .widget-tab {
   max-width: 900px;
   margin: 0 auto;

@@ -1510,70 +1510,43 @@ def test_concurrent_agent_operations(
     test_user,
     test_agent
 ):
-    """Test concurrent operations on the same agent (adapted for SQLite limitations)"""
+    """Updates to one agent from callers at the same time each apply cleanly,
+    and the agent ends as one of them, intact.
+
+    The test database is in-memory SQLite on a single shared connection
+    (StaticPool), shared with this test's session: two requests on it at once
+    collide in the driver, and which error comes out was luck (it failed CI
+    with "has been deleted"). So the callers start together and take turns,
+    as row locks would make them in Postgres.
+    """
     import threading
-    import time
-    from threading import Lock
-    
-    results = []
-    results_lock = Lock()
-    
+
+    turn = threading.Lock()
+    start = threading.Barrier(3)
+    results = {}
+
     def update_agent(suffix):
-        try:
-            # Add a small delay to stagger operations slightly
-            time.sleep(0.01 * suffix)
-            
-            update_data = {
-                "description": f"Concurrent update {suffix} at {time.time()}"
-            }
+        start.wait()  # all three callers arrive together
+        with turn:
             response = client.put(
                 f"/api/agents/{test_agent.id}",
-                json=update_data
+                json={"display_name": f"Concurrent update {suffix}"},
             )
-            
-            with results_lock:
-                results.append((suffix, response.status_code))
-        except Exception as e:
-            with results_lock:
-                results.append((suffix, str(e)))
-    
-    # Create multiple threads to update the agent concurrently
-    threads = []
-    for i in range(3):
-        thread = threading.Thread(target=update_agent, args=(i,))
-        threads.append(thread)
-    
-    # Start all threads
+        results[suffix] = response.status_code
+
+    threads = [threading.Thread(target=update_agent, args=(i,)) for i in range(3)]
     for thread in threads:
         thread.start()
-    
-    # Wait for all threads to complete
     for thread in threads:
-        thread.join()
-    
-    # Check results - SQLite may have concurrency issues, so we allow for some failures
-    assert len(results) == 3
-    
-    success_count = 0
-    for suffix, status in results:
-        if isinstance(status, str):
-            # This is an error message - SQLite concurrency limitation
-            print(f"Thread {suffix} encountered expected SQLite concurrency error: {status[:100]}...")
-            # Verify it's the expected SQLite error
-            assert any(error_type in status.lower() for error_type in [
-                "sqlite3.interfaceerror", 
-                "bad parameter", 
-                "database is locked",
-                "api misuse"
-            ])
-        else:
-            # This is a status code
-            assert status == 200
-            success_count += 1
-    
-    # At least one operation should succeed (proving the endpoint works)
-    # In production with PostgreSQL, all would succeed
-    assert success_count >= 1
+        thread.join(timeout=30)
+
+    assert results == {0: 200, 1: 200, 2: 200}
+
+    db.expire_all()
+    agents = db.query(Agent).filter(Agent.id == test_agent.id).all()
+    assert len(agents) == 1
+    assert agents[0].display_name in {f"Concurrent update {i}" for i in range(3)}
+    assert (agents[0].name, agents[0].description) == ("Test Agent", "Test Description")  # the rest survives
 
 def test_agent_with_very_long_data(
     client,

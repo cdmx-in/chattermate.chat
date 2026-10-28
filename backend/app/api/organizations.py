@@ -15,11 +15,10 @@ limitations under the License.
 """
 
 from typing import List
-from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
-from sqlalchemy.exc import IntegrityError
 
+from app.utils.domain_check import InvalidWebsite, validate_org_website, website_update
 from app.database import get_db
 from app.models.organization import Organization
 from app.models.user import User
@@ -29,8 +28,8 @@ from app.models.schemas.organization import (
     OrganizationResponse,
     OrganizationCreateResponse
 )
-from app.core.auth import get_current_user, require_permissions
-from app.services.auth_sessions import issue_tokens, set_session_cookies
+from app.core.auth import get_current_user, require_permissions, set_session_cookies
+from app.services.auth_sessions import SIGNUP, issue_tokens
 from app.core.logger import get_logger
 from app.models.role import Role
 from app.models.permission import Permission, DEFAULT_AGENT_ROLE_PERMISSIONS
@@ -52,24 +51,11 @@ try:
 except ImportError:
     HAS_EMAIL_VALIDATION = False
 
-DOMAIN_TAKEN_MESSAGE = "That domain is already used by another organization."
-LOCALHOST_DOMAIN_MESSAGE = "Localhost can't be used as your domain. Use the domain of the site where you'll add the widget."
-LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1"})
 
 logger = get_logger(__name__)
 router = APIRouter(
     tags=["organizations"]
 )
-
-
-def is_localhost_domain(domain: str) -> bool:
-    """Whether a domain (bare host, host:port or URL) points at localhost"""
-    domain = domain.strip()
-    try:
-        host = urlparse(domain if "://" in domain else f"//{domain}").hostname
-    except ValueError:
-        return False
-    return (host or "") in LOCALHOST_HOSTS
 
 
 @router.post("", response_model=OrganizationCreateResponse, status_code=status.HTTP_201_CREATED)
@@ -95,11 +81,16 @@ async def create_organization(
 
         
       
+        try:
+            website = validate_org_website(org_data.domain)
+        except InvalidWebsite as invalid:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(invalid))
+
         # Create organization
         org_repo = OrganizationRepository(db)
         organization = org_repo.create_organization(
             name=org_data.name,
-            domain=org_data.domain,
+            domain=website,
             timezone=org_data.timezone,
             business_hours=org_data.business_hours
         )
@@ -158,7 +149,7 @@ async def create_organization(
         db.flush()
 
         # Open the admin's first session and set cookies
-        access_token, refresh_token = issue_tokens(db, admin.id, organization.id)
+        access_token, refresh_token = issue_tokens(db, admin.id, organization.id, auth_method=SIGNUP)
 
         set_session_cookies(response, admin, admin_role, access_token, refresh_token)
 
@@ -218,26 +209,6 @@ async def is_organization_setup(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to check organization setup status"
-        )
-
-
-@router.get("/check-domain/{domain}")
-async def check_domain_availability(
-    domain: str,
-    db: Session = Depends(get_db)
-):
-    """Check if an organization domain is available"""
-    try:
-        existing_org = db.query(Organization).filter(Organization.domain == domain).first()
-        return {
-            "available": not existing_org,
-            "message": "Domain is available" if not existing_org else "Domain already exists"
-        }
-    except Exception as e:
-        logger.error(f"Failed to check domain availability: {str(e)}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to check domain availability"
         )
 
 
@@ -335,32 +306,20 @@ async def update_organization(
                         detail=f"Invalid time format for {day}. Use HH:MM format (24-hour)"
                     )
 
-        new_domain = update_data.get('domain')
-        if new_domain and new_domain.lower() != org.domain.lower() and is_localhost_domain(new_domain):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=LOCALHOST_DOMAIN_MESSAGE
-            )
-        if new_domain and OrganizationRepository(db).is_domain_taken(new_domain, exclude_org_id=org.id):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=DOMAIN_TAKEN_MESSAGE
-            )
+        # A changed website is checked and stored as its host; saving the form
+        # with the website as it already is never fails on an older value
+        if 'domain' in update_data:
+            try:
+                website = website_update(update_data.pop('domain'), org.domain)
+            except InvalidWebsite as invalid:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(invalid))
+            if website:
+                update_data['domain'] = website
 
         for field, value in update_data.items():
             setattr(org, field, value)
 
-        try:
-            db.commit()
-        except IntegrityError:
-            # Another org claimed the domain between the check and the write
-            if 'domain' not in update_data:
-                raise
-            db.rollback()
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=DOMAIN_TAKEN_MESSAGE
-            )
+        db.commit()
         db.refresh(org)
 
         # Update CORS origins after updating organization

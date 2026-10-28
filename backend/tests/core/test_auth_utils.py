@@ -81,17 +81,17 @@ def live_user(db, test_organization):
 
 @pytest.fixture
 def socket_db(db):
-    """Point authenticate_socket's SessionLocal() at the test database."""
-    with patch('app.core.auth_utils.SessionLocal') as mock_session_local:
-        mock_session_local.return_value.__enter__.return_value = db
+    """Point authenticate_socket's sessions at the test database."""
+    with patch('app.core.auth_utils.session_off_loop', AsyncMock(return_value=db)):
         yield db
 
 
 def _socket_environ(**cookies):
+    # A same-origin handshake: only our own pages may sign in with the cookies
     jar = http.cookies.SimpleCookie()
     for name, value in cookies.items():
         jar[name] = value
-    return {'HTTP_COOKIE': jar.output(header='', sep=';')}
+    return {'HTTP_COOKIE': jar.output(header='', sep=';'), 'HTTP_SEC_FETCH_SITE': 'same-origin'}
 
 
 @pytest.mark.asyncio
@@ -175,16 +175,12 @@ async def test_authenticate_socket_with_refresh(socket_db, live_user):
     _, refresh_token = issue_tokens(socket_db, live_user.id, live_user.organization_id)
     socket_db.commit()
 
-    with patch('app.core.socketio.sio.emit') as mock_emit:
-        result_token, result_user_id, result_org_id = await authenticate_socket(
-            sid, _socket_environ(refresh_token=refresh_token))
+    result_token, result_user_id, result_org_id = await authenticate_socket(
+        sid, _socket_environ(refresh_token=refresh_token))
 
     assert verify_token(result_token)["type"] == "access"
     assert result_user_id == str(live_user.id)
     assert result_org_id == str(live_user.organization_id)
-    mock_emit.assert_called_once_with('cookie_set', {
-        'access_token': result_token
-    }, to=sid)
 
 
 @pytest.mark.asyncio
@@ -244,17 +240,17 @@ async def test_authenticate_socket_conversation_token_success(mock_db, mock_widg
     auth = {'conversation_token': conversation_token}
 
     mock_db.query.return_value.filter.return_value.first.return_value = mock_widget
-    # No merged-into pointer for this customer (merge-resolution query returns None).
-    mock_db.query.return_value.filter.return_value.scalar.return_value = None
 
+    # No merged-into pointer for this customer: it resolves to itself.
     with patch('app.core.auth_utils.verify_conversation_token') as mock_verify, \
-         patch('app.core.auth_utils.SessionLocal') as mock_session_local:
+         patch('app.core.auth_utils.session_off_loop', AsyncMock(return_value=mock_db)), \
+         patch('app.repositories.customer.CustomerRepository.resolve_merged',
+               return_value=MagicMock(id=customer_id)):
         mock_verify.return_value = {
             "widget_id": str(mock_widget.id),
             "sub": customer_id,
             "type": "conversation"
         }
-        mock_session_local.return_value.__enter__.return_value = mock_db
         
         # Execute
         result_widget_id, result_org_id, result_customer_id, result_token = await authenticate_socket_conversation_token(sid, auth)
@@ -299,13 +295,12 @@ async def test_authenticate_socket_conversation_token_missing_widget(mock_db):
     mock_db.query.return_value.filter.return_value.first.return_value = None
     
     with patch('app.core.auth_utils.verify_conversation_token') as mock_verify, \
-         patch('app.core.auth_utils.get_db') as mock_get_db:
+         patch('app.core.auth_utils.session_off_loop', AsyncMock(return_value=mock_db)):
         mock_verify.return_value = {
             "widget_id": widget_id,
             "sub": customer_id,
             "type": "conversation"
         }
-        mock_get_db.return_value.__next__.return_value = mock_db
         
         # Execute
         result = await authenticate_socket_conversation_token(sid, auth)
@@ -327,13 +322,12 @@ async def test_authenticate_socket_conversation_token_wrong_type(mock_db, mock_w
     mock_db.query.return_value.filter.return_value.first.return_value = mock_widget
     
     with patch('app.core.auth_utils.verify_conversation_token') as mock_verify, \
-         patch('app.core.auth_utils.get_db') as mock_get_db:
+         patch('app.core.auth_utils.session_off_loop', AsyncMock(return_value=mock_db)):
         mock_verify.return_value = {
             "widget_id": str(mock_widget.id),
             "sub": customer_id,
             "type": "access"  # Wrong token type
         }
-        mock_get_db.return_value.__next__.return_value = mock_db
         
         # Execute
         result = await authenticate_socket_conversation_token(sid, auth)
@@ -364,9 +358,7 @@ async def test_authenticate_socket_invalid_token_format(mock_db):
     access_token = "invalid_format_token"
     
     # Create mock environ with cookies
-    cookies = http.cookies.SimpleCookie()
-    cookies['access_token'] = access_token
-    environ = {'HTTP_COOKIE': cookies.output(header='', sep=';')}
+    environ = _socket_environ(access_token=access_token)
     
     with patch('app.core.auth_utils.live_payload') as mock_verify:
         mock_verify.side_effect = Exception("Invalid token format")

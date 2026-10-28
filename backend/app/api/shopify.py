@@ -16,8 +16,11 @@ limitations under the License.
 
 import traceback
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse, HTMLResponse
 from sqlalchemy.orm import Session
+from app.utils.domain_check import InvalidWebsite, website_update
+from app.repositories.organization import OrganizationRepository
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.database import get_db
@@ -39,6 +42,7 @@ from app.repositories.widget import WidgetRepository
 from app.services.shopify import ShopifyService
 from app.services.shopify_auth_service import ShopifyAuthService
 from app.services.shopify_helper_service import ShopifyHelperService
+from app.services.shopify_links import owned_by_another_org, refresh_allowed_storefronts, use_shop_domain_if_unset
 from app.services.shopify_session import require_shopify_session
 from app.services.shopify_urls import shopify_admin_url, shopify_oauth_token_url
 from app.repositories.knowledge import KnowledgeRepository
@@ -214,7 +218,7 @@ async def link_shop_to_org(
         # could re-point another tenant's installed shop (and its stored
         # access token) at their own org, and drag that shop's domain onto
         # their organization record in the process.
-        if db_shop.organization_id and str(db_shop.organization_id) != org_id_str:
+        if owned_by_another_org(db_shop, org_id_str):
             raise HTTPException(
                 status_code=404,
                 detail="Shop not found"
@@ -224,37 +228,15 @@ async def link_shop_to_org(
         shop_update = ShopifyShopUpdate(organization_id=org_id_str)
         shop_repo.update_shop(shop_id, shop_update)
 
-        # Update organization domain with shop domain
         try:
-            from app.repositories.organization import OrganizationRepository
-            org_repo = OrganizationRepository(db)
-            organization = org_repo.get_organization(org_id_str)
-
-            if organization and db_shop.shop_domain:
-                # Only update if domain is different
-                if organization.domain != db_shop.shop_domain:
-                    # Check if domain is already used by another organization
-                    existing_org = org_repo.get_organization_by_domain(db_shop.shop_domain)
-                    if not existing_org or str(existing_org.id) == str(organization.id):
-                        # Update organization domain to shop domain
-                        organization.domain = db_shop.shop_domain
-                        db.add(organization)
-                        logger.info(f"Updated organization {org_id_str} domain to {db_shop.shop_domain}")
-                    else:
-                        logger.warning(f"Domain {db_shop.shop_domain} is already used by organization {existing_org.id}, skipping update")
+            use_shop_domain_if_unset(db, org_id_str, db_shop.shop_domain)
         except Exception as domain_error:
             logger.error(f"Error updating organization domain: {str(domain_error)}")
             # Don't fail the linking if domain update fails
 
         db.commit()
 
-        # Update CORS middleware to include new domain
-        try:
-            update_cors_middleware(app)
-            logger.info("Updated CORS middleware after linking shop to organization")
-        except Exception as cors_error:
-            logger.error(f"Error updating CORS middleware: {str(cors_error)}")
-            # Don't fail the linking if CORS update fails
+        refresh_allowed_storefronts()
 
         logger.info(f"Successfully linked shop {shop_id} to organization {org_id_str}")
 
@@ -408,6 +390,7 @@ async def delete_shop(
     success = shop_repository.delete_shop(shop_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete shop")
+    refresh_allowed_storefronts()
     
     return {"status": "success", "message": "Shop successfully disconnected"}
 
@@ -435,6 +418,7 @@ async def link_shop_to_organization(
             shop_update = ShopifyShopUpdate(organization_id=org_id_str)
             db_shop = shop_repository.update_shop(shop_id, shop_update)
             db.commit()
+            refresh_allowed_storefronts()
             logger.info(f"Linked shop {shop_id} to organization {org_id_str}")
         
         return {
@@ -546,7 +530,6 @@ async def get_organization_domain(
             raise HTTPException(status_code=400, detail="Shop not linked to organization")
 
         # Get organization
-        from app.repositories.organization import OrganizationRepository
         org_repo = OrganizationRepository(db)
         organization = org_repo.get_organization(str(db_shop.organization_id))
 
@@ -586,24 +569,23 @@ async def update_organization_domain(
         body = await request.json()
         new_domain = body.get('domain')
 
-        if not new_domain:
-            raise HTTPException(status_code=400, detail="domain is required")
-
-        # Validate domain format (basic validation)
-        new_domain = new_domain.strip()
-        if not new_domain:
-            raise HTTPException(status_code=400, detail="domain cannot be empty")
-
         # Get organization
         if not db_shop.organization_id:
             raise HTTPException(status_code=400, detail="Shop not linked to organization")
 
-        from app.repositories.organization import OrganizationRepository
         org_repo = OrganizationRepository(db)
         organization = org_repo.get_organization(str(db_shop.organization_id))
 
         if not organization:
             raise HTTPException(status_code=404, detail="Organization not found")
+
+        try:
+            website = website_update(new_domain, organization.domain)
+        except InvalidWebsite as invalid:
+            raise HTTPException(status_code=400, detail=str(invalid))
+        if not website:
+            return {"success": True, "domain": organization.domain, "organization_id": str(organization.id)}
+        new_domain = website
 
         # Update organization domain
         organization.domain = new_domain
@@ -626,12 +608,6 @@ async def update_organization_domain(
         raise
     except Exception as e:
         logger.error(f"Error updating organization domain: {str(e)}")
-        # Check if it's a unique constraint violation
-        if "duplicate key" in str(e).lower() or "unique constraint" in str(e).lower():
-            raise HTTPException(
-                status_code=400,
-                detail="Domain is already connected to another organization"
-            )
         raise HTTPException(
             status_code=500,
             detail="Error updating organization domain"
@@ -708,7 +684,7 @@ async def get_agent_shopify_config(
         logger.info(f"GET agent-config using session token for org: {org_id}")
     except HTTPException:
         # Fall back to JWT auth (for dashboard)
-        current_user = await get_current_user(request=request, db=db)
+        current_user = await run_in_threadpool(get_current_user, request, None, db)
         if not check_permissions(current_user, ["manage_organization"]):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         org_id = current_user.organization_id
@@ -754,7 +730,7 @@ async def save_agent_shopify_config(
         logger.info(f"POST agent-config using session token for org: {org_id_str}")
     except HTTPException:
         # Fall back to JWT auth (for dashboard)
-        current_user = await get_current_user(request=request, db=db)
+        current_user = await run_in_threadpool(get_current_user, request, None, db)
         if not check_permissions(current_user, ["manage_organization"]):
             raise HTTPException(status_code=403, detail="Insufficient permissions")
         if not current_user.organization_id:
@@ -940,6 +916,7 @@ async def shopify_app_uninstalled_webhook(
         
         # Commit the changes
         db.commit()
+        refresh_allowed_storefronts()
         
         logger.info(f"Successfully processed uninstall for {shop_domain}. Deleted shop and {deleted_configs} agent config(s)")
         

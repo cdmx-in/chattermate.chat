@@ -76,3 +76,29 @@ export function buildWidgetEmbed(widgetId: string, requireTokenAuth?: boolean): 
 <\/script>
 <script src="${loaderOrigin}/webclient/chattermate.min.js"><\/script>`
 }
+
+/**
+ * The hosts a strict site's frame-src must allow: the API the snippet points the
+ * loader at (it frames /frame there), and the frame host that redirects to.
+ */
+export function widgetFrameSources(frameHost: string | null): string[] {
+  let api = ''
+  try {
+    api = new URL(getApiUrl(), getLoaderOrigin() || undefined).origin
+  } catch {
+    // No usable API address: only the frame host is known
+  }
+  return [...new Set([api, frameHost].filter((origin): origin is string => Boolean(origin)))]
+}
+
+/**
+ * The Content-Security-Policy lines a site with a strict policy adds so the
+ * widget can load: the loader script (for the script snippet) and the hosts
+ * that frame the widget, which the browser checks across the redirect too.
+ */
+export function buildWidgetCsp(frameSources: string[], withLoaderScript = true): string {
+  const lines = []
+  if (withLoaderScript) lines.push(`script-src ${getLoaderOrigin()};`)
+  if (frameSources.length) lines.push(`frame-src ${frameSources.join(' ')};`)
+  return lines.join('\n')
+}

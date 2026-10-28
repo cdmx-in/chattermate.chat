@@ -18,12 +18,15 @@ import jwt
 import time
 from typing import Optional, Dict, Any
 from fastapi import Request, HTTPException, Depends
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.logger import get_logger
 from app.database import get_db
 
 logger = get_logger(__name__)
+
+SHOP_NOT_LINKED = "Connect your ChatterMate account to this store first."
 
 
 class ShopifySessionService:
@@ -194,7 +197,8 @@ async def require_shopify_or_jwt_auth(
     
     # First try Shopify session token
     session_token = ShopifySessionService.get_session_token_from_request(request)
-    
+    unlinked_shop = None
+
     if session_token:
         try:
             # Validate and decode the session token
@@ -219,12 +223,14 @@ async def require_shopify_or_jwt_auth(
                         'decoded_token': decoded,
                         'user_id': None  # No user_id for session token auth
                     }
+                if db_shop and db_shop.is_installed:
+                    unlinked_shop = shop_domain
         except Exception as e:
             logger.debug(f"Shopify session token validation failed, trying JWT: {str(e)}")
     
     # Fall back to JWT authentication
     try:
-        current_user = await get_current_user(request=request, db=db)
+        current_user = await run_in_threadpool(get_current_user, request, None, db)
         logger.info(f"Using JWT auth for user: {current_user.id}")
         return {
             'auth_type': 'jwt',
@@ -233,7 +239,12 @@ async def require_shopify_or_jwt_auth(
             'current_user': current_user
         }
     except Exception as e:
-        logger.error(f"Both Shopify session token and JWT authentication failed: {str(e)}")
+        # A store that installed the app but isn't linked to an account yet is
+        # a step in onboarding, not a failure: the app shows its Connect prompt
+        if unlinked_shop:
+            logger.info(f"Shop {unlinked_shop} is not linked to an organization yet")
+            raise HTTPException(status_code=403, detail=SHOP_NOT_LINKED)
+        logger.warning(f"Both Shopify session token and JWT authentication failed: {str(e)}")
         raise HTTPException(
             status_code=401,
             detail="Authentication required"

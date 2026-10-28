@@ -18,7 +18,7 @@ import traceback
 from fastapi import APIRouter, Depends, HTTPException, status
 from app.core import config
 from app.core.logger import get_logger
-from app.database import get_db
+from app.database import get_db, release_connection
 from app.models.user import User
 from app.core.auth import get_current_user, require_permissions
 from app.repositories.ai_config import AIConfigRepository
@@ -166,6 +166,7 @@ async def setup_ai(
                             "details": "A base URL is required for the selected provider."
                         }
                     )
+                release_connection(db)  # not held through the live key test
                 is_valid = await ChatAgent.test_api_key(
                     api_key=config_data.api_key.get_secret_value(),
                     model_type=config_data.model_type,
@@ -352,6 +353,7 @@ async def update_ai_config(
                             if config_data.api_key
                             else decrypt_api_key(current_config.encrypted_api_key)
                         )
+                        release_connection(db)  # not held through the live key test
                         is_valid = await ChatAgent.test_api_key(
                             api_key=test_api_key_value,
                             model_type=config_data.model_type,

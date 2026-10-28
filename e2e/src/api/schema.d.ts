@@ -1427,26 +1427,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/organizations/check-domain/{domain}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Check Domain Availability
-         * @description Check if an organization domain is available
-         */
-        get: operations["check_domain_availability_api_v1_organizations_check_domain__domain__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/organizations/{org_id}": {
         parameters: {
             query?: never;
@@ -1595,6 +1575,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Me
+         * @description The signed-in user, as a sign-in answers with it. The dashboard reads it
+         *     after an SSO sign-in, whose redirect can't carry a response body.
+         */
+        get: operations["get_me_api_v1_users_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Profile
+         * @description Update current user's profile
+         */
+        patch: operations["update_profile_api_v1_users_me_patch"];
+        trace?: never;
+    };
     "/api/v1/users/{user_id}": {
         parameters: {
             query?: never;
@@ -1712,26 +1717,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/users/me": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update Profile
-         * @description Update current user's profile
-         */
-        patch: operations["update_profile_api_v1_users_me_patch"];
-        trace?: never;
-    };
     "/api/v1/users/{user_id}/reset-password": {
         parameters: {
             query?: never;
@@ -1800,6 +1785,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/{user_id}/identities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Identities
+         * @description The SSO accounts that sign in as this team member.
+         */
+        get: operations["list_identities_api_v1_users__user_id__identities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/users/{user_id}/identities/{identity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Unlink Identity
+         * @description Unlink one SSO account and end the sessions it opened. Its next sign-in
+         *     links again by e-mail address, if the provider vouches for it.
+         */
+        delete: operations["unlink_identity_api_v1_users__user_id__identities__identity_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sso/config": {
         parameters: {
             query?: never;
@@ -1809,8 +1835,8 @@ export interface paths {
         };
         /**
          * Sign In Config
-         * @description What the login page offers: a button per configured provider, and whether
-         *     the e-mail/password form is still shown (an operator can turn it off once SSO works).
+         * @description What the login page offers: a button per configured provider, and
+         *     whether it leads with the e-mail/password form or with SSO.
          */
         get: operations["sign_in_config_api_v1_sso_config_get"];
         put?: never;
@@ -1830,8 +1856,8 @@ export interface paths {
         };
         /**
          * Start
-         * @description Send the browser to the provider. The CSRF state is redeemed once by the
-         *     callback and also carries the nonce the ID token must echo back.
+         * @description Send the browser to the provider, handing it the state cookie the
+         *     callback redeems (see app.services.sso_state).
          */
         get: operations["start_api_v1_sso__provider_key__start_get"];
         put?: never;
@@ -1856,27 +1882,6 @@ export interface paths {
          *     page as `sso_error`; the detail stays in the log.
          */
         get: operations["callback_api_v1_sso__provider_key__callback_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/sso/session": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Session
-         * @description The signed-in user, for the dashboard to pick up after the redirect.
-         *     Password login returns this in its response body; a redirect cannot.
-         */
-        get: operations["session_api_v1_sso_session_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3446,7 +3451,12 @@ export interface paths {
         };
         /**
          * Get Widget Ui
-         * @description Get widget UI and handle customer authentication
+         * @description The widget page with its visitor's token baked in.
+         *
+         *     Fetched cross-origin by older embed loaders (and injected as srcdoc), or
+         *     framed directly by a raw <iframe> embed — which is why it carries the same
+         *     frame-ancestors as /frame: a CSP on a fetch() response is never applied, so
+         *     old loaders are unaffected, while a raw iframe can't dodge the list.
          */
         get: operations["get_widget_ui_api_v1_widgets__widget_id__data_get"];
         put?: never;
@@ -3514,6 +3524,68 @@ export interface paths {
          */
         get: operations["get_widgets_by_agent_api_v1_widgets_agent__agent_id__get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/widgets/{widget_id}/frame": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Widget Frame */
+        get: operations["get_widget_frame_api_v1_widgets__widget_id__frame_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/widgets/{widget_id}/bootstrap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bootstrap Widget
+         * @description Everything the framed widget starts from, for the visitor in `authorization`.
+         *
+         *     401 `identity_expired`: the signed-in visitor's identity lapsed (the host
+         *     re-identifies and retries). 401 `token_required`: the agent only talks to
+         *     identified visitors.
+         */
+        post: operations["bootstrap_widget_api_v1_widgets__widget_id__bootstrap_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/widgets/{widget_id}/embed-settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Embed Settings */
+        get: operations["get_embed_settings_api_v1_widgets__widget_id__embed_settings_get"];
+        /**
+         * Update Embed Settings
+         * @description Replace the widget's allowed domains. An empty list allows any site.
+         */
+        put: operations["update_embed_settings_api_v1_widgets__widget_id__embed_settings_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -5576,6 +5648,13 @@ export interface components {
         Body_upload_profile_pic_api_v1_users_me_profile_pic_post: {
             /** File */
             file: string;
+        };
+        /** BootstrapRequest */
+        BootstrapRequest: {
+            /** Host Origin */
+            host_origin?: string | null;
+            /** Source */
+            source?: string | null;
         };
         /** BusinessHours */
         BusinessHours: {
@@ -8857,6 +8936,25 @@ export interface components {
             /** Users */
             users: components["schemas"]["UserResponse"][];
         };
+        /**
+         * UserIdentityResponse
+         * @description A single sign-on account linked to a team member, as an admin sees it.
+         */
+        UserIdentityResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Provider */
+            provider: string;
+            /** Email */
+            email?: string | null;
+            /** Created At */
+            created_at?: string | null;
+            /** Last Login At */
+            last_login_at?: string | null;
+        };
         /** UserResponse */
         UserResponse: {
             /**
@@ -9084,6 +9182,30 @@ export interface components {
             name: string;
             /** Agent Id */
             agent_id?: string | null;
+        };
+        /**
+         * WidgetEmbedSettings
+         * @description Where a widget may be embedded. Org-only: never part of the public
+         *     WidgetResponse, which any visitor's widget can read. Entries are checked
+         *     and normalised by app.services.widget_embed_policy; these bounds only keep
+         *     an oversized request from being processed at all, well above the policy's
+         *     own limits, so a person over those gets its plain message instead.
+         */
+        WidgetEmbedSettings: {
+            /** Allowed Domains */
+            allowed_domains?: string[];
+        };
+        /**
+         * WidgetEmbedSettingsResponse
+         * @description The settings, plus the widget's frame host (WIDGET_FRAME_URL's origin), which
+         *     the API's /frame redirects to: a strict site's frame-src needs it beside the API,
+         *     and only the backend knows it. None when the widget is framed on the API itself.
+         */
+        WidgetEmbedSettingsResponse: {
+            /** Allowed Domains */
+            allowed_domains?: string[];
+            /** Frame Host */
+            frame_host?: string | null;
         };
         /**
          * WidgetPosition
@@ -12014,37 +12136,6 @@ export interface operations {
             };
         };
     };
-    check_domain_availability_api_v1_organizations_check_domain__domain__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                domain: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_organization_api_v1_organizations__org_id__get: {
         parameters: {
             query?: never;
@@ -12297,6 +12388,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_me_api_v1_users_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_profile_api_v1_users_me_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UserUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserResponse"];
                 };
             };
             /** @description Validation Error */
@@ -12565,41 +12722,6 @@ export interface operations {
             };
         };
     };
-    update_profile_api_v1_users_me_patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                access_token?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["UserUpdate"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     reset_user_password_api_v1_users__user_id__reset_password_post: {
         parameters: {
             query?: never;
@@ -12740,6 +12862,71 @@ export interface operations {
             };
         };
     };
+    list_identities_api_v1_users__user_id__identities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserIdentityResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unlink_identity_api_v1_users__user_id__identities__identity_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+                identity_id: string;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     sign_in_config_api_v1_sso_config_get: {
         parameters: {
             query?: never;
@@ -12762,9 +12949,7 @@ export interface operations {
     };
     start_api_v1_sso__provider_key__start_get: {
         parameters: {
-            query?: {
-                next?: string | null;
-            };
+            query?: never;
             header?: never;
             path: {
                 provider_key: string;
@@ -12815,37 +13000,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    session_api_v1_sso_session_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                access_token?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UserResponse"];
                 };
             };
             /** @description Validation Error */
@@ -16118,6 +16272,144 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WidgetResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_widget_frame_api_v1_widgets__widget_id__frame_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                widget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bootstrap_widget_api_v1_widgets__widget_id__bootstrap_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                authorization?: string | null;
+            };
+            path: {
+                widget_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BootstrapRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_embed_settings_api_v1_widgets__widget_id__embed_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                widget_id: string;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetEmbedSettingsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_embed_settings_api_v1_widgets__widget_id__embed_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                widget_id: string;
+            };
+            cookie?: {
+                access_token?: string | null;
+            };
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WidgetEmbedSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WidgetEmbedSettings"];
                 };
             };
             /** @description Validation Error */

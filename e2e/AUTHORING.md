@@ -154,6 +154,7 @@ A journey that should hold on every channel loops over `channels` (or `channelsW
 | Size and speed budgets | `specs/perf` | every run |
 | Migrations | `./scripts/upgrade-check.sh [ref]`: the last release's schema upgraded to HEAD must equal a fresh install | nightly |
 | API fuzzing | `./scripts/api-fuzz.sh` (Schemathesis): every read endpoint, no 500s | nightly |
+| Widget burst | `./scripts/stack.sh reset && node scripts/widget-burst.mjs [visitors]`: that many page loads at once all get in, and the API never stalls | nightly |
 
 ## Adding a test
 
@@ -165,7 +166,7 @@ A journey that should hold on every channel loops over `channels` (or `channelsW
 
 ## Troubleshooting
 
-- **Port already in use:** something else is on 18000, 15173, 14010, 14020, 14030, 13000, 11025 or 18025. Run `./scripts/stack.sh down`, or stop the other process.
+- **Port already in use:** something else is on 18000, 15173, 14010, 14020, 14030, 13000, 13001, 11025 or 18025. Run `./scripts/stack.sh down`, or stop the other process.
 - **The launcher never becomes clickable:** the suite runs with `reducedMotion: 'reduce'` because the launcher floats forever otherwise. Keep that option on any new browser context.
 - **The customer site must be a real server:** Chrome blocks a page faked with `page.route` from calling `127.0.0.1` (Local Network Access).
 - **The widget and loader are built from source on every run.** `stack.sh` builds the widget bundle and `chattermate.min.js` from the current `frontend/src/webclient` into `e2e/.cache`, and points the backend at that build with `WIDGET_ASSETS_DIR`. The committed production bundles in `backend/assets` and `frontend/public/webclient` are never rebuilt or modified.

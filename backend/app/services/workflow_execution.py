@@ -32,6 +32,7 @@ from app.repositories.workflow import WorkflowRepository
 from app.repositories.session_to_agent import SessionToAgentRepository
 from app.repositories.chat import ChatRepository
 from app.agents.chat_agent import ChatAgent, ChatResponse
+from app.database import release_connection
 from app.core.logger import get_logger
 from app.services.workflow_conditions import (
     MISSING,
@@ -609,6 +610,7 @@ class WorkflowExecutionService:
             if not user_message or user_message.strip() == "":
                 processed_user_message = await self._build_context_message(session_id, workflow_state)
             
+            release_connection(self.db)  # not held through the model call
             # Create chat agent with custom system prompt
             chat_agent = await ChatAgent.create_async(
                 api_key=api_key,

@@ -1,4 +1,4 @@
-import { test as base, expect, type APIRequestContext, type Browser, type BrowserContextOptions, type Page, type TestInfo } from '@playwright/test'
+import { test as base, expect, type APIRequestContext, type Browser, type BrowserContext, type BrowserContextOptions, type Page, type TestInfo } from '@playwright/test'
 import { ApiClient } from '../api/client'
 import { signedInClient } from '../api/auth'
 import { createAgent, enableLeadCapture } from '../api/agents'
@@ -18,6 +18,7 @@ import { InboxPage } from '../pages/inbox.page'
 import { LoginPage } from '../pages/login.page'
 import { PeoplePage } from '../pages/people.page'
 import { TicketsPage } from '../pages/tickets.page'
+import { WidgetAllowedDomainsPage } from '../pages/widget-allowed-domains.page'
 import { unique } from '../support/ids'
 import { blockThirdParty } from './network'
 
@@ -95,6 +96,11 @@ interface TestFixtures {
   /** A widget for any agent id — e.g. one a test created through the UI. */
   makeWidget: (agentId: string) => Promise<ChatWidget>
   /**
+   * Another visitor on `widget`'s site, in a browser of their own. Pass `customer`
+   * to have them claim someone's name and email.
+   */
+  makeVisitor: (customer?: { name: string; email: string }) => Promise<ChatWidget>
+  /**
    * The team this test's agent hands over to (with transferToHuman): a member and
    * group of its own, so no other test's chats crowd its inbox or change its member.
    * Created on first call — tests that never hand over never pay for one.
@@ -118,6 +124,8 @@ interface TestFixtures {
   ticketsPage: TicketsPage
   peoplePage: PeoplePage
   humanAgentsPage: HumanAgentsPage
+  /** The agent editor's Widget tab, where the widget's allowed domains are edited. */
+  allowedDomainsPage: WidgetAllowedDomainsPage
 }
 
 /**
@@ -131,6 +139,9 @@ async function newContext(browser: Browser, testInfo: TestInfo, options: Browser
     ...contextOptions,
     baseURL, serviceWorkers, timezoneId, locale, colorScheme, viewport, userAgent,
     deviceScaleFactor, isMobile, hasTouch,
+    // Explicitly empty: Playwright's browser fixture otherwise hands every new
+    // context the project's storageState, signing visitors in as the admin
+    storageState: { cookies: [], origins: [] },
     ...options,
   })
   await blockThirdParty(context)
@@ -227,6 +238,16 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
 
   widget: [async ({ agent, makeWidget }, use) => use(await makeWidget(agent.id)), { box: true }],
 
+  makeVisitor: [async ({ browser, widget }, use, testInfo) => {
+    const contexts: BrowserContext[] = []
+    await use(async (customer) => {
+      const context = await newContext(browser, testInfo)
+      contexts.push(context)
+      return new ChatWidget(await context.newPage(), widget.widgetId, customer)
+    })
+    await Promise.all(contexts.map((context) => context.close()))
+  }, { box: true }],
+
   inbox: [async ({ browser, handoverTeam }, use, testInfo) => {
     const { member } = await handoverTeam()
     const context = await newContext(browser, testInfo)
@@ -254,6 +275,7 @@ export const test = base.extend<TestFixtures & Options, WorkerFixtures>({
   ticketsPage: async ({ page }, use) => use(new TicketsPage(page)),
   peoplePage: async ({ page }, use) => use(new PeoplePage(page)),
   humanAgentsPage: async ({ page }, use) => use(new HumanAgentsPage(page)),
+  allowedDomainsPage: async ({ page }, use) => use(new WidgetAllowedDomainsPage(page)),
 })
 
 export { expect }

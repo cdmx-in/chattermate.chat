@@ -21,6 +21,12 @@ app.use(cors());
 // Serve static files
 app.use(express.static(__dirname));
 
+// ui-test.html's stub mode: the loader frames {baseUrl}/widgets/{id}/frame, and
+// this answers that with a fake widget that plays the real handshake.
+app.get("/stub/api/v1/widgets/:id/frame", (req, res) => {
+  res.sendFile(join(__dirname, "stub-frame.html"));
+});
+
 // Serve index.html
 app.get("/", (req, res) => {
   res.sendFile(join(__dirname, "index.html"));

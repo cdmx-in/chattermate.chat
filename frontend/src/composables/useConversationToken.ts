@@ -33,6 +33,10 @@ export const TOKEN_STORAGE_KEY = 'ctid'
 // carried a real token for a signed-in visitor, and it has run out.
 export const IDENTITY_EXPIRED_CODE = 'identity_expired'
 
+// Matches conversation_token.INVALID_TOKEN_CODE: the token names nobody the host page
+// could sign in again (an anonymous visitor's, or not ours). Authorizing replaces it.
+const INVALID_TOKEN_CODE = 'invalid_token'
+
 // Rotate once this share of the lifetime is gone. Early enough to survive a sleeping
 // tab that wakes just before expiry, late enough not to churn tokens on every visit.
 const REFRESH_AT_LIFETIME_FRACTION = 0.8
@@ -68,39 +72,67 @@ export const readTokenClaims = (token: string | null): Record<string, any> | nul
   }
 }
 
-const readStoredToken = (): string | null => {
+/** The `detail.code` of an error answer, when it has one. */
+const errorCode = async (response: Response): Promise<string | undefined> => {
   try {
-    return sanitizeToken(localStorage.getItem(TOKEN_STORAGE_KEY))
+    return (await response.json())?.detail?.code
   } catch {
-    // Private mode, or storage blocked by the host page's settings.
-    return null
+    return undefined
   }
 }
 
-const writeStoredToken = (token: string) => {
-  try {
-    localStorage.setItem(TOKEN_STORAGE_KEY, token)
-  } catch {
-    // Not fatal: the token still lives in memory for this page view.
-  }
+/** Where the widget keeps its token between page views. */
+export interface TokenStore {
+  read(): string | null
+  write(token: string): void
+  clear(): void
 }
 
-const clearStoredToken = () => {
-  try {
-    localStorage.removeItem(TOKEN_STORAGE_KEY)
-  } catch {
-    /* nothing to clear */
-  }
-}
+/** localStorage under `key`; private mode or blocked storage just means no persistence. */
+export const localTokenStore = (key: string = TOKEN_STORAGE_KEY): TokenStore => ({
+  read: () => {
+    try {
+      return sanitizeToken(localStorage.getItem(key))
+    } catch {
+      return null
+    }
+  },
+  write: (token) => {
+    try {
+      localStorage.setItem(key, token)
+    } catch {
+      // Not fatal: the token still lives in memory for this page view.
+    }
+  },
+  clear: () => {
+    try {
+      localStorage.removeItem(key)
+    } catch {
+      /* nothing to clear */
+    }
+  },
+})
+
+/** Nothing persisted here: the host page holds the token and is told of every change. */
+export const memoryTokenStore = (): TokenStore => ({
+  read: () => null,
+  write: () => {},
+  clear: () => {},
+})
 
 export interface ConversationTokenOptions {
   /** Called whenever the token changes, so the host page can store the new one. */
   onTokenChanged?: (token: string) => void
   /** Called when only the host can help: its token expired and cannot be rotated. */
   onIdentityExpired?: () => void
+  /** Called when the widget drops its token, so the host page can forget it too. */
+  onTokenCleared?: () => void
+  /** Defaults to the `ctid` localStorage entry the host page shares with the widget. */
+  store?: TokenStore
 }
 
 export function useConversationToken(options: ConversationTokenOptions = {}) {
+  const store = options.store ?? localTokenStore()
   const token: Ref<string | null> = ref(null)
   let refreshTimer: ReturnType<typeof setTimeout> | null = null
   let inFlight: Promise<boolean> | null = null
@@ -131,14 +163,16 @@ export function useConversationToken(options: ConversationTokenOptions = {}) {
 
   const setToken = (next: string | null, { persist = true } = {}) => {
     const clean = sanitizeToken(next)
+    const hadToken = !!token.value
     clearTimer()
     token.value = clean
     if (!clean) {
-      clearStoredToken()
+      store.clear()
+      if (hadToken) options.onTokenCleared?.()
       return
     }
     if (persist) {
-      writeStoredToken(clean)
+      store.write(clean)
       options.onTokenChanged?.(clean)
     }
     scheduleRefresh()
@@ -165,8 +199,10 @@ export function useConversationToken(options: ConversationTokenOptions = {}) {
         })
 
         if (response.status === 401) {
-          // Past saving from in here: only the host page can mint a new identity.
-          options.onIdentityExpired?.()
+          // Past saving from in here. A lapsed identity only the host page can mint
+          // again; telling it about an anonymous token as well started a second
+          // authorization next to the caller's, and a second anonymous customer.
+          if (await errorCode(response) !== INVALID_TOKEN_CODE) options.onIdentityExpired?.()
           return false
         }
         if (!response.ok) {
@@ -233,11 +269,11 @@ export function useConversationToken(options: ConversationTokenOptions = {}) {
   /** Adopt the token the backend rendered into the frame, or the stored one. */
   const start = (widgetId: string, initialToken?: unknown) => {
     scheduledWidgetId = widgetId
-    const initial = sanitizeToken(initialToken) || readStoredToken()
+    const initial = sanitizeToken(initialToken) || store.read()
     // Persisting on start would echo the token straight back to the host page, which
     // already has it. setToken still arms the refresh timer.
     setToken(initial, { persist: false })
-    if (initial) writeStoredToken(initial)
+    if (initial) store.write(initial)
   }
 
   const stop = () => {

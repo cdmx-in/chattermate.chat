@@ -14,8 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from pydantic import BaseModel, field_serializer
-from typing import List, Optional
+from pydantic import BaseModel, Field, StringConstraints, field_serializer
+from typing import Annotated, List, Optional
 from uuid import UUID
 
 from app.core.s3 import sign_s3_url
@@ -93,3 +93,20 @@ class WidgetResponse(BaseModel):
     token: Optional[str] = None
     class Config:
         from_attributes = True
+
+
+class WidgetEmbedSettings(BaseModel):
+    """Where a widget may be embedded. Org-only: never part of the public
+    WidgetResponse, which any visitor's widget can read. Entries are checked
+    and normalised by app.services.widget_embed_policy; these bounds only keep
+    an oversized request from being processed at all, well above the policy's
+    own limits, so a person over those gets its plain message instead."""
+    allowed_domains: List[Annotated[str, StringConstraints(max_length=2000)]] = Field(default_factory=list,
+                                                                                    max_length=200)
+
+
+class WidgetEmbedSettingsResponse(WidgetEmbedSettings):
+    """The settings, plus the widget's frame host (WIDGET_FRAME_URL's origin), which
+    the API's /frame redirects to: a strict site's frame-src needs it beside the API,
+    and only the backend knows it. None when the widget is framed on the API itself."""
+    frame_host: Optional[str] = None

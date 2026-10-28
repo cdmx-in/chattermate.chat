@@ -19,6 +19,7 @@ from .organization import Organization
 from .user import User
 from .fcm_token import FCMToken
 from .auth_session import AuthSession
+from .user_identity import UserIdentity
 from .customer import Customer
 from .role import Role
 from .permission import Permission
@@ -79,6 +80,7 @@ __all__ = [
     "User",
     "FCMToken",
     "AuthSession",
+    "UserIdentity",
     "Customer",
     "Permission",
     "Role",

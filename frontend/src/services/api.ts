@@ -104,6 +104,44 @@ api.interceptors.request.use(
   (error) => Promise.reject(error),
 )
 
+/** Signs the user out locally and sends them to the login page. */
+function signOut() {
+  document.cookie = 'user_info=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
+  // Remove any cached auth state so guards don't think we're logged in
+  try {
+    userService.clearCurrentUser()
+  } catch {}
+  router.push('/login')
+}
+
+/**
+ * The refresh in flight, shared. A page opening with an expired access token
+ * gets a 401 on every call it makes at once; each used to refresh on its own,
+ * and the burst tripped the API rate limit, so one refresh got a 503 and the
+ * user was signed out.
+ */
+let refreshing: Promise<unknown> | null = null
+
+function refreshSession(): Promise<unknown> {
+  refreshing ??= axios
+    .post('/users/refresh', {}, { withCredentials: true, baseURL: getApiUrl() })
+    .finally(() => {
+      refreshing = null
+    })
+  return refreshing
+}
+
+/**
+ * Only the server saying the session is over (401/403 from the refresh) ends
+ * it. A 502 while the API restarts on a deploy, a 503 from rate limiting or a
+ * dropped connection says nothing about the session: the request fails, the
+ * user stays signed in, and the next one retries.
+ */
+function sessionIsOver(refreshError: unknown): boolean {
+  const status = (refreshError as AxiosError)?.response?.status
+  return status === 401 || status === 403
+}
+
 // Response interceptor
 api.interceptors.response.use(
   (response) => response,
@@ -114,40 +152,21 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
       // If there's no authenticated user, do not attempt refresh. Go to login directly.
       if (!userService.isAuthenticated()) {
-        // Clear any stale user info
-        document.cookie = 'user_info=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-        userService.clearCurrentUser()
-        router.push('/login')
+        signOut()
         return Promise.reject(error)
       }
 
       originalRequest._retry = true
 
       try {
-        // Try to refresh token
-        await axios.post(
-          '/users/refresh',
-          {},
-          {
-            withCredentials: true,
-            baseURL: getApiUrl(),
-          },
-        )
-
-        // Retry original request
-        return api(originalRequest)
+        await refreshSession()
       } catch (refreshError) {
-        // Clear user info cookie
-        document.cookie = 'user_info=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;'
-        // Remove any cached auth state so guards don't think we're logged in
-        try {
-          userService.clearCurrentUser()
-        } catch {}
-
-        // Redirect to login if refresh fails
-        router.push('/login')
+        if (sessionIsOver(refreshError)) signOut()
         return Promise.reject(refreshError)
       }
+
+      // Retry original request
+      return api(originalRequest)
     }
 
     return Promise.reject(error)

@@ -24,3 +24,13 @@ async function setBusinessHours(api: ApiClient, orgId: string, open: boolean): P
   const businessHours = Object.fromEntries(DAYS.map((day) => [day, { start: '00:00', end: '23:59', enabled: open }]))
   await api.patch(`/organizations/${orgId}`, { data: { business_hours: businessHours } })
 }
+
+/** The org's website, to put back after a spec changes it. */
+export async function orgDomain(api: ApiClient, orgId: string): Promise<string> {
+  return (await api.get<{ domain: string }>(`/organizations/${orgId}`)).domain
+}
+
+/** Change the org's website, which decides the sites allowed to call the API (`*.org.spec.ts` only). */
+export async function setOrgDomain(api: ApiClient, orgId: string, domain: string): Promise<void> {
+  await api.patch(`/organizations/${orgId}`, { data: { domain } })
+}

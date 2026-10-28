@@ -58,11 +58,17 @@ export interface AgentCustomization {
 
 
 export interface SocketError {
-    type: 'connection_error' | 'auth_error' | 'chat_error' | 'ai_config_missing' | 'customer_required'
+    type: 'connection_error' | 'auth_error' | 'chat_error' | 'ai_config_missing' | 'customer_required' | 'token_invalid'
         | 'validation_error' | 'upload_error' | 'rating_error';
     error?: string;
 }
 
+// Refusals the widget clears by authorizing again: GET /widgets/{id} binds an
+// unbound token to a customer, and swaps an expired or revoked one for a live one.
+export const REAUTHORIZING_REFUSALS: ReadonlySet<SocketError['type']> = new Set<SocketError['type']>(['customer_required', 'token_invalid'])
+
+export const isReauthorizingRefusal = (reason: SocketError['type'] | null | undefined): boolean =>
+    !!reason && REAUTHORIZING_REFUSALS.has(reason)
 
 // Helper functions
 export const isColorDark = (color: string): boolean => {

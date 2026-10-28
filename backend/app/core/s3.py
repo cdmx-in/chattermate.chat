@@ -332,14 +332,20 @@ async def download_file_from_s3(s3_url: str) -> bytes:
 
 
 async def delete_file_from_s3(s3_url: str) -> bool:
-    """Delete file from S3 bucket"""
+    """Delete a file from our S3 bucket. Anything else is left alone: a photo
+    can be an inline data: image (the built-in avatars) or an external URL,
+    and neither has an object of ours to delete."""
+    key = owned_s3_key(s3_url)
+    if not key:
+        logger.debug("Not an object in our bucket, nothing to delete")
+        return False
     try:
         s3_client = get_s3_client()
         await asyncio.to_thread(
             partial(
                 s3_client.delete_object,
                 Bucket=settings.S3_BUCKET,
-                Key=_key_from_url(s3_url)
+                Key=key
             )
         )
         return True

@@ -20,14 +20,11 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.utils.uuids import as_uuid
 from app.models.notification_settings import (
     NOTIFICATION_PREFERENCE_DEFAULTS,
     UserNotificationSettings,
 )
-
-
-def _to_uuid(value: UUID | str) -> UUID:
-    return UUID(value) if isinstance(value, str) else value
 
 
 class UserNotificationSettingsRepository:
@@ -37,14 +34,14 @@ class UserNotificationSettingsRepository:
     def get(self, user_id: UUID | str) -> Optional[UserNotificationSettings]:
         return (
             self.db.query(UserNotificationSettings)
-            .filter(UserNotificationSettings.user_id == _to_uuid(user_id))
+            .filter(UserNotificationSettings.user_id == as_uuid(user_id))
             .first()
         )
 
     def get_or_create(self, user_id: UUID | str) -> UserNotificationSettings:
         settings = self.get(user_id)
         if settings is None:
-            settings = UserNotificationSettings(user_id=_to_uuid(user_id))
+            settings = UserNotificationSettings(user_id=as_uuid(user_id))
             self.db.add(settings)
             try:
                 self.db.commit()
@@ -68,7 +65,7 @@ class UserNotificationSettingsRepository:
         if field not in NOTIFICATION_PREFERENCE_DEFAULTS:
             raise ValueError(f"Unknown notification preference: {field}")
 
-        candidates = {_to_uuid(user_id) for user_id in user_ids if user_id}
+        candidates = {as_uuid(user_id) for user_id in user_ids if user_id}
         if not candidates:
             return set()
 
