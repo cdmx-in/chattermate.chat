@@ -14,6 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from app.models.user import User
 from app.models.role import Role
@@ -79,6 +80,15 @@ class UserRepository:
     def get_user_by_email(self, email: str) -> User | None:
         """Get a user by email"""
         return self.db.query(User).filter(User.email == email).first()
+
+    def email_taken(self, email: str, except_user_id=None) -> bool:
+        """Whether another user has this address in any case: SSO links accounts
+        by address case-insensitively, so two that differ only in case would
+        leave both unable to link."""
+        query = self.db.query(User.id).filter(func.lower(User.email) == email.strip().lower())
+        if except_user_id is not None:
+            query = query.filter(User.id != except_user_id)
+        return query.first() is not None
 
     def create_user(self, **kwargs) -> User:
         """Create a new user"""

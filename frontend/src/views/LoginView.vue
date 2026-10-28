@@ -15,14 +15,17 @@ limitations under the License.
 -->
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { authService } from '@/services/auth'
 import { resolveLandingRoute } from '@/router/landing'
+import { isInternalPath } from '@/utils/validators'
 import { useEnterpriseFeatures } from '@/composables/useEnterpriseFeatures'
 import { useForgotPassword } from '@/composables/useForgotPassword'
+import { useSsoSignIn } from '@/composables/useSsoSignIn'
 import InstallPrompt from '@/components/pwa/InstallPrompt.vue'
-import { apiPath, getApiUrl } from '@/config/api'
+import SsoButtons from '@/components/auth/SsoButtons.vue'
+import { apiPath } from '@/config/api'
 import type { AxiosError } from 'axios'
 interface ErrorResponse {
     detail: string
@@ -39,6 +42,27 @@ const email = ref('')
 const password = ref('')
 const error = ref('')
 const isLoading = ref(false)
+// Declared before useSsoSignIn: a sign-in coming back with an error sets it on mount.
+const {
+    providers: ssoProviders, passwordLogin, configLoaded: ssoConfigLoaded, available: ssoAvailable,
+    leads: ssoFirst, redirecting: ssoRedirecting, completing: ssoCompleting, start: startSso,
+} = useSsoSignIn({
+    onSignedIn: () => {
+        trackLogin('sso')
+        continueAfterLogin()
+    },
+    onError: (message) => { error.value = message },
+})
+const passwordFormOpened = ref(false)
+const showPasswordForm = computed(() => passwordLogin.value || passwordFormOpened.value || !ssoAvailable.value)
+const emailInput = ref<HTMLInputElement | null>(null)
+const openPasswordForm = async () => {
+    passwordFormOpened.value = true
+    await nextTick()
+    emailInput.value?.focus()
+}
+// SSO has its own progress states so the password button never says "Signing in…" for it.
+const busy = computed(() => isLoading.value || ssoRedirecting.value !== '' || ssoCompleting.value)
 
 // Check if enterprise module is available
 const { hasEnterpriseModule } = useEnterpriseFeatures()
@@ -74,135 +98,136 @@ const goBackToEmailStep = forgotPassword?.goBackToEmailStep ?? (() => {})
 // not even registered, so the user silently ended up on /ai-agents instead.
 const getInitialRoute = () => resolveLandingRoute()
 
+// Where to go once a session exists. Shared by password login and the SSO
+// return leg, so both honour the Shopify flows and the ?redirect= parameter.
+const continueAfterLogin = () => {
+    // Check if this is Shopify flow (new managed installation)
+    const urlParams = new URLSearchParams(window.location.search)
+    const isShopifyFlow = urlParams.get('shopify_flow') === '1'
+    const shopId = urlParams.get('shop_id')
+    const returnTo = urlParams.get('return_to')
+
+    if (isShopifyFlow && shopId) {
+        console.log('🔗 Shopify flow detected, linking organization')
+
+        try {
+
+
+            // If return_to is specified, redirect there (only ever a page of ours)
+            if (isInternalPath(returnTo)) {
+                console.log('📍 Redirecting to return_to:', returnTo)
+                window.location.href = returnTo
+                return
+            }
+        } catch (linkError: any) {
+            console.error('❌ Failed to link organization:', linkError)
+            error.value = linkError.response?.data?.detail || 'Failed to link organization'
+            isLoading.value = false
+            return
+        }
+    }
+    
+    // Check if this is an OLD embedded Shopify login (opened in popup) - for backward compatibility
+    const isEmbedded = router.currentRoute.value.query.embedded === 'true'
+    const legacyShopId = router.currentRoute.value.query.shop_id as string
+    
+    if (isEmbedded && legacyShopId && window.opener) {
+        // This is a popup for Shopify embedded app (old flow)
+        console.log('Login successful in popup, notifying parent window')
+        
+        // Show success state
+        isLoading.value = true
+        error.value = ''
+        
+        // Notify the parent window of successful login
+        if (window.opener && !window.opener.closed) {
+            window.opener.postMessage(
+                { type: 'login_success', shop_id: legacyShopId },
+                window.location.origin
+            )
+            
+            // Close the popup after a brief delay to ensure message is sent
+            setTimeout(() => {
+                window.close()
+            }, 300)
+        } else {
+            // If opener is gone, just close the window
+            setTimeout(() => {
+                window.close()
+            }, 300)
+        }
+        
+        return
+    }
+   
+    // Check for Shopify flow (new simplified flow)
+    if (router.currentRoute.value.query.shopify_flow === '1') {
+        const shop = router.currentRoute.value.query.shop as string
+        const shopId = router.currentRoute.value.query.shop_id as string
+        const host = router.currentRoute.value.query.host as string
+        const returnTo = router.currentRoute.value.query.return_to as string
+
+        // Redirect to auth complete page
+        const query: any = { shop, shop_id: shopId, host }
+        if (isInternalPath(returnTo)) {
+            query.return_to = returnTo
+        }
+
+        router.push({
+            path: '/shopify/auth-complete',
+            query
+        })
+        return
+    }
+   
+    // Check if there's a Shopify redirect pending in localStorage (legacy flow)
+    const shopifyRedirectData = localStorage.getItem('shopifyRedirect')
+    if (shopifyRedirectData) {
+        try {
+            const redirectInfo = JSON.parse(shopifyRedirectData)
+            // Clear the stored redirect
+            localStorage.removeItem('shopifyRedirect')
+            
+            // Build the full URL with all query parameters
+            const queryParams = new URLSearchParams()
+            for (const [key, value] of Object.entries(redirectInfo)) {
+                queryParams.append(key, value as string)
+            }
+            
+            // Redirect to the backend Shopify auth endpoint
+            window.location.href = apiPath(`/shopify/auth?${queryParams.toString()}`)
+            return // Don't do the normal navigation
+        } catch (e) {
+            console.error('Failed to parse shopifyRedirect data:', e)
+            // Clear invalid data
+            localStorage.removeItem('shopifyRedirect')
+        }
+    }
+
+    // Check for redirect query parameter (internal frontend route)
+    const redirectPath = router.currentRoute.value.query.redirect as string
+    if (redirectPath) {
+        // If it's an internal route, use router.push
+        if (isInternalPath(redirectPath)) {
+            router.push(redirectPath)
+            return
+        }
+        // Anything else (another site, a mangled path) falls through to the
+        // dashboard's landing page rather than being navigated to.
+    }
+
+    // Determine initial route based on permissions
+    const initialRoute = getInitialRoute()
+    router.push(initialRoute)
+}
+
 const handleLogin = async () => {
     try {
         isLoading.value = true
         error.value = ''
-
         await authService.login(email.value, password.value)
-
         trackLogin('email')
-
-        // Check if this is Shopify flow (new managed installation)
-        const urlParams = new URLSearchParams(window.location.search)
-        const isShopifyFlow = urlParams.get('shopify_flow') === '1'
-        const shopId = urlParams.get('shop_id')
-        const returnTo = urlParams.get('return_to')
-
-        if (isShopifyFlow && shopId) {
-            console.log('🔗 Shopify flow detected, linking organization')
-
-            try {
-
-
-                // If return_to is specified, redirect there
-                if (returnTo) {
-                    console.log('📍 Redirecting to return_to:', returnTo)
-                    window.location.href = returnTo
-                    return
-                }
-            } catch (linkError: any) {
-                console.error('❌ Failed to link organization:', linkError)
-                error.value = linkError.response?.data?.detail || 'Failed to link organization'
-                isLoading.value = false
-                return
-            }
-        }
-        
-        // Check if this is an OLD embedded Shopify login (opened in popup) - for backward compatibility
-        const isEmbedded = router.currentRoute.value.query.embedded === 'true'
-        const legacyShopId = router.currentRoute.value.query.shop_id as string
-        
-        if (isEmbedded && legacyShopId && window.opener) {
-            // This is a popup for Shopify embedded app (old flow)
-            console.log('Login successful in popup, notifying parent window')
-            
-            // Show success state
-            isLoading.value = true
-            error.value = ''
-            
-            // Notify the parent window of successful login
-            if (window.opener && !window.opener.closed) {
-                window.opener.postMessage(
-                    { type: 'login_success', shop_id: legacyShopId },
-                    window.location.origin
-                )
-                
-                // Close the popup after a brief delay to ensure message is sent
-                setTimeout(() => {
-                    window.close()
-                }, 300)
-            } else {
-                // If opener is gone, just close the window
-                setTimeout(() => {
-                    window.close()
-                }, 300)
-            }
-            
-            return
-        }
-       
-        // Check for Shopify flow (new simplified flow)
-        if (router.currentRoute.value.query.shopify_flow === '1') {
-            const shop = router.currentRoute.value.query.shop as string
-            const shopId = router.currentRoute.value.query.shop_id as string
-            const host = router.currentRoute.value.query.host as string
-            const returnTo = router.currentRoute.value.query.return_to as string
-
-            // Redirect to auth complete page
-            const query: any = { shop, shop_id: shopId, host }
-            if (returnTo) {
-                query.return_to = returnTo
-            }
-
-            router.push({
-                path: '/shopify/auth-complete',
-                query
-            })
-            return
-        }
-       
-        // Check if there's a Shopify redirect pending in localStorage (legacy flow)
-        const shopifyRedirectData = localStorage.getItem('shopifyRedirect')
-        if (shopifyRedirectData) {
-            try {
-                const redirectInfo = JSON.parse(shopifyRedirectData)
-                // Clear the stored redirect
-                localStorage.removeItem('shopifyRedirect')
-                
-                // Build the full URL with all query parameters
-                const queryParams = new URLSearchParams()
-                for (const [key, value] of Object.entries(redirectInfo)) {
-                    queryParams.append(key, value as string)
-                }
-                
-                // Redirect to the backend Shopify auth endpoint
-                window.location.href = apiPath(`/shopify/auth?${queryParams.toString()}`)
-                return // Don't do the normal navigation
-            } catch (e) {
-                console.error('Failed to parse shopifyRedirect data:', e)
-                // Clear invalid data
-                localStorage.removeItem('shopifyRedirect')
-            }
-        }
-
-        // Check for redirect query parameter (internal frontend route)
-        const redirectPath = router.currentRoute.value.query.redirect as string
-        if (redirectPath) {
-            // If it's an internal route (starts with /), use router.push
-            if (redirectPath.startsWith('/')) {
-                router.push(redirectPath)
-                return
-            }
-            // Otherwise treat as API redirect (legacy behavior)
-            window.location.href = `${getApiUrl()}${redirectPath}`
-            return
-        }
-
-        // Determine initial route based on permissions
-        const initialRoute = getInitialRoute()
-        router.push(initialRoute)
-
+        continueAfterLogin()
     } catch (err) {
         console.log(err)
         // authService.login rethrows the backend's detail as a plain Error, so
@@ -274,46 +299,79 @@ const handleVerifyAndResetPassword = async () => {
     <div class="auth-page">
         <!-- Left: form panel -->
         <div class="form-panel">
-            <!-- Logo mark -->
-            <div class="auth-logo">
-                <div class="logo-mark">
-                    <div class="dot"></div>
-                    <div class="dot"></div>
-                    <div class="dot"></div>
-                </div>
-                <span class="logo-word">ChatterMate</span>
-            </div>
-
-            <h1 class="auth-title">Welcome back</h1>
-            <p class="auth-sub">Sign in to continue to your dashboard</p>
-
-            <form @submit.prevent="handleLogin" class="auth-form">
-                <div class="field">
-                    <label for="email">Email</label>
-                    <input id="email" v-model="email" type="email" required placeholder="you@company.com" autocomplete="email" />
+            <div class="auth-shell">
+                <!-- Logo mark -->
+                <div class="auth-logo">
+                    <div class="logo-mark">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                    <span class="logo-word">ChatterMate</span>
                 </div>
 
-                <div class="field">
-                    <label for="password">Password</label>
-                    <input id="password" v-model="password" type="password" required placeholder="••••••••" autocomplete="current-password" />
-                    <a v-if="hasEnterpriseModule" href="#" @click.prevent="openForgotPasswordModal" class="forgot-link">Forgot password?</a>
+                <header class="auth-head">
+                    <h1 class="auth-title">Welcome back</h1>
+                    <p class="auth-sub">Sign in to continue to your dashboard</p>
+                </header>
+
+                <div class="auth-body" :class="{ 'is-pending': !ssoConfigLoaded }">
+                    <div v-if="error" class="auth-error" role="alert">
+                        <font-awesome-icon :icon="['fas', 'circle-exclamation']" class="auth-error-icon" aria-hidden="true" />
+                        <span>{{ error }}</span>
+                    </div>
+
+                    <p v-if="ssoCompleting" class="sso-status" role="status">
+                        <span class="status-spinner" aria-hidden="true"></span>Completing sign-in…
+                    </p>
+
+                    <!-- SSO-first: the providers lead, the password stays one click away -->
+                    <template v-if="ssoFirst">
+                        <SsoButtons :providers="ssoProviders" :loading-key="ssoRedirecting" :disabled="busy" layout="stack" @select="startSso" />
+                        <button v-if="!passwordFormOpened" type="button" class="password-toggle" :disabled="busy" @click="openPasswordForm">
+                            <font-awesome-icon :icon="['fas', 'envelope']" class="password-toggle-icon" aria-hidden="true" />
+                            Sign in with password
+                        </button>
+                    </template>
+
+                    <div v-if="showPasswordForm" class="password-block" :class="{ 'is-revealed': passwordFormOpened }">
+                        <div v-if="ssoFirst" class="auth-divider" aria-hidden="true"><span>or</span></div>
+                        <form @submit.prevent="handleLogin" class="auth-form">
+                            <div class="field">
+                                <label for="email">Email</label>
+                                <input id="email" ref="emailInput" v-model="email" type="email" required placeholder="you@company.com" autocomplete="email" />
+                            </div>
+
+                            <div class="field">
+                                <div class="field-row">
+                                    <label for="password">Password</label>
+                                    <a v-if="hasEnterpriseModule" href="#" @click.prevent="openForgotPasswordModal" class="forgot-link">Forgot password?</a>
+                                </div>
+                                <input id="password" v-model="password" type="password" required placeholder="••••••••" autocomplete="current-password" />
+                            </div>
+
+                            <button type="submit" class="auth-submit" :disabled="busy">
+                                <span v-if="isLoading">{{ router.currentRoute.value.query.embedded === 'true' ? 'Connecting…' : 'Signing in…' }}</span>
+                                <span v-else>Sign In</span>
+                            </button>
+                        </form>
+                    </div>
+
+                    <!-- Password-first: the providers follow the form -->
+                    <template v-if="ssoAvailable && !ssoFirst">
+                        <div class="auth-divider" aria-hidden="true"><span>or</span></div>
+                        <SsoButtons :providers="ssoProviders" :loading-key="ssoRedirecting" :disabled="busy" layout="row" @select="startSso" />
+                    </template>
                 </div>
-
-                <div v-if="error" class="auth-error" role="alert">{{ error }}</div>
-
-                <button type="submit" class="auth-submit" :disabled="isLoading">
-                    <span v-if="isLoading">{{ router.currentRoute.value.query.embedded === 'true' ? 'Connecting…' : 'Signing in…' }}</span>
-                    <span v-else>Sign In</span>
-                </button>
 
                 <p v-if="hasEnterpriseModule" class="signup-prompt">
                     Don't have an account?
                     <a href="#" @click.prevent="navigateToSignup" class="signup-link">Sign up</a>
                 </p>
-            </form>
 
-            <div class="install-hint-slot">
-                <InstallPrompt />
+                <div class="install-hint-slot">
+                    <InstallPrompt />
+                </div>
             </div>
         </div>
 
@@ -495,11 +553,21 @@ const handleVerifyAndResetPassword = async () => {
 .form-panel {
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    padding: 60px 56px;
+    align-items: center;
+    padding: var(--space-2xl) var(--space-xl);
     background: var(--bg);
     min-height: 100vh;
     min-height: 100dvh;
+}
+
+/* One centred column; margin-block auto centres it vertically without ever
+   clipping the top when it is taller than the screen. */
+.auth-shell {
+    width: 100%;
+    max-width: 400px;
+    margin-block: auto;
+    display: flex;
+    flex-direction: column;
 }
 
 /* Install hint (design: dashed card under the form) — mobile only */
@@ -519,7 +587,7 @@ const handleVerifyAndResetPassword = async () => {
     display: flex;
     align-items: center;
     gap: 10px;
-    margin-bottom: 44px;
+    margin-bottom: var(--space-2xl);
 }
 
 .logo-mark {
@@ -537,7 +605,7 @@ const handleVerifyAndResetPassword = async () => {
 .dot {
     width: 4.5px;
     height: 4.5px;
-    background: var(--on-accent);
+    background: var(--on-accent-solid);
     border-radius: 50%;
 }
 
@@ -549,40 +617,148 @@ const handleVerifyAndResetPassword = async () => {
     color: var(--text);
 }
 
+.auth-head {
+    margin-bottom: var(--space-xl);
+}
+
 .auth-title {
     font-family: var(--font-display);
-    font-size: 40px;
+    font-size: var(--text-4xl);
     font-weight: 700;
     letter-spacing: -0.03em;
     color: var(--text);
-    margin-bottom: 10px;
+    margin: 0 0 var(--space-sm);
     line-height: 1.1;
 }
 
 .auth-sub {
     color: var(--muted);
     font-size: 15px;
-    margin-bottom: 36px;
+    line-height: 1.5;
+    margin: 0;
+}
+
+/* Everything between the heading and the footer, on one rhythm. */
+.auth-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+/* Until /sso/config answers the page can't tell which way it leads: keep the
+   controls' space but not their look, so neither layout flashes first. */
+.auth-body.is-pending > :not(.auth-error):not(.sso-status) {
+    visibility: hidden;
+}
+
+.auth-error {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    color: var(--c-coral);
+    background: var(--coral-bg);
+    border: 1px solid var(--coral-border);
+    border-radius: var(--radius-chip);
+    padding: 12px 14px;
+    font-size: 13.5px;
+    line-height: 1.45;
+}
+
+.auth-error-icon {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    margin-top: 2px;
+}
+
+.sso-status {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 13.5px;
+    margin: 0;
+}
+
+.status-spinner {
+    width: 14px;
+    height: 14px;
+    flex: none;
+    border-radius: 50%;
+    border: 2px solid var(--o20);
+    border-top-color: var(--accent-ink);
+    animation: cm-spin 0.7s linear infinite;
+}
+
+/* SSO-first: the quieter way in, under the providers. */
+.password-toggle {
+    align-self: center;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-sm);
+    margin-top: calc(var(--space-sm) - var(--space-lg));
+    padding: 10px 14px;
+    background: none;
+    border: none;
+    border-radius: var(--radius-btn);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    font-weight: var(--font-weight-medium);
+    color: var(--text3);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+.password-toggle-icon {
+    width: 14px;
+    height: 14px;
+    color: var(--muted);
+}
+.password-toggle:hover:not(:disabled) {
+    background: var(--o05);
+    color: var(--text);
+}
+.password-toggle:focus-visible {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 2px;
+}
+.password-toggle:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.password-block {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+}
+
+/* The password form slides in when it is opened from the SSO-first page. */
+.password-block.is-revealed {
+    animation: reveal-in var(--transition-normal) both;
+}
+@keyframes reveal-in {
+    from { opacity: 0; transform: translateY(-6px); }
 }
 
 /* Form */
 .auth-form {
     display: flex;
     flex-direction: column;
-    gap: 20px;
-    max-width: 400px;
+    gap: var(--space-md);
 }
 
 .field {
     display: flex;
     flex-direction: column;
-    gap: 9px;
+    gap: var(--space-sm);
 }
 
 .field-row {
     display: flex;
     justify-content: space-between;
-    align-items: center;
+    align-items: baseline;
+    gap: var(--space-md);
 }
 
 .field label {
@@ -593,10 +769,11 @@ const handleVerifyAndResetPassword = async () => {
 
 .field input {
     width: 100%;
-    padding: 14px 16px;
+    min-height: 48px;
+    padding: 0 16px;
     background: var(--o04);
     border: 1px solid var(--o12);
-    border-radius: 12px;
+    border-radius: var(--radius-input);
     color: var(--text);
     font-family: var(--font-sans);
     font-size: 15px;
@@ -622,30 +799,26 @@ const handleVerifyAndResetPassword = async () => {
 }
 
 .forgot-link {
-    align-self: flex-end;
-    margin-top: 2px;
     font-size: 13px;
     color: var(--accent-ink);
     text-decoration: none;
+    border-radius: 4px;
 }
 .forgot-link:hover { text-decoration: underline; }
-
-.auth-error {
-    color: var(--c-coral);
-    background: color-mix(in srgb, var(--c-coral) 10%, transparent);
-    border: 1px solid color-mix(in srgb, var(--c-coral) 20%, transparent);
-    border-radius: 10px;
-    padding: 10px 14px;
-    font-size: 13.5px;
+.forgot-link:focus-visible {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 2px;
 }
 
 .auth-submit {
     width: 100%;
-    padding: 15px;
+    min-height: 48px;
+    margin-top: var(--space-sm);
+    padding: 0 16px;
     background: var(--accent-solid);
     color: var(--on-accent-solid);
     border: none;
-    border-radius: 12px;
+    border-radius: var(--radius-input);
     font-family: var(--font-sans);
     font-weight: 600;
     font-size: 15px;
@@ -654,9 +827,31 @@ const handleVerifyAndResetPassword = async () => {
 }
 
 .auth-submit:hover:not(:disabled) { opacity: 0.88; }
+.auth-submit:focus-visible {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 2px;
+}
 .auth-submit:disabled { opacity: 0.45; cursor: not-allowed; }
 
+.auth-divider {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    color: var(--muted2);
+    font-size: 13px;
+}
+.auth-divider::before,
+.auth-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--o10);
+}
+
 .signup-prompt {
+    margin: var(--space-xl) 0 0;
+    padding-top: var(--space-lg);
+    border-top: 1px solid var(--o08);
     text-align: center;
     font-size: 14px;
     color: var(--muted2);
@@ -666,8 +861,18 @@ const handleVerifyAndResetPassword = async () => {
     color: var(--accent-ink);
     text-decoration: none;
     font-weight: 500;
+    border-radius: 4px;
 }
 .signup-link:hover { text-decoration: underline; }
+.signup-link:focus-visible {
+    outline: 2px solid var(--accent-ink);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .password-block.is-revealed { animation: none; }
+    .status-spinner { animation-duration: 2s; }
+}
 
 /* ── Brand panel ── */
 .brand-panel {
@@ -843,8 +1048,10 @@ const handleVerifyAndResetPassword = async () => {
 }
 
 @media (max-width: 600px) {
-    .form-panel { padding: 40px 28px; }
-    .auth-title { font-size: 30px; }
+    .form-panel { padding: var(--space-xl) 20px; }
+    .auth-logo { margin-bottom: var(--space-xl); }
+    .auth-head { margin-bottom: var(--space-lg); }
+    .auth-title { font-size: var(--text-3xl); }
 }
 
 /* Modal Overlay */

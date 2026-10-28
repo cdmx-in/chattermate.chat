@@ -15,10 +15,8 @@ limitations under the License.
 """
 
 from typing import List
-from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException, status, Response
 from sqlalchemy.orm import Session
-import json
 
 from app.utils.domain_check import InvalidWebsite, validate_org_website, website_update
 from app.database import get_db
@@ -30,8 +28,8 @@ from app.models.schemas.organization import (
     OrganizationResponse,
     OrganizationCreateResponse
 )
-from app.core.auth import get_current_user, require_permissions
-from app.services.auth_sessions import issue_tokens
+from app.core.auth import get_current_user, require_permissions, set_session_cookies
+from app.services.auth_sessions import SIGNUP, issue_tokens
 from app.core.logger import get_logger
 from app.models.role import Role
 from app.models.permission import Permission, DEFAULT_AGENT_ROLE_PERMISSIONS
@@ -151,40 +149,9 @@ async def create_organization(
         db.flush()
 
         # Open the admin's first session and set cookies
-        access_token, refresh_token = issue_tokens(db, admin.id, organization.id)
+        access_token, refresh_token = issue_tokens(db, admin.id, organization.id, auth_method=SIGNUP)
 
-        # Set cookies and return response
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=1800  # 30 minutes
-        )
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            max_age=604800  # 7 days
-        )
-
-        # Set session data with role information
-        response.set_cookie(
-            key="user_info",
-            value=quote(json.dumps({
-                "id": str(admin.id),
-                "email": admin.email,
-                "full_name": admin.full_name,
-                "organization_id": str(organization.id),
-                "role": admin_role.to_dict()
-            }, default=str)),
-            samesite="none",  # Changed to "none" for cross-domain support (shopifiy)
-            secure=True,  # Required when samesite="none"
-            max_age=604800  # 7 days
-        )
+        set_session_cookies(response, admin, admin_role, access_token, refresh_token)
 
         db.commit()
 

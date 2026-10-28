@@ -14,7 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
-from fastapi import Depends, HTTPException, status, Cookie, Request
+import json
+from urllib.parse import quote
+
+from fastapi import Depends, HTTPException, status, Cookie, Request, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
@@ -24,7 +27,7 @@ from uuid import UUID
 from app.database import get_db
 from app.models.user import User
 from app.models.organization import Organization
-from app.services.auth_sessions import ACCESS, live_payload
+from app.services.auth_sessions import ACCESS, live_payload, revoke_session, session_id_of
 from app.core.logger import get_logger
 from app.models.role import Role
 
@@ -178,6 +181,39 @@ def request_token(request: Request) -> Optional[str]:
     if auth_header and auth_header.startswith('Bearer '):
         return auth_header.split(' ')[1]
     return None
+
+
+def revoke_presented_sessions(db: Session, request: Request) -> None:
+    """End the session(s) this request's tokens belong to: on sign-out, and on
+    a new sign-in so the browser's previous session doesn't linger."""
+    for token in (request_token(request), request.cookies.get("refresh_token")):
+        sid = session_id_of(token)
+        if sid:
+            revoke_session(db, sid)
+
+
+# Cookie lifetimes: the access token is short-lived, the refresh token and the
+# readable user_info blob last a week.
+ACCESS_COOKIE_MAX_AGE = 30 * 60
+REFRESH_COOKIE_MAX_AGE = 7 * 24 * 60 * 60
+
+
+def set_session_cookies(response: Response, user, role, access_token: str, refresh_token: str) -> None:
+    """Install a dashboard session on `response`: the two httpOnly JWT cookies
+    and the user_info blob the dashboard may read. One place for every
+    sign-in path (password login, token refresh, organization signup, SSO),
+    so a cookie attribute cannot drift between them."""
+    cookie = dict(secure=True, samesite="none")  # cross-site for the Shopify embedded app
+    response.set_cookie("access_token", access_token, httponly=True, max_age=ACCESS_COOKIE_MAX_AGE, **cookie)
+    response.set_cookie("refresh_token", refresh_token, httponly=True, max_age=REFRESH_COOKIE_MAX_AGE, **cookie)
+    user_info = json.dumps({
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "organization_id": str(user.organization_id),
+        "role": role.to_dict() if role else None,
+    }, default=str)
+    response.set_cookie("user_info", quote(user_info), max_age=REFRESH_COOKIE_MAX_AGE, **cookie)
 
 
 def _unauthorized(detail: str) -> HTTPException:
