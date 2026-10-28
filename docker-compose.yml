@@ -27,6 +27,7 @@ services:
       - VITE_WS_URL=wss://chm.c-dev.in
       - VITE_WIDGET_URL=https://chm.c-dev.in
       - VITE_APP_URL=https://chm.c-dev.in
+      - VUE_DEVTOOLS=false
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/public:/app/public
@@ -143,6 +144,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # LiteLLM on the host (port 4000)
     networks:
       - chattermate-network
     stdin_open: true
@@ -175,6 +178,8 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # LiteLLM on the host (port 4000)
     networks:
       - chattermate-network
 

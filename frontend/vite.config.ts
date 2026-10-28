@@ -68,7 +68,8 @@ export default defineConfig(({ command, mode }) => {
       }
     }),
     vueJsx(),
-    vueDevTools(),
+    // ponytail: opt-out via VUE_DEVTOOLS=false (docker-compose.yml); plugin only acts under `vite dev`
+    process.env.VUE_DEVTOOLS !== 'false' && vueDevTools(),
     // Plugin to inject environment variables into HTML
     {
       name: 'html-transform',
