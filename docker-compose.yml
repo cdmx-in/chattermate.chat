@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   nginx:
+    restart: always
     image: nginx:alpine
     ports:
       - "8300:80"
@@ -207,6 +208,7 @@ services:
       - chattermate-network
 
   db:
+    restart: always
     build:
       context: .
       dockerfile: Dockerfile.postgres
@@ -226,6 +228,7 @@ services:
       - chattermate-network
 
   redis:
+    restart: always
     image: redis:7-alpine
     ports:
       - "6379:6379"
@@ -241,6 +244,7 @@ services:
       - chattermate-network
 
   minio:
+    restart: always
     image: quay.io/minio/minio:latest
     ports:
       - "9310:9000"
